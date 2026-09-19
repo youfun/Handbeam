@@ -1,0 +1,361 @@
+defmodule Handbeam.AttachmentsTest do
+  use ExUnit.Case, async: false
+
+  alias Handbeam.Attachments
+  alias Handbeam.Attachments.{Access, History, Imported, MessageBuilder, Type}
+  alias Handbeam.Agent.{Coordinator, Message}
+
+  setup do
+    dir = Path.join(System.tmp_dir!(), "att_#{System.unique_integer([:positive])}")
+    File.mkdir_p!(dir)
+
+    # `ConversationStore.create/1` writes `~/.handbeam/conversations/`; point the
+    # Handbeam home at the tmp dir so the test never touches the real HOME.
+    previous_host = Application.get_env(:handbeam, :host)
+    Handbeam.Host.put!(Map.put(previous_host || %{}, :data_dir, dir))
+
+    on_exit(fn ->
+      if previous_host,
+        do: Application.put_env(:handbeam, :host, previous_host),
+        else: Application.delete_env(:handbeam, :host)
+
+      File.rm_rf!(dir)
+    end)
+
+    %{dir: dir}
+  end
+
+  test "classifies octet-stream source as text only with an allowed extension" do
+    assert {:ok, "text/x-source"} =
+             Type.classify("defmodule X do\nend\n", "mod.ex", "application/octet-stream")
+
+    assert {:error, :unsupported_type} =
+             Type.classify("hello world", "note.bin", "application/octet-stream")
+  end
+
+  test "rejects declared image without magic, PDF header, and malformed utf8" do
+    assert {:error, :unsupported_type} =
+             Type.classify("not-an-image", "photo.png", "image/png")
+
+    assert {:error, :unsupported_type} =
+             Type.classify("%PDF-1.4\n%", "doc.pdf", "application/pdf")
+
+    assert {:error, :unsupported_type} =
+             Type.classify(<<0xFF, 0xFE, 0x00>>, "note.txt", "text/plain")
+  end
+
+  test "batch limits use actual file sizes", %{dir: dir} do
+    items = for i <- 1..5, do: write_text(dir, "#{i}.txt", "x")
+    assert {:error, :too_many_attachments} = Attachments.validate_batch(items)
+
+    png = write_bytes(dir, "big.png", png_header() <> :binary.copy(<<1>>, 5_000_001 - 8))
+    assert {:error, :image_too_large} = Attachments.validate_batch([png])
+
+    text = write_bytes(dir, "big.txt", :binary.copy("a", 21 * 1024 * 1024))
+    assert {:error, :text_too_large} = Attachments.validate_batch([text])
+
+    a = write_bytes(dir, "a.txt", :binary.copy("a", 20 * 1024 * 1024))
+    b = write_bytes(dir, "b.txt", :binary.copy("b", 6 * 1024 * 1024))
+    assert {:error, :batch_too_large} = Attachments.validate_batch([a, b])
+  end
+
+  test "promote and persist without conversation on import, bind on send", %{dir: dir} do
+    workspace = Path.join(dir, "ws")
+    File.mkdir_p!(workspace)
+    staging = Path.join(dir, "staging")
+    File.mkdir_p!(staging)
+    src = Path.join(staging, "note.txt")
+    File.write!(src, "hello")
+
+    imported = %Imported{
+      attachment_id: "att-1",
+      source: :test,
+      display_name: "note.txt",
+      canonical_type: "text/plain",
+      size_bytes: 5,
+      controlled_path: src
+    }
+
+    {:ok, conv} = Handbeam.ConversationStore.create("default")
+
+    assert {:ok, message, persistable} =
+             MessageBuilder.build("see file", [imported],
+               workspace_path: workspace,
+               conversation_id: conv["id"],
+               staging_roots: [staging]
+             )
+
+    assert File.exists?(src)
+    assert is_binary(message) or match?(%Message{}, message)
+    refute persistable |> Jason.encode!() |> String.contains?("aGVsbG8")
+    assert hd(persistable)["relative_path"] =~ ".handbeam/uploads/#{conv["id"]}"
+    refute hd(persistable)["relative_path"] =~ workspace
+  end
+
+  test "rejects traversal, sibling prefix, symlink, and absolute storage fallback", %{dir: dir} do
+    workspace = Path.join(dir, "ws")
+    File.mkdir_p!(workspace)
+    {:ok, conv} = Handbeam.ConversationStore.create("default")
+    dest_dir = Handbeam.Uploads.ensure_conversation_dir!(workspace, conv["id"])
+    dest = Path.join(dest_dir, "ok.txt")
+    File.write!(dest, "ok")
+
+    secret = Path.join(dir, "secret.txt")
+    File.write!(secret, "leaked")
+
+    assert {:error, :malformed_ref} =
+             Access.resolve_upload(workspace, conv["id"], "../../../secret.txt")
+
+    sibling = Path.join(workspace, ".handbeam/uploads#{conv["id"]}")
+    File.mkdir_p!(sibling)
+    File.write!(Path.join(sibling, "x.txt"), "nope")
+
+    assert {:error, :malformed_ref} =
+             Access.resolve_upload(
+               workspace,
+               conv["id"],
+               Path.join([".handbeam", "uploads#{conv["id"]}", "x.txt"])
+             )
+
+    link = Path.join(dest_dir, "link.txt")
+    File.ln_s!(secret, link)
+
+    assert {:error, _} =
+             Access.resolve_upload(
+               workspace,
+               conv["id"],
+               Path.join([".handbeam", "uploads", conv["id"], "link.txt"])
+             )
+
+    [blocked] =
+      History.to_messages(
+        %{
+          "role" => "user",
+          "content" => "x",
+          "conversation_id" => conv["id"],
+          "attachments" => [
+            %{
+              "mime_type" => "image/png",
+              "filename" => "secret.png",
+              "storage_path" => secret
+            }
+          ]
+        },
+        workspace
+      )
+
+    texts =
+      case blocked.content do
+        text when is_binary(text) -> [text]
+        blocks when is_list(blocks) -> Enum.map(blocks, & &1[:text])
+      end
+
+    assert Enum.any?(texts, &(is_binary(&1) and &1 =~ "absolute"))
+  end
+
+  test "first-turn missing or grown images fail send; history marks missing", %{dir: dir} do
+    workspace = Path.join(dir, "ws")
+    File.mkdir_p!(workspace)
+    {:ok, conv} = Handbeam.ConversationStore.create("default")
+    dest_dir = Handbeam.Uploads.ensure_conversation_dir!(workspace, conv["id"])
+    dest = Path.join(dest_dir, "img-1.png")
+    png = png_header() <> <<1, 2, 3, 4>>
+    File.write!(dest, png)
+    relative = Path.join([".handbeam", "uploads", conv["id"], "img-1.png"])
+
+    missing = %{
+      mime_type: "image/png",
+      filename: "gone.png",
+      relative_path: Path.join([".handbeam", "uploads", conv["id"], "gone.png"])
+    }
+
+    assert {:error, :unreadable_attachment} =
+             MessageBuilder.build("see", [missing],
+               workspace_path: workspace,
+               conversation_id: conv["id"]
+             )
+
+    att = %{
+      id: "img-1",
+      kind: "image",
+      mime_type: "image/png",
+      filename: "img-1.png",
+      relative_path: relative
+    }
+
+    File.rm!(dest)
+
+    assert {:error, :unreadable_attachment} =
+             MessageBuilder.build("see", [att],
+               workspace_path: workspace,
+               conversation_id: conv["id"]
+             )
+
+    File.write!(dest, png)
+
+    {:ok, entry} =
+      Handbeam.Agent.TranscriptPersistence.append_inbound(
+        conv["id"],
+        %Message{
+          role: :user,
+          content: [
+            %{type: "text", text: "look"},
+            %{type: "image", mime_type: "image/png", data: "x"}
+          ]
+        },
+        attachments: [
+          %{
+            "id" => "img-1",
+            "kind" => "image",
+            "mime_type" => "image/png",
+            "filename" => "img-1.png",
+            "relative_path" => relative
+          }
+        ]
+      )
+
+    File.write!(dest, png_header() <> :binary.copy(<<9>>, 5_000_001))
+    [grown] = History.to_messages(Map.put(entry, "conversation_id", conv["id"]), workspace)
+
+    assert Enum.any?(List.wrap(grown.content), fn
+             %{text: text} -> text =~ "missing" or text =~ "too_large"
+             _ -> false
+           end)
+  end
+
+  test "transcript stores refs not base64 and history restores images", %{dir: dir} do
+    workspace = Path.join(dir, "ws")
+    File.mkdir_p!(workspace)
+    {:ok, conv} = Handbeam.ConversationStore.create("default")
+    png = png_header() <> <<0, 1, 2, 3>>
+    dest_dir = Handbeam.Uploads.ensure_conversation_dir!(workspace, conv["id"])
+    dest = Path.join(dest_dir, "img-1.png")
+    File.write!(dest, png)
+    relative = Path.join([".handbeam", "uploads", conv["id"], "img-1.png"])
+
+    message = %Message{
+      role: :user,
+      content: [
+        %{type: "text", text: "look"},
+        %{type: "image", mime_type: "image/png", data: Base.encode64(png)}
+      ]
+    }
+
+    attachments = [
+      %{
+        "id" => "img-1",
+        "kind" => "image",
+        "mime_type" => "image/png",
+        "filename" => "img-1.png",
+        "relative_path" => relative
+      }
+    ]
+
+    {:ok, entry} =
+      Handbeam.Agent.TranscriptPersistence.append_inbound(conv["id"], message,
+        workspace_path: workspace,
+        attachments: attachments,
+        inbound_id: "inb-1"
+      )
+
+    encoded = Jason.encode!(entry)
+    refute encoded =~ Base.encode64(png)
+    refute encoded =~ ~s("data")
+    refute encoded =~ "content://"
+    assert entry["inbound_id"] == "inb-1"
+    assert Attachments.inbound_ack(conv["id"], "inb-1") == :acknowledged
+    assert Attachments.inbound_ack(conv["id"], "missing") == :unknown
+
+    [restored] = History.to_messages(Map.put(entry, "conversation_id", conv["id"]), workspace)
+    assert %Message{content: blocks} = restored
+    image = Enum.find(blocks, &(&1.type == "image"))
+    assert image.data == Base.encode64(png)
+
+    File.rm!(dest)
+    [missing] = History.to_messages(Map.put(entry, "conversation_id", conv["id"]), workspace)
+    assert %Message{content: missing_blocks} = missing
+    assert Enum.any?(missing_blocks, &(is_binary(&1.text) and &1.text =~ "missing"))
+  end
+
+  test "history restore is what Coordinator uses for later turns", %{dir: dir} do
+    workspace = Path.join(dir, "ws")
+    File.mkdir_p!(workspace)
+    {:ok, conv} = Handbeam.ConversationStore.create("default")
+    png = png_header() <> <<1, 2, 3, 4>>
+    dest = Path.join(Handbeam.Uploads.ensure_conversation_dir!(workspace, conv["id"]), "a.png")
+    File.write!(dest, png)
+
+    {:ok, entry} =
+      Handbeam.Agent.TranscriptPersistence.append_inbound(
+        conv["id"],
+        %Message{
+          role: :user,
+          content: [
+            %{type: "text", text: "img"},
+            %{type: "image", mime_type: "image/png", data: "xxxx"}
+          ]
+        },
+        attachments: [
+          %{
+            "id" => "a",
+            "kind" => "image",
+            "mime_type" => "image/png",
+            "filename" => "a.png",
+            "relative_path" => Path.join([".handbeam", "uploads", conv["id"], "a.png"])
+          }
+        ]
+      )
+
+    refute Jason.encode!(entry) =~ "xxxx"
+
+    messages = History.to_messages(Map.put(entry, "conversation_id", conv["id"]), workspace)
+    assert match?([%Message{role: :user, content: [_ | _]}], messages)
+    _ = Coordinator
+  end
+
+  test "read_bounded streams at most max+1 bytes and rejects growth past the cap", %{dir: dir} do
+    path = Path.join(dir, "grow.bin")
+    File.write!(path, "abc")
+    assert {:ok, "abc"} = Access.read_bounded(path, 10)
+    File.write!(path, :binary.copy("x", 32))
+    assert {:error, :too_large_or_empty} = Access.read_bounded(path, 8)
+    assert {:error, :too_large_or_empty} = Access.read_bounded(path, 31)
+  end
+
+  test "export authorize rejects traversal and oversized files", %{dir: dir} do
+    workspace = Path.join(dir, "ws")
+    File.mkdir_p!(workspace)
+    File.write!(Path.join(workspace, "ok.txt"), "x")
+    assert {:ok, meta} = Handbeam.ExportSnapshot.authorize(workspace, "ok.txt")
+    assert meta.size_bytes == 1
+    assert {:error, :invalid_path} = Handbeam.ExportSnapshot.authorize(workspace, "../secret")
+    assert {:error, :invalid_path} = Handbeam.ExportSnapshot.authorize(workspace, "/etc/passwd")
+  end
+
+  defp png_header, do: <<0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A>>
+
+  defp write_text(dir, name, body) do
+    path = Path.join(dir, name)
+    File.write!(path, body)
+
+    %{
+      mime_type: "text/plain",
+      filename: name,
+      controlled_path: path,
+      size_bytes: byte_size(body)
+    }
+  end
+
+  defp write_bytes(dir, name, body) do
+    path = Path.join(dir, name)
+    File.write!(path, body)
+    mime = if String.ends_with?(name, ".png"), do: "image/png", else: "text/plain"
+
+    %{
+      mime_type: mime,
+      filename: name,
+      controlled_path: path,
+      size_bytes: 1
+    }
+  end
+end

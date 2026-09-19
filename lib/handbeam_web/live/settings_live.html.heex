@@ -1,0 +1,292 @@
+<!-- Unified Settings Page — full-screen, matches workspace visual style -->
+<div class="h-screen flex flex-col bg-main text-primary settings-page-shell">
+  <Layouts.flash_group flash={@flash} />
+  <div
+    :if={@runtime_banner}
+    id="runtime-banner"
+    class="px-3 py-2 text-xs text-secondary border-b bg-surface"
+  >
+    {@runtime_banner}
+  </div>
+  <!-- Toast Notification -->
+  <div
+    :if={@toast}
+    id={"toast-#{@toast.id}"}
+    class={"toast-notification #{if @toast.type == :error, do: "toast-error", else: ""}"}
+  >
+    <span :if={@toast.type == :success} class="flex-shrink-0 font-bold">✓</span>
+    <span :if={@toast.type == :error} class="flex-shrink-0 font-bold font-mono">⚠</span>
+    <span>{@toast.message}</span>
+  </div>
+
+  <!-- Top bar with back link -->
+  <div class="settings-topbar h-9 border-b bg-surface flex items-center px-3 flex-shrink-0 gap-2">
+    <a
+      href={
+        if @conversation_id, do: ~p"/w/#{@workspace["id"]}/c/#{@conversation_id}", else: ~p"/"
+      }
+      class="settings-back-link text-secondary hover:text-primary transition-colors flex items-center gap-1.5 no-underline"
+    >
+      <span aria-hidden="true">←</span>
+      <span>{gettext("返回工作台")}</span>
+    </a>
+    <span class="settings-topbar-title text-xs font-semibold text-primary">
+      {gettext("Settings")}
+    </span>
+  </div>
+
+  <!-- Main content: left menu + right panel -->
+  <div class="flex flex-1 overflow-hidden settings-page-main">
+    <!-- Left: Settings Menu -->
+    <div
+      id="settings-menu"
+      class="settings-sidebar flex-shrink-0 border-r bg-surface flex flex-col"
+    >
+      <div class="pt-3 pb-2 px-3">
+        <h2 class="projects-panel-title">{gettext("Settings")}</h2>
+      </div>
+      <div class="flex-1">
+        <button
+          :for={item <- @tabs}
+          phx-click="select_tab"
+          phx-value-tab={item.id}
+          class={[
+            "settings-menu-item w-full text-left px-3 py-2 text-xs flex items-center gap-2 transition-colors",
+            if(@active_tab == item.id,
+              do: "settings-menu-item-active text-primary",
+              else: "text-secondary hover:bg-surface-hover"
+            )
+          ]}
+        >
+          <span>{tab_label(item.id)}</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Right: Content Panel (flex-1) -->
+    <div class="settings-page-content flex-1 overflow-y-auto bg-main">
+      <!-- Model / AI Tab — reuse existing ModelAIPanel component -->
+      <div :if={@active_tab == :model_ai} class="settings-content-wrap">
+        <div class="settings-content-card">
+          <ModelAIPanel.render
+            form={@form}
+            available_models={@available_models}
+            errors={@errors}
+            scope={:global}
+          />
+
+          <div class="settings-page-actions">
+            <button
+              phx-click="save_settings"
+              disabled={@saving}
+              class="settings-save-btn"
+            >
+              {if @saving, do: gettext("Saving..."), else: gettext("Save")}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Workspace Models Tab -->
+      <div :if={@active_tab == :workspace_models} class="settings-content-wrap">
+        <div class="settings-content-card">
+          <div class="settings-form-section">
+            <div class="settings-section-title">{gettext("当前工作区模型")}</div>
+            <div class="settings-help-text">
+              <div>{@workspace["name"]}</div>
+              <div class="settings-path">{@workspace_root}</div>
+            </div>
+
+            <div class="settings-card">
+              <div class="settings-field-row">
+                <div class="settings-field-copy">
+                  <div class="settings-field-title">{gettext("访问模式")}</div>
+                  <div class="settings-field-desc">
+                    {gettext("Limit which models this workspace can use.")}
+                  </div>
+                </div>
+                <div class="settings-field-control">
+                  <div class="flex gap-2">
+                    <button
+                      type="button"
+                      phx-click="set_workspace_model_mode"
+                      phx-value-mode="unrestricted"
+                      class={[
+                        "settings-chip",
+                        if(@workspace_model_policy.mode == :unrestricted, do: "active")
+                      ]}
+                    >
+                      {gettext("不限制")}
+                    </button>
+                    <button
+                      type="button"
+                      phx-click="set_workspace_model_mode"
+                      phx-value-mode="restricted"
+                      class={[
+                        "settings-chip",
+                        if(@workspace_model_policy.mode == :restricted, do: "active")
+                      ]}
+                    >
+                      {gettext("仅允许勾选模型")}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <form phx-change="set_workspace_default_model" class="settings-field-row">
+                <div class="settings-field-copy">
+                  <label class="settings-field-title" for="workspace-default-model">
+                    {gettext("工作区默认模型")}
+                  </label>
+                  <div class="settings-field-desc">
+                    {gettext("Used when starting a new conversation in this workspace.")}
+                  </div>
+                </div>
+                <div class="settings-field-control">
+                  <select
+                    id="workspace-default-model"
+                    name="default_model"
+                    value={@workspace_model_policy.default_model || ""}
+                    class="settings-input"
+                  >
+                    <option value="">{gettext("使用供应商默认")}</option>
+                    <%= for model <- workspace_default_options(@workspace_model_policy, @all_models) do %>
+                      <option
+                        value={model.id}
+                        selected={model.id == @workspace_model_policy.default_model}
+                      >
+                        {model.provider_id} / {model.name || model.model_id}
+                      </option>
+                    <% end %>
+                  </select>
+                </div>
+              </form>
+            </div>
+
+            <div :if={@workspace_model_policy.mode == :restricted} class="settings-model-list">
+              <%= for {provider_id, models} <- models_grouped_by_provider(@all_models) do %>
+                <div class="settings-model-provider">
+                  <div class="settings-model-provider-title">{provider_id}</div>
+                  <label :for={model <- models} class="settings-model-row">
+                    <input
+                      type="checkbox"
+                      checked={
+                        workspace_model_checked?(
+                          @workspace_model_policy,
+                          provider_id,
+                          model.model_id
+                        )
+                      }
+                      phx-click="toggle_workspace_model"
+                      phx-value-provider={provider_id}
+                      phx-value-model={model.model_id}
+                    />
+                    <span>{model.name || model.model_id}</span>
+                  </label>
+                </div>
+              <% end %>
+            </div>
+          </div>
+
+          <div class="settings-page-actions">
+            <button
+              phx-click="save_workspace_models"
+              disabled={@workspace_models_saving}
+              class="settings-save-btn"
+            >
+              {if @workspace_models_saving, do: gettext("Saving..."), else: gettext("Save")}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Available Models Tab — nested LiveView via live_render -->
+      <div :if={@active_tab == :available_models} class="flex-1 overflow-hidden">
+        {live_render(@socket, HandbeamWeb.AvailableModelsLive,
+          id: "settings-available-models",
+          session: %{"embedded" => "true"}
+        )}
+      </div>
+
+      <!-- UI Settings Tab -->
+      <div :if={@active_tab == :ui} class="settings-content-wrap">
+        <div class="settings-content-card">
+          <div class="settings-form-section">
+            <div class="settings-section-title">{gettext("UI Settings")}</div>
+            <div class="settings-help-text">
+              {gettext("Configure layout, language, and theme preferences.")}
+            </div>
+
+            <div class="settings-card">
+              <div class="settings-field-row">
+                <div class="settings-field-copy">
+                  <div class="settings-field-title">{gettext("Language")}</div>
+                  <div class="settings-field-desc">
+                    {gettext("Choose the interface language.")}
+                  </div>
+                </div>
+                <div class="settings-field-control">
+                  <div class="flex gap-2">
+                    <a
+                      href="?locale=zh_CN"
+                      class={[
+                        "settings-chip no-underline inline-flex items-center justify-center text-xs px-3 py-1.5 rounded border transition-colors",
+                        if(@locale == "zh_CN",
+                          do: "active font-medium",
+                          else: "text-secondary hover:bg-surface-hover"
+                        )
+                      ]}
+                    >
+                      {gettext("中文 (简体)")}
+                    </a>
+                    <a
+                      href="?locale=en"
+                      class={[
+                        "settings-chip no-underline inline-flex items-center justify-center text-xs px-3 py-1.5 rounded border transition-colors",
+                        if(@locale == "en",
+                          do: "active font-medium",
+                          else: "text-secondary hover:bg-surface-hover"
+                        )
+                      ]}
+                    >
+                      {gettext("English")}
+                    </a>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Coming Soon Tabs -->
+      <div
+        :if={@active_tab not in [:model_ai, :workspace_models, :available_models, :ui]}
+        class="settings-content-wrap"
+      >
+        <div class="settings-section-heading">
+          <div class="settings-section-title">{gettext("即将推出")}</div>
+          <div class="settings-help-text">
+            {gettext("这些设置还不能用。")}
+          </div>
+        </div>
+        <div class="settings-card">
+          <div
+            :for={name <- [gettext("SNS"), gettext("Tools"), gettext("Security")]}
+            class="settings-field-row is-disabled"
+          >
+            <div class="settings-field-copy">
+              <div class="settings-field-title">
+                {name}
+                <span class="settings-badge-experimental">{gettext("Experimental")}</span>
+              </div>
+              <div class="settings-field-desc">
+                {gettext("%{name} settings — coming soon", name: name)}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

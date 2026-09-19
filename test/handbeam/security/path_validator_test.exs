@@ -1,0 +1,197 @@
+defmodule Handbeam.Security.PathValidator.Test do
+  @moduledoc """
+  Tests for path security validation.
+
+  Reference: `cortex/core/security.ex` (Cortex path validation)
+  Test pattern: hand-written from Cortex security behavior
+
+  Covers:
+    - validate_readable: existent file, non-existent, directory, permissions
+    - validate_writeable: writable path, parent directory when file doesn't exist
+    - validate_within_workspace: inside, outside via `../`, absolute path escape, symlink escape
+  """
+
+  use ExUnit.Case, async: false
+
+  alias Handbeam.Security.PathValidator
+
+  @fixtures_dir Path.join(File.cwd!(), "test/fixtures")
+  @sandbox_dir Path.join(
+                 System.tmp_dir!(),
+                 "sigil_sec_test_#{System.unique_integer([:positive])}"
+               )
+
+  setup do
+    File.mkdir_p!(@sandbox_dir)
+    File.mkdir_p!(Path.join(@sandbox_dir, "subdir"))
+    File.write!(Path.join(@sandbox_dir, "readable.txt"), "content")
+    File.chmod!(Path.join(@sandbox_dir, "readable.txt"), 0o644)
+
+    on_exit(fn -> File.rm_rf!(@sandbox_dir) end)
+  end
+
+  describe "validate_readable/1" do
+    test "returns :ok for readable file" do
+      path = Path.join(@fixtures_dir, "sample.txt")
+      assert PathValidator.validate_readable(path) == :ok
+    end
+
+    test "returns error for non-existent file" do
+      {:error, reason} = PathValidator.validate_readable("/nonexistent/path.txt")
+      assert reason =~ "No such file"
+    end
+
+    test "returns error for directory" do
+      {:error, reason} = PathValidator.validate_readable(@fixtures_dir)
+      assert reason =~ "Is a directory"
+    end
+  end
+
+  describe "validate_writeable/1" do
+    test "returns :ok for writable file" do
+      path = Path.join(@sandbox_dir, "readable.txt")
+      assert PathValidator.validate_writeable(path) == :ok
+    end
+
+    test "validates parent directory when file doesn't exist" do
+      subdir = Path.join(@sandbox_dir, "subdir")
+      path = Path.join(subdir, "new.txt")
+      assert PathValidator.validate_writeable(path) == :ok
+    end
+  end
+
+  describe "validate_within_workspace/2 — workspace boundary" do
+    test "allows paths inside workspace" do
+      file = Path.join(@sandbox_dir, "readable.txt")
+      assert PathValidator.validate_within_workspace(file, @sandbox_dir) == :ok
+    end
+
+    test "allows the workspace root itself" do
+      assert PathValidator.validate_within_workspace(@sandbox_dir, @sandbox_dir) == :ok
+    end
+
+    # ── ../ traversal escape ──
+    # Reference: cortex/core/security.ex — path traversal blocking
+
+    test "blocks ../ traversal escape" do
+      # Resolve `..` to go outside the workspace
+      escape_path = Path.join(@sandbox_dir, "../secret.txt")
+
+      {:error, reason} = PathValidator.validate_within_workspace(escape_path, @sandbox_dir)
+      assert reason =~ "Path traversal blocked"
+      assert reason =~ "outside workspace"
+    end
+
+    test "blocks ../ chain traversal" do
+      escape_path = Path.join(@sandbox_dir, "../../etc/passwd")
+
+      {:error, reason} = PathValidator.validate_within_workspace(escape_path, @sandbox_dir)
+      assert reason =~ "outside workspace"
+    end
+
+    # ── Absolute path escape ──
+
+    test "blocks absolute path that points outside workspace" do
+      {:error, reason} = PathValidator.validate_within_workspace("/etc/passwd", @sandbox_dir)
+      assert reason =~ "outside workspace"
+    end
+
+    test "allows absolute path that is within workspace" do
+      abs = Path.expand(@sandbox_dir)
+      assert PathValidator.validate_within_workspace(abs, abs) == :ok
+    end
+
+    # ── Symlink traversal escape ──
+
+    test "blocks symlink pointing outside workspace" do
+      link = Path.join(@sandbox_dir, "escape_link")
+      File.ln_s!("/etc/hosts", link)
+
+      {:error, reason} = PathValidator.validate_within_workspace(link, @sandbox_dir)
+      assert reason =~ "outside workspace"
+    end
+
+    test "blocks intermediate directory symlink that points outside workspace" do
+      outside =
+        Path.join(System.tmp_dir!(), "sigil_sec_outside_#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(outside)
+      File.write!(Path.join(outside, "secret.txt"), "nope")
+      File.ln_s!(outside, Path.join(@sandbox_dir, "escape"))
+      on_exit(fn -> File.rm_rf!(outside) end)
+
+      escaped = Path.join(@sandbox_dir, "escape/secret.txt")
+      {:error, reason} = PathValidator.validate_within_workspace(escaped, @sandbox_dir)
+      assert reason =~ "outside workspace"
+
+      missing = Path.join(@sandbox_dir, "escape/new-repo")
+      {:error, missing_reason} = PathValidator.validate_within_workspace(missing, @sandbox_dir)
+      assert missing_reason =~ "outside workspace"
+    end
+
+    test "handles symlink loop without infinite recursion" do
+      a = Path.join(@sandbox_dir, "loop_a")
+      b = Path.join(@sandbox_dir, "loop_b")
+      File.ln_s!(b, a)
+      File.ln_s!(a, b)
+
+      # Should either return the path or detect it's within workspace
+      result = PathValidator.validate_within_workspace(a, @sandbox_dir)
+      # The loop should not crash; it resolves to the first seen path
+      assert result == :ok or match?({:error, _}, result)
+    end
+  end
+
+  describe "validate_under_root/2 — session store / event dir guard" do
+    @allowed_root Path.join(
+                    System.tmp_dir!(),
+                    "sigil_sec_under_root_#{System.unique_integer([:positive])}"
+                  )
+
+    setup do
+      File.mkdir_p!(@allowed_root)
+      on_exit(fn -> File.rm_rf!(@allowed_root) end)
+    end
+
+    test "allows path inside the allowed root" do
+      sub = Path.join(@allowed_root, "subdir")
+      assert PathValidator.validate_under_root(sub, @allowed_root) == :ok
+    end
+
+    test "allows the allowed root itself" do
+      assert PathValidator.validate_under_root(@allowed_root, @allowed_root) == :ok
+    end
+
+    test "blocks path outside the allowed root" do
+      outside =
+        Path.join(System.tmp_dir!(), "definitely_outside_#{System.unique_integer([:positive])}")
+
+      {:error, reason} = PathValidator.validate_under_root(outside, @allowed_root)
+      assert reason =~ "Path traversal blocked"
+    end
+
+    test "blocks ../ traversal escape" do
+      escape = Path.join(@allowed_root, "../escape_#{System.unique_integer([:positive])}")
+      {:error, reason} = PathValidator.validate_under_root(escape, @allowed_root)
+      assert reason =~ "Path traversal blocked"
+    end
+
+    test "allows new path under root when root does not exist yet" do
+      new_root =
+        Path.join(System.tmp_dir!(), "sigil_sec_new_root_#{System.unique_integer([:positive])}")
+
+      # Root does not exist — prefix check should still allow paths under it
+      sub = Path.join(new_root, "child")
+      assert PathValidator.validate_under_root(sub, new_root) == :ok
+    end
+
+    test "blocks new path outside a non-existent root" do
+      new_root =
+        Path.join(System.tmp_dir!(), "sigil_sec_new_root2_#{System.unique_integer([:positive])}")
+
+      outside = Path.join(System.tmp_dir!(), "other_#{System.unique_integer([:positive])}")
+      {:error, reason} = PathValidator.validate_under_root(outside, new_root)
+      assert reason =~ "Path traversal blocked"
+    end
+  end
+end

@@ -1,0 +1,152 @@
+defmodule Handbeam.Platform.ProcessRunner do
+  @moduledoc """
+  Executes bash commands via Port with timeout control and process cleanup.
+
+  Encapsulates shell resolution, Port lifecycle, output collection,
+  timeout handling, and cross-platform process tree termination.
+  """
+
+  alias Handbeam.Platform.{ShellResolver, ProcessManager}
+
+  @max_output_bytes 50_000
+  @max_output_lines 2_000
+  @buffer_limit 102_400
+
+  @type run_meta :: %{
+          optional(:exit_code) => non_neg_integer(),
+          timed_out: boolean()
+        }
+
+  @doc """
+  Runs a bash command and returns output with metadata.
+
+  ## Options
+    - `:shell_path` — explicit shell binary path
+  """
+  @spec run_bash(binary(), Path.t() | nil, timeout(), keyword()) ::
+          {:ok, binary(), run_meta()} | {:error, String.t()}
+  def run_bash(command, cwd, timeout_ms, opts \\ []) do
+    with {:ok, shell} <- ShellResolver.resolve(opts) do
+      port_opts = [:binary, :exit_status, :use_stdio, :stderr_to_stdout, :hide]
+
+      port_opts =
+        if cwd, do: [{:cd, String.to_charlist(cwd)} | port_opts], else: port_opts
+
+      try do
+        port =
+          Port.open(
+            {:spawn_executable, shell.path},
+            [{:args, shell.args ++ [command]} | port_opts]
+          )
+
+        os_pid = get_os_pid(port)
+        collect_output(port, os_pid, timeout_ms)
+      rescue
+        e -> {:error, "Failed to spawn: #{Exception.message(e)}"}
+      end
+    end
+  end
+
+  # ── Output collection ──
+
+  defp collect_output(port, os_pid, timeout_ms) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    state = %{chunks: [], buf_bytes: 0, total_bytes: 0}
+    do_collect(port, os_pid, deadline, state, timeout_ms)
+  end
+
+  defp do_collect(port, os_pid, deadline, state, original_timeout) do
+    remaining = deadline - System.monotonic_time(:millisecond)
+
+    if remaining <= 0 do
+      ProcessManager.kill_process_tree(os_pid)
+      safe_close_port(port)
+      output = build_output(state)
+
+      {:ok, output <> "\n\n[Command timed out after #{div(original_timeout, 1000)}s]",
+       %{timed_out: true}}
+    else
+      receive do
+        {^port, {:data, data}} ->
+          state = ingest_chunk(state, data)
+          do_collect(port, os_pid, deadline, state, original_timeout)
+
+        {^port, {:exit_status, exit_code}} ->
+          output = build_output(state)
+
+          if exit_code == 0 do
+            {:ok, output, %{exit_code: 0, timed_out: false}}
+          else
+            content = if output == "", do: "", else: output <> "\n\n"
+
+            {:ok, "#{content}Command exited with code #{exit_code}",
+             %{exit_code: exit_code, timed_out: false}}
+          end
+      after
+        min(remaining, 200) ->
+          do_collect(port, os_pid, deadline, state, original_timeout)
+      end
+    end
+  end
+
+  # ── Buffer management ──
+
+  defp ingest_chunk(state, data) do
+    size = byte_size(data)
+    new_total = state.total_bytes + size
+    new_chunks = [data | state.chunks]
+    new_buf = state.buf_bytes + size
+
+    {trimmed, trimmed_bytes} =
+      if new_buf > @buffer_limit do
+        trim_buffer(new_chunks, new_buf)
+      else
+        {new_chunks, new_buf}
+      end
+
+    %{state | chunks: trimmed, buf_bytes: trimmed_bytes, total_bytes: new_total}
+  end
+
+  defp trim_buffer(chunks, buf) when buf <= @buffer_limit, do: {chunks, buf}
+
+  defp trim_buffer(chunks, buf) do
+    [oldest | rest] = Enum.reverse(chunks)
+    trim_buffer(Enum.reverse(rest), buf - byte_size(oldest))
+  end
+
+  defp build_output(%{chunks: chunks, total_bytes: total}) do
+    raw = chunks |> Enum.reverse() |> IO.iodata_to_binary() |> String.trim_trailing("\n")
+
+    output =
+      if total > @max_output_bytes do
+        lines = String.split(raw, "\n")
+        kept = Enum.take(lines, -@max_output_lines)
+        "[#{length(lines) - length(kept)} lines omitted]\n" <> Enum.join(kept, "\n")
+      else
+        if length(String.split(raw, "\n")) > @max_output_lines do
+          lines = String.split(raw, "\n")
+          kept = Enum.take(lines, -@max_output_lines)
+          "[#{length(lines) - length(kept)} lines omitted]\n" <> Enum.join(kept, "\n")
+        else
+          raw
+        end
+      end
+
+    if output == "", do: "(no output)", else: output
+  end
+
+  # ── Helpers ──
+
+  defp get_os_pid(port) do
+    case Port.info(port, :os_pid) do
+      {:os_pid, pid} -> pid
+      nil -> nil
+    end
+  end
+
+  defp safe_close_port(port) do
+    if Port.info(port) != nil, do: Port.close(port)
+  rescue
+    _ -> :ok
+  end
+end

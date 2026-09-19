@@ -1,0 +1,42 @@
+defmodule Handbeam.Git.Credentials do
+  @moduledoc """
+  Resolves opaque Git credential names at execution time, outside model input.
+
+  Hosts configure `:handbeam, :git_credentials` as a map of names to keyword
+  lists containing `:endpoint`, `:password` and optional `:username`.
+  Fresh authentication challenges must match the HTTPS endpoint. libgit2
+  blocks cross-host redirects and HTTPS downgrades, but may reuse credentials
+  on other HTTPS ports or paths of the same hostname. Configuration therefore
+  trusts every HTTPS service on that hostname, not just one port or repository.
+  Never load this map from agent-controlled workspace settings.
+  """
+
+  @spec resolve(String.t() | nil) :: {:ok, keyword()} | {:error, String.t()}
+  def resolve(nil), do: {:ok, []}
+
+  def resolve(name) when is_binary(name) do
+    credentials = Application.get_env(:handbeam, :git_credentials, %{})
+
+    case Map.fetch(credentials, name) do
+      {:ok, credential} -> validate(credential)
+      :error -> {:error, "Git credential is not configured by the host"}
+    end
+  end
+
+  def resolve(_), do: {:error, "credential must be a configured name"}
+
+  defp validate(credential) when is_list(credential) do
+    endpoint = credential[:endpoint]
+    password = credential[:password]
+
+    with true <- is_binary(endpoint) and is_binary(password) and password != "",
+         %URI{scheme: "https", host: host, userinfo: nil, path: nil, query: nil, fragment: nil}
+         when is_binary(host) and host != "" <- URI.parse(endpoint) do
+      {:ok, [credential_endpoint: endpoint] ++ Keyword.take(credential, [:username, :password])}
+    else
+      _ -> {:error, "Git credential requires an HTTPS endpoint without a path and a password"}
+    end
+  end
+
+  defp validate(_), do: {:error, "Invalid host Git credential configuration"}
+end

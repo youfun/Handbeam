@@ -1,0 +1,160 @@
+defmodule Handbeam.Tool.Builtin.Bash do
+  @moduledoc """
+  Execute shell commands with timeout control and process tree killing.
+
+  Uses Port-based execution with scroll buffer, output truncation (tail strategy),
+  and process group killing on timeout.
+  """
+
+  @behaviour Handbeam.Agent.Tool
+
+  @max_output_bytes 50_000
+
+  @impl true
+  def name, do: "bash"
+
+  @impl true
+  def description do
+    "Execute a bash command in the current working directory. " <>
+      "Returns stdout and stderr. Use Unix-style commands and forward-slash paths " <>
+      "(ls, cat, grep, find, rm, ./scripts/test.sh) even on Windows — " <>
+      "this tool always runs in a bash environment. " <>
+      "Supports timeout control and working directory override."
+  end
+
+  @impl true
+  def input_schema do
+    %{
+      type: "object",
+      properties: %{
+        command: %{
+          type: "string",
+          description:
+            "Bash command to execute. Use Unix-style commands with forward-slash paths " <>
+              "(e.g. ls, cat, grep, find). Do not prefix with cd — this tool sets the " <>
+              "working directory automatically."
+        },
+        timeout: %{type: "integer", description: "Timeout in seconds", default: 120},
+        cwd: %{
+          type: "string",
+          description:
+            "Optional working directory override. Use only for a subdirectory inside " <>
+              "the current workspace."
+        }
+      },
+      required: ["command"]
+    }
+  end
+
+  @impl true
+  def max_result_chars, do: @max_output_bytes + 5_000
+
+  @impl true
+  def concurrent?, do: false
+
+  @impl true
+  def execute(%{"command" => command} = input, context) do
+    timeout_sec = Map.get(input, "timeout", 120)
+    working_directory = context[:working_directory]
+
+    with :ok <- validate_command(command),
+         {:ok, cwd} <- resolve_cwd(Map.get(input, "cwd"), working_directory),
+         :ok <- validate_command_paths(command, cwd) do
+      execute_command(command, timeout_sec, cwd, working_directory)
+    end
+  end
+
+  def execute(_input, _context) do
+    {:error, "command is required"}
+  end
+
+  # ── Validation ──
+
+  defp validate_command(cmd) when not is_binary(cmd) or byte_size(cmd) == 0 do
+    {:error, "command must be a non-empty string"}
+  end
+
+  defp validate_command(_), do: :ok
+
+  defp validate_command_paths(cmd, cwd) do
+    paths = Handbeam.Security.ShellPathGuard.extract_paths(cmd)
+
+    if paths == [] or is_nil(cwd) do
+      :ok
+    else
+      violations =
+        Enum.reject(paths, fn path ->
+          safe_external_shell_path?(path) or workspace_path?(path, cwd)
+        end)
+
+      if violations == [] do
+        :ok
+      else
+        {:error,
+         "Path traversal blocked in command: #{Enum.map_join(violations, ", ", &inspect/1)} outside workspace"}
+      end
+    end
+  end
+
+  defp safe_external_shell_path?("/dev/null"), do: true
+  defp safe_external_shell_path?(_path), do: false
+
+  defp workspace_path?(path, cwd) do
+    expanded =
+      if Path.type(path) == :absolute do
+        Path.expand(path)
+      else
+        Path.expand(Path.join(cwd, path))
+      end
+
+    resolved = Handbeam.Security.PathValidator.resolve_symlink(expanded)
+    resolved_cwd = Handbeam.Security.PathValidator.resolve_symlink(Path.expand(cwd))
+    String.starts_with?(resolved, resolved_cwd <> "/") or resolved == resolved_cwd
+  end
+
+  defp resolve_cwd(nil, working_directory), do: {:ok, working_directory}
+
+  defp resolve_cwd(path, working_directory) do
+    cwd =
+      if Path.type(path) == :absolute do
+        Path.expand(path)
+      else
+        wd = working_directory || File.cwd!()
+        Path.expand(Path.join(wd, path))
+      end
+
+    # Validate cwd stays within workspace boundary (resolving symlinks)
+    case working_directory do
+      nil ->
+        {:ok, cwd}
+
+      wd ->
+        resolved_cwd = Handbeam.Security.PathValidator.resolve_symlink(cwd)
+        resolved_wd = Handbeam.Security.PathValidator.resolve_symlink(Path.expand(wd))
+
+        if String.starts_with?(resolved_cwd, resolved_wd <> "/") or
+             resolved_cwd == resolved_wd do
+          if cwd == "/" or File.dir?(cwd) do
+            {:ok, cwd}
+          else
+            {:error, "cwd #{path} is not a directory"}
+          end
+        else
+          {:error, "Path traversal blocked: cwd #{path} is outside workspace #{wd}"}
+        end
+    end
+  end
+
+  # ── Execution ──
+
+  defp execute_command(command, timeout_sec, cwd, working_directory) do
+    timeout_ms = timeout_sec * 1000
+
+    opts = if working_directory, do: [workspace_path: working_directory], else: []
+
+    case Handbeam.Platform.ProcessRunner.run_bash(command, cwd, timeout_ms, opts) do
+      {:ok, output, meta} -> {:ok, output, meta}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+end

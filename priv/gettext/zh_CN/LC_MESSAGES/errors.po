@@ -1,0 +1,74 @@
+## Ecto validation errors — 中文翻译
+msgid ""
+msgstr ""
+
+msgid "can't be blank"
+msgstr "不能为空"
+
+msgid "is invalid"
+msgstr "无效"
+
+msgid "has invalid format"
+msgstr "格式无效"
+
+msgid "has already been taken"
+msgstr "已被占用"
+
+msgid "does not match confirmation"
+msgstr "与确认值不匹配"
+
+msgid "must be accepted"
+msgstr "必须接受"
+
+msgid "should be at least %{count} character(s)"
+msgid_plural "should be at least %{count} character(s)"
+msgstr[0] "至少需要 %{count} 个字符"
+msgstr[1] "至少需要 %{count} 个字符"
+
+msgid "should be at most %{count} character(s)"
+msgid_plural "should be at most %{count} character(s)"
+msgstr[0] "最多 %{count} 个字符"
+msgstr[1] "最多 %{count} 个字符"
+
+msgid "should have at least %{count} item(s)"
+msgid_plural "should have at least %{count} item(s)"
+msgstr[0] "至少需要 %{count} 项"
+msgstr[1] "至少需要 %{count} 项"
+
+msgid "should have at most %{count} item(s)"
+msgid_plural "should have at most %{count} item(s)"
+msgstr[0] "最多 %{count} 项"
+msgstr[1] "最多 %{count} 项"
+
+msgid "should be %{number}"
+msgstr "应为 %{number}"
+
+msgid "must be less than %{number}"
+msgstr "必须小于 %{number}"
+
+msgid "must be greater than %{number}"
+msgstr "必须大于 %{number}"
+
+msgid "must be less than or equal to %{number}"
+msgstr "必须小于等于 %{number}"
+
+msgid "must be greater than or equal to %{number}"
+msgstr "必须大于等于 %{number}"
+
+msgid "must be equal to %{number}"
+msgstr "必须等于 %{number}"
+
+#: lib/sigil/agent/coordinator.ex:182
+#, elixir-autogen, elixir-format
+msgid "Model %{model} is not allowed in this workspace. Check Settings → Model / AI → Default model."
+msgstr "模型 %{model} 不允许在此工作区使用。请检查 设置 → 模型 / AI → 默认模型。"
+
+#: lib/sigil/agent/coordinator.ex:205
+#, elixir-autogen, elixir-format
+msgid "Observational Memory observer model (%{model}) is not allowed in this workspace. Check Settings → Model / AI → Observational Memory → Observer model."
+msgstr "观察记忆的观测模型（%{model}）不允许在此工作区使用。请检查 设置 → 模型 / AI → 观察记忆 → 观测模型。"
+
+#: lib/sigil/agent/coordinator.ex:218
+#, elixir-autogen, elixir-format
+msgid "Observational Memory reflector model (%{model}) is not allowed in this workspace. Check Settings → Model / AI → Observational Memory → Reflector model."
+msgstr "观察记忆的反思模型（%{model}）不允许在此工作区使用。请检查 设置 → 模型 / AI → 观察记忆 → 反思模型。"

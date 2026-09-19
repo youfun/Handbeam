@@ -1,0 +1,43 @@
+defmodule Handbeam.TranscriptEntryTest do
+  use ExUnit.Case, async: true
+
+  alias Handbeam.TranscriptEntry
+
+  test "prefers the tool_* names written by TranscriptPersistence" do
+    entry = %{
+      "tool" => "old",
+      "tool_name" => "write",
+      "status" => "running",
+      "tool_status" => "done",
+      "duration_ms" => 1,
+      "tool_duration_ms" => 42,
+      "error" => nil,
+      "tool_error" => "boom",
+      "input" => %{"path" => "a.txt"}
+    }
+
+    assert TranscriptEntry.tool_name(entry) == "write"
+    assert TranscriptEntry.tool_status(entry) == "done"
+    assert TranscriptEntry.duration_ms(entry) == 42
+    assert TranscriptEntry.error(entry) == "boom"
+    assert TranscriptEntry.input(entry) == %{"path" => "a.txt"}
+  end
+
+  test "falls back to the legacy bare names for old messages.jsonl entries" do
+    entry = %{"tool" => "bash", "status" => "error", "duration_ms" => 7, "error" => "exit 1"}
+
+    assert TranscriptEntry.tool_name(entry) == "bash"
+    assert TranscriptEntry.tool_status(entry) == "error"
+    assert TranscriptEntry.duration_ms(entry) == 7
+    assert TranscriptEntry.error(entry) == "exit 1"
+    assert TranscriptEntry.input(entry) == %{}
+    assert TranscriptEntry.input_summary(entry) == nil
+  end
+
+  test "handles missing fields and non-map entries without raising" do
+    assert TranscriptEntry.tool_name(%{}) == nil
+    assert TranscriptEntry.tool_status(nil) == nil
+    assert TranscriptEntry.input("not a map") == %{}
+    assert TranscriptEntry.input_summary(%{"input_summary" => "ls"}) == "ls"
+  end
+end
