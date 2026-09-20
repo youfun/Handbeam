@@ -26,7 +26,9 @@ defmodule Handbeam.Agent.TranscriptPersistence do
         "content" => message_text(content),
         "attachments" => persistable_attachments(content, opts),
         "raw_content" => persistable_raw_content(content, opts),
-        "inbound_id" => Keyword.get(opts, :inbound_id) || Keyword.get(opts, :transcript_id)
+        "inbound_id" => Keyword.get(opts, :inbound_id) || Keyword.get(opts, :transcript_id),
+        "origin" => inbound_origin(opts),
+        "consumption" => if(Keyword.get(opts, :origin), do: "pending", else: nil)
       })
       |> put_inbound_delivery(opts)
 
@@ -43,6 +45,16 @@ defmodule Handbeam.Agent.TranscriptPersistence do
     clear_thinking_buffer(conversation_id)
     Process.put(run_opts_key(conversation_id), opts)
     Process.put(run_payload_key(conversation_id), payload)
+
+    if opts[:origin] && opts[:transcript_id] do
+      Handbeam.ConversationTranscriptStore.update(
+        conversation_id,
+        opts[:transcript_id],
+        %{"consumption" => "consumed", "consumed_run_id" => opts[:run_id]},
+        opts
+      )
+    end
+
     Logger.debug("[TranscriptPersistence] run_start conversation=#{conversation_id}")
     :ok
   end
@@ -138,6 +150,22 @@ defmodule Handbeam.Agent.TranscriptPersistence do
       |> Map.merge(patch)
 
     append_or_update(conversation_id, entry, opts)
+    :ok
+  end
+
+  def handle_event(conversation_id, {:candidate_message_injected, %{message_ids: ids}}, opts)
+      when is_list(ids) do
+    flush!(conversation_id, opts)
+
+    for id <- ids do
+      Handbeam.ConversationTranscriptStore.update(
+        conversation_id,
+        id,
+        %{"consumption" => "consumed", "consumed_run_id" => opts[:run_id]},
+        opts
+      )
+    end
+
     :ok
   end
 
@@ -661,6 +689,12 @@ defmodule Handbeam.Agent.TranscriptPersistence do
     else
       "tool-event-#{tool_name}"
     end
+  end
+
+  defp inbound_origin(opts) do
+    opts[:origin] ||
+      if opts[:source] in [:webhook, :sns, :schedule, :scheduler],
+        do: %{"kind" => "automatic", "source" => to_string(opts[:source])}
   end
 
   defp now_iso8601, do: DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()

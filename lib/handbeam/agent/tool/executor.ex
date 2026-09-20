@@ -126,7 +126,14 @@ defmodule Handbeam.Agent.Tool.Executor do
       case fetch_tool(tool_fns, name) do
         {:ok, entry} ->
           try do
-            case entry.executor.(input || %{}, Map.put(context, :tool_call_id, id)) do
+            outcome =
+              if Handbeam.Threads.Collaboration.tool_allowed?(name, context) do
+                entry.executor.(input || %{}, Map.put(context, :tool_call_id, id))
+              else
+                {:error, "Delegated thread is read-only; tool execution denied"}
+              end
+
+            case outcome do
               {:ok, text} ->
                 Result.new(text)
 
@@ -305,7 +312,14 @@ defmodule Handbeam.Agent.Tool.Executor do
         Map.get(context, :conversation_id) || Map.get(metadata, :conversation_id) ||
           Map.get(metadata, :session_id),
       session_id: Map.get(metadata, :session_id) || Map.get(context, :session_id),
-      workspace_id: Map.get(context, :workspace_id)
+      workspace_id: Map.get(context, :workspace_id),
+      run_id: Map.get(context, :run_id),
+      thread_run_opts: [
+        workspace_path: config.working_directory,
+        model: config.model,
+        provider: config.provider,
+        provider_config: config.provider_config
+      ]
     })
     |> Enum.reject(fn {_key, value} -> is_nil(value) end)
     |> Map.new()

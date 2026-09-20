@@ -128,6 +128,34 @@ defmodule Handbeam.ConversationStore do
     |> Enum.sort_by(&(&1["updated_at"] || ""), :desc)
   end
 
+  @doc "Read workspace metadata without loading transcripts or editor files."
+  def list_metadata(workspace_id) do
+    case read_index() do
+      {:ok, index} ->
+        index
+        |> Map.get("conversations", [])
+        |> Enum.filter(&(&1["workspace_id"] == workspace_id))
+        |> Enum.flat_map(fn entry ->
+          case get_metadata(entry["id"]) do
+            {:ok, %{"workspace_id" => ^workspace_id} = meta} -> [meta]
+            _ -> []
+          end
+        end)
+
+      _ ->
+        []
+    end
+  end
+
+  @doc "Read only persisted conversation metadata. IDs must be path-safe."
+  def get_metadata(id) when is_binary(id) do
+    if byte_size(id) in 1..128 and Regex.match?(~r/\A[A-Za-z0-9_-]+\z/, id),
+      do: read_meta(id),
+      else: {:error, :not_found}
+  end
+
+  def get_metadata(_), do: {:error, :not_found}
+
   @doc "Get one conversation by id."
   @spec get(String.t()) :: {:ok, conversation()} | {:error, :not_found}
   def get(id) when is_binary(id) do
@@ -152,6 +180,8 @@ defmodule Handbeam.ConversationStore do
       "active_file" => Keyword.get(opts, :active_file),
       "file_preview_error" => Keyword.get(opts, :file_preview_error),
       "selected_model" => Keyword.get(opts, :selected_model),
+      "collaboration" => Keyword.get(opts, :collaboration),
+      "allow_thread_wakeup" => Keyword.get(opts, :allow_thread_wakeup),
       "selected_reasoning_level" => Keyword.get(opts, :selected_reasoning_level),
       "archived_at" => Keyword.get(opts, :archived_at),
       "created_at" => now,
@@ -187,6 +217,21 @@ defmodule Handbeam.ConversationStore do
   @doc "Insert or replace a conversation."
   @spec upsert(conversation()) :: {:ok, conversation()} | {:error, term()}
   def upsert(conversation) when is_map(conversation) do
+    conversation =
+      case get_metadata(value(conversation, "id")) do
+        {:ok, meta} ->
+          Enum.reduce(
+            ~w(collaboration visibility allow_thread_wakeup last_run_result),
+            conversation,
+            fn key, acc ->
+              Map.put(acc, key, meta[key])
+            end
+          )
+
+        _ ->
+          conversation
+      end
+
     normalized = normalize_conversation(conversation)
 
     with :ok <- write_item(normalized),
@@ -633,7 +678,11 @@ defmodule Handbeam.ConversationStore do
       "created_at" => conversation["created_at"],
       "updated_at" => conversation["updated_at"],
       "selected_model" => conversation["selected_model"],
-      "selected_reasoning_level" => conversation["selected_reasoning_level"]
+      "selected_reasoning_level" => conversation["selected_reasoning_level"],
+      "collaboration" => conversation["collaboration"],
+      "visibility" => conversation["visibility"],
+      "allow_thread_wakeup" => conversation["allow_thread_wakeup"],
+      "last_run_result" => conversation["last_run_result"]
     }
   end
 
@@ -767,6 +816,10 @@ defmodule Handbeam.ConversationStore do
       "file_preview_error" => value(conversation, "file_preview_error"),
       "selected_model" => string_value(conversation, "selected_model"),
       "selected_reasoning_level" => string_value(conversation, "selected_reasoning_level"),
+      "collaboration" => value(conversation, "collaboration"),
+      "visibility" => string_value(conversation, "visibility"),
+      "allow_thread_wakeup" => value(conversation, "allow_thread_wakeup"),
+      "last_run_result" => value(conversation, "last_run_result"),
       "archived_at" => string_value(conversation, "archived_at"),
       "created_at" => string_value(conversation, "created_at") || now,
       "updated_at" => now

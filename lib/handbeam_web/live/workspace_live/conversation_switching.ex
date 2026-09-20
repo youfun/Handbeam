@@ -12,6 +12,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
     socket
     |> assign(:current_workspace_id, ws["id"])
     |> assign(:current_conversation_id, conversation_id)
+    |> assign(:thread_collaboration_enabled, HandbeamWeb.ThreadHandoff.enabled?(conversation_id))
     |> assign(:workspace_root, ws["path"])
     |> assign(:workspace_label, ws["name"])
     |> assign(:expanded_tool_groups, MapSet.new())
@@ -147,9 +148,13 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
         current_convs = Map.get(convs, ws_id, [])
 
         updated_convs =
-          Enum.map(current_convs, fn c ->
-            if ConversationState.conversation_id(c) == conv_id, do: updated_conv, else: c
-          end)
+          if Enum.any?(current_convs, &(ConversationState.conversation_id(&1) == conv_id)) do
+            Enum.map(current_convs, fn c ->
+              if ConversationState.conversation_id(c) == conv_id, do: updated_conv, else: c
+            end)
+          else
+            current_convs ++ [updated_conv]
+          end
 
         socket
         |> assign(:conversations_by_workspace, Map.put(convs, ws_id, updated_convs))
