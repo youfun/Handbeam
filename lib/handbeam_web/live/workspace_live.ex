@@ -153,6 +153,7 @@ defmodule HandbeamWeb.WorkspaceLive do
       |> assign(:show_settings_sheet, false)
       |> assign(:show_file_drawer, false)
       |> assign(:show_settings_panel, false)
+      |> assign(:mobile_right_panel_open, false)
       |> assign(:right_panel_collapsed, false)
       |> load_effective_settings()
       |> apply_effective_model_ai_settings()
@@ -553,11 +554,32 @@ defmodule HandbeamWeb.WorkspaceLive do
     {:noreply,
      socket
      |> assign(:right_panel_view, :files)
+     |> assign(:right_panel_collapsed, false)
      |> assign(:show_terminal, false)}
   end
 
   def handle_event("select_right_panel_view", %{"view" => "terminal"}, socket) do
     {:noreply, show_terminal_panel(socket)}
+  end
+
+  def handle_event("select_mobile_right_panel_view", %{"view" => "files"}, socket) do
+    {:noreply,
+     socket
+     |> assign(:mobile_right_panel_open, true)
+     |> assign(:right_panel_view, :files)
+     |> assign(:right_panel_collapsed, false)
+     |> assign(:show_terminal, false)}
+  end
+
+  def handle_event("select_mobile_right_panel_view", %{"view" => "terminal"}, socket) do
+    {:noreply,
+     socket
+     |> show_terminal_panel()
+     |> assign(:mobile_right_panel_open, true)}
+  end
+
+  def handle_event("close_mobile_right_panel", _params, socket) do
+    {:noreply, assign(socket, :mobile_right_panel_open, false)}
   end
 
   @impl true

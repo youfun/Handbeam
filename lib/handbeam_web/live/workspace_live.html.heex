@@ -29,6 +29,38 @@
     </button>
     <div class="mobile-header-actions">
       <button
+        id="mobile-open-files"
+        phx-click="select_mobile_right_panel_view"
+        phx-value-view="files"
+        class="mobile-header-panel-btn"
+        aria-label={gettext("Files")}
+        title={gettext("Files")}
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+          aria-hidden="true"
+        >
+          <path d="M3 6h6l2 2h10v10H3z" />
+        </svg>
+      </button>
+      <button
+        id="mobile-open-terminal"
+        phx-click="select_mobile_right_panel_view"
+        phx-value-view="terminal"
+        class="mobile-header-panel-btn"
+        aria-label={gettext("Terminal")}
+        title={gettext("Terminal")}
+      >
+        <span aria-hidden="true">›_</span>
+      </button>
+      <button
         phx-click="open_sheet"
         phx-value-type="settings"
         class="mobile-header-info-btn"
@@ -259,7 +291,13 @@
     </div>
 
     <!-- Center: Chat Panel / AI Panel (flex-1) -->
-    <div id="ai-panel" class="flex-1 flex flex-col min-w-0 workspace-panel chat-panel">
+    <div
+      id="ai-panel"
+      class={[
+        "flex-1 flex flex-col min-w-0 workspace-panel chat-panel",
+        if(@mobile_right_panel_open, do: "mobile-right-panel-open", else: "")
+      ]}
+    >
       <!-- Add Project Dialog (overlay) -->
       <div
         :if={@show_add_project}
@@ -1026,25 +1064,13 @@
     </div>
 
     <button
+      :if={@right_panel_collapsed}
       id="workspace-panel-toggle"
       phx-click="toggle_right_panel"
-      class={[
-        "workspace-panel-toggle",
-        if(@right_panel_collapsed, do: "collapsed", else: "expanded")
-      ]}
-      title={
-        if(@right_panel_collapsed,
-          do: gettext("Show workspace"),
-          else: gettext("Collapse workspace")
-        )
-      }
-      aria-label={
-        if(@right_panel_collapsed,
-          do: gettext("Show workspace"),
-          else: gettext("Collapse workspace")
-        )
-      }
-      aria-pressed={to_string(!@right_panel_collapsed)}
+      class="workspace-panel-toggle collapsed"
+      title={gettext("Show workspace")}
+      aria-label={gettext("Show workspace")}
+      aria-pressed="false"
     >
       <svg
         width="16"
@@ -1058,8 +1084,7 @@
       >
         <rect x="2.5" y="3" width="11" height="10" rx="1.4" />
         <path d="M10.2 3v10" />
-        <path :if={!@right_panel_collapsed} d="M7.1 6.2 5.3 8l1.8 1.8" />
-        <path :if={@right_panel_collapsed} d="M5.3 6.2 7.1 8 5.3 9.8" />
+        <path d="M5.3 6.2 7.1 8 5.3 9.8" />
       </svg>
     </button>
 
@@ -1070,6 +1095,7 @@
       phx-hook="WorkspacePanel"
       class={[
         "flex-shrink-0 border-l bg-surface flex flex-col workspace-panel files-panel",
+        if(@mobile_right_panel_open, do: "mobile-panel-open", else: ""),
         if(@right_panel_collapsed,
           do: "w-0 overflow-hidden border-l-0 opacity-0",
           else: "w-[440px]"
@@ -1098,6 +1124,49 @@
           {gettext("Terminal")}
         </button>
         <span class="workspace-panel-label truncate">{@workspace_label}</span>
+        <button
+          :if={!@right_panel_collapsed}
+          id="workspace-panel-toggle"
+          phx-click="toggle_right_panel"
+          class="workspace-panel-toggle expanded"
+          title={gettext("Collapse workspace")}
+          aria-label={gettext("Collapse workspace")}
+          aria-pressed="true"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <rect x="2.5" y="3" width="11" height="10" rx="1.4" />
+            <path d="M10.2 3v10" />
+            <path d="M7.1 6.2 5.3 8l1.8 1.8" />
+          </svg>
+        </button>
+        <button
+          id="mobile-close-workspace-panel"
+          phx-click="close_mobile_right_panel"
+          class="mobile-panel-close"
+          title={gettext("Close")}
+          aria-label={gettext("Close")}
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linecap="round"
+          >
+            <path d="M4 4l8 8M12 4l-8 8" />
+          </svg>
+        </button>
       </div>
 
       <div

@@ -1446,6 +1446,25 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       refute has_element?(view, "#terminal-dock")
     end
 
+    test "mobile header can open files and terminal in the workspace panel", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      assert has_element?(view, "#mobile-open-files")
+      assert has_element?(view, "#mobile-open-terminal")
+      refute has_element?(view, "#workspace-panel.mobile-panel-open")
+
+      view |> element("#mobile-open-files") |> render_click()
+      assert has_element?(view, "#workspace-panel.mobile-panel-open")
+      assert has_element?(view, "#workspace-panel .workspace-panel-tab.active", "Files")
+
+      view |> element("#mobile-close-workspace-panel") |> render_click()
+      refute has_element?(view, "#workspace-panel.mobile-panel-open")
+
+      view |> element("#mobile-open-terminal") |> render_click()
+      assert has_element?(view, "#workspace-panel.mobile-panel-open")
+      assert has_element?(view, "#workspace-panel #terminal-panel")
+    end
+
     test "duplicate file_path does not add duplicate editor file", %{conn: conn} do
       ws = Handbeam.Workspace.ensure_root!()
       file_path = Path.join(ws, "dup.ex")

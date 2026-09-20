@@ -482,7 +482,9 @@ textarea::placeholder {
 }
 
 .workspace-panel-toggle.expanded {
-  right: 10px;
+  position: static;
+  flex: 0 0 30px;
+  margin-left: 6px;
 }
 
 .workspace-panel-toggle.collapsed {
@@ -491,9 +493,8 @@ textarea::placeholder {
   box-shadow: 0 1px 8px rgba(0, 0, 0, 0.06);
 }
 
-.workspace-panel-header {
-  min-height: 33px;
-  padding-right: 46px;
+.mobile-panel-close {
+  display: none;
 }
 
 #editor-content,
@@ -688,7 +689,25 @@ textarea::placeholder {
 
   #workspace-panel.files-panel {
     width: clamp(320px, 30vw, 380px);
+    min-width: 320px;
     max-width: 380px;
+  }
+}
+
+@media (min-width: 769px) and (max-width: 980px) {
+  #activity-bar {
+    width: 200px;
+    min-width: 200px;
+  }
+
+  #ai-panel {
+    min-width: 280px;
+  }
+
+  #workspace-panel.files-panel {
+    width: min(34vw, 320px);
+    min-width: 280px;
+    max-width: 320px;
   }
 }
 
@@ -1987,6 +2006,7 @@ button.workspace-file-row:hover,
     margin-left: auto;
   }
 
+  .mobile-header-panel-btn,
   .mobile-header-info-btn,
   .mobile-header-settings-btn {
     display: inline-flex;
@@ -2002,6 +2022,13 @@ button.workspace-file-row:hover,
     text-decoration: none;
   }
 
+  .mobile-header-panel-btn {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .mobile-header-panel-btn:hover,
   .mobile-header-info-btn:hover,
   .mobile-header-settings-btn:hover {
     color: var(--color-text-primary);
@@ -2065,6 +2092,29 @@ button.workspace-file-row:hover,
   .mobile-mode .chat-panel,
   .chat-panel {
     display: flex !important;
+  }
+
+  .chat-panel.mobile-right-panel-open {
+    display: none !important;
+  }
+
+  #workspace-panel.mobile-panel-open {
+    display: flex !important;
+  }
+
+  .mobile-panel-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 30px;
+    width: 30px;
+    height: 30px;
+    margin-left: 6px;
+    padding: 0;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--color-text-tertiary);
   }
 
   #activity-bar {
