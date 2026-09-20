@@ -18,7 +18,12 @@ defmodule Handbeam.Agent.Provider.OpenAITest do
             Jason.encode!(
               response_payload(
                 [assistant_text_item("Hello!")],
-                %{"input_tokens" => 10, "output_tokens" => 5, "total_tokens" => 15}
+                %{
+                  "input_tokens" => 10,
+                  "output_tokens" => 5,
+                  "total_tokens" => 15,
+                  "input_tokens_details" => %{"cached_tokens" => 8}
+                }
               )
             )
         })
@@ -29,6 +34,8 @@ defmodule Handbeam.Agent.Provider.OpenAITest do
       assert Message.text(hd(result.messages)) == "Hello!"
       assert result.usage.input_tokens == 10
       assert result.usage.output_tokens == 5
+      assert result.usage.total_input_tokens == 10
+      assert result.usage.cache_read_input_tokens == 8
       assert result.provider_state == %{response_id: "resp_test"}
     end
 
@@ -226,7 +233,11 @@ defmodule Handbeam.Agent.Provider.OpenAITest do
           sse_response_output_text_delta(" world"),
           sse_response_completed(
             [assistant_text_item("Hello world")],
-            %{"input_tokens" => 10, "output_tokens" => 5}
+            %{
+              "input_tokens" => 10,
+              "output_tokens" => 5,
+              "input_tokens_details" => %{"cached_tokens" => 8}
+            }
           ),
           "data: [DONE]\n\n"
         ])
@@ -236,6 +247,8 @@ defmodule Handbeam.Agent.Provider.OpenAITest do
       assert {:ok, result} = OpenAI.stream([Message.user("Hi")], [], config, on_chunk)
       assert result.stop_reason == :end_turn
       assert Message.text(hd(result.messages)) == "Hello world"
+      assert result.usage.total_input_tokens == 10
+      assert result.usage.cache_read_input_tokens == 8
       assert_received {:chunk, "Hello"}
       assert_received {:chunk, " world"}
     end

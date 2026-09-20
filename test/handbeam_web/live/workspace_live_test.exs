@@ -1544,6 +1544,138 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert has_element?(view, "#status-turns", "3")
     end
 
+    test "usage updates refresh the running footer and replace cumulative totals", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+      create_default_conversation(view)
+      send(view.pid, {:agent_event, agent_event(:run_start, %{model: "fake"})})
+
+      send(
+        view.pid,
+        {:agent_event,
+         agent_event(:usage_updated, %{usage: %{input_tokens: 10, output_tokens: 15}}, 2)}
+      )
+
+      assert has_element?(view, "#status-input-tokens", "10")
+      assert has_element?(view, "#status-output-tokens", "15")
+      assert has_element?(view, "button[phx-click='stop_run']")
+
+      payload = %{
+        "usage" => %{
+          "input_tokens" => 25,
+          "output_tokens" => 35,
+          "cache_read_input_tokens" => 7,
+          "cache_creation_input_tokens" => 3
+        }
+      }
+
+      for seq <- [3, 4] do
+        send(view.pid, {:agent_event, agent_event(:usage_updated, payload, seq)})
+        assert has_element?(view, "#status-input-tokens", "25")
+        assert has_element?(view, "#status-output-tokens", "35")
+        assert has_element?(view, "#status-cache-read", "7")
+        assert has_element?(view, "#status-cache-write", "3")
+      end
+
+      send(
+        view.pid,
+        {:agent_event,
+         agent_event(:run_end, %{status: "completed", turns: 2, usage: payload["usage"]}, 5)}
+      )
+
+      assert has_element?(view, "#status-input-tokens", "25")
+      assert has_element?(view, "#status-output-tokens", "35")
+
+      send(view.pid, {:agent_event, agent_event(:run_start, %{model: "fake"}, 6)})
+      assert has_element?(view, "#status-input-tokens", "0")
+      assert has_element?(view, "#status-output-tokens", "0")
+
+      send(view.pid, {:agent_event, agent_event(:run_end, %{status: :cancelled}, 7)})
+      send(view.pid, {:agent_event, agent_event(:usage_updated, payload, 8)})
+      assert has_element?(view, "#status-input-tokens", "0")
+      assert has_element?(view, "#status-output-tokens", "0")
+    end
+
+    test "cache hit rate follows cumulative usage through completion and resets for a new run", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, "/")
+      create_default_conversation(view)
+      send(view.pid, {:agent_event, agent_event(:run_start, %{model: "fake"})})
+      assert has_element?(view, "#status-cache-hit-rate", "—")
+
+      usage = %{input_tokens: 100, total_input_tokens: 100, cache_read_input_tokens: 80}
+
+      for seq <- [2, 3] do
+        send(view.pid, {:agent_event, agent_event(:usage_updated, %{usage: usage}, seq)})
+        assert has_element?(view, "#status-cache-hit-rate", "80.0%")
+      end
+
+      cumulative = %{
+        "input_tokens" => 150,
+        "total_input_tokens" => 1000,
+        "cache_read_input_tokens" => 180,
+        "cache_creation_input_tokens" => 750
+      }
+
+      send(view.pid, {:agent_event, agent_event(:usage_updated, %{"usage" => cumulative}, 4)})
+      assert has_element?(view, "#status-cache-hit-rate", "18.0%")
+      assert has_element?(view, "button[phx-click='stop_run']")
+
+      send(
+        view.pid,
+        {:agent_event,
+         agent_event(:run_end, %{"status" => "completed", "usage" => cumulative}, 5)}
+      )
+
+      assert has_element?(view, "#status-cache-hit-rate[title*='This run:']", "18.0%")
+      assert has_element?(view, "#status-input-tokens[title='150']", "150")
+      refute has_element?(view, "button[phx-click='stop_run']")
+
+      send(view.pid, {:agent_event, agent_event(:run_start, %{model: "fake"}, 6)})
+      assert has_element?(view, "#status-cache-hit-rate", "—")
+    end
+
+    test "token footer formats live and final usage while preserving exact titles", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+      create_default_conversation(view)
+      send(view.pid, {:agent_event, agent_event(:run_start, %{model: "fake"})})
+      assert has_element?(view, "#status-input-tokens[title='0']", "0")
+
+      usage = %{
+        input_tokens: 5481,
+        output_tokens: 827,
+        cache_read_input_tokens: 999_950,
+        cache_creation_input_tokens: 1000
+      }
+
+      send(view.pid, {:agent_event, agent_event(:usage_updated, %{usage: usage}, 2)})
+      assert has_element?(view, "button[phx-click='stop_run']")
+      assert has_element?(view, "#status-input-tokens[title='5481']", "5.5K")
+      assert has_element?(view, "#status-output-tokens[title='827']", "827")
+      assert has_element?(view, "#status-cache-read[title='999950']", "1M")
+      assert has_element?(view, "#status-cache-write[title='1000']", "1K")
+
+      final_usage = %{
+        usage
+        | input_tokens: 33_261,
+          output_tokens: 1250,
+          cache_read_input_tokens: 1_200_000,
+          cache_creation_input_tokens: 999
+      }
+
+      send(
+        view.pid,
+        {:agent_event,
+         agent_event(:run_end, %{status: :completed, turns: 2, usage: final_usage}, 3)}
+      )
+
+      refute has_element?(view, "button[phx-click='stop_run']")
+      assert has_element?(view, "#status-input-tokens[title='33261']", "33.3K")
+      assert has_element?(view, "#status-output-tokens[title='1250']", "1.3K")
+      assert has_element?(view, "#status-cache-read[title='1200000']", "1.2M")
+      assert has_element?(view, "#status-cache-write[title='999']", "999")
+    end
+
     test "run_end event updates input and output token counts from provider usage", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/")
 

@@ -1002,3 +1002,9 @@ msgstr ""
 #, elixir-autogen, elixir-format
 msgid "默认供应商已更改"
 msgstr ""
+
+msgid "Cache hit"
+msgstr ""
+
+msgid "This run: cached input / total input (including cache reads and writes). Not a cost saving rate. — means no cache activity reported."
+msgstr ""

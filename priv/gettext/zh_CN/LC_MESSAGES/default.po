@@ -1167,3 +1167,9 @@ msgstr "队列已满，无法重发。"
 
 msgid "Could not resend because the run is no longer accepting input."
 msgstr "当前运行已不再接受输入，无法重发。"
+
+msgid "Cache hit"
+msgstr "缓存命中"
+
+msgid "This run: cached input / total input (including cache reads and writes). Not a cost saving rate. — means no cache activity reported."
+msgstr "本次运行累计：缓存读取 token ÷ 总输入 token（含缓存读取与写入）。不是费用节省比例。— 表示未报告缓存活动。"

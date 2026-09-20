@@ -1615,8 +1615,14 @@
       </.link>
       <span id="status-tokens">
         {gettext("Tokens:")}
-        {gettext("input")} <span id="status-input-tokens">{@status_info.input_tokens}</span>
-        / {gettext("output")} <span id="status-output-tokens">{@status_info.output_tokens}</span>
+        {gettext("input")}
+        <span id="status-input-tokens" title={@status_info.input_tokens}>
+          {format_tokens(@status_info.input_tokens)}
+        </span>
+        / {gettext("output")}
+        <span id="status-output-tokens" title={@status_info.output_tokens}>
+          {format_tokens(@status_info.output_tokens)}
+        </span>
       </span>
       <span
         :if={has_cache_tokens?(@status_info)}
@@ -1624,9 +1630,25 @@
         class="text-secondary"
         title="Prompt cache hits/writes (discounted tokens)"
       >
-        {gettext("read")} <span id="status-cache-read">{@status_info.cache_read_tokens}</span>
+        {gettext("read")}
+        <span id="status-cache-read" title={@status_info.cache_read_tokens}>
+          {format_tokens(@status_info.cache_read_tokens)}
+        </span>
         / {gettext("write")}
-        <span id="status-cache-write">{@status_info.cache_write_tokens}</span>
+        <span id="status-cache-write" title={@status_info.cache_write_tokens}>
+          {format_tokens(@status_info.cache_write_tokens)}
+        </span>
+      </span>
+      <span
+        id="status-cache-hit-rate"
+        class="whitespace-nowrap"
+        title={
+          gettext(
+            "This run: cached input / total input (including cache reads and writes). Not a cost saving rate. — means no cache activity reported."
+          )
+        }
+      >
+        {gettext("Cache hit")} {format_cache_hit_rate(@status_info)}
       </span>
       <span :if={@status_info.turns > 0}>
         {gettext("Turns:")} <span id="status-turns">{@status_info.turns}</span>

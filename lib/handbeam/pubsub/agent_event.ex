@@ -11,6 +11,7 @@ defmodule Handbeam.PubSub.AgentEvent do
   @type kind ::
           :message_delta
           | :thinking_delta
+          | :usage_updated
           | :tool_start
           | :tool_end
           | :session_state

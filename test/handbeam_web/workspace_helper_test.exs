@@ -421,6 +421,69 @@ defmodule HandbeamWeb.WorkspaceHelperTest do
     end
   end
 
+  test "format_tokens uses decimal units, trims zeros and promotes rounded boundaries" do
+    for {tokens, expected} <- [
+          {0, "0"},
+          {827, "827"},
+          {999, "999"},
+          {1000, "1K"},
+          {1049, "1K"},
+          {1050, "1.1K"},
+          {5481, "5.5K"},
+          {33_261, "33.3K"},
+          {999_949, "999.9K"},
+          {999_950, "1M"},
+          {999_999, "1M"},
+          {1_000_000, "1M"},
+          {1_049_999, "1M"},
+          {1_050_000, "1.1M"},
+          {1_200_000, "1.2M"},
+          {10_000_000, "10M"}
+        ] do
+      assert WorkspaceHelper.format_tokens(tokens) == expected
+    end
+  end
+
+  test "cache rate uses normalized prompt totals and distinguishes cold writes from no activity" do
+    assert WorkspaceHelper.format_cache_hit_rate(%{}) == "—"
+
+    assert WorkspaceHelper.format_cache_hit_rate(%{
+             total_input_tokens: 0,
+             cache_read_tokens: 0,
+             cache_write_tokens: 0
+           }) == "—"
+
+    assert WorkspaceHelper.format_cache_hit_rate(%{
+             total_input_tokens: 100,
+             cache_read_tokens: 0,
+             cache_write_tokens: 0
+           }) == "—"
+
+    assert WorkspaceHelper.format_cache_hit_rate(%{
+             total_input_tokens: 100,
+             cache_read_tokens: 0,
+             cache_write_tokens: 80
+           }) == "0.0%"
+
+    assert WorkspaceHelper.format_cache_hit_rate(%{
+             total_input_tokens: 100,
+             cache_read_tokens: 100,
+             cache_write_tokens: 0
+           }) == "100.0%"
+
+    assert WorkspaceHelper.format_cache_hit_rate(%{
+             total_input_tokens: 300,
+             cache_read_tokens: 100,
+             cache_write_tokens: 0
+           }) == "33.3%"
+
+    assert WorkspaceHelper.format_cache_hit_rate(%{
+             total_input_tokens: 1000,
+             cache_read_tokens: 180,
+             cache_write_tokens: 750
+           }) == "18.0%"
+  end
+
   # ── format_bytes/1 ──
 
   describe "format_bytes/1" do

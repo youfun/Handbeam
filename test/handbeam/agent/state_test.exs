@@ -81,6 +81,30 @@ defmodule Handbeam.Agent.StateTest do
   end
 
   describe "merge_usage/2" do
+    test "accumulates normalized prompt totals across unequal calls and provider conventions" do
+      state = State.init(%Config{}, "test")
+
+      state =
+        State.merge_usage(state, %{
+          input_tokens: 100,
+          total_input_tokens: 100,
+          cache_read_input_tokens: 80
+        })
+
+      state =
+        State.merge_usage(state, %{
+          input_tokens: 50,
+          total_input_tokens: 900,
+          cache_read_input_tokens: 100,
+          cache_creation_input_tokens: 750
+        })
+
+      assert state.usage.input_tokens == 150
+      assert state.usage.total_input_tokens == 1000
+      assert state.usage.cache_read_input_tokens == 180
+      assert state.usage.cache_creation_input_tokens == 750
+    end
+
     test "accumulates token counts" do
       config = %Config{}
       state = State.init(config, "test")

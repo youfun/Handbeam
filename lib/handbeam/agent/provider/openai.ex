@@ -585,10 +585,7 @@ defmodule Handbeam.Agent.Provider.OpenAI do
          %{
            stop_reason: stop_reason,
            messages: [alloy_msg],
-           usage: %{
-             input_tokens: Map.get(usage, "input_tokens", 0),
-             output_tokens: Map.get(usage, "output_tokens", 0)
-           },
+           usage: Handbeam.Agent.Provider.openai_usage(usage),
            provider_state: provider_state,
            response_metadata: response_metadata_from_response(resp)
          }}
@@ -612,10 +609,7 @@ defmodule Handbeam.Agent.Provider.OpenAI do
      %{
        stop_reason: :end_turn,
        messages: [%Message{role: :assistant, content: content_blocks}],
-       usage: %{
-         input_tokens: Map.get(usage, "input_tokens", 0),
-         output_tokens: Map.get(usage, "output_tokens", 0)
-       },
+       usage: Handbeam.Agent.Provider.openai_usage(usage),
        provider_state: provider_state,
        response_metadata: response_metadata_from_response(resp)
      }}

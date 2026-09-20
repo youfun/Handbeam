@@ -427,6 +427,20 @@ defmodule Handbeam.Agent.Provider.OpenAICompatibleTest do
   # ── Successful completion ──
 
   describe "successful completion" do
+    test "preserves standard and DeepSeek cache reads without adding them to total input" do
+      for cache <- [
+            %{"prompt_tokens_details" => %{"cached_tokens" => 8}},
+            %{"prompt_cache_hit_tokens" => 8}
+          ] do
+        body = update_in(success_body(), ["usage"], &Map.merge(&1, cache))
+        set_responses([mock_response(200, body)])
+        assert {:ok, %{usage: usage}} = OpenAICompat.complete([user_msg()], [], base_config())
+        assert usage.input_tokens == 10
+        assert usage.total_input_tokens == 10
+        assert usage.cache_read_input_tokens == 8
+      end
+    end
+
     test "returns parsed response for end_turn with atom-key tool_use blocks" do
       set_responses([mock_response(200, success_body())])
 

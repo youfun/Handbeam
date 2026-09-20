@@ -4,6 +4,10 @@ defmodule Handbeam.Agent.Provider do
 
   Each provider translates between its native wire format and
   `Handbeam.Agent.Message` structs.
+
+  Usage preserves provider-native `input_tokens` and `output_tokens` counts.
+  `total_input_tokens` includes uncached input, cache reads and cache writes
+  exactly once, so consumers can compare cache usage across providers.
   """
 
   alias Handbeam.Agent.Message
@@ -44,6 +48,26 @@ defmodule Handbeam.Agent.Provider do
   @optional_callbacks [stream: 4]
 
   # ── Shared Helpers (used by provider implementations) ──────────────
+
+  @doc """
+  Normalizes Responses and Chat Completions usage without counting cache reads twice.
+
+  ## Examples
+
+      iex> Handbeam.Agent.Provider.openai_usage(%{"prompt_tokens" => 100, "prompt_tokens_details" => %{"cached_tokens" => 80}})
+      %{input_tokens: 100, total_input_tokens: 100, output_tokens: 0, cache_read_input_tokens: 80}
+  """
+  def openai_usage(usage) do
+    input = usage["input_tokens"] || usage["prompt_tokens"] || 0
+    details = usage["input_tokens_details"] || usage["prompt_tokens_details"] || %{}
+
+    %{
+      input_tokens: input,
+      total_input_tokens: input,
+      output_tokens: usage["output_tokens"] || usage["completion_tokens"] || 0,
+      cache_read_input_tokens: details["cached_tokens"] || usage["prompt_cache_hit_tokens"] || 0
+    }
+  end
 
   @doc """
   Recursively convert atom keys to strings in maps.

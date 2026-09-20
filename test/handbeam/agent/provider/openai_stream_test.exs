@@ -244,6 +244,27 @@ defmodule Handbeam.Agent.Provider.OpenAIStreamTest do
   end
 
   describe "process_event/2 — usage" do
+    test "preserves cache usage on both final usage chunks and choice chunks" do
+      usage = %{
+        "prompt_tokens" => 100,
+        "completion_tokens" => 17,
+        "prompt_tokens_details" => %{"cached_tokens" => 80}
+      }
+
+      for choices <- [
+            [],
+            [%{"delta" => nil}],
+            [%{"delta" => %{"content" => "Done"}, "finish_reason" => "stop"}]
+          ] do
+        acc = OpenAIStream.process_event(new_acc(), %{"choices" => choices, "usage" => usage})
+        assert {:ok, %{usage: result}} = OpenAIStream.build_response(acc)
+        assert result.input_tokens == 100
+        assert result.total_input_tokens == 100
+        assert result.cache_read_input_tokens == 80
+        assert result.output_tokens == 17
+      end
+    end
+
     test "captures usage from final chunk" do
       acc = new_acc()
 
