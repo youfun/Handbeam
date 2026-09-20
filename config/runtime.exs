@@ -39,7 +39,7 @@ config :handbeam,
 openai_base_url =
   System.get_env("OPENAI_BASE_URL") || "https://api.stepfun.com/step_plan/v1"
 
-openai_model = System.get_env("OPENAI_MODEL") || "step-router-v1"
+openai_model = System.get_env("OPENAI_MODEL") || "step-5-preview"
 
 openai_max_tokens =
   case System.get_env("OPENAI_MAX_TOKENS") do

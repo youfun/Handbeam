@@ -88,10 +88,57 @@ defmodule Handbeam.Agent.ModelConfigWriteTest do
       assert models != []
       assert Enum.any?(models, &(&1.model_id == "step-router-v1"))
       router = Enum.find(models, &(&1.model_id == "step-router-v1"))
-      flash = Enum.find(models, &(&1.model_id == "step-3.7-flash"))
-      assert flash.provider_id == router.provider_id
+      preview = Enum.find(models, &(&1.model_id == "step-5-preview"))
+      assert preview.provider_id == router.provider_id
       assert router.input == ["text"]
-      assert flash.input == ["text", "image"]
+      assert preview.input == ["text", "image"]
+
+      assert {:ok, json} = config_path() |> File.read!() |> Jason.decode()
+      assert json["defaultProvider"] == "stepfun"
+      assert json["defaultModel"] == "step-5-preview"
+    end
+
+    test "adds step-5-preview to an existing StepFun catalog and makes it default" do
+      File.write!(
+        config_path(),
+        Jason.encode!(%{
+          "defaultProvider" => "stepfun",
+          "defaultModel" => "step-router-v1",
+          "providers" => %{
+            "stepfun" => %{
+              "baseUrl" => "https://api.stepfun.com/step_plan/v1",
+              "api" => "stepfun-step-plan",
+              "apiKey" => "env:OPENAI_API_KEY",
+              "provider" => "stepfun",
+              "models" => [
+                %{
+                  "id" => "step-router-v1",
+                  "name" => "Step Router v1",
+                  "reasoning" => true,
+                  "input" => ["text"]
+                },
+                %{
+                  "id" => "step-3.7-flash",
+                  "name" => "Step 3.7 Flash",
+                  "reasoning" => true,
+                  "input" => ["text", "image"]
+                }
+              ]
+            }
+          }
+        })
+      )
+
+      assert :ok = ModelConfig.ensure_config()
+      assert {:ok, json} = config_path() |> File.read!() |> Jason.decode()
+      ids = Enum.map(json["providers"]["stepfun"]["models"], & &1["id"])
+      assert ids == ["step-router-v1", "step-3.7-flash", "step-5-preview"]
+      assert json["defaultModel"] == "step-5-preview"
+
+      assert :ok = ModelConfig.ensure_config()
+      assert {:ok, again} = config_path() |> File.read!() |> Jason.decode()
+      assert again["defaultModel"] == "step-5-preview"
+      assert length(again["providers"]["stepfun"]["models"]) == 3
     end
 
     test "optional seed is used only when models.json is missing" do

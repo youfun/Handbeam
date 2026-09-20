@@ -10,7 +10,7 @@ defmodule Handbeam.Agent.ModelConfig do
 
       {
         "defaultProvider": "stepfun",
-        "defaultModel": "step-router-v1",
+        "defaultModel": "step-5-preview",
         "providers": {
           "stepfun": {
             "baseUrl": "https://api.stepfun.com/step_plan/v1",
@@ -47,7 +47,7 @@ defmodule Handbeam.Agent.ModelConfig do
   require Logger
 
   @default_base_url "https://api.stepfun.com/step_plan/v1"
-  @default_model "step-router-v1"
+  @default_model "step-5-preview"
   @config_filenames ["models.json"]
   @global_config_path "~/.handbeam/models.json"
   @config_path_env "HANDBEAM_MODELS_FILE"
@@ -877,9 +877,18 @@ defmodule Handbeam.Agent.ModelConfig do
   @valid_provider_name_re ~r/^[a-z0-9_-]+$/
   @valid_input_types ["text", "image", "audio"]
 
+  @stepfun_preview_model %{
+    "id" => "step-5-preview",
+    "name" => "Step 5 Preview",
+    "reasoning" => true,
+    "defaultReasoning" => "medium",
+    "input" => ["text", "image"],
+    "contextWindow" => 256_000
+  }
+
   @default_config %{
     "defaultProvider" => "stepfun",
-    "defaultModel" => "step-router-v1",
+    "defaultModel" => "step-5-preview",
     "providers" => %{
       "stepfun" => %{
         "baseUrl" => "https://api.stepfun.com/step_plan/v1",
@@ -895,14 +904,7 @@ defmodule Handbeam.Agent.ModelConfig do
             "input" => ["text"],
             "contextWindow" => 256_000
           },
-          %{
-            "id" => "step-3.7-flash",
-            "name" => "Step 3.7 Flash",
-            "reasoning" => true,
-            "defaultReasoning" => "medium",
-            "input" => ["text", "image"],
-            "contextWindow" => 256_000
-          }
+          @stepfun_preview_model
         ]
       }
     }
@@ -963,8 +965,9 @@ defmodule Handbeam.Agent.ModelConfig do
   Ensure the global model configuration file exists.
 
   Creates `~/.handbeam/models.json` with a default StepFun provider configuration
-  if the file does not already exist. Idempotent — will not overwrite an
-  existing config.
+  if the file does not already exist. If a StepFun catalog already exists without
+  `step-5-preview`, that model is appended and set as the default. Other
+  providers are left unchanged.
 
   Returns `:ok` if the file already exists or was created successfully.
   """
@@ -973,7 +976,7 @@ defmodule Handbeam.Agent.ModelConfig do
     path = config_file_path()
 
     if File.exists?(path) do
-      :ok
+      upgrade_stepfun_preview()
     else
       with {:ok, body} <- initial_config_body(),
            :ok <- File.mkdir_p(Path.dirname(path)),
@@ -987,6 +990,49 @@ defmodule Handbeam.Agent.ModelConfig do
   rescue
     e in RuntimeError -> {:error, Exception.message(e)}
   end
+
+  defp upgrade_stepfun_preview do
+    with {:ok, json} <- read_config(),
+         {:ok, updated} <- maybe_put_stepfun_preview(json),
+         :ok <- persist_stepfun_preview(updated) do
+      :ok
+    else
+      :unchanged ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("[Handbeam] model catalog upgrade skipped: #{inspect(reason)}")
+        :ok
+    end
+  end
+
+  defp persist_stepfun_preview(config) do
+    with :ok <- validate_config(config) do
+      atomic_write(config_file_path(), Handbeam.JSON.encode!(config, pretty: true))
+    end
+  end
+
+  defp maybe_put_stepfun_preview(%{"providers" => providers} = json) when is_map(providers) do
+    case Map.get(providers, "stepfun") do
+      %{"models" => models} = stepfun when is_list(models) ->
+        if Enum.any?(models, &(is_map(&1) and &1["id"] == @stepfun_preview_model["id"])) do
+          :unchanged
+        else
+          stepfun = Map.put(stepfun, "models", models ++ [@stepfun_preview_model])
+
+          {:ok,
+           json
+           |> put_in(["providers", "stepfun"], stepfun)
+           |> Map.put("defaultProvider", "stepfun")
+           |> Map.put("defaultModel", @stepfun_preview_model["id"])}
+        end
+
+      _ ->
+        :unchanged
+    end
+  end
+
+  defp maybe_put_stepfun_preview(_json), do: :unchanged
 
   defp initial_config_body do
     case System.get_env("HANDBEAM_MODELS_SEED") do
