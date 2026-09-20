@@ -1,8 +1,8 @@
 defmodule Handbeam.Jobs.Server do
-  @moduledoc "Application-level Port owner, bounded results and serialized run admission."
+  @moduledoc "Application-level job admission, bounded results and backend lifecycle tracking."
   use GenServer
 
-  alias Handbeam.Jobs.{Buffer, Cleaner}
+  alias Handbeam.Jobs.{Beam, Buffer, Cleaner}
   alias Handbeam.Platform.{ProcessManager, ProcessRunner}
 
   @terminal [:completed, :failed, :cancelled, :timed_out]
@@ -114,7 +114,49 @@ defmodule Handbeam.Jobs.Server do
     end
   end
 
+  def handle_call({:beam_output, id, text}, _from, state) do
+    case state.jobs[id] do
+      %{state: :running} = job ->
+        {:reply, :ok, put_in(state.jobs[id], %{job | buffer: Buffer.append(job.buffer, text)})}
+
+      _ ->
+        {:reply, :ok, state}
+    end
+  end
+
   @impl true
+  def handle_info({:beam_finished, id, result}, state) do
+    case state.jobs[id] do
+      %{beam: _} = job ->
+        Process.cancel_timer(job.timer)
+
+        {status, text} =
+          case result do
+            {:ok, text, _} -> {:completed, text}
+            {:ok, text} -> {:completed, text}
+            {:error, text, %{timed_out: true}} -> {:timed_out, text}
+            {:error, text, %{cancelled: true}} -> {:cancelled, text}
+            {:error, text, _} -> {:failed, text}
+            {:error, text} -> {:failed, text}
+          end
+
+        result = Handbeam.Utils.Truncate.truncate(text, :head, max_bytes: 50_000)
+
+        job =
+          Map.merge(job, %{
+            state: job.target || status,
+            result: result.content,
+            result_truncated: result.truncated,
+            finished_at: now()
+          })
+
+        {:noreply, state |> put_in([:jobs, id], job) |> notify_waiters(id)}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
   def handle_info({port, {:data, data}}, state) when is_port(port) do
     case job_for_port(state, port) do
       nil ->
@@ -194,6 +236,9 @@ defmodule Handbeam.Jobs.Server do
 
   def handle_info({:fallback_clean, id}, state) do
     case state.jobs[id] do
+      %{state: :cancelling, beam: pid} ->
+        Beam.cancel(pid)
+
       %{state: :cancelling} = job ->
         result = ProcessManager.cleanup_job_group(job.group)
         send(self(), {:job_cleanup, id, result})
@@ -207,6 +252,20 @@ defmodule Handbeam.Jobs.Server do
   end
 
   def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
+    state =
+      Enum.reduce(state.jobs, state, fn {id, job}, acc ->
+        if job[:beam_monitor] == ref and job.state not in @terminal do
+          put_in(acc.jobs[id], %{
+            job
+            | state: :cancelling,
+              cleanup_error:
+                "BEAM owner exited before cleanup confirmation; execution will not restart"
+          })
+        else
+          acc
+        end
+      end)
+
     state =
       Enum.reduce(state.scopes, state, fn {owner, scope}, acc ->
         if scope.monitor == ref do
@@ -240,6 +299,45 @@ defmodule Handbeam.Jobs.Server do
 
     Process.send_after(self(), :prune, 60_000)
     {:noreply, %{state | jobs: jobs}}
+  end
+
+  defp launch(state, owner, call_id, {:beam, kind, fun}, _cwd, timeout, deadline, from) do
+    id = "job_" <> Base.url_encode64(:crypto.strong_rand_bytes(18), padding: false)
+
+    case DynamicSupervisor.start_child(
+           Handbeam.Jobs.BeamSupervisor,
+           {Beam, [id: id, kind: kind, fun: fun, server: self()]}
+         ) do
+      {:ok, pid} ->
+        job = %{
+          id: id,
+          owner: owner,
+          call_id: call_id,
+          beam: pid,
+          beam_monitor: Process.monitor(pid),
+          buffer: %Buffer{},
+          state: :running,
+          target: nil,
+          exit_code: nil,
+          cleanup_error: nil,
+          created_at: now(),
+          finished_at: nil,
+          timer: Process.send_after(self(), {:expire, id}, timeout)
+        }
+
+        state = put_in(state.jobs[id], job)
+
+        if now() < deadline and Process.alive?(state.scopes[owner].runner) do
+          GenServer.cast(pid, :go)
+          reply_or_wait(state, job, 0, deadline, from)
+        else
+          state = cancel_job(state, job, :cancelled)
+          {:reply, {:ok, snapshot(state.jobs[id], 0)}, state}
+        end
+
+      {:error, _} ->
+        {:reply, {:error, "BEAM job owner unavailable"}, state}
+    end
   end
 
   defp launch(state, owner, call_id, command, cwd, timeout, deadline, from) do
@@ -331,7 +429,7 @@ defmodule Handbeam.Jobs.Server do
        when status in @terminal or status == :cancelling, do: state
 
   defp cancel_job(state, job, target) do
-    Cleaner.cancel(job.id)
+    if job[:beam], do: Beam.cancel(job.beam), else: Cleaner.cancel(job.id)
     put_in(state.jobs[job.id], %{job | state: :cancelling, target: target})
   end
 
@@ -349,11 +447,12 @@ defmodule Handbeam.Jobs.Server do
   defp visible?(_, _), do: false
 
   defp job_for_port(state, port),
-    do: Enum.find_value(state.jobs, fn {_id, job} -> if job.port == port, do: job end)
+    do: Enum.find_value(state.jobs, fn {_id, job} -> if job[:port] == port, do: job end)
 
   defp snapshot(job, cursor) do
     Buffer.read(job.buffer, cursor, job.state in @terminal)
     |> Map.merge(%{job_id: job.id, state: job.state, cleanup_error: job.cleanup_error})
+    |> Map.merge(Map.take(job, [:result, :result_truncated]))
     |> then(fn result ->
       if is_integer(job.exit_code), do: Map.put(result, :exit_code, job.exit_code), else: result
     end)

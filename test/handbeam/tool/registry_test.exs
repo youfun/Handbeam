@@ -111,8 +111,7 @@ defmodule Handbeam.Tool.RegistryTest do
       assert "android_open_file" in names
       assert "android_share_file" in names
       assert "run_elixir_script" in names
-      for tool <- ~w(web_fetch skill task), do: assert(tool in names)
-      for tool <- ~w(bash job_status job_cancel), do: refute(tool in names)
+      for tool <- ~w(web_fetch skill task job_status job_cancel), do: assert(tool in names)
       assert "mix_project" in names
       assert "git" in names
       refute "bash" in names

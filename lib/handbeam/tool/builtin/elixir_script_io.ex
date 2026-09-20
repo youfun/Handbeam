@@ -4,8 +4,8 @@ defmodule Handbeam.Tool.Builtin.ElixirScriptIO do
   @type snapshot :: %{text: binary(), truncated?: boolean()}
 
   @spec start_link(pos_integer()) :: pid()
-  def start_link(max_bytes) when is_integer(max_bytes) and max_bytes > 0 do
-    spawn_link(fn -> loop(%{max: max_bytes, acc: [], size: 0, truncated?: false}) end)
+  def start_link(max_bytes, sink \\ nil) when is_integer(max_bytes) and max_bytes > 0 do
+    spawn_link(fn -> loop(%{max: max_bytes, acc: [], size: 0, truncated?: false, sink: sink}) end)
   end
 
   @spec snapshot(pid()) :: snapshot()
@@ -29,7 +29,14 @@ defmodule Handbeam.Tool.Builtin.ElixirScriptIO do
   defp loop(state) do
     receive do
       {:io_request, from, reply_as, request} ->
+        previous_size = state.size
         {reply, state} = handle_request(request, state)
+
+        if state.sink && state.size > previous_size do
+          text = IO.iodata_to_binary(state.acc)
+          state.sink.(binary_part(text, previous_size, state.size - previous_size))
+        end
+
         send(from, {:io_reply, reply_as, reply})
         loop(state)
 

@@ -15,6 +15,37 @@ defmodule Handbeam.Workspace.MixOwnerTest do
     {:ok, cwd: cwd}
   end
 
+  test "failed restoration remains visible to late cancellation fences and blocks admission" do
+    owner = start_supervised!({MixOwner, name: :mix_owner_restore_failure_test})
+    parent = self()
+
+    task =
+      Task.async(fn ->
+        MixOwner.run(
+          fn ->
+            send(parent, :restore_failure_started)
+            receive do: (:never -> :ok)
+          end,
+          server: owner
+        )
+      end)
+
+    assert_receive :restore_failure_started
+
+    :sys.replace_state(owner, fn state ->
+      put_in(state.job.snapshot.cwd, Path.join(System.tmp_dir!(), Ecto.UUID.generate()))
+    end)
+
+    assert {:error, _, %{restore_failed: true}} = MixOwner.cancel_for(task.pid, owner)
+    assert {:error, _, %{restore_failed: true}} = Task.await(task)
+    assert {:error, _, %{restore_failed: true}} = MixOwner.cancel_for(task.pid, owner)
+
+    assert {:error, _, %{restore_failed: true}} =
+             MixOwner.run(fn -> send(parent, :unsafe_next_operation) end, server: owner)
+
+    refute_receive :unsafe_next_operation
+  end
+
   test "serializes work and restores cwd and env", %{cwd: cwd} do
     tmp = Path.join(System.tmp_dir!(), "sigil_mix_owner_#{System.unique_integer([:positive])}")
     File.mkdir_p!(tmp)

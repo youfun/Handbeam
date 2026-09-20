@@ -1,6 +1,6 @@
 defmodule Handbeam.Jobs do
   @moduledoc """
-  Run-scoped Bash jobs. Start Cleaner before Server in the application supervision tree,
+  Run-scoped Bash and BEAM jobs. Start Cleaner before Server in the application supervision tree,
   outside RunSupervisor. Runner must open a scope before executing tools and close it on
   every real terminal path; its monitor also closes the scope on abnormal exit.
   This is not OS containment and does not resume jobs after a VM restart.
@@ -12,7 +12,12 @@ defmodule Handbeam.Jobs do
   """
   alias Handbeam.Jobs.Server
 
-  def child_specs, do: [Handbeam.Jobs.Cleaner, Server]
+  def child_specs,
+    do: [
+      Handbeam.Jobs.Cleaner,
+      {DynamicSupervisor, name: Handbeam.Jobs.BeamSupervisor, strategy: :one_for_one},
+      Server
+    ]
 
   def open_run(context, runner) when is_pid(runner) do
     with {:ok, owner} <- owner(context), do: call({:open, owner, runner}, 5_000)
@@ -40,9 +45,21 @@ defmodule Handbeam.Jobs do
 
   def start(_, _, _, _, _), do: {:error, "Job launch wait_ms must be a positive integer"}
 
+  @doc "Start trusted BEAM work; the callback receives a bounded output sink."
+  def start_beam(kind, fun, timeout_ms, wait_ms, context)
+      when kind in [:script, :mix] and is_function(fun, 1) and is_integer(wait_ms) and wait_ms > 0 do
+    with {:ok, owner} <- owner(context),
+         {:ok, wait} <- wait_budget(wait_ms, context),
+         :ok <- valid_timeout(timeout_ms),
+         {:ok, call_id} <- call_id(context) do
+      call({:start, owner, call_id, {:beam, kind, fun}, nil, timeout_ms, now() + wait}, wait)
+    end
+  end
+
+  def start_beam(_, _, _, _, _), do: {:error, "Job launch wait_ms must be a positive integer"}
+
   def status(id, cursor, wait_ms, context) when is_nil(id) or is_binary(id) do
-    with :ok <- shell_supported(),
-         {:ok, owner} <- owner(context),
+    with {:ok, owner} <- owner(context),
          {:ok, wait} <- wait_budget(wait_ms, context),
          :ok <- valid_cursor(cursor) do
       call({:status, owner, id, cursor, now() + wait}, wait)
@@ -52,8 +69,7 @@ defmodule Handbeam.Jobs do
   def status(_, _, _, _), do: {:error, "job_id must be a string or omitted"}
 
   def cancel(id, context) when is_binary(id) do
-    with :ok <- shell_supported(),
-         {:ok, owner} <- owner(context),
+    with {:ok, owner} <- owner(context),
          {:ok, wait} <- wait_budget(1_000, context) do
       call({:cancel, owner, id}, wait)
     end
@@ -62,8 +78,9 @@ defmodule Handbeam.Jobs do
   def cancel(_, _), do: {:error, "job_id is required"}
 
   def format({:ok, result}) do
-    header = Jason.encode!(Map.delete(result, :output))
+    header = Jason.encode!(Map.drop(result, [:output, :result]))
     text = if result[:output], do: header <> "\n\n" <> result.output, else: header
+    text = if result[:result], do: text <> "\n\nresult:\n" <> result.result, else: text
     {:ok, text, %{job: result}}
   end
 

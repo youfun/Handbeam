@@ -19,8 +19,8 @@ defmodule Handbeam.Jobs.RunnerIntegrationTest do
         call = %{
           type: "tool_use",
           id: "launch-job",
-          name: "bash",
-          input: %{"command" => "printf ready; read -r answer", "job" => true, "wait_ms" => 100}
+          name: config.tool_name,
+          input: config.tool_input
         }
 
         {:ok, %{stop_reason: :tool_use, messages: [Message.tool_use([call])], usage: %{}}}
@@ -32,6 +32,7 @@ defmodule Handbeam.Jobs.RunnerIntegrationTest do
 
   setup do
     old_home = System.get_env("HOME")
+    old_host = Application.get_env(:handbeam, :host)
     dir = Path.join(System.tmp_dir!(), "job-runner-#{Ecto.UUID.generate()}")
     File.mkdir_p!(dir)
     System.put_env("HOME", dir)
@@ -40,21 +41,46 @@ defmodule Handbeam.Jobs.RunnerIntegrationTest do
     on_exit(fn ->
       Coordinator.cancel(conversation["id"])
       if old_home, do: System.put_env("HOME", old_home), else: System.delete_env("HOME")
+
+      if old_host,
+        do: Application.put_env(:handbeam, :host, old_host),
+        else: Application.delete_env(:handbeam, :host)
+
       File.rm_rf!(dir)
     end)
 
     %{dir: dir, id: conversation["id"]}
   end
 
-  for outcome <- [:completed, :cancelled] do
-    test "real Runner #{outcome} closes jobs after an Executor wait returns", %{dir: dir, id: id} do
+  for outcome <- [:completed, :cancelled],
+      tool <- [Handbeam.Tool.Builtin.Bash, Handbeam.Tool.Builtin.RunElixirScript] do
+    test "real Runner #{outcome} closes #{tool} jobs after an Executor wait returns", %{
+      dir: dir,
+      id: id
+    } do
+      tool = unquote(tool)
+
+      input =
+        if unquote(tool == Handbeam.Tool.Builtin.RunElixirScript) do
+          Handbeam.Host.put!(%{shell: false, system_intents: true, desktop_browser: false})
+
+          File.write!(
+            Path.join(dir, "wait.exs"),
+            "IO.write(\"ready\"); receive do: (:never -> :ok)"
+          )
+
+          %{"path" => "wait.exs", "job" => true, "wait_ms" => 100}
+        else
+          %{"command" => "printf ready; read -r answer", "job" => true, "wait_ms" => 100}
+        end
+
       {:ok, ack} =
         Coordinator.add_message(id, "run a job",
           workspace_path: dir,
           model: "fake",
           provider: Provider,
-          provider_config: %{notify: self()},
-          tools: [Handbeam.Tool.Builtin.Bash],
+          provider_config: %{notify: self(), tool_name: tool.name(), tool_input: input},
+          tools: [tool],
           source: :cli,
           middleware: [],
           mcp: false

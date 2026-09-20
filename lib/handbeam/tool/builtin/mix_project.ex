@@ -21,6 +21,7 @@ defmodule Handbeam.Tool.Builtin.MixProject do
 
     Actions: deps.get (install host-compatible pure Elixir/Erlang deps through real Mix and Hex), compile, test, run.
     The project must contain mix.exs; typical layout is mix.exs, mix.lock, lib/, test/.
+    Set job=true for long work: short wait returns job_id; query job_status until finished before ending the run. MixOwner still serializes execution and restores VM state before completion. No shell is required.
     #{toolchain_status()}
 
     Supported deps are Mix packages of pure Elixir/Erlang code. NIF/native compilers, Rebar, Make, and other external build tools are rejected with an error. Host application versions and modules are not replaced. Mix changes the whole VM working directory while a project operation runs; operations are serialized, managed descendant processes are cleaned up, and globals are restored afterwards. This is not a security sandbox: project code runs with Handbeam app privileges, can still call System.cmd/3, and can hand work to pre-existing or external processes outside the managed lifecycle.
@@ -34,6 +35,8 @@ defmodule Handbeam.Tool.Builtin.MixProject do
     %{
       type: "object",
       properties: %{
+        job: %{type: "boolean", default: false},
+        wait_ms: %{type: "integer", minimum: 1, default: 1_000},
         action: %{
           type: "string",
           enum: ["deps.get", "compile", "test", "run"],
@@ -65,7 +68,7 @@ defmodule Handbeam.Tool.Builtin.MixProject do
         timeout_ms: %{
           type: "integer",
           description:
-            "Timeout in milliseconds (default #{Project.default_timeout_ms()}, max #{Project.max_timeout_ms()}).",
+            "Execution limit in milliseconds (default #{Project.default_timeout_ms()}, synchronous max #{Project.max_timeout_ms()}, job max 3600000). Separate from job response wait.",
           default: Project.default_timeout_ms()
         }
       },
@@ -74,7 +77,7 @@ defmodule Handbeam.Tool.Builtin.MixProject do
   end
 
   @impl true
-  def max_result_chars, do: 40_000
+  def max_result_chars, do: 105_000
 
   @impl true
   def concurrent?, do: false
@@ -87,13 +90,27 @@ defmodule Handbeam.Tool.Builtin.MixProject do
          {:ok, action} <- parse_action(action),
          {:ok, path} <- resolve_project(Map.get(input, "path", "."), workspace),
          {:ok, timeout_ms} <-
-           parse_timeout(Map.get(input, "timeout_ms", Project.default_timeout_ms())),
+           parse_timeout(
+             Map.get(input, "timeout_ms", Project.default_timeout_ms()),
+             Map.get(input, "job", false)
+           ),
          {:ok, opts} <- run_opts(action, input) do
-      Project.perform(
-        action,
-        path,
-        Keyword.merge(opts, timeout_ms: timeout_ms, offline: truthy?(input["offline"]))
-      )
+      opts = Keyword.merge(opts, timeout_ms: timeout_ms, offline: truthy?(input["offline"]))
+
+      if input["job"] == true do
+        Handbeam.Jobs.start_beam(
+          :mix,
+          fn sink ->
+            Project.perform(action, path, Keyword.put(opts, :on_output, sink))
+          end,
+          timeout_ms,
+          Map.get(input, "wait_ms", 1_000),
+          context
+        )
+        |> Handbeam.Jobs.format()
+      else
+        Project.perform(action, path, opts)
+      end
     end
   end
 
@@ -147,12 +164,15 @@ defmodule Handbeam.Tool.Builtin.MixProject do
     end
   end
 
-  defp parse_timeout(ms) when is_integer(ms) and ms >= 1 do
-    if ms <= Project.max_timeout_ms(), do: {:ok, ms}, else: parse_timeout(nil)
+  defp parse_timeout(ms, job) when is_integer(ms) and ms >= 1 and is_boolean(job) do
+    max = if job, do: 3_600_000, else: Project.max_timeout_ms()
+    if ms <= max, do: {:ok, ms}, else: parse_timeout(nil, job)
   end
 
-  defp parse_timeout(_),
-    do: {:error, "timeout_ms must be an integer from 1 to #{Project.max_timeout_ms()}"}
+  defp parse_timeout(_, job),
+    do:
+      {:error,
+       "job must be boolean; timeout_ms must be 1..#{if job == true, do: 3_600_000, else: Project.max_timeout_ms()}"}
 
   defp run_opts(:run, input) do
     {:ok,

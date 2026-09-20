@@ -134,6 +134,8 @@ defmodule Handbeam.Tool.Registry do
       Handbeam.Tool.Builtin.FileSearch,
       Handbeam.Tool.Builtin.Git,
       Handbeam.Tool.Builtin.Grep,
+      Handbeam.Tool.Builtin.JobStatus,
+      Handbeam.Tool.Builtin.JobCancel,
       Handbeam.Tool.Builtin.MixProject,
       Handbeam.Tool.Builtin.Read,
       Handbeam.Tool.Builtin.Skill,
@@ -150,8 +152,6 @@ defmodule Handbeam.Tool.Registry do
 
     base
     |> maybe_add(Handbeam.Host.shell?(), Handbeam.Tool.Builtin.Bash)
-    |> maybe_add(Handbeam.Host.shell?(), Handbeam.Tool.Builtin.JobStatus)
-    |> maybe_add(Handbeam.Host.shell?(), Handbeam.Tool.Builtin.JobCancel)
     |> maybe_add(
       Handbeam.Host.desktop_browser?() or Handbeam.Host.webview_browser?(),
       Handbeam.Tool.Builtin.Browser

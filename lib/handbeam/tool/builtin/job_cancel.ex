@@ -6,7 +6,7 @@ defmodule Handbeam.Tool.Builtin.JobCancel do
   def name, do: "job_cancel"
   @impl true
   def description do
-    "Request cancellation of a Bash job in this conversation/workspace. Idempotent. " <>
+    "Request cancellation of a Bash or BEAM job in this conversation/workspace. Idempotent. " <>
       "cancelling is not confirmation of termination: query job_status for the final state. " <>
       "Completed results are unchanged. May retry cleanup of a previous run, never resume it."
   end
@@ -18,7 +18,7 @@ defmodule Handbeam.Tool.Builtin.JobCancel do
   @impl true
   def concurrent?, do: true
   @impl true
-  def max_result_chars, do: 55_000
+  def max_result_chars, do: 105_000
   @impl true
   def execute(input, context),
     do: Handbeam.Jobs.cancel(input["job_id"], context) |> Handbeam.Jobs.format()

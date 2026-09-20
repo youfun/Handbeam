@@ -39,9 +39,14 @@ defmodule Handbeam.Workspace.MixOwner do
     GenServer.call(server, {:run, fun, opts}, timeout + 5_000)
   end
 
-  @spec cancel(atom() | pid()) :: :ok
+  @spec cancel(atom() | pid()) :: :ok | {:error, String.t(), map()}
   def cancel(server \\ __MODULE__) do
     GenServer.call(server, :cancel, :infinity)
+  end
+
+  @doc "Cancel only work owned by this caller, waiting for global-state restoration."
+  def cancel_for(caller, server \\ __MODULE__) when is_pid(caller) do
+    GenServer.call(server, {:cancel_for, caller}, :infinity)
   end
 
   @spec busy?(atom() | pid()) :: boolean()
@@ -62,6 +67,7 @@ defmodule Handbeam.Workspace.MixOwner do
     {:ok,
      %{
        job: nil,
+       restore_error: nil,
        supervisor: supervisor,
        host: Handbeam.Workspace.MixCompat.snapshot(),
        workspace_roots: MapSet.new(),
@@ -70,11 +76,44 @@ defmodule Handbeam.Workspace.MixOwner do
   end
 
   @impl true
+  def handle_call({:run, _fun, _opts}, _from, %{restore_error: error} = state)
+      when not is_nil(error), do: {:reply, error, state}
+
   def handle_call({:run, _fun, _opts}, _from, %{job: job} = state) when not is_nil(job) do
     {:reply, {:error, "another Mix project operation is running", %{busy: true}}, state}
   end
 
   def handle_call({:run, fun, opts}, {caller, _tag} = from, %{job: nil} = state) do
+    if Process.alive?(caller) do
+      start_job(fun, opts, from, state)
+    else
+      {:reply, {:error, "Mix caller has exited", %{cancelled: true}}, state}
+    end
+  end
+
+  def handle_call({:cancel_for, caller}, from, %{job: %{from: {caller, _}}} = state),
+    do: handle_call(:cancel, from, state)
+
+  def handle_call({:cancel_for, _caller}, _from, state),
+    do: {:reply, state.restore_error || :ok, state}
+
+  def handle_call(:cancel, _from, %{job: nil} = state),
+    do: {:reply, state.restore_error || :ok, state}
+
+  def handle_call(:cancel, from, %{job: job} = state) do
+    job =
+      job
+      |> Map.update!(:cancel_from, &[from | &1])
+      |> begin_shutdown({:error, "Mix project operation cancelled", %{cancelled: true}})
+
+    complete_or_continue(%{state | job: job})
+  end
+
+  def handle_call(:busy?, _from, state), do: {:reply, state.job != nil, state}
+
+  def handle_call(:host_snapshot, _from, state), do: {:reply, state.host, state}
+
+  defp start_job(fun, opts, {caller, _tag} = from, state) do
     timeout = Keyword.get(opts, :timeout_ms, 60_000)
     snapshot = snapshot()
     parent = self()
@@ -122,21 +161,6 @@ defmodule Handbeam.Workspace.MixOwner do
          }
      }}
   end
-
-  def handle_call(:cancel, _from, %{job: nil} = state), do: {:reply, :ok, state}
-
-  def handle_call(:cancel, from, %{job: job} = state) do
-    job =
-      job
-      |> Map.update!(:cancel_from, &[from | &1])
-      |> begin_shutdown({:error, "Mix project operation cancelled", %{cancelled: true}})
-
-    complete_or_continue(%{state | job: job})
-  end
-
-  def handle_call(:busy?, _from, state), do: {:reply, state.job != nil, state}
-
-  def handle_call(:host_snapshot, _from, state), do: {:reply, state.host, state}
 
   @impl true
   def handle_info({:mix_owner_result, worker, result}, %{job: %{worker: worker} = job} = state) do
@@ -229,14 +253,17 @@ defmodule Handbeam.Workspace.MixOwner do
   defp complete_or_continue(%{job: %{stopping?: true, managed: managed} = job} = state)
        when map_size(managed) == 0 do
     Process.demonitor(job.caller_ref, [:flush])
-    result = with_restore_result(job.outcome, restore(job.snapshot))
+    restoration = restore(job.snapshot)
+    result = with_restore_result(job.outcome, restoration)
     if job.reply? and result, do: GenServer.reply(job.from, result)
-    Enum.each(job.cancel_from, &GenServer.reply(&1, :ok))
+    cancellation = if restoration == :ok, do: :ok, else: result
+    Enum.each(job.cancel_from, &GenServer.reply(&1, cancellation))
 
     state =
       state
       |> maybe_remember_workspace(job.project_path, job.project_modules, result)
       |> Map.put(:job, nil)
+      |> Map.put(:restore_error, if(restoration == :ok, do: nil, else: result))
 
     {:noreply, state}
   end
