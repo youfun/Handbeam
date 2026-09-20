@@ -6,7 +6,7 @@ defmodule Handbeam.Platform.ProcessRunner do
   timeout handling, and cross-platform process tree termination.
   """
 
-  alias Handbeam.Platform.{ShellResolver, ProcessManager}
+  alias Handbeam.Platform.{ProcessManager, ProcessSandbox, ShellResolver}
 
   @max_output_bytes 50_000
   @max_output_lines 2_000
@@ -22,25 +22,29 @@ defmodule Handbeam.Platform.ProcessRunner do
 
   ## Options
     - `:shell_path` — explicit shell binary path
+    - `:workspace_path` — confines writes to this workspace using an OS sandbox
   """
   @spec run_bash(binary(), Path.t() | nil, timeout(), keyword()) ::
           {:ok, binary(), run_meta()} | {:error, String.t()}
   def run_bash(command, cwd, timeout_ms, opts \\ []) do
-    with {:ok, shell} <- ShellResolver.resolve(opts) do
+    with {:ok, shell} <- ShellResolver.resolve(opts),
+         {:ok, invocation} <- ProcessSandbox.wrap(shell, command, cwd, opts) do
       port_opts = [:binary, :exit_status, :use_stdio, :stderr_to_stdout, :hide]
 
       port_opts =
-        if cwd, do: [{:cd, String.to_charlist(cwd)} | port_opts], else: port_opts
+        if invocation.cwd,
+          do: [{:cd, String.to_charlist(invocation.cwd)} | port_opts],
+          else: port_opts
 
       try do
         port =
           Port.open(
-            {:spawn_executable, shell.path},
-            [{:args, shell.args ++ [command]} | port_opts]
+            {:spawn_executable, invocation.executable},
+            [{:args, invocation.args} | port_opts]
           )
 
         os_pid = get_os_pid(port)
-        collect_output(port, os_pid, timeout_ms)
+        collect_output(port, os_pid, timeout_ms, Keyword.has_key?(opts, :workspace_path))
       rescue
         e -> {:error, "Failed to spawn: #{Exception.message(e)}"}
       end
@@ -49,17 +53,20 @@ defmodule Handbeam.Platform.ProcessRunner do
 
   # ── Output collection ──
 
-  defp collect_output(port, os_pid, timeout_ms) do
+  defp collect_output(port, os_pid, timeout_ms, sandboxed?) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
     state = %{chunks: [], buf_bytes: 0, total_bytes: 0}
-    do_collect(port, os_pid, deadline, state, timeout_ms)
+    do_collect(port, os_pid, deadline, state, timeout_ms, sandboxed?)
   end
 
-  defp do_collect(port, os_pid, deadline, state, original_timeout) do
+  defp do_collect(port, os_pid, deadline, state, original_timeout, sandboxed?) do
     remaining = deadline - System.monotonic_time(:millisecond)
 
     if remaining <= 0 do
-      ProcessManager.kill_process_tree(os_pid)
+      if sandboxed?,
+        do: ProcessManager.kill_process(os_pid),
+        else: ProcessManager.kill_process_tree(os_pid)
+
       safe_close_port(port)
       output = build_output(state)
 
@@ -69,7 +76,7 @@ defmodule Handbeam.Platform.ProcessRunner do
       receive do
         {^port, {:data, data}} ->
           state = ingest_chunk(state, data)
-          do_collect(port, os_pid, deadline, state, original_timeout)
+          do_collect(port, os_pid, deadline, state, original_timeout, sandboxed?)
 
         {^port, {:exit_status, exit_code}} ->
           output = build_output(state)
@@ -84,7 +91,7 @@ defmodule Handbeam.Platform.ProcessRunner do
           end
       after
         min(remaining, 200) ->
-          do_collect(port, os_pid, deadline, state, original_timeout)
+          do_collect(port, os_pid, deadline, state, original_timeout, sandboxed?)
       end
     end
   end

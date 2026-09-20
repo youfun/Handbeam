@@ -42,5 +42,17 @@ defmodule Handbeam.Platform.ProcessRunnerTest do
       assert output =~ tmp or output =~ Path.basename(tmp)
       assert meta.exit_code == 0
     end
+
+    test "fails closed when a workspace sandbox is unavailable" do
+      workspace = File.cwd!()
+
+      assert {:error, reason} =
+               ProcessRunner.run_bash("echo unsafe", workspace, 5000,
+                 workspace_path: workspace,
+                 sandbox_path: "/nonexistent/bwrap"
+               )
+
+      assert reason =~ "Sandbox executable not found"
+    end
   end
 end

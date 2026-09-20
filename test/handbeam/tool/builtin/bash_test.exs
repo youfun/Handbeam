@@ -165,6 +165,54 @@ defmodule Handbeam.Tool.Builtin.BashTest do
   end
 
   describe "security — workspace boundary" do
+    test "runtime-computed paths cannot modify the host outside the workspace" do
+      workspace =
+        Path.join(System.tmp_dir!(), "bash_sandbox_ws_#{System.unique_integer([:positive])}")
+
+      outside =
+        Path.join(System.tmp_dir!(), "bash_sandbox_escape_#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(workspace)
+
+      try do
+        {:ok, output, data} =
+          Bash.execute(
+            %{
+              "command" =>
+                "target=$(printf '%s' '#{outside}'); printf escaped > \"$target\"; cat \"$target\""
+            },
+            %{working_directory: workspace}
+          )
+
+        assert output =~ "escaped"
+        assert data.exit_code == 0
+        refute File.exists?(outside)
+      after
+        File.rm_rf(workspace)
+        File.rm(outside)
+      end
+    end
+
+    test "workspace writes persist through the sandbox" do
+      workspace =
+        Path.join(System.tmp_dir!(), "bash_sandbox_write_#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(workspace)
+
+      try do
+        {:ok, _output, data} =
+          Bash.execute(
+            %{"command" => "printf inside > result.txt"},
+            %{working_directory: workspace}
+          )
+
+        assert data.exit_code == 0
+        assert File.read!(Path.join(workspace, "result.txt")) == "inside"
+      after
+        File.rm_rf(workspace)
+      end
+    end
+
     test "rejects cwd outside the workspace" do
       {:error, reason} =
         Bash.execute(

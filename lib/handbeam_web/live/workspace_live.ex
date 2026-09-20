@@ -22,6 +22,7 @@ defmodule HandbeamWeb.WorkspaceLive do
   alias HandbeamWeb.WorkspaceLive.ConversationState
   alias HandbeamWeb.WorkspaceLive.ConversationSwitching
   alias Handbeam.Settings
+  alias Handbeam.WorkspaceFiles
 
   @high_freq_events [:message_delta, :thinking_delta]
 
@@ -98,6 +99,11 @@ defmodule HandbeamWeb.WorkspaceLive do
       |> assign(:sandbox_workspace?, sandbox_workspace?())
       |> subscribe_workspace_import()
       |> assign(:show_terminal, false)
+      |> assign(:right_panel_view, :files)
+      |> assign(:workspace_tree, %{})
+      |> assign(:expanded_workspace_dirs, MapSet.new())
+      |> assign(:workspace_tree_error, nil)
+      |> load_workspace_tree("")
       # Thinking / reasoning display
       |> assign(:thinking_content, "")
       |> assign(:thinking_active, false)
@@ -507,6 +513,54 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   @impl true
+  def handle_event("select_workspace_file", %{"path" => relative_path}, socket) do
+    case WorkspaceFiles.resolve(current_workspace_path(socket), relative_path, :file) do
+      {:ok, path} ->
+        socket =
+          ConversationState.select_file(
+            socket,
+            path,
+            current_workspace_path(socket),
+            conversation_state_opts()
+          )
+          |> assign(:show_diff, false)
+          |> assign(:diff_lines, nil)
+          |> assign(:active_change, nil)
+
+        {:noreply, socket}
+
+      {:error, _reason} ->
+        {:noreply, socket}
+    end
+  end
+
+  @impl true
+  def handle_event("toggle_workspace_directory", %{"path" => relative_path}, socket) do
+    expanded = socket.assigns.expanded_workspace_dirs
+
+    if MapSet.member?(expanded, relative_path) do
+      {:noreply, assign(socket, :expanded_workspace_dirs, MapSet.delete(expanded, relative_path))}
+    else
+      {:noreply,
+       socket
+       |> load_workspace_tree(relative_path)
+       |> update(:expanded_workspace_dirs, &MapSet.put(&1, relative_path))}
+    end
+  end
+
+  @impl true
+  def handle_event("select_right_panel_view", %{"view" => "files"}, socket) do
+    {:noreply,
+     socket
+     |> assign(:right_panel_view, :files)
+     |> assign(:show_terminal, false)}
+  end
+
+  def handle_event("select_right_panel_view", %{"view" => "terminal"}, socket) do
+    {:noreply, show_terminal_panel(socket)}
+  end
+
+  @impl true
   def handle_event("view_diff", %{"id" => id}, socket) do
     case find_timeline_entry(socket.assigns.timeline, id) do
       %{} = entry ->
@@ -601,15 +655,7 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   def handle_event("toggle_terminal", _params, socket) do
-    show = !socket.assigns.show_terminal
-    socket = assign(socket, :show_terminal, show)
-
-    if show && connected?(socket) do
-      topic = "terminal:\#{socket.assigns.current_workspace_id}"
-      Phoenix.PubSub.subscribe(Handbeam.PubSub, topic)
-    end
-
-    {:noreply, socket}
+    {:noreply, show_terminal_panel(socket)}
   end
 
   # ── Workspace / Project dialog ──
@@ -986,10 +1032,39 @@ defmodule HandbeamWeb.WorkspaceLive do
   def handle_workspace_switch(socket) do
     socket
     |> sync_conv_state(reload?: true)
+    |> assign(:workspace_tree, %{})
+    |> assign(:expanded_workspace_dirs, MapSet.new())
+    |> load_workspace_tree("")
     |> reload_workspace_models()
     |> reload_workspace_counts()
     |> load_available_skills()
     |> load_permission_mode_into_socket()
+  end
+
+  defp load_workspace_tree(socket, relative_dir) do
+    case WorkspaceFiles.list(current_workspace_path(socket), relative_dir, show_hidden: true) do
+      {:ok, %{entries: entries}} ->
+        socket
+        |> update(:workspace_tree, &Map.put(&1, relative_dir, entries))
+        |> assign(:workspace_tree_error, nil)
+
+      {:error, reason} ->
+        assign(socket, :workspace_tree_error, reason)
+    end
+  end
+
+  defp show_terminal_panel(socket) do
+    if connected?(socket) do
+      Phoenix.PubSub.subscribe(
+        Handbeam.PubSub,
+        "terminal:\#{socket.assigns.current_workspace_id}"
+      )
+    end
+
+    socket
+    |> assign(:show_terminal, true)
+    |> assign(:right_panel_view, :terminal)
+    |> assign(:right_panel_collapsed, false)
   end
 
   @impl true
@@ -1275,12 +1350,16 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   defp handle_agent_event(%{kind: :candidate_message_injected, payload: payload}, socket) do
-    pending = Handbeam.Agent.PendingMessages.apply_injected(socket.assigns.pending_messages, payload)
+    pending =
+      Handbeam.Agent.PendingMessages.apply_injected(socket.assigns.pending_messages, payload)
+
     assign_pending_messages(socket, pending)
   end
 
   defp handle_agent_event(%{kind: :candidate_message_deleted, payload: payload}, socket) do
-    pending = Handbeam.Agent.PendingMessages.apply_deleted(socket.assigns.pending_messages, payload)
+    pending =
+      Handbeam.Agent.PendingMessages.apply_deleted(socket.assigns.pending_messages, payload)
+
     assign_pending_messages(socket, pending)
   end
 
@@ -1853,7 +1932,11 @@ defmodule HandbeamWeb.WorkspaceLive do
       socket =
         assign_pending_messages(
           socket,
-          Handbeam.Agent.PendingMessages.put_status(socket.assigns.pending_messages, id, :resending)
+          Handbeam.Agent.PendingMessages.put_status(
+            socket.assigns.pending_messages,
+            id,
+            :resending
+          )
         )
 
       workspace_path = current_workspace_path(socket)
@@ -2609,6 +2692,7 @@ defmodule HandbeamWeb.WorkspaceLive do
       socket =
         socket
         |> assign(:editor_files, existing ++ [new_file])
+        |> refresh_loaded_tree_parent(abs_path)
 
       if socket.assigns.active_file == nil do
         socket
@@ -2617,6 +2701,22 @@ defmodule HandbeamWeb.WorkspaceLive do
       else
         socket
       end
+    end
+  end
+
+  defp refresh_loaded_tree_parent(socket, abs_path) do
+    relative = Path.relative_to(abs_path, current_workspace_path(socket))
+
+    parent =
+      case Path.dirname(relative) do
+        "." -> ""
+        directory -> directory
+      end
+
+    if Map.has_key?(socket.assigns.workspace_tree, parent) do
+      load_workspace_tree(socket, parent)
+    else
+      socket
     end
   end
 
@@ -3251,6 +3351,76 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   def any_sheet_open?(show_workspace, show_model, show_reasoning, show_settings) do
     show_workspace or show_model or show_reasoning or show_settings
+  end
+
+  attr :entries, :map, required: true
+  attr :expanded, :any, required: true
+  attr :active_file, :string, default: nil
+  attr :workspace_root, :string, required: true
+  attr :parent, :string, default: ""
+  attr :depth, :integer, default: 0
+
+  def workspace_tree(assigns) do
+    ~H"""
+    <ul class="workspace-file-tree" role={if(@depth == 0, do: "tree", else: "group")}>
+      <li :for={entry <- Map.get(@entries, @parent, [])} role="treeitem">
+        <button
+          :if={entry.kind == :directory}
+          type="button"
+          class="workspace-file-row directory"
+          style={"--tree-depth: #{@depth}"}
+          phx-click="toggle_workspace_directory"
+          phx-value-path={entry.relative_path}
+          aria-expanded={to_string(MapSet.member?(@expanded, entry.relative_path))}
+          title={entry.relative_path}
+        >
+          <span class="workspace-tree-chevron" aria-hidden="true">
+            {if MapSet.member?(@expanded, entry.relative_path), do: "⌄", else: "›"}
+          </span>
+          <span class="workspace-tree-icon" aria-hidden="true">▱</span>
+          <span class="truncate">{entry.name}</span>
+        </button>
+        <.workspace_tree
+          :if={entry.kind == :directory && MapSet.member?(@expanded, entry.relative_path)}
+          entries={@entries}
+          expanded={@expanded}
+          active_file={@active_file}
+          workspace_root={@workspace_root}
+          parent={entry.relative_path}
+          depth={@depth + 1}
+        />
+        <button
+          :if={entry.kind == :file}
+          type="button"
+          class={[
+            "workspace-file-row file",
+            if(@active_file == Path.join(@workspace_root, entry.relative_path),
+              do: "active",
+              else: ""
+            )
+          ]}
+          style={"--tree-depth: #{@depth}"}
+          phx-click="select_workspace_file"
+          phx-value-path={entry.relative_path}
+          title={entry.relative_path}
+        >
+          <span class="workspace-tree-chevron" aria-hidden="true"></span>
+          <span class="workspace-tree-icon file" aria-hidden="true">▧</span>
+          <span class="truncate">{entry.name}</span>
+        </button>
+        <div
+          :if={entry.kind == :symlink}
+          class="workspace-file-row symlink"
+          style={"--tree-depth: #{@depth}"}
+          title={gettext("Symlinks are not opened from the workspace tree")}
+        >
+          <span class="workspace-tree-chevron" aria-hidden="true"></span>
+          <span class="workspace-tree-icon" aria-hidden="true">↗</span>
+          <span class="truncate">{entry.name}</span>
+        </div>
+      </li>
+    </ul>
+    """
   end
 
   def reasoning_label(level) do

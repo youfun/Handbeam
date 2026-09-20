@@ -431,7 +431,7 @@ textarea::placeholder {
   height: 100%;
 }
 
-#editor-group {
+#workspace-panel {
   width: 480px;
   min-width: 360px;
   height: 100%;
@@ -916,33 +916,118 @@ textarea::placeholder {
   border-color: var(--color-primary);
 }
 
-/* ── File tabs ── */
-#editor-group .file-tab {
-  padding: 6px 12px;
-  font-size: 12px;
-  color: var(--color-text-secondary);
-  border: none;
-  border-bottom: 2px solid transparent;
-  background: none;
-  outline: none;
-  cursor: pointer;
-  white-space: nowrap;
-  min-height: 36px;
-  transition: color 0.12s, border-color 0.12s;
+/* ── Workspace files / terminal panel ── */
+.workspace-panel-header {
+  min-height: 38px;
+  padding: 0 8px;
 }
 
-#editor-group .file-tab:hover {
+.workspace-panel-tab {
+  align-self: stretch;
+  padding: 0 10px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.workspace-panel-tab:hover,
+.workspace-panel-tab.active {
   color: var(--color-text-primary);
 }
 
-#editor-group .file-tab.active {
-  color: var(--color-user-message);
+.workspace-panel-tab.active {
   border-bottom-color: var(--color-user-message);
   font-weight: 600;
 }
 
+.workspace-panel-label {
+  min-width: 0;
+  margin-left: auto;
+  padding-left: 12px;
+  color: var(--color-text-tertiary);
+  font-size: 11px;
+}
+
+.workspace-tree-pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 0;
+}
+
+.workspace-tree-pane.has-preview {
+  flex: 0 0 40%;
+}
+
+.workspace-file-tree {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.workspace-file-row {
+  width: 100%;
+  min-width: 0;
+  min-height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px 3px calc(8px + var(--tree-depth) * 16px);
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.25;
+  text-align: left;
+}
+
+button.workspace-file-row {
+  cursor: pointer;
+}
+
+button.workspace-file-row:hover,
+.workspace-file-row.active {
+  background: var(--color-surface-hover);
+  color: var(--color-text-primary);
+}
+
+.workspace-file-row.active {
+  box-shadow: inset 2px 0 0 var(--color-user-message);
+}
+
+.workspace-file-row.symlink {
+  color: var(--color-text-tertiary);
+  opacity: 0.75;
+}
+
+.workspace-tree-chevron {
+  width: 10px;
+  flex: 0 0 10px;
+  text-align: center;
+  color: var(--color-text-tertiary);
+}
+
+.workspace-tree-icon {
+  width: 13px;
+  flex: 0 0 13px;
+  color: var(--color-text-tertiary);
+}
+
+.workspace-tree-icon.file {
+  font-size: 10px;
+}
+
+.workspace-tree-error {
+  padding: 12px;
+  color: var(--color-error);
+  font-size: 12px;
+}
+
 /* ── Terminal tabs ── */
-#editor-group .terminal-tab {
+#workspace-panel .terminal-tab {
   padding: 4px 10px;
   font-size: 11px;
   color: var(--color-text-secondary);
@@ -959,17 +1044,17 @@ textarea::placeholder {
   transition: color 0.12s, border-color 0.12s;
 }
 
-#editor-group .terminal-tab:hover {
+#workspace-panel .terminal-tab:hover {
   color: var(--color-text-primary);
 }
 
-#editor-group .terminal-tab.active {
+#workspace-panel .terminal-tab.active {
   color: var(--color-accent, #6366f1);
   border-bottom-color: var(--color-accent, #6366f1);
   font-weight: 600;
 }
 
-#editor-group .terminal-tab .status-dot {
+#workspace-panel .terminal-tab .status-dot {
   width: 6px;
   height: 6px;
   border-radius: 50%;
@@ -977,15 +1062,15 @@ textarea::placeholder {
   flex-shrink: 0;
 }
 
-#editor-group .terminal-tab .status-dot.running {
+#workspace-panel .terminal-tab .status-dot.running {
   background: #22c55e;
 }
 
-#editor-group .terminal-tab .status-dot.exited {
+#workspace-panel .terminal-tab .status-dot.exited {
   background: #ef4444;
 }
 
-#editor-group .terminal-tab .activity-dot {
+#workspace-panel .terminal-tab .activity-dot {
   width: 5px;
   height: 5px;
   border-radius: 50%;
@@ -999,7 +1084,7 @@ textarea::placeholder {
   50% { opacity: 0.4; }
 }
 
-#editor-group .terminal-action-btn {
+#workspace-panel .terminal-action-btn {
   width: 22px;
   height: 22px;
   display: flex;
@@ -1014,7 +1099,7 @@ textarea::placeholder {
   transition: color 0.12s, background-color 0.12s;
 }
 
-#editor-group .terminal-action-btn:hover {
+#workspace-panel .terminal-action-btn:hover {
   color: var(--color-text-primary);
   background: var(--color-surface-hover);
 }

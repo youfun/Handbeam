@@ -243,11 +243,11 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert html =~ "No messages yet"
     end
 
-    test "renders no-file-selected placeholder in editor area", %{conn: conn} do
-      {:ok, _view, html} = live(conn, "/")
+    test "renders the workspace file tree instead of an empty editor placeholder", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
 
-      assert html =~ "id=\"no-file-selected\""
-      assert html =~ "No file selected"
+      assert has_element?(view, ".workspace-file-tree[role='tree']")
+      refute has_element?(view, "#editor-content")
     end
 
     test "diff view is hidden initially", %{conn: conn} do
@@ -256,10 +256,11 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       refute html =~ "id=\"diff-view\""
     end
 
-    test "editor tabs show empty placeholder when no files open", %{conn: conn} do
-      {:ok, _view, html} = live(conn, "/")
+    test "workspace panel starts in the Files view", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
 
-      assert html =~ "no files open"
+      assert has_element?(view, ".workspace-panel-tab.active", "Files")
+      refute has_element?(view, "#terminal-panel")
     end
   end
 
@@ -1335,8 +1336,8 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         )
 
         rendered = render(view)
-        refute has_element?(view, ".file-tab", "my_module.ex")
-        assert rendered =~ "no files open"
+        assert has_element?(view, ".workspace-file-row.file", "my_module.ex")
+        refute rendered =~ "defmodule MyModule do end"
       after
         File.rm(file_path)
       end
@@ -1359,8 +1360,8 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         )
 
         rendered = render(view)
-        refute has_element?(view, ".file-tab", "foo.ex")
-        assert rendered =~ "no files open"
+        assert has_element?(view, ".workspace-file-row.file", "foo.ex")
+        refute rendered =~ "# foo"
       after
         File.rm(file_path)
       end
@@ -1395,6 +1396,54 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       after
         File.rm(file_path)
       end
+    end
+
+    test "workspace tree lazily expands directories and selects a nested file", %{
+      conn: conn
+    } do
+      ws = Handbeam.Workspace.ensure_root!()
+      file_path = Path.join([ws, "nested", "compact-tab.ex"])
+      File.mkdir_p!(Path.dirname(file_path))
+      File.write!(file_path, "# compact")
+
+      {:ok, view, _html} = live(conn, "/")
+      _ = create_default_conversation(view)
+
+      try do
+        assert has_element?(view, ".workspace-file-row.directory", "nested")
+        refute has_element?(view, ".workspace-file-row.file", "compact-tab.ex")
+
+        view
+        |> element("button[phx-click='toggle_workspace_directory'][phx-value-path='nested']")
+        |> render_click()
+
+        assert has_element?(
+                 view,
+                 ".workspace-file-row.file[title='nested/compact-tab.ex']",
+                 "compact-tab.ex"
+               )
+
+        view
+        |> element(
+          "button[phx-click='select_workspace_file'][phx-value-path='nested/compact-tab.ex']"
+        )
+        |> render_click()
+
+        assert render(view) =~ "# compact"
+      after
+        File.rm_rf(Path.dirname(file_path))
+      end
+    end
+
+    test "terminal opens inside the right workspace panel instead of a bottom dock", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      view
+      |> element("button[phx-click='select_right_panel_view'][phx-value-view='terminal']")
+      |> render_click()
+
+      assert has_element?(view, "#workspace-panel #terminal-panel")
+      refute has_element?(view, "#terminal-dock")
     end
 
     test "duplicate file_path does not add duplicate editor file", %{conn: conn} do
@@ -1807,16 +1856,14 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
 
       {:ok, view, _html} = live(conn, "/")
 
-      # Add a file to editor_files so a tab appears to click
+      # A missing tool path must not appear in the workspace tree or open a preview.
       send(
         view.pid,
         agent_event(:tool_end, %{tool: "edit", duration_ms: 100, file_path: bad_path})
       )
 
-      rendered = render(view)
-      # The file doesn't exist, so it shouldn't be added to editor_files
-      # Verify the UI still works
-      assert rendered =~ "no files open"
+      refute has_element?(view, ".workspace-file-row.file", "nonexistent.txt")
+      refute has_element?(view, "#editor-content")
     end
 
     test "select_file shows file content in preview", %{conn: conn} do
@@ -2878,8 +2925,9 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       rendered = render(view)
       # Should NOT show the sensitive file
       refute rendered =~ "passwd"
-      # Should still have empty editor tabs
-      assert rendered =~ "no files open"
+      # The workspace tree remains available and no preview is opened.
+      assert has_element?(view, ".workspace-file-tree[role='tree']")
+      refute has_element?(view, "#editor-content")
     end
 
     test "select_file outside workspace does not read system file" do
@@ -3163,7 +3211,9 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert c1 == ""
 
       # Combined: </thi + nk> = </think> closes block, "after" is outside, "/think> visible" is trailing
-      {t2, c2, buf2} = HandbeamWeb.WorkspaceLive.strip_think_tags(buf1, "nk>after</think> visible")
+      {t2, c2, buf2} =
+        HandbeamWeb.WorkspaceLive.strip_think_tags(buf1, "nk>after</think> visible")
+
       assert t2 == ""
       assert c2 == "after</think> visible"
       assert buf2 == ""
