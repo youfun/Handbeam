@@ -654,6 +654,8 @@ defmodule Handbeam.Agent.Turn do
           |> State.merge_provider_state(Map.get(response, :provider_state, %{}))
           |> State.put_provider_response_metadata(Map.get(response, :response_metadata, %{}))
 
+        emit(opts, :usage_updated, %{usage: state.usage})
+
         state = mw_run(state, :after_tool_request)
 
         case state.status do
@@ -679,6 +681,8 @@ defmodule Handbeam.Agent.Turn do
           |> State.merge_usage(usage)
           |> State.merge_provider_state(Map.get(response, :provider_state, %{}))
           |> State.put_provider_response_metadata(Map.get(response, :response_metadata, %{}))
+
+        emit(opts, :usage_updated, %{usage: state.usage})
 
         state = mw_run(state, :after_completion)
 

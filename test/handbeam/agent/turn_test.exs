@@ -692,6 +692,35 @@ defmodule Handbeam.Agent.TurnTest do
       refute {:message_delta, %{chunk: "private reasoning"}} in Agent.get(events, & &1)
     end
 
+    test "usage updates are cumulative and arrive before tools and run_end" do
+      config = %Config{
+        provider: FakeProvider,
+        model: "fake",
+        max_turns: 50,
+        provider_config: %{scenario: :tool_use_chain}
+      }
+
+      {:ok, events} = Agent.start_link(fn -> [] end)
+
+      result =
+        Turn.run_loop(State.init(config, "Read a file"),
+          on_event: fn event -> Agent.update(events, &[event | &1]) end
+        )
+
+      assert result.status == :completed
+      events = Agent.get(events, &Enum.reverse/1)
+
+      relevant =
+        Enum.filter(events, fn {kind, _} -> kind in [:usage_updated, :tool_start, :run_end] end)
+
+      assert [
+               {:usage_updated, %{usage: %{input_tokens: 10, output_tokens: 15}}},
+               {:tool_start, _},
+               {:usage_updated, %{usage: %{input_tokens: 25, output_tokens: 35}}},
+               {:run_end, %{usage: %{input_tokens: 25, output_tokens: 35}}}
+             ] = relevant
+    end
+
     test "run_end event includes cumulative provider usage" do
       config = %Config{
         provider: FakeProvider,

@@ -1214,6 +1214,15 @@ defmodule HandbeamWeb.WorkspaceLive do
     end
   end
 
+  defp handle_agent_event(%{kind: :usage_updated, payload: payload}, socket) do
+    if socket.assigns.stream_suppressed do
+      socket
+    else
+      # Runtime usage is cumulative for this run; replace rather than add on replay.
+      update_status(socket, payload |> payload_value(:usage, %{}) |> usage_tokens())
+    end
+  end
+
   defp handle_agent_event(%{kind: :message_delta, payload: %{chunk: chunk}}, socket) do
     # Logger.debug(
     #   "[WorkspaceLive] agent event message_delta bytes=#{byte_size(chunk)} " <>

@@ -1476,6 +1476,57 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert has_element?(view, "#status-turns", "3")
     end
 
+    test "usage updates refresh the running footer and replace cumulative totals", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+      create_default_conversation(view)
+      send(view.pid, {:agent_event, agent_event(:run_start, %{model: "fake"})})
+
+      send(
+        view.pid,
+        {:agent_event,
+         agent_event(:usage_updated, %{usage: %{input_tokens: 10, output_tokens: 15}}, 2)}
+      )
+
+      assert has_element?(view, "#status-input-tokens", "10")
+      assert has_element?(view, "#status-output-tokens", "15")
+      assert has_element?(view, "button[phx-click='stop_run']")
+
+      payload = %{
+        "usage" => %{
+          "input_tokens" => 25,
+          "output_tokens" => 35,
+          "cache_read_input_tokens" => 7,
+          "cache_creation_input_tokens" => 3
+        }
+      }
+
+      for seq <- [3, 4] do
+        send(view.pid, {:agent_event, agent_event(:usage_updated, payload, seq)})
+        assert has_element?(view, "#status-input-tokens", "25")
+        assert has_element?(view, "#status-output-tokens", "35")
+        assert has_element?(view, "#status-cache-read", "7")
+        assert has_element?(view, "#status-cache-write", "3")
+      end
+
+      send(
+        view.pid,
+        {:agent_event,
+         agent_event(:run_end, %{status: "completed", turns: 2, usage: payload["usage"]}, 5)}
+      )
+
+      assert has_element?(view, "#status-input-tokens", "25")
+      assert has_element?(view, "#status-output-tokens", "35")
+
+      send(view.pid, {:agent_event, agent_event(:run_start, %{model: "fake"}, 6)})
+      assert has_element?(view, "#status-input-tokens", "0")
+      assert has_element?(view, "#status-output-tokens", "0")
+
+      send(view.pid, {:agent_event, agent_event(:run_end, %{status: :cancelled}, 7)})
+      send(view.pid, {:agent_event, agent_event(:usage_updated, payload, 8)})
+      assert has_element?(view, "#status-input-tokens", "0")
+      assert has_element?(view, "#status-output-tokens", "0")
+    end
+
     test "run_end event updates input and output token counts from provider usage", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/")
 
