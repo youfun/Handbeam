@@ -689,31 +689,39 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   @impl true
   def handle_event("select_conversation", %{"id" => conv_id, "ws_id" => ws_id}, socket) do
-    {socket, _conv_id} = ConversationSwitching.select_conversation(socket, ws_id, conv_id)
+    with {:ok, %{"workspace_id" => ^ws_id}} <- Handbeam.ConversationStore.get(conv_id) do
+      {socket, _conv_id} = ConversationSwitching.select_conversation(socket, ws_id, conv_id)
 
-    socket =
-      socket
-      |> handle_workspace_switch()
-      |> subscribe_to_session()
-      |> restore_active_session_snapshot()
-      |> close_mobile_sheets()
+      socket =
+        socket
+        |> handle_workspace_switch()
+        |> subscribe_to_session()
+        |> restore_active_session_snapshot()
+        |> close_mobile_sheets()
 
-    {:noreply, push_patch(socket, to: "/w/#{ws_id}/c/#{conv_id}")}
+      {:noreply, push_patch(socket, to: "/w/#{ws_id}/c/#{conv_id}")}
+    else
+      _ -> {:noreply, socket}
+    end
   end
 
   @impl true
   def handle_event("select_archived_conversation", %{"id" => conv_id, "ws" => ws_id}, socket) do
-    {socket, _conv_id} =
-      ConversationSwitching.select_archived_conversation(socket, ws_id, conv_id)
+    with {:ok, %{"workspace_id" => ^ws_id}} <- Handbeam.ConversationStore.get(conv_id) do
+      {socket, _conv_id} =
+        ConversationSwitching.select_archived_conversation(socket, ws_id, conv_id)
 
-    socket =
-      socket
-      |> sync_conv_state(reload?: true)
-      |> subscribe_to_session()
-      |> restore_active_session_snapshot()
-      |> close_mobile_sheets()
+      socket =
+        socket
+        |> sync_conv_state(reload?: true)
+        |> subscribe_to_session()
+        |> restore_active_session_snapshot()
+        |> close_mobile_sheets()
 
-    {:noreply, push_patch(socket, to: "/w/#{ws_id}/c/#{conv_id}")}
+      {:noreply, push_patch(socket, to: "/w/#{ws_id}/c/#{conv_id}")}
+    else
+      _ -> {:noreply, socket}
+    end
   end
 
   @impl true

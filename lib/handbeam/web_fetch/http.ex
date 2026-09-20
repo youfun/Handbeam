@@ -82,6 +82,11 @@ defmodule Handbeam.WebFetch.HTTP do
     consume(events, ref, %{response | status: status})
   end
 
+  defp consume([{:headers, ref, _headers} | events], ref, %{status: status} = response)
+       when status in 100..199 and status != 101 do
+    consume(events, ref, %{response | status: nil})
+  end
+
   defp consume([{:headers, ref, headers} | events], ref, response) do
     response = %{response | headers: response.headers ++ headers}
 

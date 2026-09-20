@@ -22,6 +22,33 @@ defmodule Handbeam.WebFetch.HTTPTest do
     assert_receive {:closed, ^server, {:error, :closed}}
   end
 
+  test "discards informational headers and reads the final response" do
+    {port, _} =
+      serve(fn socket, _ ->
+        :gen_tcp.send(socket, [
+          "HTTP/1.1 100 Continue\r\n\r\n",
+          "HTTP/1.1 103 Early Hints\r\nLink: </style.css>; rel=preload\r\n\r\n",
+          "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 2\r\n\r\nOK"
+        ])
+      end)
+
+    assert {:ok, %{status: 200, body: "OK", headers: headers}} = get(port)
+    assert {"content-type", "text/plain"} in headers
+    refute List.keymember?(headers, "link", 0)
+  end
+
+  test "informational response without a final response still times out" do
+    {port, server} =
+      serve(fn socket, _ ->
+        :gen_tcp.send(socket, "HTTP/1.1 103 Early Hints\r\n\r\n")
+      end)
+
+    assert {:error, _} =
+             HTTP.get(URI.parse("http://docs.test:#{port}"), {127, 0, 0, 1}, deadline(100))
+
+    assert_receive {:closed, ^server, {:error, :closed}}
+  end
+
   test "rejects advertised and streamed bodies over 1 MiB" do
     {port, _} =
       serve(fn socket, _ ->
