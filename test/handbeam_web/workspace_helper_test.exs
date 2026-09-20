@@ -421,6 +421,29 @@ defmodule HandbeamWeb.WorkspaceHelperTest do
     end
   end
 
+  test "format_tokens uses decimal units, trims zeros and promotes rounded boundaries" do
+    for {tokens, expected} <- [
+          {0, "0"},
+          {827, "827"},
+          {999, "999"},
+          {1000, "1K"},
+          {1049, "1K"},
+          {1050, "1.1K"},
+          {5481, "5.5K"},
+          {33_261, "33.3K"},
+          {999_949, "999.9K"},
+          {999_950, "1M"},
+          {999_999, "1M"},
+          {1_000_000, "1M"},
+          {1_049_999, "1M"},
+          {1_050_000, "1.1M"},
+          {1_200_000, "1.2M"},
+          {10_000_000, "10M"}
+        ] do
+      assert WorkspaceHelper.format_tokens(tokens) == expected
+    end
+  end
+
   # ── format_bytes/1 ──
 
   describe "format_bytes/1" do

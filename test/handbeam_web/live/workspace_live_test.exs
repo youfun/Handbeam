@@ -1527,6 +1527,47 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert has_element?(view, "#status-output-tokens", "0")
     end
 
+    test "token footer formats live and final usage while preserving exact titles", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+      create_default_conversation(view)
+      send(view.pid, {:agent_event, agent_event(:run_start, %{model: "fake"})})
+      assert has_element?(view, "#status-input-tokens[title='0']", "0")
+
+      usage = %{
+        input_tokens: 5481,
+        output_tokens: 827,
+        cache_read_input_tokens: 999_950,
+        cache_creation_input_tokens: 1000
+      }
+
+      send(view.pid, {:agent_event, agent_event(:usage_updated, %{usage: usage}, 2)})
+      assert has_element?(view, "button[phx-click='stop_run']")
+      assert has_element?(view, "#status-input-tokens[title='5481']", "5.5K")
+      assert has_element?(view, "#status-output-tokens[title='827']", "827")
+      assert has_element?(view, "#status-cache-read[title='999950']", "1M")
+      assert has_element?(view, "#status-cache-write[title='1000']", "1K")
+
+      final_usage = %{
+        usage
+        | input_tokens: 33_261,
+          output_tokens: 1250,
+          cache_read_input_tokens: 1_200_000,
+          cache_creation_input_tokens: 999
+      }
+
+      send(
+        view.pid,
+        {:agent_event,
+         agent_event(:run_end, %{status: :completed, turns: 2, usage: final_usage}, 3)}
+      )
+
+      refute has_element?(view, "button[phx-click='stop_run']")
+      assert has_element?(view, "#status-input-tokens[title='33261']", "33.3K")
+      assert has_element?(view, "#status-output-tokens[title='1250']", "1.3K")
+      assert has_element?(view, "#status-cache-read[title='1200000']", "1.2M")
+      assert has_element?(view, "#status-cache-write[title='999']", "999")
+    end
+
     test "run_end event updates input and output token counts from provider usage", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/")
 

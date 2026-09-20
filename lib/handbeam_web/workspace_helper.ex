@@ -406,6 +406,27 @@ defmodule HandbeamWeb.WorkspaceHelper do
   def format_bytes(bytes), do: "#{Float.round(bytes / 1_048_576, 2)} MB"
 
   @doc """
+  Formats tokens with decimal K/M units and at most one decimal place.
+  Rounds half up and promotes rounded 1000K to 1M.
+
+  ## Examples
+
+      iex> HandbeamWeb.WorkspaceHelper.format_tokens(5481)
+      "5.5K"
+
+      iex> HandbeamWeb.WorkspaceHelper.format_tokens(999_950)
+      "1M"
+  """
+  def format_tokens(tokens) when tokens < 1000, do: Integer.to_string(tokens)
+  def format_tokens(tokens) when tokens < 999_950, do: compact_tokens(tokens, 1000, "K")
+  def format_tokens(tokens), do: compact_tokens(tokens, 1_000_000, "M")
+
+  defp compact_tokens(tokens, unit, suffix) do
+    value = (tokens / unit) |> Float.round(1) |> :erlang.float_to_binary(decimals: 1)
+    String.trim_trailing(value, ".0") <> suffix
+  end
+
+  @doc """
   Returns the diff line prefix character for a given diff type.
   """
   def diff_prefix("ins"), do: "+"

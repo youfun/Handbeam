@@ -3321,6 +3321,7 @@ defmodule HandbeamWeb.WorkspaceLive do
   defdelegate user_message_nav_items(entries), to: HandbeamWeb.WorkspaceHelper
   defdelegate format_duration(ms), to: HandbeamWeb.WorkspaceHelper
   defdelegate format_bytes(bytes), to: HandbeamWeb.WorkspaceHelper
+  defdelegate format_tokens(tokens), to: HandbeamWeb.WorkspaceHelper
   defdelegate diff_prefix(type), to: HandbeamWeb.WorkspaceHelper
   defdelegate file_value(file, key, default), to: HandbeamWeb.WorkspaceHelper
   defdelegate archived_stream_count(entries), to: HandbeamWeb.WorkspaceHelper
