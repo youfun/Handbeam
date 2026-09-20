@@ -43,6 +43,32 @@ defmodule Handbeam.Agent.CandidateQueueTest do
       assert [%Message{content: "before"}] = CandidateQueue.drain_steer(queue)
     end
 
+    test "enqueue treats orderly shutdown during a call and stale PIDs as sealed" do
+      for reason <- [:normal, :shutdown] do
+        {queue, ref} =
+          spawn_monitor(fn ->
+            receive do
+              {:"$gen_call", _from, {:enqueue, _, _, _}} -> exit(reason)
+            end
+          end)
+
+        assert {:error, :sealed} = CandidateQueue.enqueue(queue, "during shutdown")
+        assert_receive {:DOWN, ^ref, :process, ^queue, ^reason}
+        assert {:error, :sealed} = CandidateQueue.enqueue(queue, "after shutdown")
+      end
+    end
+
+    test "enqueue does not hide unexpected crashes as orderly sealing" do
+      queue =
+        spawn(fn ->
+          receive do
+            {:"$gen_call", _from, {:enqueue, _, _, _}} -> exit(:unexpected_crash)
+          end
+        end)
+
+      assert {:unexpected_crash, _} = catch_exit(CandidateQueue.enqueue(queue, "message"))
+    end
+
     test "reports pending messages" do
       {:ok, queue} = CandidateQueue.start_link(session_id: "cq-pending", owner: self())
 

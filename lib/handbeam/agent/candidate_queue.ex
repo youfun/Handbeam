@@ -23,6 +23,9 @@ defmodule Handbeam.Agent.CandidateQueue do
   def enqueue(server, message, opts \\ []) do
     deliver_as = Keyword.get(opts, :deliver_as, :steer)
     GenServer.call(server, {:enqueue, message, deliver_as, opts})
+  catch
+    :exit, {reason, _call} when reason in [:noproc, :normal, :shutdown] ->
+      {:error, :sealed}
   end
 
   def drain_steer(server), do: GenServer.call(server, {:drain, :steer})

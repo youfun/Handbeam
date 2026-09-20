@@ -185,7 +185,7 @@ defmodule Handbeam.Agent.Runner do
       }}, state}
   end
 
-  def handle_call(:cancel, _from, %{status: status, task: task} = state)
+  def handle_call(:cancel, from, %{status: status, task: task} = state)
       when status in [:running, :awaiting_approval] do
     close_scope(state)
     shutdown_run_task(task)
@@ -193,8 +193,10 @@ defmodule Handbeam.Agent.Runner do
     Handbeam.Agent.CandidateQueue.seal(state.queue_pid)
     Session.broadcast_event(state.conversation_id, :run_end, %{status: "cancelled", turns: 0})
     Session.mark_run_finished(state.conversation_id)
+    # Teardown may terminate this Runner immediately; acknowledge before launching it.
+    GenServer.reply(from, :ok)
     stop_run_supervisor(state)
-    {:reply, :ok, %{state | status: :cancelled, task: nil, interrupted_state: nil}}
+    {:noreply, %{state | status: :cancelled, task: nil, interrupted_state: nil}}
   end
 
   def handle_call(:cancel, _from, state) do

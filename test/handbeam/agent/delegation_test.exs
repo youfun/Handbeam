@@ -246,11 +246,19 @@ defmodule Handbeam.Agent.DelegationTest do
   end
 
   test "killed tool caller cannot orphan a child", %{context: context} do
+    owner = Process.whereis(Delegation)
+    :erlang.trace(owner, true, [:receive])
+    on_exit(fn -> :erlang.trace(owner, false, [:receive]) end)
     task = delegate(context)
     assert_receive {:provider, :child, child, _, _, _}, 2_000
+    assert_receive {:trace, ^owner, :receive, {:started, id, {:ok, _}}}, 2_000
     ref = Process.monitor(child)
     Task.shutdown(task, :brutal_kill)
     assert_receive {:DOWN, ^ref, :process, ^child, _}, 2_000
+    assert_receive {:trace, ^owner, :receive, {:cleaned, ^id}}, 2_000
+    # The worker's DOWN precedes usage persistence. Drain the owner callback
+    # before teardown removes HOME and races the final ledger write.
+    refute Map.has_key?(:sys.get_state(owner), id)
     assert Policy.live_parent?(context)
   end
 
