@@ -219,6 +219,10 @@ defmodule Handbeam.Agent.DelegationTest do
                run_id: job.run_id
              )
 
+    assert :ok = Handbeam.Agent.TranscriptRecovery.recover(id)
+    assert {:ok, entries} = Handbeam.ConversationStore.load_messages_result(id)
+    assert Enum.find(entries, &(&1["id"] == "running-tool"))["tool_status"] == "running"
+
     assert :ok = Coordinator.cancel(id)
     assert {:error, _, _} = Task.await(task, 5_000)
     assert {:ok, entries} = Handbeam.ConversationTranscriptStore.list(id, access_context: context)
@@ -228,8 +232,24 @@ defmodule Handbeam.Agent.DelegationTest do
   test "child crash does not restart or stop its parent", %{context: context} do
     task = delegate(context)
     assert_receive {:provider, :child, child, _, _, _}, 2_000
+    [{id, job}] = Map.to_list(:sys.get_state(Delegation))
+
+    assert {:ok, _} =
+             Handbeam.ConversationTranscriptStore.append(id, %{
+               "id" => "unfinished-reply",
+               "role" => "assistant",
+               "status" => "streaming",
+               "content" => "durable before crash",
+               "run_id" => job.run_id
+             })
+
     send(child, :crash)
     assert {:error, _, _} = Task.await(task, 5_000)
+    assert {:ok, entries} = Handbeam.ConversationStore.load_messages_result(id)
+    reply = Enum.find(entries, &(&1["id"] == "unfinished-reply"))
+    assert reply["status"] == "error"
+    assert reply["content"] == "durable before crash"
+    assert {:error, :not_found} = Handbeam.ConversationTranscriptStore.list(id)
     assert Policy.live_parent?(context)
     refute_receive {:provider, :child, _, _, _, _}, 100
   end

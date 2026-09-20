@@ -12,6 +12,11 @@ error entry per run. It skips active Runners (including approval waits) and does
 not rerun tools or redeliver old messages. Tests disable automatic startup
 recovery and invoke it against isolated histories.
 
+Recovery runs in a registered, supervised owner. Only that process identity (not
+`source: :recovery` or a caller-supplied bypass flag) may read internal delegated
+transcripts for orphan maintenance. The recovery API returns status, never
+transcript contents; public reads of internal conversations remain restricted.
+
 ## JSONL compatibility
 
 Legacy plain entries remain readable. Updates and deletions now append versioned

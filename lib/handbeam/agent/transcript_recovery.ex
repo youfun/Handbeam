@@ -7,18 +7,43 @@ defmodule Handbeam.Agent.TranscriptRecovery do
   An active Runner, including one awaiting approval, remains the lifecycle owner.
   """
 
+  use GenServer
+
   require Logger
 
   alias Handbeam.Agent.{Runner, TranscriptPersistence}
   alias Handbeam.ConversationTranscriptStore
 
-  def run do
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  def run, do: GenServer.call(__MODULE__, :run, :infinity)
+  def recover(id), do: GenServer.call(__MODULE__, {:recover, id}, :infinity)
+
+  @impl true
+  def init(opts) do
+    if Keyword.get(opts, :recover_on_start, true),
+      do: {:ok, nil, {:continue, :recover}},
+      else: {:ok, nil}
+  end
+
+  @impl true
+  def handle_continue(:recover, state) do
+    recover_all()
+    {:noreply, state}
+  end
+
+  @impl true
+  def handle_call(:run, _from, state), do: {:reply, recover_all(), state}
+
+  def handle_call({:recover, id}, _from, state), do: {:reply, recover_orphan(id), state}
+
+  defp recover_all do
     items = Path.join(Handbeam.ConversationStore.storage_dir(), "items")
 
     case File.ls(items) do
       {:ok, ids} ->
         Enum.each(ids, fn id ->
-          case recover(id) do
+          case recover_orphan(id) do
             :ok -> :ok
             {:error, reason} -> Logger.error("[TranscriptRecovery] #{id}: #{inspect(reason)}")
           end
@@ -34,14 +59,20 @@ defmodule Handbeam.Agent.TranscriptRecovery do
     :ok
   end
 
-  def recover(conversation_id) do
-    with {:ok, entries} <- ConversationTranscriptStore.list(conversation_id) do
-      case Runner.status(conversation_id) do
-        {:ok, %{running?: true}} -> :ok
-        {:error, :not_found} -> recover_runs(conversation_id, entries)
-        _ -> :ok
-      end
+  defp recover_orphan(conversation_id) do
+    case Runner.status(conversation_id) do
+      {:error, :not_found} ->
+        with {:ok, entries} <- ConversationTranscriptStore.list(conversation_id) do
+          recover_runs(conversation_id, entries)
+        end
+
+      _ ->
+        :ok
     end
+  rescue
+    error -> {:error, error}
+  catch
+    :exit, reason -> {:error, reason}
   end
 
   defp recover_runs(conversation_id, entries) do

@@ -12,7 +12,8 @@ defmodule Handbeam.ConversationTranscriptStore.ConversationStore do
   @impl true
   def list(conversation_id, opts) do
     if Handbeam.ConversationStore.internal?(conversation_id) and
-         not runtime_reader?(conversation_id, opts) do
+         not runtime_reader?(conversation_id, opts) and
+         self() != Process.whereis(Handbeam.Agent.TranscriptRecovery) do
       with {:ok, conversation} <- Handbeam.ConversationStore.get(conversation_id, opts) do
         {:ok, conversation["timeline"]}
       end

@@ -33,6 +33,19 @@ defmodule HandbeamWeb.ConnCase do
 
   setup tags do
     Handbeam.DataCase.setup_sandbox(tags)
-    {:ok, conn: Phoenix.ConnTest.build_conn() |> Map.put(:host, "localhost")}
+    conn = Phoenix.ConnTest.build_conn() |> Map.put(:host, "localhost")
+    conn = if tags[:unauthenticated], do: conn, else: authenticate(conn)
+    {:ok, conn: conn}
+  end
+
+  def authenticate(conn) do
+    config = Application.get_env(:handbeam, :access, [])
+
+    if config[:mode] == :password do
+      credentials = config[:username] <> ":" <> config[:password]
+      Plug.Conn.put_req_header(conn, "authorization", "Basic " <> Base.encode64(credentials))
+    else
+      conn
+    end
   end
 end

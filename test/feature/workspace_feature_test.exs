@@ -43,7 +43,7 @@ defmodule HandbeamWeb.Feature.WorkspaceFeatureTest do
 
   setup do
     isolate_conversation_home!()
-    {:ok, conn: %{Phoenix.ConnTest.build_conn() | host: "localhost"}}
+    :ok
   end
 
   describe "workspace mount" do

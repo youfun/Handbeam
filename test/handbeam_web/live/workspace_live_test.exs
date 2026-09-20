@@ -1384,11 +1384,17 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
     test "tool_end event with non-empty diff adds to editor_files", %{conn: conn} do
       ws = Handbeam.Workspace.ensure_root!()
       file_path = Path.join(ws, "changed.ex")
-      File.write!(file_path, "# changed")
 
       {:ok, view, _html} = live(conn, "/")
 
+      refute has_element?(
+               view,
+               "button[phx-click='select_workspace_file'][phx-value-path='changed.ex']"
+             )
+
       try do
+        File.write!(file_path, "# changed")
+
         send(
           view.pid,
           {:agent_event,
@@ -1407,6 +1413,11 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
 
         rendered = render(view)
         assert rendered =~ "changed.ex"
+
+        assert has_element?(
+                 view,
+                 "button[phx-click='select_workspace_file'][phx-value-path='changed.ex']"
+               )
       after
         File.rm(file_path)
       end
@@ -2572,11 +2583,11 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       Application.delete_env(:handbeam, :openai)
     end
 
-    test "openai_provider_config returns defaults when no env configured" do
+    test "openai_provider_config returns defaults when no env configured", %{conn: conn} do
       # Ensure no config is set
       Application.delete_env(:handbeam, :openai)
 
-      {:ok, _view, html} = build_conn() |> Map.put(:host, "localhost") |> live("/")
+      {:ok, _view, html} = live(conn, "/")
 
       # Status bar should show default OpenAI model
       assert html =~ "step-router-v1"

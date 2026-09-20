@@ -74,15 +74,10 @@ defmodule Handbeam.Application do
   end
 
   defp recovery_children do
-    if Application.get_env(:handbeam, :recover_transcripts, true) do
-      [
-        Supervisor.child_spec({Task, &Handbeam.Agent.TranscriptRecovery.run/0},
-          id: Handbeam.Agent.TranscriptRecovery
-        )
-      ]
-    else
-      []
-    end
+    [
+      {Handbeam.Agent.TranscriptRecovery,
+       recover_on_start: Application.get_env(:handbeam, :recover_transcripts, true)}
+    ]
   end
 
   defp terminal_children do

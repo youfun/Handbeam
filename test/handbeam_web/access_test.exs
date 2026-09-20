@@ -1,6 +1,8 @@
 defmodule HandbeamWeb.AccessTest do
   use HandbeamWeb.ConnCase, async: false
 
+  @moduletag :unauthenticated
+
   setup do
     old = Application.get_env(:handbeam, :access)
 

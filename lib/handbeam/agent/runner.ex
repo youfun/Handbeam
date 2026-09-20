@@ -68,6 +68,10 @@ defmodule Handbeam.Agent.Runner do
     content = Keyword.fetch!(opts, :content)
     run_opts = Keyword.fetch!(opts, :run_opts)
 
+    # Delegated tasks stay linked so killing their Runner also kills the task.
+    # Trap task exits so the monitor's DOWN can durably close a crashed child run.
+    if run_opts[:delegated?], do: Process.flag(:trap_exit, true)
+
     state = %__MODULE__{
       conversation_id: conversation_id,
       content: content,
