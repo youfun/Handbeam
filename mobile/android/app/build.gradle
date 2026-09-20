@@ -42,8 +42,8 @@ android {
         applicationId foundationTestApp ? "com.example.handbeam_probe.foundationtest" : "com.example.handbeam_probe.nativechat"
         minSdk 28
         targetSdk 35
-        versionCode 2
-        versionName "0.1.0"
+        versionCode 3
+        versionName "0.1.1"
         buildConfigField "boolean", "FOUNDATION_TEST_APP", foundationTestApp.toString()
 
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
