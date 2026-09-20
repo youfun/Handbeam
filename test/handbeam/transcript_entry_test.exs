@@ -23,6 +23,18 @@ defmodule Handbeam.TranscriptEntryTest do
     assert TranscriptEntry.input(entry) == %{"path" => "a.txt"}
   end
 
+  test "canonical nil fields override stale values on mixed legacy records" do
+    entry = %{
+      "tool_error" => nil,
+      "error" => "stale error",
+      "tool_duration_ms" => nil,
+      "duration_ms" => 99
+    }
+
+    assert TranscriptEntry.error(entry) == nil
+    assert TranscriptEntry.duration_ms(entry) == nil
+  end
+
   test "falls back to the legacy bare names for old messages.jsonl entries" do
     entry = %{"tool" => "bash", "status" => "error", "duration_ms" => 7, "error" => "exit 1"}
 

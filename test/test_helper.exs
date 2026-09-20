@@ -1,4 +1,10 @@
-ExUnit.configure(exclude: [:slow, :e2e, :external_api])
+platform_excludes =
+  case :os.type() do
+    {:unix, :linux} -> []
+    _ -> [:linux_jobs, :linux_sandbox]
+  end
+
+ExUnit.configure(exclude: [:slow, :e2e, :external_api] ++ platform_excludes)
 ExUnit.start()
 Ecto.Adapters.SQL.Sandbox.mode(Handbeam.Repo, :manual)
 

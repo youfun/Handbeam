@@ -20,6 +20,7 @@ defmodule Handbeam.Tool.Builtin.BashTest do
   alias Handbeam.Tool.Builtin.Bash
 
   describe "basic command execution" do
+    @describetag :linux_sandbox
     test "executes a simple command and returns output" do
       {:ok, output, data} =
         Bash.execute(
@@ -46,6 +47,7 @@ defmodule Handbeam.Tool.Builtin.BashTest do
   end
 
   describe "non-zero exit code" do
+    @describetag :linux_sandbox
     test "reports non-zero exit code in output" do
       {:ok, output, data} =
         Bash.execute(
@@ -59,6 +61,7 @@ defmodule Handbeam.Tool.Builtin.BashTest do
   end
 
   describe "cwd override" do
+    @describetag :linux_sandbox
     test "executes command in specified directory" do
       # Use a subdirectory of the current working directory to stay within workspace
       tmp_dir = Path.join(File.cwd!(), "tmp_bash_cwd_test")
@@ -138,6 +141,7 @@ defmodule Handbeam.Tool.Builtin.BashTest do
   end
 
   describe "timeout handling" do
+    @describetag :linux_sandbox
     test "kills command that exceeds timeout" do
       {:ok, output, data} =
         Bash.execute(
@@ -151,6 +155,7 @@ defmodule Handbeam.Tool.Builtin.BashTest do
   end
 
   describe "output truncation" do
+    @describetag :linux_sandbox
     test "handles large output gracefully" do
       # Generate enough output to potentially trigger truncation
       {:ok, output, _data} =
@@ -165,7 +170,9 @@ defmodule Handbeam.Tool.Builtin.BashTest do
   end
 
   describe "security — workspace boundary" do
+    @tag :linux_sandbox
     test "runtime-computed paths cannot modify the host outside the workspace" do
+      # Requires the Linux workspace sandbox; path-validation-only cases below remain portable.
       workspace =
         Path.join(System.tmp_dir!(), "bash_sandbox_ws_#{System.unique_integer([:positive])}")
 
@@ -193,6 +200,7 @@ defmodule Handbeam.Tool.Builtin.BashTest do
       end
     end
 
+    @tag :linux_sandbox
     test "workspace writes persist through the sandbox" do
       workspace =
         Path.join(System.tmp_dir!(), "bash_sandbox_write_#{System.unique_integer([:positive])}")
@@ -243,6 +251,7 @@ defmodule Handbeam.Tool.Builtin.BashTest do
       assert reason =~ "Path traversal" or reason =~ "outside workspace"
     end
 
+    @tag :linux_sandbox
     test "allows /dev/null as a shell redirection target" do
       {:ok, output, data} =
         Bash.execute(
@@ -254,6 +263,7 @@ defmodule Handbeam.Tool.Builtin.BashTest do
       assert data.exit_code == 0
     end
 
+    @tag :linux_sandbox
     test "allows commands that reference paths within the workspace" do
       tmp_dir = Path.join(File.cwd!(), "tmp_bash_guard_test")
       File.mkdir_p!(tmp_dir)
@@ -345,6 +355,7 @@ defmodule Handbeam.Tool.Builtin.BashTest do
   # ── BDD scenarios translated from gong/docs/bdd/bash_action.dsl ──
 
   describe "BDD-BASH-008 stderr 和 stdout 合并" do
+    @describetag :linux_sandbox
     test "captures both stdout and stderr in output" do
       {:ok, output, data} =
         Bash.execute(
@@ -359,6 +370,7 @@ defmodule Handbeam.Tool.Builtin.BashTest do
   end
 
   describe "BDD-BASH-012 env inheritance" do
+    @describetag :linux_sandbox
     test "inherits environment variables from parent process" do
       env_key = "HANDBEAM_BDD_ENV_TEST"
       env_val = "gong_env_value_#{System.unique_integer([:positive])}"
@@ -378,6 +390,7 @@ defmodule Handbeam.Tool.Builtin.BashTest do
   end
 
   describe "BDD-BASH-013 command not found exit 127" do
+    @describetag :linux_sandbox
     test "returns exit code 127 for nonexistent command" do
       {:ok, output, data} =
         Bash.execute(
@@ -391,6 +404,7 @@ defmodule Handbeam.Tool.Builtin.BashTest do
   end
 
   describe "BDD-BASH-014 返回值含 timed_out=false" do
+    @describetag :linux_sandbox
     test "returns timed_out: false for successful command" do
       {:ok, _output, data} =
         Bash.execute(
@@ -403,6 +417,7 @@ defmodule Handbeam.Tool.Builtin.BashTest do
   end
 
   describe "BDD-BASH-017 UTF-8 多字节跨 chunk 边界" do
+    @describetag :linux_sandbox
     test "handles multi-byte UTF-8 characters across chunk boundaries" do
       # Generate enough UTF-8 content to cross Port chunk boundaries
       # using POSIX shell + printf only (no python3 dependency)
@@ -419,6 +434,7 @@ defmodule Handbeam.Tool.Builtin.BashTest do
   end
 
   describe "BDD-BASH-020 管道 SIGPIPE 不报错" do
+    @describetag :linux_sandbox
     test "handles SIGPIPE in pipeline without error" do
       {:ok, output, data} =
         Bash.execute(
@@ -432,6 +448,7 @@ defmodule Handbeam.Tool.Builtin.BashTest do
   end
 
   describe "BDD-BASH-021 exact omitted line count" do
+    @describetag :linux_sandbox
     test "reports exact count of omitted lines on truncation" do
       {:ok, output, data} =
         Bash.execute(
@@ -455,6 +472,7 @@ defmodule Handbeam.Tool.Builtin.BashTest do
   end
 
   describe "BDD-BASH-022 special chars command" do
+    @describetag :linux_sandbox
     test "executes command with special characters in quotes" do
       {:ok, output, data} =
         Bash.execute(
@@ -469,6 +487,7 @@ defmodule Handbeam.Tool.Builtin.BashTest do
   end
 
   describe "BDD-BASH-023 cwd defaults to workspace/temp dir" do
+    @describetag :linux_sandbox
     test "defaults to working directory when cwd is empty string" do
       tmp_dir = Path.join(File.cwd!(), "tmp_bash_default_cwd")
       File.mkdir_p!(tmp_dir)

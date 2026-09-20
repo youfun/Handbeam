@@ -86,6 +86,47 @@ defmodule HandbeamWeb.ThreadHandoffTest do
     assert Handbeam.Agent.Runner.status(c.child) == {:error, :not_found}
   end
 
+  test "switching conversations restores both collaboration permission and history pagination",
+       c do
+    {:ok, entries} = ConversationTranscriptStore.list(c.parent)
+
+    history =
+      for n <- 1..105 do
+        %{
+          "id" => "history-#{n}",
+          "role" => "user",
+          "content_type" => "user_msg",
+          "content" => "Earlier message #{n}"
+        }
+      end
+
+    :ok = ConversationTranscriptStore.replace_all(c.parent, history ++ entries)
+    {:ok, _} = ConversationStore.update_meta(c.parent, allow_thread_wakeup: true)
+    {:ok, view, _} = live(c.conn, "/w/#{c.ws}/c/#{c.parent}")
+
+    assert has_element?(view, "button[phx-click='toggle_thread_collaboration']", "enabled")
+    assert has_element?(view, "button[phx-click='load_older_history']")
+    refute has_element?(view, "[data-user-msg='history-1']")
+    assert has_element?(view, "[data-thread-handoff='audit-a'] details")
+
+    view |> element("button[phx-click='load_older_history']") |> render_click()
+    assert has_element?(view, "[data-user-msg='history-1']")
+    refute has_element?(view, "button[phx-click='load_older_history']")
+
+    render_patch(view, "/w/#{c.ws}/c/#{c.child}")
+    refute has_element?(view, "button[phx-click='toggle_thread_collaboration']", "enabled")
+    refute has_element?(view, "button[phx-click='load_older_history']")
+    refute has_element?(view, "[data-user-msg='history-1']")
+
+    render_patch(view, "/w/#{c.ws}/c/#{c.parent}")
+    assert has_element?(view, "button[phx-click='toggle_thread_collaboration']", "enabled")
+    assert has_element?(view, "button[phx-click='load_older_history']")
+    assert has_element?(view, "[data-thread-handoff='audit-a'] details")
+    refute has_element?(view, "[data-user-msg='history-1']")
+    assert Handbeam.Agent.Runner.status(c.parent) == {:error, :not_found}
+    assert Handbeam.Agent.Runner.status(c.child) == {:error, :not_found}
+  end
+
   test "human permission toggle persists but never wakes a thread", c do
     {:ok, view, _} = live(c.conn, "/w/#{c.ws}/c/#{c.parent}")
     view |> element("button[phx-click='toggle_thread_collaboration']") |> render_click()

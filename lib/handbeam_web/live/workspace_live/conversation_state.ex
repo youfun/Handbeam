@@ -33,10 +33,18 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
 
     expanded = Map.get(socket.assigns, :expanded_tool_groups, MapSet.new())
 
-    timeline =
-      conv_id
-      |> load_transcript_entries(fallback)
-      |> HandbeamWeb.WorkspaceHelper.apply_tool_work_collapse(expanded)
+    {timeline, history_before, history_has_more?} =
+      if running_for_conversation?(socket, conv_id) and current_timeline != [] do
+        {current_timeline, Map.get(socket.assigns, :history_before),
+         Map.get(socket.assigns, :history_has_more?, false)}
+      else
+        conv_id
+        |> load_transcript_page(fallback)
+        |> then(fn {entries, before, has_more?} ->
+          {HandbeamWeb.WorkspaceHelper.apply_tool_work_collapse(entries, expanded), before,
+           has_more?}
+        end)
+      end
 
     available_models = Map.get(socket.assigns, :available_models, [])
     selected_model = conversation_selected_model(socket, conv, available_models)
@@ -47,6 +55,8 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
       socket
       |> assign(:timeline, timeline)
       |> assign(:thread_collaboration_enabled, HandbeamWeb.ThreadHandoff.enabled?(conv_id))
+      |> assign(:history_before, history_before)
+      |> assign(:history_has_more?, history_has_more?)
       |> maybe_reset_timeline_stream(timeline, running_for_conversation?)
 
     socket
@@ -155,11 +165,11 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
     conv_id = socket.assigns.current_conversation_id
 
     if is_binary(conv_id) do
-      case Handbeam.ConversationStore.get(conv_id) do
+      case Handbeam.ConversationStore.get(conv_id, include_timeline?: false) do
         {:ok, conversation} ->
           Logger.debug(
             "[WorkspaceLive] loaded conversation from store conversation=#{conv_id} " <>
-              "timeline=#{length(Map.get(conversation, "timeline", []))}"
+              "metadata_only=true"
           )
 
           conversation
@@ -178,6 +188,37 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
   end
 
   def load_transcript_entries(_conversation_id, fallback), do: fallback
+
+  def load_transcript_page(conversation_id, fallback) when is_binary(conversation_id) do
+    case Handbeam.ConversationTranscriptStore.page(conversation_id, limit: 100) do
+      {:ok, %{entries: entries, before: before, has_more?: has_more?}} ->
+        {entries, before, has_more?}
+
+      {:error, _reason} ->
+        {fallback, nil, false}
+    end
+  end
+
+  def load_transcript_page(_conversation_id, fallback), do: {fallback, nil, false}
+
+  def load_older_history(socket) do
+    conv_id = socket.assigns.current_conversation_id
+    before = Map.get(socket.assigns, :history_before)
+
+    with true <- is_binary(conv_id) and is_binary(before),
+         {:ok, %{entries: entries, before: next_before, has_more?: has_more?}} <-
+           Handbeam.ConversationTranscriptStore.page(conv_id, limit: 100, before: before) do
+      timeline = deduplicate_entries(entries ++ socket.assigns.timeline)
+
+      socket
+      |> assign(:timeline, timeline)
+      |> assign(:history_before, next_before)
+      |> assign(:history_has_more?, has_more?)
+      |> stream(:timeline, timeline, reset: true)
+    else
+      _ -> socket
+    end
+  end
 
   def maybe_replace_current_conversation(socket, conv) do
     if is_binary(socket.assigns.current_conversation_id) do
@@ -325,7 +366,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
 
   defp load_or_build_current_conversation(conv_id, ws_id)
        when is_binary(conv_id) and is_binary(ws_id) do
-    case Handbeam.ConversationStore.get(conv_id) do
+    case Handbeam.ConversationStore.get(conv_id, include_timeline?: false) do
       {:ok, conversation} ->
         conversation
 
@@ -359,6 +400,10 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
   defp normalize_editor_file(%{path: _, name: _} = file), do: file
   defp normalize_editor_file(%{"path" => path, "name" => name}), do: %{path: path, name: name}
   defp normalize_editor_file(file), do: file
+
+  defp deduplicate_entries(entries) do
+    Enum.uniq_by(entries, &conv_value(&1, "id", nil))
+  end
 
   defp conversation_selected_model(_socket, conv, available) do
     stored_model = conv_value(conv, "selected_model", nil)

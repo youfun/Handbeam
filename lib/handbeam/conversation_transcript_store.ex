@@ -10,6 +10,8 @@ defmodule Handbeam.ConversationTranscriptStore do
   @type entry :: map()
 
   @callback list(String.t(), keyword()) :: {:ok, [entry()]} | {:error, term()}
+  @callback page(String.t(), keyword()) :: {:ok, map()} | {:error, term()}
+  @optional_callbacks page: 2
   @callback append(String.t(), entry(), keyword()) :: {:ok, entry()} | {:error, term()}
   @callback update(String.t(), String.t(), map(), keyword()) :: {:ok, entry()} | {:error, term()}
   @callback delete(String.t(), String.t(), keyword()) :: :ok | {:error, term()}
@@ -19,6 +21,22 @@ defmodule Handbeam.ConversationTranscriptStore do
   @spec list(String.t(), keyword()) :: {:ok, [entry()]} | {:error, term()}
   def list(conversation_id, opts \\ []) when is_binary(conversation_id) do
     impl(opts).list(conversation_id, opts)
+  end
+
+  @doc """
+  Read a bounded history page in chronological order, newest page by default.
+
+  `:limit` is 1..200 (default 100). Pass the returned `:before` entry ID to
+  load the preceding page. A deleted cursor returns `:invalid_cursor`; restart
+  from the newest page rather than silently skipping history. Full `list/2`
+  remains available for runtime context/recovery and legacy adapters.
+  """
+  def page(conversation_id, opts \\ []) when is_binary(conversation_id) do
+    store = impl(opts)
+
+    if Code.ensure_loaded?(store) and function_exported?(store, :page, 2),
+      do: store.page(conversation_id, opts),
+      else: {:error, :pagination_not_supported}
   end
 
   @doc "Append one transcript entry, filling common fields when absent."

@@ -135,7 +135,12 @@ defmodule HandbeamProbe.ScriptEnvironmentTest do
       assert description =~ "Req.get"
       assert description =~ "NOT automatically workspace-relative"
       refute system =~ "NimbleCSV.RFC4180"
-      if unquote(mode) == :custom, do: assert(system == "Custom prompt only.")
+
+      if unquote(mode) == :custom do
+        assert String.starts_with?(system, "Custom prompt only.\n\n## Host execution environment")
+        assert system =~ "There is no Unix shell on this host available to the agent."
+        assert system =~ "These host capabilities do not grant permission."
+      end
     end
   end
 end

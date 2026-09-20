@@ -151,7 +151,7 @@ Session owns runtime event snapshot/replay, not conversation history.
 |------|------|------|
 | inbound user | `user_msg` / `user` / `user` / `inbound` | `id`（`opts[:transcript_id]` / `opts[:inbound_id]` / `opts[:message_id]` 应对齐为同一值）、`content`（纯文本）、`attachments`、`raw_content`、`inbound_id`、`delivery`（`"new_run"` / `"steer"` / `"follow_up"`）、`interrupts_work`（仅 `"steer"` 为 true） |
 | assistant | `assistant_msg` / `assistant` / `assistant` / `outbound` | `id`（`msg-assistant-*`）、`content`（累计文本）、`status`：`streaming` → `completed`、`phase`：`commentary`（被 tool_start 截断）或 `final` |
-| tool | `tool` / `tool` / `tool` / `internal` | `id`（`tool-<tool_use_id>`）、`tool_use_id`、`tool` + `tool_name`、`status` + `tool_status`（`running`/`done`/`error`/`cancelled`）、`input`、`started_at`、`duration_ms` + `tool_duration_ms`、`error` + `tool_error`、`output`、`details`、`file_path`、`diff_lines` |
+| tool | `tool` / `tool` / `tool` / `internal` | `id`（`tool-<tool_use_id>`）、`tool_use_id`、`tool_name`、`tool_status`（`running`/`done`/`error`/`cancelled`）、`input`、`started_at`、`tool_duration_ms`、`tool_error`、`output`、`details`、`file_path`、`diff_lines` |
 | run error | `system_msg` / `error` / `system` / `outbound` | `id`（`msg-system-*`）、`content`（`"Run error: ..."`）、`status: "final"` |
 
 inbound 附件相关字段：
@@ -160,13 +160,12 @@ inbound 附件相关字段：
 - `attachments`：`opts[:attachments]` 经 `Handbeam.Attachments.persistable/1` 规范化后的 list，每项只保留非 nil 的 `id`、`kind`（`"image"`/`"text"`）、`mime_type`、`filename`、`size_bytes`、`relative_path`（相对 workspace 的 `.handbeam/uploads/<conversation_id>/...`）、`source`、`url`。**不存 base64、不存 `content://` URI**；历史恢复由 `Handbeam.Attachments.History.to_messages/2` 按 `relative_path` 重新读文件。
 - `raw_content`：有附件时是 `%{"text", "attachments"}`；否则是去掉 `data`/`uri` 的 content block list 或原字符串。
 
-兼容期双写（`tool`/`tool_name`、`status`/`tool_status`、`duration_ms`/`tool_duration_ms`、`error`/`tool_error`）：
+工具字段兼容读取：
 
-- 现状：`TranscriptPersistence` 两个键都写。`Handbeam.TranscriptEntry` 提供统一读函数（`tool_name/1`、`tool_status/1`、`duration_ms/1`、`error/1`）。`handbeam_probe` 的 `WorkTimeline` / `NativeArtifactDelivery` 已改走它；`workspace_live.html.heex` 与 `HandbeamWeb.WorkspaceHelper` 仍有别名链。`tool_*` 前缀是为了和 assistant entry 的 `status`/`error` 语义区分而加的新名；无前缀版本是旧名。
-- 目标：`tool_*` 前缀为唯一写入名。移除计划：
-  1. ~~在 `sigil` 提供统一读函数，probe 读方改走它。~~（2026-09-10 已完成）
-  2. 其余读方（LiveView / WorkspaceHelper）改走 `TranscriptEntry`，不再直接 `||`。
-  3. 读方切换完成后，`TranscriptPersistence` 停写无前缀键；旧 `messages.jsonl` 由读函数兜底。新增读方不得再引入新的 `a || b` 别名链。
+- `TranscriptPersistence` 与工具投影只写 `tool_name` / `tool_status` / `tool_duration_ms` / `tool_error`，不再双写旧字段。
+- Web 与 native 读方统一使用 `Handbeam.TranscriptEntry`；旧 `messages.jsonl` 的 `tool` / `status` / `duration_ms` / `error` 仍可读取。canonical 键存在时优先，即使值为 nil，也不复活旧 error。
+- assistant/system 的 `status` / `error` 不受影响。新增读方不得再引入 `a || b` 别名链。
+- Journal 的 retry intent、自动 compaction、分页和跨 VM 原生锁契约见 `docs/transcript-durability.md`。不要直接逐行解析 journal 当作 timeline，也不要删除 `.handbeam-storage.lock` 绕过锁。
 
 ### Delivery
 
@@ -398,4 +397,3 @@ mix precommit         # 提交前检查
 - Changeset 优先，`:ok/:error` tuple 模式
 - 禁止 `IO.inspect`，用 `dbg/2`
 - 禁止 `Process.sleep` 掩盖并发问题
-

@@ -19,23 +19,29 @@ defmodule Handbeam.WorkspaceStoreTest do
   alias Handbeam.WorkspaceStore
 
   setup do
-    # Use isolated storage path per test
     test_id = System.unique_integer([:positive])
     storage_path = Path.join(System.tmp_dir!(), "sigil_ws_store_test_#{test_id}.json")
-    System.put_env("HANDBEAM_WORKSPACES_FILE", storage_path)
-    # Clear HANDBEAM_WORKSPACE to use default
-    System.delete_env("HANDBEAM_WORKSPACE")
+    workspace_path = Path.join(System.tmp_dir!(), "sigil_ws_store_workspace_#{test_id}")
+    previous_storage_path = System.get_env("HANDBEAM_WORKSPACES_FILE")
+    previous_workspace_path = System.get_env("HANDBEAM_WORKSPACE")
 
-    # Clean up any existing file
+    System.put_env("HANDBEAM_WORKSPACES_FILE", storage_path)
+    System.put_env("HANDBEAM_WORKSPACE", workspace_path)
+
     if File.exists?(storage_path), do: File.rm!(storage_path)
 
     on_exit(fn ->
-      System.delete_env("HANDBEAM_WORKSPACES_FILE")
+      restore_env("HANDBEAM_WORKSPACES_FILE", previous_storage_path)
+      restore_env("HANDBEAM_WORKSPACE", previous_workspace_path)
       if File.exists?(storage_path), do: File.rm!(storage_path)
+      File.rm_rf!(workspace_path)
     end)
 
-    {:ok, storage_path: storage_path}
+    {:ok, storage_path: storage_path, workspace_path: workspace_path}
   end
+
+  defp restore_env(name, nil), do: System.delete_env(name)
+  defp restore_env(name, value), do: System.put_env(name, value)
 
   describe "storage_path/0" do
     test "returns ~/.handbeam/workspaces.json by default" do
@@ -50,7 +56,10 @@ defmodule Handbeam.WorkspaceStoreTest do
   end
 
   describe "ensure_default!/0" do
-    test "creates default workspace when file does not exist", %{storage_path: storage_path} do
+    test "creates default workspace when file does not exist", %{
+      storage_path: storage_path,
+      workspace_path: workspace_path
+    } do
       refute File.exists?(storage_path)
 
       {:ok, ws} = WorkspaceStore.ensure_default!()
@@ -58,7 +67,7 @@ defmodule Handbeam.WorkspaceStoreTest do
       assert ws["id"] == "default"
       assert ws["name"] == "My Workspace"
       assert ws["default"] == true
-      assert String.contains?(ws["path"], "sigil")
+      assert ws["path"] == workspace_path
       assert ws["added_at"] =~ ~r/^\d{4}-\d{2}-\d{2}T/
       assert ws["last_opened_at"] =~ ~r/^\d{4}-\d{2}-\d{2}T/
 

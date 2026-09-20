@@ -20,8 +20,10 @@ defmodule Handbeam.Skills.LoaderTest do
 
   alias Handbeam.Skills
 
+  {:ok, canonical_tmp} = Handbeam.Security.PathValidator.canonicalize(System.tmp_dir!())
+
   @tmp_base Path.join(
-              System.tmp_dir!(),
+              canonical_tmp,
               "sigil_skills_test_#{System.unique_integer([:positive])}"
             )
 

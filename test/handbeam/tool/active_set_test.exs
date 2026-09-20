@@ -3,6 +3,12 @@ defmodule Handbeam.Tool.ActiveSetTest do
 
   alias Handbeam.Tool.Registry
 
+  setup do
+    registry_state = :sys.get_state(Registry)
+
+    on_exit(fn -> :sys.replace_state(Registry, fn _current -> registry_state end) end)
+  end
+
   describe "set_active_for_session/2 and active_for_session/1" do
     test "no active set returns nil (all tools available)" do
       assert Registry.active_for_session("no-such-session") == nil

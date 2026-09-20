@@ -1105,6 +1105,25 @@ defmodule Handbeam.Agent.TurnPermissionTest do
 
   alias Handbeam.Agent.{Config, Message, State, Turn}
 
+  defmodule TouchFixtureTool do
+    @behaviour Handbeam.Agent.Tool
+
+    def name, do: "permission_touch_fixture"
+    def description, do: "Deterministic permission-flow fixture"
+    def input_schema, do: %{type: "object", properties: %{file: %{type: "string"}}}
+
+    def execute(%{"file" => file}, %{working_directory: workspace}) do
+      :ok = File.write(Path.join(workspace, file), "approved")
+      {:ok, "touched #{file}", %{file_path: file}}
+    end
+  end
+
+  setup do
+    :ok = Handbeam.Tool.Registry.register(TouchFixtureTool, override: true)
+    on_exit(fn -> Handbeam.Tool.Registry.unregister(TouchFixtureTool.name()) end)
+    :ok
+  end
+
   defmodule TouchProvider do
     @behaviour Handbeam.Agent.Provider
 
@@ -1126,8 +1145,8 @@ defmodule Handbeam.Agent.TurnPermissionTest do
                %{
                  type: "tool_use",
                  id: "touch_1",
-                 name: "bash",
-                 input: %{"command" => "touch denied_marker"}
+                 name: "permission_touch_fixture",
+                 input: %{"file" => "denied_marker"}
                }
              ])
            ],
@@ -1151,7 +1170,8 @@ defmodule Handbeam.Agent.TurnPermissionTest do
   end
 
   test "deny policy returns a tool error result and does not execute the tool" do
-    workspace = tmp_workspace(%{"tools" => %{"per_tool" => %{"bash" => "deny"}}})
+    workspace =
+      tmp_workspace(%{"tools" => %{"per_tool" => %{"permission_touch_fixture" => "deny"}}})
 
     config = %Config{
       provider: TouchProvider,
@@ -1174,7 +1194,8 @@ defmodule Handbeam.Agent.TurnPermissionTest do
   end
 
   test "deny policy injects steer candidates after blocked tools" do
-    workspace = tmp_workspace(%{"tools" => %{"per_tool" => %{"bash" => "deny"}}})
+    workspace =
+      tmp_workspace(%{"tools" => %{"per_tool" => %{"permission_touch_fixture" => "deny"}}})
 
     {:ok, queue} =
       Handbeam.Agent.CandidateQueue.start_link(session_id: "turn-deny-inject", owner: self())
@@ -1230,7 +1251,9 @@ defmodule Handbeam.Agent.TurnPermissionTest do
   end
 
   test "prompt policy interrupts before tool execution and emits approval request" do
-    workspace = tmp_workspace(%{"tools" => %{"per_tool" => %{"bash" => "prompt"}}})
+    workspace =
+      tmp_workspace(%{"tools" => %{"per_tool" => %{"permission_touch_fixture" => "prompt"}}})
+
     events = Agent.start_link(fn -> [] end) |> elem(1)
 
     config = %Config{
@@ -1529,7 +1552,9 @@ defmodule Handbeam.Agent.TurnPermissionTest do
     end
 
     test "approve executes the pending HITL tool call instead of skipping it" do
-      workspace = tmp_workspace(%{"tools" => %{"per_tool" => %{"bash" => "prompt"}}})
+      workspace =
+        tmp_workspace(%{"tools" => %{"per_tool" => %{"permission_touch_fixture" => "prompt"}}})
+
       marker = Path.join(workspace, "denied_marker")
 
       config = %Config{
@@ -1551,7 +1576,13 @@ defmodule Handbeam.Agent.TurnPermissionTest do
       resumed =
         Turn.resume_after_tool_approval(
           interrupted,
-          [%{"tool_call_id" => "touch_1", "tool_name" => "bash", "action" => "approve"}],
+          [
+            %{
+              "tool_call_id" => "touch_1",
+              "tool_name" => "permission_touch_fixture",
+              "action" => "approve"
+            }
+          ],
           on_event: &send(self(), {:resume_event, &1})
         )
 
@@ -1584,7 +1615,9 @@ defmodule Handbeam.Agent.TurnPermissionTest do
     end
 
     test "approve resume injects steer candidates after the HITL tool executes" do
-      workspace = tmp_workspace(%{"tools" => %{"per_tool" => %{"bash" => "prompt"}}})
+      workspace =
+        tmp_workspace(%{"tools" => %{"per_tool" => %{"permission_touch_fixture" => "prompt"}}})
+
       marker = Path.join(workspace, "denied_marker")
 
       {:ok, queue} =
@@ -1614,7 +1647,13 @@ defmodule Handbeam.Agent.TurnPermissionTest do
       resumed =
         Turn.resume_after_tool_approval(
           interrupted,
-          [%{"tool_call_id" => "touch_1", "tool_name" => "bash", "action" => "approve"}],
+          [
+            %{
+              "tool_call_id" => "touch_1",
+              "tool_name" => "permission_touch_fixture",
+              "action" => "approve"
+            }
+          ],
           candidate_queue: queue,
           on_event: &send(self(), {:resume_event, &1})
         )
@@ -1634,7 +1673,8 @@ defmodule Handbeam.Agent.TurnPermissionTest do
     end
 
     test "full deny-approve flow: deny policy interrupts, then resume with deny completes" do
-      workspace = tmp_workspace(%{"tools" => %{"per_tool" => %{"bash" => "prompt"}}})
+      workspace =
+        tmp_workspace(%{"tools" => %{"per_tool" => %{"permission_touch_fixture" => "prompt"}}})
 
       config = %Config{
         provider: TouchProvider,

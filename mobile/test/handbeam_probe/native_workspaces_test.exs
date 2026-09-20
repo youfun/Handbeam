@@ -92,6 +92,13 @@ defmodule HandbeamProbe.NativeWorkspacesTest do
     assert default["id"] in ids
   end
 
+  test "canonicalize treats the macOS /var alias as /private/var" do
+    if File.dir?("/private/var") do
+      assert NativeWorkspaces.canonicalize("/var") ==
+               Handbeam.Security.PathValidator.resolve_symlink("/private/var")
+    end
+  end
+
   test "folder browser stays under the app root", %{dir: dir} do
     nested = Path.join(dir, "a/b")
     File.mkdir_p!(nested)

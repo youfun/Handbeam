@@ -18,9 +18,13 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   require Logger
 
+  alias HandbeamWeb.WorkspaceLive.Approval
+  alias HandbeamWeb.WorkspaceLive.Composer
   alias HandbeamWeb.WorkspaceLive.ConversationState
   alias HandbeamWeb.WorkspaceLive.ConversationSwitching
   alias HandbeamWeb.WorkspaceLive.EditorProjection
+  alias HandbeamWeb.WorkspaceLive.RuntimeProjection
+  alias HandbeamWeb.WorkspaceLive.Skills
   alias HandbeamWeb.WorkspaceLive.ToolProjection
   alias Handbeam.Settings
   alias Handbeam.WorkspaceFiles
@@ -177,7 +181,7 @@ defmodule HandbeamWeb.WorkspaceLive do
     if socket.assigns.current_workspace_id != ws_id or
          socket.assigns.current_conversation_id != conv_id do
       with {:ok, ws} <- Handbeam.WorkspaceStore.get(ws_id),
-           {:ok, conv} <- Handbeam.ConversationStore.get(conv_id),
+           {:ok, conv} <- Handbeam.ConversationStore.get(conv_id, include_timeline?: false),
            true <- conv["workspace_id"] == ws_id do
         {socket, _conv_id} = ConversationSwitching.select_conversation(socket, ws_id, conv_id)
 
@@ -204,7 +208,7 @@ defmodule HandbeamWeb.WorkspaceLive do
   def handle_progress(:images, entry, socket) do
     errors =
       entry.errors
-      |> Enum.map(&upload_error_to_string/1)
+      |> Enum.map(&Composer.upload_error/1)
       |> Enum.reject(&(&1 in [nil, ""]))
 
     socket =
@@ -217,17 +221,9 @@ defmodule HandbeamWeb.WorkspaceLive do
     {:noreply, socket}
   end
 
-  defp upload_error_to_string(:too_large), do: "File too large (max 5MB)"
-  defp upload_error_to_string(:not_accepted), do: "Unsupported file type (images only)"
-  defp upload_error_to_string(:too_many_files), do: "Too many files (max 4)"
-  defp upload_error_to_string(other), do: to_string(other)
-
   @impl true
   def handle_event("remove_attachment", %{"id" => id}, socket) do
-    {:noreply,
-     update(socket, :pending_attachments, fn atts ->
-       Enum.reject(atts, fn att -> (att[:id] || att["id"]) == id end)
-     end)}
+    {:noreply, Composer.remove_attachment(socket, id)}
   end
 
   def handle_event("toggle_thread_collaboration", _params, socket) do
@@ -256,16 +252,7 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   @impl true
   def handle_event("launch_skill", %{"name" => skill_name}, socket) do
-    skill = Enum.find(socket.assigns.available_skills, &(&1.name == skill_name))
-
-    prompt =
-      case skill do
-        %{description: desc} when is_binary(desc) and desc != "" ->
-          "Use the #{skill.name} skill: #{desc}"
-
-        %{name: name} ->
-          "Use the #{name} skill"
-      end
+    prompt = Skills.launch_prompt(socket.assigns.available_skills, skill_name)
 
     socket =
       socket
@@ -423,7 +410,7 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   @impl true
   def handle_event("update_input", %{"value" => value}, socket) do
-    suggestions = compute_skill_suggestions(value, socket.assigns.available_skills)
+    suggestions = Skills.suggestions(value, socket.assigns.available_skills)
 
     {:noreply,
      socket
@@ -433,19 +420,7 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   @impl true
   def handle_event("select_skill_suggestion", %{"name" => skill_name}, socket) do
-    current = socket.assigns.input_value
-
-    new_value =
-      cond do
-        String.starts_with?(current, "/skill:") ->
-          "/skill:#{skill_name} "
-
-        String.starts_with?(current, "/") ->
-          "/skill:#{skill_name} "
-
-        true ->
-          current
-      end
+    new_value = Skills.select(socket.assigns.input_value, skill_name)
 
     {:noreply,
      socket
@@ -480,11 +455,11 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   def handle_event("approve_all_tools", params, socket) do
-    resume_tool_approval(socket, :approve, remember_scope(params))
+    resume_tool_approval(socket, :approve, Approval.remember_scope(params))
   end
 
   def handle_event("deny_all_tools", params, socket) do
-    resume_tool_approval(socket, :deny, remember_scope(params))
+    resume_tool_approval(socket, :deny, Approval.remember_scope(params))
   end
 
   @impl true
@@ -759,8 +734,14 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   @impl true
+  def handle_event("load_older_history", _params, socket) do
+    {:noreply, ConversationState.load_older_history(socket)}
+  end
+
+  @impl true
   def handle_event("select_conversation", %{"id" => conv_id, "ws_id" => ws_id}, socket) do
-    with {:ok, %{"workspace_id" => ^ws_id}} <- Handbeam.ConversationStore.get(conv_id) do
+    with {:ok, %{"workspace_id" => ^ws_id}} <-
+           Handbeam.ConversationStore.get(conv_id, include_timeline?: false) do
       {socket, _conv_id} = ConversationSwitching.select_conversation(socket, ws_id, conv_id)
 
       socket =
@@ -778,7 +759,8 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   @impl true
   def handle_event("select_archived_conversation", %{"id" => conv_id, "ws" => ws_id}, socket) do
-    with {:ok, %{"workspace_id" => ^ws_id}} <- Handbeam.ConversationStore.get(conv_id) do
+    with {:ok, %{"workspace_id" => ^ws_id}} <-
+           Handbeam.ConversationStore.get(conv_id, include_timeline?: false) do
       {socket, _conv_id} =
         ConversationSwitching.select_archived_conversation(socket, ws_id, conv_id)
 
@@ -1886,9 +1868,7 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   defp restore_pending_draft(socket, item) when is_map(item) do
-    socket
-    |> restore_pending_draft_text(item)
-    |> restore_pending_draft_attachments(item)
+    Composer.restore_draft(socket, item)
   end
 
   defp restore_pending_draft(socket, _), do: socket
@@ -2018,58 +1998,14 @@ defmodule HandbeamWeb.WorkspaceLive do
     {:noreply, socket}
   end
 
-  defp resend_error(:queue_full), do: gettext("Could not resend because the queue is full.")
-
-  defp resend_error(:sealed),
-    do: gettext("Could not resend because the run is no longer accepting input.")
-
-  defp resend_error(reason), do: outbound_error(reason)
-
-  defp restore_pending_draft_text(socket, %{content: content})
-       when is_binary(content) and content != "" do
-    current = socket.assigns.input_value || ""
-
-    value =
-      if String.trim(current) == "" do
-        content
-      else
-        String.trim_trailing(current) <> "\n" <> content
-      end
-
-    assign(socket, :input_value, value)
-  end
-
-  defp restore_pending_draft_text(socket, _), do: socket
-
-  defp restore_pending_draft_attachments(socket, %{attachments: attachments})
-       when is_list(attachments) and attachments != [] do
-    assign(socket, :pending_attachments, socket.assigns.pending_attachments ++ attachments)
-  end
-
-  defp restore_pending_draft_attachments(socket, _), do: socket
-
   defp assign_pending_messages(socket, pending) do
-    socket
-    |> assign(:pending_messages, pending)
-    |> stream(:timeline, socket.assigns.timeline || [], reset: true)
+    Composer.assign_pending(socket, pending)
   end
 
-  defp drop_transcript_entry(conversation_id, id)
-       when is_binary(conversation_id) and is_binary(id) do
-    case Handbeam.ConversationTranscriptStore.list(conversation_id) do
-      {:ok, entries} ->
-        Handbeam.ConversationTranscriptStore.replace_all(
-          conversation_id,
-          Enum.reject(entries, &(Map.get(&1, "id") == id))
-        )
+  defp drop_transcript_entry(conversation_id, id),
+    do: Composer.drop_transcript_entry(conversation_id, id)
 
-      error ->
-        error
-    end
-  end
-
-  defp put_inbound_message_id(%Handbeam.Agent.Message{} = message, id), do: %{message | id: id}
-  defp put_inbound_message_id(content, _id), do: content
+  defp put_inbound_message_id(content, id), do: Composer.put_message_id(content, id)
 
   defp queue_running_agent_message(socket, conv_id, content, message, attachments, deliver_as) do
     msg_id = unique_id("msg-user")
@@ -2273,248 +2209,43 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   defp prepare_outbound_message(socket, message) do
-    {socket, attachments} = consume_uploaded_images(socket)
-    conv_id = socket.assigns.current_conversation_id
-    workspace_path = current_workspace_path(socket)
-
-    case Handbeam.Attachments.MessageBuilder.build(message, attachments,
-           workspace_path: workspace_path,
-           conversation_id: conv_id
-         ) do
-      {:ok, content, persistable} ->
-        persistable = merge_upload_urls(attachments, persistable)
-        content = expand_skill_content(content, socket.assigns.available_skills)
-        {:ok, assign(socket, :pending_attachments, persistable), content, persistable}
-
-      {:error, reason} ->
-        {:error, assign(socket, :composer_error, outbound_error(reason))}
-    end
+    Composer.prepare(socket, message, current_workspace_path(socket))
   end
 
-  defp merge_upload_urls(original, persistable) do
-    by_id = Map.new(original, fn att -> {att[:id] || att["id"], att} end)
-
-    Enum.map(persistable, fn att ->
-      case by_id[att["id"]] do
-        %{url: url} -> Map.put(att, "url", url)
-        %{"url" => url} -> Map.put(att, "url", url)
-        _ -> att
-      end
-    end)
-  end
-
-  defp outbound_error(:empty), do: nil
-  defp outbound_error(:images_not_supported), do: "Current model cannot accept images."
-  defp outbound_error(:too_many_attachments), do: "At most 4 attachments per message."
-  defp outbound_error(:image_too_large), do: "An image exceeds 5,000,000 bytes."
-  defp outbound_error(:text_too_large), do: "A text attachment exceeds 20 MiB."
-  defp outbound_error(:batch_too_large), do: "Attachments exceed the 25 MiB batch limit."
-  defp outbound_error(reason), do: "Attachment failed: #{inspect(reason)}"
-
-  defp consume_uploaded_images(socket) do
-    conv_id = socket.assigns.current_conversation_id
-    ws_id = socket.assigns.current_workspace_id
-    workspace_path = current_workspace_path(socket)
-
-    new_attachments =
-      consume_uploaded_entries(socket, :images, fn meta, entry ->
-        if ext_from_upload(entry) == "bin" do
-          {:postpone, nil}
-        else
-          attachment_id = Ecto.UUID.generate()
-          ext = ext_from_upload(entry)
-          dest_dir = Handbeam.Uploads.ensure_conversation_dir!(workspace_path, conv_id)
-          filename = "#{attachment_id}.#{ext}"
-          dest_path = Path.join(dest_dir, filename)
-          File.cp!(meta.path, dest_path)
-
-          {:ok,
-           %{
-             id: attachment_id,
-             kind: "image",
-             mime_type: entry.client_type,
-             size_bytes: entry.client_size,
-             filename: entry.client_name,
-             storage_path: dest_path,
-             relative_path: Path.relative_to(dest_path, workspace_path),
-             url: "/uploads/#{conv_id}/#{filename}?ws_id=#{ws_id}"
-           }}
-        end
-      end)
-      |> Enum.reject(&is_nil/1)
-
-    attachments =
-      (socket.assigns.pending_attachments ++ new_attachments)
-      |> Enum.take(4)
-
-    socket = assign(socket, :pending_attachments, attachments)
-    {socket, attachments}
-  rescue
-    e ->
-      socket = assign(socket, :composer_error, Exception.message(e))
-      {socket, socket.assigns.pending_attachments}
-  end
-
-  defp has_upload_entries?(socket) do
-    case socket.assigns.uploads[:images] do
-      %{entries: entries} when is_list(entries) -> entries != []
-      _ -> false
-    end
-  end
-
-  defp ext_from_upload(entry) do
-    case String.downcase(entry.client_type || "") do
-      "image/png" -> "png"
-      "image/jpeg" -> "jpg"
-      "image/gif" -> "gif"
-      "image/webp" -> "webp"
-      _ -> "bin"
-    end
-  end
-
-  defp expand_skill_content(content, skills) do
-    case content do
-      %Handbeam.Agent.Message{role: :user, content: blocks} = msg ->
-        # Message with structured blocks (e.g. images + text).
-        # Expand only the text block if present; image blocks are untouched.
-        expanded_blocks =
-          Enum.map(blocks, fn
-            %{type: "text", text: text} = block ->
-              Map.put(block, :text, Handbeam.Skills.Expander.expand(text, skills))
-
-            other ->
-              other
-          end)
-
-        %{msg | content: expanded_blocks}
-
-      text when is_binary(text) ->
-        Handbeam.Skills.Expander.expand(text, skills)
-
-      other ->
-        other
-    end
-  end
-
-  defp attachment_url(%{url: url}) when is_binary(url) and url != "", do: url
-  defp attachment_url(%{"url" => url}) when is_binary(url) and url != "", do: url
-
-  defp attachment_url(%{data: data, mime_type: mime_type}) when is_binary(data) do
-    "data:#{mime_type || "image/png"};base64,#{data}"
-  end
-
-  defp attachment_url(%{"data" => data, "mime_type" => mime_type}) when is_binary(data) do
-    "data:#{mime_type || "image/png"};base64,#{data}"
-  end
-
-  defp attachment_url(_attachment), do: "#"
-
-  defp attachment_filename(%{filename: filename}) when is_binary(filename), do: filename
-  defp attachment_filename(%{"filename" => filename}) when is_binary(filename), do: filename
-  defp attachment_filename(_attachment), do: "image"
+  defp has_upload_entries?(socket), do: Composer.has_upload_entries?(socket)
+  defp outbound_error(reason), do: Composer.outbound_error(reason)
+  defp resend_error(reason), do: Composer.resend_error(reason)
+  defdelegate attachment_url(attachment), to: Composer
+  defdelegate attachment_filename(attachment), to: Composer
 
   defp timeline_insert(socket, entry, opts) do
     persist? = Keyword.get(opts, :persist?, true)
-    expanded = Map.get(socket.assigns, :expanded_tool_groups, MapSet.new())
-
-    timeline =
-      socket.assigns.timeline
-      |> replace_or_append_timeline(entry)
-      |> HandbeamWeb.WorkspaceHelper.apply_tool_work_collapse(expanded)
-
-    entry_id = Map.get(entry, "id")
-    entry = Enum.find(timeline, &(Map.get(&1, "id") == entry_id)) || entry
-
-    socket =
-      socket
-      |> assign(:timeline, timeline)
-      |> stream_insert(:timeline, entry)
-      |> stream_related_tool_work(timeline, entry)
+    socket = RuntimeProjection.timeline_insert(socket, entry)
 
     if persist?, do: sync_conv_to(socket), else: socket
   end
 
-  defp stream_related_tool_work(socket, timeline, %{"work_group_id" => group_id, "id" => id})
-       when is_binary(group_id) and group_id != "" do
-    Enum.reduce(timeline, socket, fn other, acc ->
-      if Map.get(other, "work_group_id") == group_id and Map.get(other, "id") != id do
-        stream_insert(acc, :timeline, other)
-      else
-        acc
-      end
-    end)
-  end
+  defp refresh_tool_work_projection(socket, group_id),
+    do: RuntimeProjection.refresh_tool_work(socket, group_id)
 
-  defp stream_related_tool_work(socket, _timeline, _entry), do: socket
-
-  defp refresh_tool_work_projection(socket, group_id) do
-    expanded = Map.get(socket.assigns, :expanded_tool_groups, MapSet.new())
-
-    timeline =
-      HandbeamWeb.WorkspaceHelper.apply_tool_work_collapse(socket.assigns.timeline, expanded)
-
-    socket = assign(socket, :timeline, timeline)
-
-    Enum.reduce(timeline, socket, fn entry, acc ->
-      if Map.get(entry, "work_group_id") == group_id do
-        stream_insert(acc, :timeline, entry)
-      else
-        acc
-      end
-    end)
-  end
-
-  defp replace_or_append_timeline(timeline, %{"id" => id} = entry) do
-    if Enum.any?(timeline, &(Map.get(&1, "id") == id)) do
-      Enum.map(timeline, fn existing ->
-        if Map.get(existing, "id") == id, do: entry, else: existing
-      end)
-    else
-      timeline ++ [entry]
-    end
-  end
-
-  defp find_timeline_entry(timeline, id) do
-    Enum.find(timeline, &(Map.get(&1, "id") == id))
-  end
+  defp find_timeline_entry(timeline, id), do: RuntimeProjection.find_entry(timeline, id)
 
   defp timeline_entry_id(%{"id" => id}), do: id
   defp timeline_entry_id(%{id: id}), do: id
 
-  defp finalize_current_assistant(%{assigns: %{current_assistant_entry_id: nil}} = socket),
-    do: socket
+  defp finalize_current_assistant(socket), do: RuntimeProjection.finalize_assistant(socket)
 
-  defp finalize_current_assistant(socket) do
-    id = socket.assigns.current_assistant_entry_id
-
-    case find_timeline_entry(socket.assigns.timeline, id) do
-      %{"content_type" => "assistant_msg"} = entry ->
-        timeline_insert(socket, Map.put(entry, "final", true), persist?: false)
-
-      _ ->
-        socket
-    end
-  end
-
-  defp assistant_message_final?(entry, running, current_assistant_entry_id) do
-    cond do
-      Map.has_key?(entry, "final") -> truthy?(Map.get(entry, "final"))
-      assistant_message_streaming?(entry, running, current_assistant_entry_id) -> false
-      true -> true
-    end
-  end
+  defp assistant_message_final?(entry, running, current_assistant_entry_id),
+    do: RuntimeProjection.assistant_final?(entry, running, current_assistant_entry_id)
 
   defp assistant_message_streaming?(entry, running, current_assistant_entry_id) do
     running && Map.get(entry, "id") == current_assistant_entry_id &&
       !truthy?(Map.get(entry, "final"))
   end
 
-  defp truthy?(value) when value in [true, "true", 1, "1"], do: true
-  defp truthy?(_), do: false
+  defp truthy?(value), do: value in [true, "true", 1, "1"]
 
-  defp unique_id(prefix) do
-    "#{prefix}-#{System.unique_integer([:positive, :monotonic])}"
-  end
+  defp unique_id(prefix), do: RuntimeProjection.unique_id(prefix)
 
   defp find_change(timeline, change_id),
     do: HandbeamWeb.ChangeHelper.find_change(timeline, change_id)
@@ -2553,50 +2284,12 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   # ── Status helpers ──
 
-  defp update_status(socket, overrides) do
-    assign(socket, :status_info, Map.merge(socket.assigns.status_info, overrides))
-  end
+  defp update_status(socket, overrides), do: RuntimeProjection.update_status(socket, overrides)
 
-  defp maybe_update_status(socket, overrides) do
-    if Map.has_key?(socket.assigns, :status_info) do
-      update_status(socket, overrides)
-    else
-      socket
-    end
-  end
+  defp maybe_update_status(socket, overrides),
+    do: RuntimeProjection.maybe_update_status(socket, overrides)
 
-  defp usage_tokens(usage) when is_map(usage) do
-    input = Map.get(usage, :input_tokens, Map.get(usage, "input_tokens", 0)) || 0
-    output = Map.get(usage, :output_tokens, Map.get(usage, "output_tokens", 0)) || 0
-
-    cache_read =
-      Map.get(usage, :cache_read_input_tokens, Map.get(usage, "cache_read_input_tokens", 0)) || 0
-
-    cache_write =
-      Map.get(
-        usage,
-        :cache_creation_input_tokens,
-        Map.get(usage, "cache_creation_input_tokens", 0)
-      ) || 0
-
-    %{
-      input_tokens: input,
-      total_input_tokens:
-        payload_value(usage, :total_input_tokens, input + cache_read + cache_write),
-      output_tokens: output,
-      cache_read_tokens: cache_read,
-      cache_write_tokens: cache_write
-    }
-  end
-
-  defp usage_tokens(_),
-    do: %{
-      input_tokens: 0,
-      total_input_tokens: 0,
-      output_tokens: 0,
-      cache_read_tokens: 0,
-      cache_write_tokens: 0
-    }
+  defp usage_tokens(usage), do: RuntimeProjection.usage_tokens(usage)
 
   # ── Conversation token helpers ──
 
@@ -2611,77 +2304,11 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   def has_cache_tokens?(_), do: false
 
-  defp payload_value(payload, key, default \\ nil)
+  defp payload_value(payload, key, default \\ nil),
+    do: RuntimeProjection.payload_value(payload, key, default)
 
-  defp payload_value(payload, key, default) when is_map(payload) and is_atom(key) do
-    Map.get(payload, key, Map.get(payload, Atom.to_string(key), default))
-  end
-
-  defp payload_value(_payload, _key, default), do: default
-
-  defp safe_atom("completed"), do: :completed
-  defp safe_atom("running"), do: :running
-  defp safe_atom("error"), do: :error
-  defp safe_atom("idle"), do: :idle
-  defp safe_atom("max_turns"), do: :max_turns
-  defp safe_atom("interrupted"), do: :interrupted
-  defp safe_atom("awaiting_approval"), do: :awaiting_approval
-  defp safe_atom(s) when is_atom(s), do: s
-  defp safe_atom(_), do: :idle
-
-  defp update_messages(socket, chunk) do
-    # Strip <think>...</think> tags from streaming content.
-    # Accumulate thinking text separately for collapsed display.
-    {thinking_text, clean_chunk, new_buffer} =
-      strip_think_tags(Map.get(socket.assigns, :think_buffer, ""), chunk)
-
-    socket = assign(socket, :think_buffer, new_buffer)
-
-    socket =
-      if thinking_text != "" do
-        assign(socket, :thinking_active, true)
-      else
-        socket
-      end
-
-    socket =
-      if clean_chunk != "" do
-        assign(socket, :thinking_active, false)
-      else
-        socket
-      end
-
-    update_assistant_timeline(socket, clean_chunk)
-  end
-
-  defp update_assistant_timeline(socket, ""), do: socket
-
-  defp update_assistant_timeline(socket, chunk) do
-    id = socket.assigns.current_assistant_entry_id || unique_id("msg-assistant")
-
-    # Logger.debug(
-    #   "[WorkspaceLive] update assistant timeline id=#{id} bytes=#{byte_size(chunk)} " <>
-    #     "current=#{inspect(socket.assigns.current_assistant_entry_id)}"
-    # )
-
-    entry =
-      case find_timeline_entry(socket.assigns.timeline, id) do
-        nil ->
-          %{
-            "id" => id,
-            "content_type" => "assistant_msg",
-            "role" => "assistant",
-            "content" => chunk
-          }
-
-        existing ->
-          Map.put(existing, "content", (Map.get(existing, "content") || "") <> chunk)
-      end
-
-    socket
-    |> assign(:current_assistant_entry_id, id)
-    |> timeline_insert(entry, persist?: false)
-  end
+  defp safe_atom(value), do: RuntimeProjection.safe_status(value)
+  defp update_messages(socket, chunk), do: RuntimeProjection.update_messages(socket, chunk)
 
   # ── <think> tag stripping ──────────────────────────────────────────
 
@@ -2794,52 +2421,8 @@ defmodule HandbeamWeb.WorkspaceLive do
     |> assign(:skills_count, skills_count)
   end
 
-  # ── Skill suggestion computation ──
-
-  defp compute_skill_suggestions(value, skills) when is_binary(value) and is_list(skills) do
-    cond do
-      String.starts_with?(value, "/skill:") ->
-        filter = String.replace_prefix(value, "/skill:", "")
-
-        if String.contains?(filter, " ") do
-          nil
-        else
-          matches = filter_skills_by_name(filter, skills)
-          if matches == [], do: nil, else: matches
-        end
-
-      String.starts_with?(value, "/") and value != "/skill:" ->
-        filter = String.replace_prefix(value, "/", "")
-
-        if String.contains?(filter, " ") do
-          nil
-        else
-          matches = filter_skills_by_name(filter, skills)
-          if matches == [], do: nil, else: matches
-        end
-
-      true ->
-        nil
-    end
-  end
-
-  defp filter_skills_by_name(filter, skills) do
-    lower_filter = String.downcase(filter)
-
-    Enum.filter(skills, fn skill ->
-      String.contains?(String.downcase(skill.name), lower_filter)
-    end)
-  end
-
-  # ── Skills quick-launch panel ──
-
   defp load_available_skills(socket) do
-    workspace_root = current_workspace_path(socket)
-    skills = Handbeam.Skills.Loader.load(workspace: workspace_root).skills
-
-    socket
-    |> assign(:available_skills, skills)
-    |> assign(:show_skills_panel, skills != [])
+    Skills.load(socket, current_workspace_path(socket))
   end
 
   defp sync_reasoning_for_model(socket, model_id) do
@@ -3293,37 +2876,17 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   # ── Tool approval helpers ──
 
-  def approval_action_requests(%{action_requests: requests}) when is_list(requests),
-    do: requests
-
-  def approval_action_requests(%{"action_requests" => requests}) when is_list(requests),
-    do: requests
-
-  def approval_action_requests(pending) when is_map(pending) do
-    pending[:action_requests] || pending["action_requests"] || []
-  end
-
-  def approval_action_requests(_), do: []
-
-  def format_arguments(args) when is_map(args) do
-    args
-    |> Handbeam.JSON.encode!(pretty: true)
-    |> String.slice(0, 2000)
-  rescue
-    _ -> inspect(args)
-  end
-
-  def format_arguments(args), do: inspect(args)
+  defdelegate approval_action_requests(pending), to: Approval, as: :action_requests
+  defdelegate format_arguments(arguments), to: Approval
 
   defp resume_tool_approval(socket, action, remember) when action in [:approve, :deny] do
     conv_id = socket.assigns.current_conversation_id
     pending = socket.assigns.pending_approval
 
     if is_binary(conv_id) and not is_nil(pending) do
-      persist_remembered_rules(socket, pending, action, remember)
-      decisions = build_tool_decisions(pending, action, remember)
+      workspace_root = socket.assigns.workspace_root || Handbeam.Workspace.root()
 
-      case Handbeam.Agent.Coordinator.resume(conv_id, decisions) do
+      case Approval.resume(conv_id, pending, action, remember, workspace_root) do
         :ok ->
           :ok
 
@@ -3335,52 +2898,6 @@ defmodule HandbeamWeb.WorkspaceLive do
     else
       {:noreply, socket}
     end
-  end
-
-  defp remember_scope(%{"remember" => "always"}), do: :always
-  defp remember_scope(%{"remember" => "session"}), do: :session
-  defp remember_scope(_params), do: :once
-
-  defp persist_remembered_rules(socket, pending, action, :always) do
-    workspace_root = socket.assigns.workspace_root || Handbeam.Workspace.root()
-    list = if action == :approve, do: :allow, else: :deny
-
-    pending
-    |> approval_action_requests()
-    |> Enum.each(fn req ->
-      pattern =
-        req[:suggested_pattern] || req["suggested_pattern"] ||
-          req[:tool_name] || req["tool_name"]
-
-      if is_binary(pattern) and String.trim(pattern) != "" do
-        case Handbeam.WorkspaceSettings.append_tool_rule(workspace_root, list, pattern) do
-          :ok ->
-            :ok
-
-          {:error, reason} ->
-            Logger.warning(
-              "[WorkspaceLive] failed to persist #{list} rule #{pattern}: #{inspect(reason)}"
-            )
-        end
-      end
-    end)
-  end
-
-  defp persist_remembered_rules(_socket, _pending, _action, _remember), do: :ok
-
-  defp build_tool_decisions(pending, action, remember) do
-    remember_session? = remember == :session
-
-    pending
-    |> approval_action_requests()
-    |> Enum.map(fn req ->
-      %{
-        "tool_call_id" => req[:tool_call_id] || req["tool_call_id"],
-        "tool_name" => req[:tool_name] || req["tool_name"],
-        "action" => Atom.to_string(action),
-        "remember" => remember_session?
-      }
-    end)
   end
 
   # ── Conversation stream helpers ──

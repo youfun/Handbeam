@@ -1024,7 +1024,10 @@ defmodule HandbeamProbe.HomeScreenTest do
     assert assigns(view).page == :chat
     assert assigns(view).draft == "keep this draft"
     assert assigns(view).models.reasoning == "high"
-    assert Handbeam.Settings.effective_model_ai(assigns(view).workspace["path"]).reasoning == "high"
+
+    assert Handbeam.Settings.effective_model_ai(assigns(view).workspace["path"]).reasoning ==
+             "high"
+
     model = hd(assigns(view).models.allowed_models).id
     view = info(view, {:tap, {:composer_setting, :default_model, model}})
     assert assigns(view).page == :chat
@@ -2225,7 +2228,11 @@ defmodule HandbeamProbe.HomeScreenTest do
     on_exit(fn -> Application.delete_env(:handbeam_probe, :directory_picker_screen) end)
     # Same wiring as HandbeamProbe.App: the host key points at the probe picker.
     Handbeam.Host.put!(
-      Map.put(Application.get_env(:handbeam, :host), :directory_picker, HandbeamProbe.DirectoryPicker)
+      Map.put(
+        Application.get_env(:handbeam, :host),
+        :directory_picker,
+        HandbeamProbe.DirectoryPicker
+      )
     )
 
     assert Handbeam.Host.request_directory_picker(%{source: :web}) == :ok
@@ -2305,7 +2312,27 @@ defmodule HandbeamProbe.HomeScreenTest do
     do: gettext("Send failed. Check the model configuration and network, then try again.")
 
   defp seed_input_models(view) do
-    :ok = Handbeam.Agent.ModelConfig.ensure_config()
+    :ok =
+      Handbeam.Agent.ModelConfig.write_config(%{
+        "defaultProvider" => "stepfun",
+        "defaultModel" => "step-router-v1",
+        "providers" => %{
+          "stepfun" => %{
+            "api" => "stepfun-step-plan",
+            "apiKey" => "fixture-key",
+            "baseUrl" => "https://example.invalid/v1",
+            "models" => [
+              %{"id" => "step-router-v1", "name" => "Step Router v1", "input" => ["text"]},
+              %{
+                "id" => "step-3.7-flash",
+                "name" => "Step 3.7 Flash",
+                "input" => ["text", "image"]
+              }
+            ]
+          }
+        }
+      })
+
     models = ModelSettings.load(assigns(view).workspace)
     %{view | socket: Mob.Socket.assign(view.socket, :models, models)}
   end

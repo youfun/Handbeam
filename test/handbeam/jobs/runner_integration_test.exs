@@ -1,6 +1,8 @@
 defmodule Handbeam.Jobs.RunnerIntegrationTest do
   use ExUnit.Case, async: false
 
+  @moduletag :linux_jobs
+
   alias Handbeam.Agent.{Coordinator, Message}
   alias Handbeam.Jobs
 
@@ -40,6 +42,24 @@ defmodule Handbeam.Jobs.RunnerIntegrationTest do
 
     on_exit(fn ->
       Coordinator.cancel(conversation["id"])
+
+      # Runner completion can leave a supervised thread-report task and queued
+      # lifecycle consumers behind. Finish their storage work before changing
+      # HOME or removing the fixture, not merely before the Runner exits.
+      for pid <- Task.Supervisor.children(Handbeam.AgentRunTaskSupervisor) do
+        ref = Process.monitor(pid)
+        assert_receive {:DOWN, ^ref, :process, ^pid, _}, 5_000
+      end
+
+      Handbeam.PubSub.Session.snapshot(conversation["id"])
+      :ok = Handbeam.SessionSupervisor.stop_session(conversation["id"])
+      GenServer.call(Handbeam.Runtime.TaskTracker, :snapshot)
+
+      :ok =
+        Handbeam.ConversationTranscriptStore.Journal.invalidate(
+          Handbeam.ConversationStore.index_path()
+        )
+
       if old_home, do: System.put_env("HOME", old_home), else: System.delete_env("HOME")
 
       if old_host,
