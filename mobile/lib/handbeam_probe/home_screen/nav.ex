@@ -10,7 +10,17 @@ defmodule HandbeamProbe.HomeScreen.Nav do
   import Mob.Socket, only: [assign: 2, assign: 3]
 
   alias HandbeamProbe.Bridge.Inbound
-  alias HandbeamProbe.HomeScreen.{Notice, Platform, Requests, Settings, Share, State}
+
+  alias HandbeamProbe.HomeScreen.{
+    GitSettings,
+    MCPSettings,
+    Notice,
+    Platform,
+    Requests,
+    Settings,
+    Share,
+    State
+  }
 
   alias HandbeamProbe.{
     NativeApproval,
@@ -48,6 +58,8 @@ defmodule HandbeamProbe.HomeScreen.Nav do
     cond do
       is_nil(workspace) -> socket
       page == :history -> assign(socket, :history, HandbeamProbe.NativeHistory.load())
+      page == :mcp -> MCPSettings.load(socket)
+      page == :git -> GitSettings.load(socket)
       Settings.settings_page?(page) -> Settings.load_models(socket)
       page == :workspace -> assign(socket, :workspaces, NativeWorkspaces.load(workspace))
       page == :files -> NativeWorkspaceTree.ensure(socket)
@@ -123,6 +135,8 @@ defmodule HandbeamProbe.HomeScreen.Nav do
   def apply_workspace(socket, workspace, conversation) do
     a = socket.assigns
     drafts = NativeWorkspaces.put_draft(a.drafts, a.workspace, a.chat, a.draft)
+    {_generation, socket} = Requests.bump(socket, :mcp_settings)
+    {_generation, socket} = Requests.bump(socket, :git_settings)
 
     unsubscribe(a.chat)
     socket = reset_composer(socket)
@@ -136,6 +150,8 @@ defmodule HandbeamProbe.HomeScreen.Nav do
           workspace: selected.workspace,
           conversations: selected.conversations,
           permission_mode: selected.permission_mode,
+          mcp: HandbeamProbe.MCPSettings.empty(),
+          git: HandbeamProbe.GitSettings.empty(),
           drafts: drafts,
           workspace_tree: NativeWorkspaceTree.for_workspace(selected.workspace, a.workspace_tree),
           file_viewer: NativeFileViewer.new()

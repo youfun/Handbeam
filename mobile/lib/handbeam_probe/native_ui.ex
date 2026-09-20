@@ -370,6 +370,8 @@ defmodule HandbeamProbe.NativeUI do
   defp argb(other), do: other
 
   def field(label, value, tag, props \\ []) do
+    {placeholder, props} = Keyword.pop(props, :placeholder, "")
+
     node(:column, [fill_width: true, padding_bottom: 12], [
       text(label, text_size: 13, text_color: color(:muted), padding_bottom: 6),
       node(
@@ -378,7 +380,7 @@ defmodule HandbeamProbe.NativeUI do
           [
             id: id(tag),
             value: value,
-            placeholder: label,
+            placeholder: placeholder,
             plain: true,
             background: color(:card),
             border_color: color(:border),

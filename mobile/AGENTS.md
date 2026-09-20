@@ -151,14 +151,23 @@ dual-key helper, or a `tool || tool_name` alias chain in `lib/` — `guard_test.
 fails on them. Every off-screen reply (platform request id or task ref) is
 registered in `HandbeamProbe.PendingRequests` through `HomeScreen.Requests`; the
 wire `generation` must match and the scope (`:composer`, `:workspace_open`,
-`:share_intakes_ready`, `:models`, `:folder_listed`) must not have been bumped,
+`:share_intakes_ready`, `:models`, `:mcp_settings`, `:folder_listed`) must not have been bumped,
 otherwise the reply is dropped. Deadlines send `{:pending_request_timeout, ref}`.
 
 `HandbeamProbe.App` writes `Handbeam.Host` once at boot. Desktop Mix never sets
 `:host`, so shell/browser stay on. The phone sets `shell/terminal/desktop_browser/
-beam_eval/mcp` false, `webview_browser` true, `system_intents` true, and
+beam_eval` false, `mcp/webview_browser` true, `system_intents` true, and
 `directory_picker: HandbeamProbe.DirectoryPicker`. Do not sniff `MOB_DATA_DIR` in
-Handbeam. Do not register Terminal or bash on device. `run_elixir_script` is
+Handbeam. MCP settings share `Handbeam.MCP.Settings` with WebUI. Mobile supports
+HTTP MCP only; stdio is rejected by the runtime when `Host.shell?()` is false.
+The MCP tab uses the existing settings header/tabs. Connection tests and file IO
+run through `HomeScreen.MCPSettings`/`Async` under `:mcp_settings` generation scope.
+Git identity and named HTTPS accounts share `Handbeam.Git.Settings` (`~/.handbeam/git.json`)
+with WebUI; the Git tab uses `HomeScreen.GitSettings` under `:git_settings`. Credentials
+never appear in list/edit payloads. `bcrypt_elixir` is packed like `exqlite` (Android
+`libbcrypt_nif.so`, iOS static NIF) so workspace Mix can reuse the host hasher.
+Workspace permissions are checked at discovery and invocation, not just in UI.
+Do not register Terminal or bash on device. `run_elixir_script` is
 seeded with `Host.system_intents?` (falls back to `webview_browser?` when
 undeclared): Agent writes a workspace `.exs` via `write`/`edit`, then evaluates
 it on the installed Android OTP with `args`/`workspace` bindings (no

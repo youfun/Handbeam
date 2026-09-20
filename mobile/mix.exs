@@ -28,6 +28,8 @@ defmodule HandbeamProbe.MixProject do
       {:req, "~> 0.6.1", override: true},
       {:ghostty, "~> 0.5.0", override: true},
       {:ecto_sqlite3, "~> 0.18"},
+      # Host-provided password hash for workspace Mix projects (phx.gen.auth).
+      {:bcrypt_elixir, "~> 3.3"},
       {:gettext, "~> 1.0"},
       {:nimble_csv, "~> 1.3"},
       # Code quality — Credo + ex_slop (catches AI-generated patterns

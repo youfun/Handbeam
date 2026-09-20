@@ -51,6 +51,7 @@ pub fn build(b: *std.Build) void {
     const app_name = required(b, "app_name", "Project's app_name (used as the library basename)");
     const project_root = required(b, "project_root", "Absolute project root (jniLibs install destination is computed from here)");
     const exqlite_src = required(b, "exqlite_src", "Absolute path to deps/exqlite/c_src");
+    const bcrypt_src = required(b, "bcrypt_src", "Absolute path to deps/bcrypt_elixir/c_src");
 
     // Project NIF surface — same shape as the iOS templates. mob_dev's
     // `project_nif_zig_args/1` emits these `-D` flags when there are
@@ -414,8 +415,57 @@ pub fn build(b: *std.Build) void {
         sqlite_objs.append(b.allocator, obj) catch @panic("OOM");
     }
 
-    addExqliteLink(b, native_lib_step, .{
+    addSharedNifLink(b, native_lib_step, .{
+        .so_name = "libsqlite3_nif.so",
         .objects = sqlite_objs.items,
+        .abi = abi,
+        .arch_triple = arch_triple,
+        .ndk_sysroot = ndk_sysroot,
+        .project_root = project_root,
+        .app_name = app_name,
+        .depends_on = main_link_cp,
+    });
+
+    // --- bcrypt_elixir NIF ────────────────────────────────────────────────
+    const bcrypt_flags = &[_][]const u8{
+        "-Os",
+        "-ffunction-sections",
+        "-fdata-sections",
+        "-fPIC",
+        b.fmt("--sysroot={s}", .{ndk_sysroot}),
+        "-isystem",
+        b.fmt("{s}/usr/include", .{ndk_sysroot}),
+        "-isystem",
+        b.fmt("{s}/usr/include/{s}", .{ndk_sysroot, arch_triple}),
+        "-I",
+        bcrypt_src,
+    };
+
+    const bcrypt_sources = [_]CObjectSpec{
+        .{ .name = "bcrypt_nif", .source = b.fmt("{s}/bcrypt_nif.c", .{bcrypt_src}) },
+        .{ .name = "blowfish", .source = b.fmt("{s}/blowfish.c", .{bcrypt_src}) },
+    };
+
+    var bcrypt_objs = std.ArrayList(std.Build.LazyPath).empty;
+    defer bcrypt_objs.deinit(b.allocator);
+
+    for (bcrypt_sources) |spec| {
+        const obj = addCObject(b, .{
+            .name = spec.name,
+            .source = spec.source,
+            .target = target,
+            .optimize = optimize,
+            .c_flags = bcrypt_flags,
+            .otp_dir = otp_dir,
+            .erts_vsn = erts_vsn,
+            .mob_dir = mob_dir,
+        });
+        bcrypt_objs.append(b.allocator, obj) catch @panic("OOM");
+    }
+
+    addSharedNifLink(b, native_lib_step, .{
+        .so_name = "libbcrypt_nif.so",
+        .objects = bcrypt_objs.items,
         .abi = abi,
         .arch_triple = arch_triple,
         .ndk_sysroot = ndk_sysroot,
@@ -710,7 +760,7 @@ fn addLink(b: *std.Build, step: *std.Build.Step, opts: LinkOptions) *std.Build.S
     cp.addArg(install_path);
     cp.step.dependOn(&run.step);
     step.dependOn(&cp.step);
-    // Return the cp step so addExqliteLink can `dependOn` it — exqlite's
+    // Return the cp step so addSharedNifLink can `dependOn` it — sqlite/bcrypt
     // link references the installed main .so via a literal path arg, not
     // a LazyPath, so without an explicit ordering edge the two link steps
     // race in parallel and exqlite's clang errors out with "no such file"
@@ -719,7 +769,8 @@ fn addLink(b: *std.Build, step: *std.Build.Step, opts: LinkOptions) *std.Build.S
     return &cp.step;
 }
 
-const ExqliteLinkOptions = struct {
+const SharedNifLinkOptions = struct {
+    so_name: []const u8,
     objects: []const std.Build.LazyPath,
     abi: []const u8,
     arch_triple: []const u8,
@@ -728,19 +779,18 @@ const ExqliteLinkOptions = struct {
     app_name: []const u8,
     // Step that must complete before this link runs — typically the cp
     // step returned by `addLink` (which installs lib<app>.so into
-    // jniLibs/, the path exqlite's link consumes by string).
+    // jniLibs/, the path the NIF's link consumes by string).
     depends_on: ?*std.Build.Step = null,
 };
 
-fn addExqliteLink(b: *std.Build, step: *std.Build.Step, opts: ExqliteLinkOptions) void {
-    // sqlite3_nif's NIF entry points (enif_*) come from lib<app>.so at
-    // runtime. We link against it here so the produced .so has a
-    // DT_NEEDED entry pointing at lib<app>.so's SONAME — Android's
-    // loader then ensures lib<app>.so is mapped first and the enif_*
-    // symbols resolve.
+fn addSharedNifLink(b: *std.Build, step: *std.Build.Step, opts: SharedNifLinkOptions) void {
+    // NIF entry points (enif_*) come from lib<app>.so at runtime. We
+    // link against it here so the produced .so has a DT_NEEDED entry
+    // pointing at lib<app>.so's SONAME — Android's loader then ensures
+    // lib<app>.so is mapped first and the enif_* symbols resolve.
     const ndk_clang = b.fmt("{s}/../bin/clang", .{opts.ndk_sysroot});
     const target_arg = b.fmt("--target={s}24", .{opts.arch_triple});
-    const so_name = "libsqlite3_nif.so";
+    const so_name = opts.so_name;
     const app_so = b.fmt(
         "{s}/android/app/src/main/jniLibs/{s}/lib{s}.so",
         .{ opts.project_root, opts.abi, opts.app_name },

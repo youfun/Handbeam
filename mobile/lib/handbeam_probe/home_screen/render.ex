@@ -12,6 +12,8 @@ defmodule HandbeamProbe.HomeScreen.Render do
 
   alias HandbeamProbe.{
     ModelSettings,
+    MCPSettings,
+    GitSettings,
     NativeApproval,
     NativeComposer,
     NativeTimeline,
@@ -148,7 +150,8 @@ defmodule HandbeamProbe.HomeScreen.Render do
 
   defp content(%{page: :settings} = a), do: content(%{a | page: :models})
 
-  defp content(%{page: page} = a) when page in [:models, :workspace, :appearance] do
+  defp content(%{page: page} = a)
+       when page in [:models, :workspace, :mcp, :git, :appearance] do
     node(:column, [weight: 1, fill_width: true], [
       settings_tabs(page),
       settings_body(a),
@@ -186,17 +189,23 @@ defmodule HandbeamProbe.HomeScreen.Render do
   end
 
   defp settings_tabs(page) do
-    segment_row(
-      [
+    node(:column, [fill_width: true, padding_bottom: 8], [
+      segment_row([
         tab_button(gettext("Model / AI"), {:page, :models}, page == :models),
-        tab_button(gettext("Workspaces"), {:page, :workspace}, page == :workspace),
-        tab_button(gettext("UI (unavailable)"), {:page, :appearance}, page == :appearance,
-          background: if(page == :appearance, do: color(:muted), else: color(:control)),
-          text_color: if(page == :appearance, do: color(:card), else: color(:muted))
-        )
-      ],
-      padding_bottom: 8
-    )
+        tab_button(gettext("Workspaces"), {:page, :workspace}, page == :workspace)
+      ]),
+      segment_row(
+        [
+          tab_button(gettext("MCP"), {:page, :mcp}, page == :mcp),
+          tab_button(gettext("Git"), {:page, :git}, page == :git),
+          tab_button(gettext("UI"), {:page, :appearance}, page == :appearance,
+            background: if(page == :appearance, do: color(:muted), else: color(:control)),
+            text_color: if(page == :appearance, do: color(:card), else: color(:muted))
+          )
+        ],
+        padding_top: 8
+      )
+    ])
   end
 
   defp settings_body(%{page: :models} = a),
@@ -204,6 +213,12 @@ defmodule HandbeamProbe.HomeScreen.Render do
 
   defp settings_body(%{page: :workspace} = a),
     do: NativeWorkspaces.render(a.workspaces, a.workspace)
+
+  defp settings_body(%{page: :mcp} = a),
+    do: MCPSettings.render(a.mcp, a.workspaces.items)
+
+  defp settings_body(%{page: :git} = a),
+    do: GitSettings.render(a.git)
 
   defp settings_body(%{page: :appearance}) do
     scroll([

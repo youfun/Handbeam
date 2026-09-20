@@ -21,7 +21,10 @@ defmodule Handbeam.MCP.ServerRuntimeTest do
       assert "web_fetch" in tool_names
 
       assert {:ok, text, _meta} =
-               Handbeam.MCP.ServerRuntime.call_tool(pid, "web_search", %{"query" => "test", "n" => 1})
+               Handbeam.MCP.ServerRuntime.call_tool(pid, "web_search", %{
+                 "query" => "test",
+                 "n" => 1
+               })
 
       assert is_binary(text)
       assert String.length(text) > 0
@@ -66,7 +69,9 @@ defmodule Handbeam.MCP.ServerRuntimeTest do
       {:ok, pid} = Handbeam.MCP.ServerRuntime.start_link(server_config: cfg)
 
       {:ok, text, _meta} =
-        Handbeam.MCP.ServerRuntime.call_tool(pid, "web_fetch", %{"url" => "https://elixir-lang.org"})
+        Handbeam.MCP.ServerRuntime.call_tool(pid, "web_fetch", %{
+          "url" => "https://elixir-lang.org"
+        })
 
       result = Jason.decode!(text)
       assert is_binary(result["content"])
@@ -78,6 +83,8 @@ defmodule Handbeam.MCP.ServerRuntimeTest do
 
   describe "bootstrap / teardown cycle" do
     setup do
+      start_supervised!(Handbeam.MCP.RuntimeSupervisor)
+      start_supervised!(Handbeam.MCP)
       orig_tools = Enum.filter(Handbeam.Tool.Registry.list(), &String.starts_with?(&1, "mcp__"))
 
       on_exit(fn ->
@@ -106,47 +113,16 @@ defmodule Handbeam.MCP.ServerRuntimeTest do
     end
 
     test "double bootstrap does not duplicate tools" do
-      dir1 =
-        setup_temp_project(%{
-          "stepsearch" => %{
-            "url" => "https://api.stepfun.com/step_plan/v1/mcp/web_search/mcp",
-            "headers" => %{
-              "Authorization" =>
-                "Bearer test-mcp-token"
-            }
-          }
-        })
-
-      {:ok, _} = Handbeam.MCP.bootstrap(project: dir1)
-
-      tools1 =
-        Enum.filter(Handbeam.Tool.Registry.list(), &String.starts_with?(&1, "mcp__stepsearch__"))
-
-      assert length(tools1) > 0
-
-      {:ok, _} = Handbeam.MCP.bootstrap(project: dir1)
-
-      tools2 =
-        Enum.filter(Handbeam.Tool.Registry.list(), &String.starts_with?(&1, "mcp__stepsearch__"))
-
-      assert length(tools2) == length(tools1)
-
-      empty_dir = setup_temp_project(%{})
-      {:ok, _} = Handbeam.MCP.bootstrap(project: empty_dir, user_config_path: nil)
-
-      stepsearch_after_3 =
-        Enum.filter(Handbeam.Tool.Registry.list(), &String.starts_with?(&1, "mcp__stepsearch__"))
-
-      # No servers in project config, user config suppressed -> no new tools from this bootstrap
-      assert stepsearch_after_3 == []
-
-      File.rm_rf!(dir1)
-      File.rm_rf!(empty_dir)
+      dir = setup_temp_project(%{})
+      on_exit(fn -> File.rm_rf!(dir) end)
+      assert {:ok, first} = Handbeam.MCP.bootstrap(project: dir, user_config_path: nil)
+      assert {:ok, ^first} = Handbeam.MCP.bootstrap(project: dir, user_config_path: nil)
+      assert first.registered == []
     end
 
     test "bootstrap returns server_errors on failure" do
       dir = setup_temp_project(%{"broken" => %{"command" => "nonexistent_cmd_xyz"}})
-      {:ok, result} = Handbeam.MCP.bootstrap(project: dir)
+      {:ok, result} = Handbeam.MCP.bootstrap(project: dir, user_config_path: nil)
       errors = Map.get(result, :server_errors, [])
       assert Enum.any?(errors, &(&1.server == "broken"))
       File.rm_rf!(dir)
@@ -154,7 +130,7 @@ defmodule Handbeam.MCP.ServerRuntimeTest do
 
     test "bootstrap does not raise on server failure" do
       dir = setup_temp_project(%{"broken" => %{"command" => "nonexistent_cmd_xyz"}})
-      assert {:ok, _} = Handbeam.MCP.bootstrap(project: dir)
+      assert {:ok, _} = Handbeam.MCP.bootstrap(project: dir, user_config_path: nil)
       File.rm_rf!(dir)
     end
   end

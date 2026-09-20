@@ -34,9 +34,9 @@ msgid_plural "%{count} searches"
 msgstr[0] ""
 msgstr[1] ""
 
-#: lib/sigil_probe/model_settings/render_forms.ex:105
+#: lib/handbeam_probe/model_settings/render_forms.ex:105
 #, elixir-autogen, elixir-format
-msgid "API Key (leave blank to keep current)"
+msgid "API Key"
 msgstr ""
 
 #: lib/sigil_probe/model_settings/render_forms.ex:125

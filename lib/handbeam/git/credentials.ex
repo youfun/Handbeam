@@ -12,14 +12,25 @@ defmodule Handbeam.Git.Credentials do
   """
 
   @spec resolve(String.t() | nil) :: {:ok, keyword()} | {:error, String.t()}
-  def resolve(nil), do: {:ok, []}
+  def resolve(nil) do
+    case Handbeam.Git.Settings.default_account_id() do
+      nil -> {:ok, []}
+      name -> resolve(name)
+    end
+  end
 
   def resolve(name) when is_binary(name) do
     credentials = Application.get_env(:handbeam, :git_credentials, %{})
 
     case Map.fetch(credentials, name) do
-      {:ok, credential} -> validate(credential)
-      :error -> {:error, "Git credential is not configured by the host"}
+      {:ok, credential} ->
+        validate(credential)
+
+      :error ->
+        case Handbeam.Git.Settings.lookup(name) do
+          {:ok, credential} -> validate(credential)
+          :error -> {:error, "Git credential is not configured"}
+        end
     end
   end
 

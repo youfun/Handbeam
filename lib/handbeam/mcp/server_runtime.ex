@@ -7,11 +7,9 @@ defmodule Handbeam.MCP.ServerRuntime do
     via JSON-RPC POST + SSE response.
   """
 
-  use GenServer
+  use GenServer, restart: :temporary
 
   alias Handbeam.MCP.{Protocol, ServerConfig}
-
-  require Logger
 
   @type tool_spec :: %{
           name: String.t(),
@@ -21,9 +19,7 @@ defmodule Handbeam.MCP.ServerRuntime do
 
   @type http_state :: %{
           cfg: ServerConfig.t(),
-          next_id: non_neg_integer(),
-          tools: [tool_spec()],
-          sse_buf: binary()
+          tools: [tool_spec()]
         }
 
   @type state ::
@@ -36,15 +32,6 @@ defmodule Handbeam.MCP.ServerRuntime do
              pending: %{binary() => {:from, {pid(), reference()}}}
            }}
           | {:http, http_state()}
-  @type mcp_sse_state :: %{
-          cfg: ServerConfig.t(),
-          client: Req.t(),
-          next_id: non_neg_integer(),
-          tools: [tool_spec()],
-          sse_buf: binary(),
-          pending_sse: %{non_neg_integer() => {:from, {pid(), reference()}}}
-        }
-
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts)
@@ -73,8 +60,11 @@ defmodule Handbeam.MCP.ServerRuntime do
     cfg = Keyword.fetch!(opts, :server_config)
 
     case transport_kind(cfg) do
-      :stdio -> init_stdio(cfg)
-      :http -> init_http(cfg)
+      :stdio ->
+        if Handbeam.Host.shell?(), do: init_stdio(cfg), else: {:stop, :unsupported_transport}
+
+      :http ->
+        init_http(cfg)
     end
   end
 
@@ -101,7 +91,7 @@ defmodule Handbeam.MCP.ServerRuntime do
              clientInfo: %{"name" => "Handbeam", "version" => app_version()},
              capabilities: %{}
            }),
-         :ok <- stdio_notify(state, "initialized", %{}),
+         :ok <- stdio_notify(state, "notifications/initialized", %{}),
          {:ok, tools} <- stdio_list_tools(state) do
       {:ok, tools}
     else
@@ -141,63 +131,25 @@ defmodule Handbeam.MCP.ServerRuntime do
   # -- HTTP init --
 
   defp init_http(cfg) do
-    Logger.debug("[MCP][HTTP] init_http for #{cfg.name}: url=#{cfg.url}")
+    with {:ok, cfg, tools} <- Handbeam.MCP.HTTP.initialize(cfg) do
+      tools =
+        Enum.flat_map(tools, fn
+          %{"name" => name} = tool when is_binary(name) ->
+            [
+              %{
+                name: name,
+                description: Map.get(tool, "description", ""),
+                input_schema: Map.get(tool, "inputSchema", %{})
+              }
+            ]
 
-    with {:ok, tools} <- do_http_initialize(cfg) do
-      Logger.debug("[MCP][HTTP] init_http success: #{length(tools)} tools")
-      {:ok, {:http, %{cfg: cfg, next_id: 1, tools: tools, sse_buf: ""}}}
+          _ ->
+            []
+        end)
+
+      {:ok, {:http, %{cfg: cfg, tools: tools}}}
     else
-      {:error, reason} ->
-        Logger.debug("[MCP][HTTP] init_http failed: #{inspect(reason)}")
-        {:stop, reason}
-    end
-  end
-
-  defp do_http_initialize(cfg) do
-    Logger.debug("[MCP][HTTP] do_http_initialize #{cfg.name}")
-
-    with {:ok, _} <-
-           http_rpc(cfg, "initialize", %{
-             protocolVersion: Protocol.latest_version(),
-             clientInfo: %{"name" => "Handbeam", "version" => app_version()},
-             capabilities: %{}
-           }),
-         :ok <- http_notify(cfg, "initialized", %{}),
-         {:ok, tools} <- http_list_tools(cfg) do
-      {:ok, tools}
-    else
-      {:error, reason} ->
-        Logger.error("[MCP][HTTP] initialize failed: #{inspect(reason)}")
-        {:error, reason}
-    end
-  end
-
-  defp http_list_tools(cfg) do
-    case http_rpc(cfg, "tools/list", %{}) do
-      {:ok, %{"tools" => tools}} when is_list(tools) ->
-        {:ok,
-         Enum.flat_map(tools, fn
-           %{"name" => name} = tool ->
-             [
-               %{
-                 name: name,
-                 description: Map.get(tool, "description"),
-                 input_schema: Map.get(tool, "inputSchema", %{})
-               }
-             ]
-
-           %{"name" => name, "input_schema" => schema} = tool ->
-             [%{name: name, description: Map.get(tool, "description"), input_schema: schema}]
-
-           _ ->
-             []
-         end)}
-
-      {:ok, other} ->
-        {:error, "unexpected tools/list response: #{inspect(other)}"}
-
-      {:error, reason} ->
-        {:error, reason}
+      {:error, reason} -> {:stop, reason}
     end
   end
 
@@ -219,7 +171,10 @@ defmodule Handbeam.MCP.ServerRuntime do
   end
 
   def handle_call({:call_tool, tool_name, input}, _from, {:http, state}) do
-    case http_rpc(state.cfg, "tools/call", %{name: tool_name, arguments: input || %{}}) do
+    case Handbeam.MCP.HTTP.call(state.cfg, "tools/call", %{
+           name: tool_name,
+           arguments: input || %{}
+         }) do
       {:ok, result} -> {:reply, normalize_tool_result(result), {:http, state}}
       {:error, reason} -> {:reply, {:error, format_error(reason)}, {:http, state}}
     end
@@ -233,7 +188,7 @@ defmodule Handbeam.MCP.ServerRuntime do
   # stdio transport
   # ---------------------------------------------------------------------------
 
-  defp open_port(%ServerConfig{command: command, args: args, env: env, cwd: cwd}) do
+  defp open_port(%ServerConfig{command: command, args: args, runtime_env: env, cwd: cwd}) do
     executable = System.find_executable(command)
 
     if is_nil(executable) do
@@ -322,52 +277,6 @@ defmodule Handbeam.MCP.ServerRuntime do
   # HTTP transport
   # ---------------------------------------------------------------------------
 
-  defp http_rpc(cfg, method, params) do
-    Logger.debug("[MCP][HTTP] #{method} to #{cfg.url}")
-    id = Protocol.generate_id()
-    payload = %{"jsonrpc" => "2.0", "id" => id, "method" => method, "params" => params}
-    body = Handbeam.JSON.encode!(payload)
-
-    Logger.debug(
-      "[MCP][HTTP] Req.post #{cfg.url} headers=#{inspect(Map.keys(cfg.runtime_headers))}"
-    )
-
-    case Req.post(cfg.url,
-           body: body,
-           headers: Map.merge(cfg.runtime_headers, %{"Content-Type" => "application/json"}),
-           receive_timeout: 30_000
-         ) do
-      {:ok, %Req.Response{status: status, body: body}} when status in 200..299 ->
-        parse_http_response(body)
-
-      {:ok, %Req.Response{status: status, body: body}} ->
-        {:error, "HTTP #{status}: #{truncate(body, 200)}"}
-
-      {:error, reason} ->
-        {:error, "HTTP request failed: #{inspect(reason)}"}
-    end
-  end
-
-  defp http_notify(cfg, method, params) do
-    payload = %{"jsonrpc" => "2.0", "method" => method, "params" => params}
-    body = Handbeam.JSON.encode!(payload)
-
-    case Req.post(cfg.url,
-           body: body,
-           headers: Map.merge(cfg.runtime_headers, %{"Content-Type" => "application/json"}),
-           receive_timeout: 30_000
-         ) do
-      {:ok, %Req.Response{status: status}} when status in 200..299 ->
-        :ok
-
-      {:ok, %Req.Response{status: status, body: body}} ->
-        {:error, "HTTP #{status}: #{truncate(body, 200)}"}
-
-      {:error, reason} ->
-        {:error, "HTTP request failed: #{inspect(reason)}"}
-    end
-  end
-
   def parse_http_response(body) when is_binary(body) do
     case Handbeam.JSON.decode(body) do
       {:ok, %{"jsonrpc" => "2.0", "id" => _id, "result" => _result} = msg} ->
@@ -411,6 +320,11 @@ defmodule Handbeam.MCP.ServerRuntime do
   # ---------------------------------------------------------------------------
   # Shared
   # ---------------------------------------------------------------------------
+
+  defp normalize_tool_result(%{"isError" => true} = result) do
+    {:ok, text, details} = normalize_tool_result(Map.delete(result, "isError"))
+    {:error, text, details}
+  end
 
   defp normalize_tool_result(%{"content" => content} = result) when is_binary(content) do
     {:ok, content, Map.drop(result, ["content", "isError"])}

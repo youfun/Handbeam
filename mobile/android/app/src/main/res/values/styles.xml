@@ -6,7 +6,12 @@
         <item name="android:windowBackground">#FAF9F7</item>
         <item name="android:statusBarColor">#FAF9F7</item>
         <item name="android:navigationBarColor">#FAF9F7</item>
+        <item name="android:windowDrawsSystemBarBackgrounds">true</item>
         <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <!-- Android 15+ otherwise forces a transparent bar; this OEM then
+             paints an opaque black strip. Opt out so statusBarColor applies. -->
+        <item name="android:windowOptOutEdgeToEdgeEnforcement">true</item>
         <item name="android:windowAnimationStyle">@null</item>
         <item name="android:windowNoTitle">true</item>
     </style>

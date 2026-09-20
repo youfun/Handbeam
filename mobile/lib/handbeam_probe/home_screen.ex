@@ -26,6 +26,8 @@ defmodule HandbeamProbe.HomeScreen do
     Chat,
     Delivery,
     FileNav,
+    GitSettings,
+    MCPSettings,
     Nav,
     Notice,
     Platform,
@@ -36,7 +38,14 @@ defmodule HandbeamProbe.HomeScreen do
     State
   }
 
-  alias HandbeamProbe.{Bridge.Inbound, NativeApproval, NativeWorkspaces, PendingRequests, ShareCopy}
+  alias HandbeamProbe.{
+    Bridge.Inbound,
+    NativeApproval,
+    NativeWorkspaces,
+    PendingRequests,
+    ShareCopy
+  }
+
   alias Handbeam.WorkspaceStore
 
   @toggles [:toggle_tool_work, :toggle_work_segment, :toggle_tool_output]
@@ -226,6 +235,54 @@ defmodule HandbeamProbe.HomeScreen do
   defp dispatch({:directory_picker, _} = msg, socket), do: FileNav.handle(msg, socket)
 
   # model / AI settings
+  defp dispatch({:change, {:git_identity, _}, _} = msg, socket),
+    do: GitSettings.handle(msg, socket)
+
+  defp dispatch({:change, {:git_field, _}, _} = msg, socket), do: GitSettings.handle(msg, socket)
+
+  defp dispatch({:dismiss, :git_dismiss_confirm} = msg, socket),
+    do: GitSettings.handle(msg, socket)
+
+  defp dispatch({:tap, action} = msg, %{assigns: %{page: :git}} = socket)
+       when action in [
+              :git_add,
+              :git_save,
+              :git_save_identity,
+              :git_cancel,
+              :git_ask_delete,
+              :git_delete,
+              :git_discard,
+              :git_dismiss_confirm
+            ],
+       do: GitSettings.handle(msg, socket)
+
+  defp dispatch({:tap, {action, _}} = msg, %{assigns: %{page: :git}} = socket)
+       when action in [:git_edit, :git_default],
+       do: GitSettings.handle(msg, socket)
+
+  defp dispatch({:change, {:mcp_field, _}, _} = msg, socket), do: MCPSettings.handle(msg, socket)
+
+  defp dispatch({:dismiss, :mcp_dismiss_confirm} = msg, socket),
+    do: MCPSettings.handle(msg, socket)
+
+  defp dispatch({:tap, action} = msg, %{assigns: %{page: :mcp}} = socket)
+       when action in [
+              :mcp_add,
+              :mcp_toggle_disabled,
+              :mcp_test,
+              :mcp_save,
+              :mcp_cancel,
+              :mcp_ask_delete,
+              :mcp_delete,
+              :mcp_discard,
+              :mcp_dismiss_confirm
+            ],
+       do: MCPSettings.handle(msg, socket)
+
+  defp dispatch({:tap, {action, _}} = msg, %{assigns: %{page: :mcp}} = socket)
+       when action in [:mcp_edit, :mcp_auth, :mcp_access, :mcp_workspace],
+       do: MCPSettings.handle(msg, socket)
+
   defp dispatch({:tap, {:composer_setting, field, _}} = msg, %{assigns: %{page: :chat}} = socket)
        when field in [:default_model, :reasoning],
        do: Settings.handle(msg, socket)
@@ -283,6 +340,21 @@ defmodule HandbeamProbe.HomeScreen do
 
   defp async_result(:model_settings_refs, {target, result}, socket),
     do: Settings.handle_refs(socket, target, result)
+
+  defp async_result(kind, result, socket)
+       when kind in [:mcp_loaded, :mcp_edited, :mcp_saved, :mcp_tested, :mcp_deleted],
+       do: MCPSettings.result(kind, result, socket)
+
+  defp async_result(kind, result, socket)
+       when kind in [
+              :git_loaded,
+              :git_edited,
+              :git_saved,
+              :git_identity_saved,
+              :git_deleted,
+              :git_default_saved
+            ],
+       do: GitSettings.result(kind, result, socket)
 
   defp async_result(_kind, _result, socket), do: socket
 

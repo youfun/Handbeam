@@ -20,7 +20,9 @@ defmodule Handbeam.Tool.Builtin.Git do
     Local Git history for the current workspace. Use after editing files so the user can review and roll back agent changes.
 
     Actions: init, status, diff, add, reset, commit, log, branches, create_branch, checkout, clone, fetch, pull, push, remotes, remote_add, remote_set_url.
-    HTTP(S) remotes only. After init, remote_add an https GitHub URL then push. For private repositories, pass a host-configured credential name, never a password or PAT. Credentials require HTTPS and trust the configured hostname across all ports and repository paths. Paths stay inside the workspace. pull fast-forwards only and will not create a merge commit. A successful push sets upstream so the next pull can fast-forward. SSH is not supported.
+    HTTP(S) remotes only. After init, remote_add an https GitHub URL then push. For private repositories, pass a configured credential name, never a password or PAT. Credentials require HTTPS and trust the configured hostname across all ports and repository paths. Paths stay inside the workspace. pull fast-forwards only and will not create a merge commit. A successful push sets upstream so the next pull can fast-forward. SSH is not supported.
+
+    #{Handbeam.Git.Settings.summarize()}
     """
   end
 

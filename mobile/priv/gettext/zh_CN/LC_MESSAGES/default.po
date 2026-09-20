@@ -31,10 +31,10 @@ msgid "%{count} search"
 msgid_plural "%{count} searches"
 msgstr[0] "%{count} 次搜索"
 
-#: lib/sigil_probe/model_settings/render_forms.ex:105
+#: lib/handbeam_probe/model_settings/render_forms.ex:105
 #, elixir-autogen, elixir-format
-msgid "API Key (leave blank to keep current)"
-msgstr "API Key（留空保留原值）"
+msgid "API Key"
+msgstr "API Key"
 
 #: lib/sigil_probe/model_settings/render_forms.ex:125
 #, elixir-autogen, elixir-format

@@ -208,6 +208,17 @@
         )}
       </div>
 
+      <div :if={@active_tab == :mcp} class="flex-1 overflow-hidden">
+        {live_render(@socket, HandbeamWeb.MCPSettingsLive,
+          id: "settings-mcp",
+          session: %{"workspace_id" => @workspace["id"]}
+        )}
+      </div>
+
+      <div :if={@active_tab == :git} class="flex-1 overflow-hidden">
+        {live_render(@socket, HandbeamWeb.GitSettingsLive, id: "settings-git")}
+      </div>
+
       <!-- UI Settings Tab -->
       <div :if={@active_tab == :ui} class="settings-content-wrap">
         <div class="settings-content-card">
@@ -261,7 +272,9 @@
 
       <!-- Coming Soon Tabs -->
       <div
-        :if={@active_tab not in [:model_ai, :workspace_models, :available_models, :ui]}
+        :if={
+          @active_tab not in [:model_ai, :workspace_models, :available_models, :mcp, :git, :ui]
+        }
         class="settings-content-wrap"
       >
         <div class="settings-section-heading">

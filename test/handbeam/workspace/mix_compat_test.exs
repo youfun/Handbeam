@@ -85,6 +85,33 @@ defmodule Handbeam.Workspace.MixCompatTest do
     File.rm_rf!(tmp)
   end
 
+  test "reuses a packaged host NIF when the requirement matches a different patch" do
+    host = %MixCompat{apps: %{bcrypt_elixir: "3.3.2"}, modules: MapSet.new()}
+    tmp = Path.join(System.tmp_dir!(), "sigil_bcrypt_#{System.unique_integer([:positive])}")
+    File.mkdir_p!(Path.join(tmp, "c_src"))
+    File.write!(Path.join(tmp, "mix.exs"), "defmodule Bcrypt.MixProject do\nend\n")
+
+    on_exit(fn -> File.rm_rf(tmp) end)
+
+    locked =
+      {:hex, :bcrypt_elixir, "3.2.1", "checksum", [:make, :mix], [], "hexpm", "checksum"}
+
+    dependency =
+      dep(
+        app: :bcrypt_elixir,
+        requirement: "~> 3.0",
+        status: {:ok, "3.2.1"},
+        manager: :make,
+        opts: [dest: tmp, compilers: [:elixir_make], lock: locked]
+      )
+
+    assert :ok = MixCompat.check([dependency], host)
+
+    host_missing = %MixCompat{apps: %{}, modules: MapSet.new()}
+    assert {:error, native} = MixCompat.check([dependency], host_missing)
+    assert native =~ "make" or native =~ "c_src" or native =~ "elixir_make"
+  end
+
   test "allows matching host versions and unknown pure Mix deps" do
     host = %MixCompat{apps: %{jason: "1.4.4"}, modules: MapSet.new([Jason])}
 

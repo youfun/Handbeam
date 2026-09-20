@@ -40,6 +40,11 @@ defmodule Handbeam.Workspace.MixCompat do
     ~r/\b:rebar3\b/
   ]
 
+  # Packaged into the mobile OTP tree. Workspace Mix may reuse these instead
+  # of compiling C on the device. Version must match the host copy exactly, or
+  # the host copy must satisfy the project's Mix requirement.
+  @host_native_apps MapSet.new([:bcrypt_elixir, :exqlite])
+
   defstruct apps: %{}, app_paths: %{}, modules: MapSet.new(), code_paths: MapSet.new()
 
   @type app_source :: Path.t() | {:beams, [{module(), Path.t()}], keyword()}
@@ -186,6 +191,14 @@ defmodule Handbeam.Workspace.MixCompat do
   end
 
   defp check_dep(%Mix.Dep{} = dep, host) do
+    if host_native_reuse?(dep, host) do
+      :ok
+    else
+      check_dep_sources(dep, host)
+    end
+  end
+
+  defp check_dep_sources(%Mix.Dep{} = dep, host) do
     app = dep.app
     dest = dep.opts[:dest]
 
@@ -260,6 +273,29 @@ defmodule Handbeam.Workspace.MixCompat do
   end
 
   defp host_app_vsn(app, %__MODULE__{apps: apps}), do: Map.get(apps, app)
+
+  defp host_native_reuse?(dep, host) do
+    MapSet.member?(@host_native_apps, dep.app) and
+      case host_app_vsn(dep.app, host) do
+        nil ->
+          false
+
+        host_vsn ->
+          compatible_versions?(host_vsn, dep_version(dep)) or
+            host_requirement_ok?(host_vsn, dep.requirement)
+      end
+  end
+
+  defp host_requirement_ok?(host_vsn, req) when is_binary(req) do
+    case parse_version(host_vsn) do
+      {:ok, version} -> Version.match?(version, req)
+      :error -> false
+    end
+  rescue
+    Version.InvalidRequirementError -> false
+  end
+
+  defp host_requirement_ok?(_host_vsn, _req), do: false
 
   defp check_native_tree(_app, dest) when dest in [nil, ""], do: :ok
 

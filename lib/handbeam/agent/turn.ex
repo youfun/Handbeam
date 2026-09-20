@@ -607,6 +607,7 @@ defmodule Handbeam.Agent.Turn do
         nil -> Handbeam.Tool.Registry.tool_defs()
         sid -> Handbeam.Tool.Registry.tool_defs_for_session(sid)
       end
+      |> Handbeam.MCP.Access.filter(state.config.context)
 
     # context hook — extensions can filter/modify messages and system_prompt
     # for this provider call only (does NOT modify persistent state/transcript)

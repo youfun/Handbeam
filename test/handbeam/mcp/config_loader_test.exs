@@ -160,7 +160,9 @@ defmodule Handbeam.MCP.ConfigLoaderTest do
       project = Path.join(@tmp_base, "env2")
 
       write_json(project, ".mcp.json", %{
-        "mcpServers" => %{"m" => %{"command" => "e", "env" => %{"T" => "env:HANDBEAM_MISSING_XYZ"}}}
+        "mcpServers" => %{
+          "m" => %{"command" => "e", "env" => %{"T" => "env:HANDBEAM_MISSING_XYZ"}}
+        }
       })
 
       {:ok, config} = ConfigLoader.load(user_config_path: nil, project: project)

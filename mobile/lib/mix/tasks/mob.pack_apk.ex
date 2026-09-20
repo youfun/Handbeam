@@ -131,7 +131,8 @@ defmodule Mix.Tasks.Mob.PackApk do
       "-Dndk_sysroot=#{MobDev.NdkVersion.sysroot()}",
       "-Dapp_name=#{app_name}",
       "-Dproject_root=#{root}",
-      "-Dexqlite_src=#{Path.join(root, "deps/exqlite/c_src")}"
+      "-Dexqlite_src=#{Path.join(root, "deps/exqlite/c_src")}",
+      "-Dbcrypt_src=#{Path.join(root, "deps/bcrypt_elixir/c_src")}"
       | nif_args
     ]
 
@@ -209,6 +210,7 @@ defmodule Mix.Tasks.Mob.PackApk do
         merge_priv!(dest)
         inject_or_reject_models_seed!(Path.join(dest, "priv"), opts)
         add_exqlite!(staging)
+        add_bcrypt!(staging)
         add_castore!(staging)
         {:ok, staging}
 
@@ -236,6 +238,7 @@ defmodule Mix.Tasks.Mob.PackApk do
   end
 
   defp add_exqlite!(staging), do: add_dep_lib!(staging, :exqlite)
+  defp add_bcrypt!(staging), do: add_dep_lib!(staging, :bcrypt_elixir)
   defp add_castore!(staging), do: add_dep_lib!(staging, :castore)
 
   # Flattened ebin copies are not an OTP lib. Mint TLS falls back to
@@ -258,6 +261,12 @@ defmodule Mix.Tasks.Mob.PackApk do
         dest_priv = Path.join(lib_dir, "priv")
         File.mkdir_p!(dest_priv)
         cp!(priv <> "/.", dest_priv)
+        # Host-built NIFs are the wrong ABI. Android/iOS load lib<name>.so
+        # from jniLibs / the static NIF table instead.
+        Enum.each([".so", ".dylib", ".dll"], fn ext ->
+          Path.wildcard(Path.join(dest_priv, "**/*#{ext}"))
+          |> Enum.each(&File.rm/1)
+        end)
       end
 
       :ok

@@ -44,10 +44,18 @@ defmodule Handbeam.MCP.ConfigLoader do
 
     sources = build_sources(user_path, project)
     {servers, diagnostics} = load_sources(sources)
+    {user_servers, _} = if user_path, do: load_one_source(:user, user_path), else: {%{}, []}
+    workspace_id = Keyword.get(opts, :workspace_id)
 
     active =
       servers
-      |> Enum.reject(fn {_name, cfg} -> cfg.disabled end)
+      |> Enum.reject(fn {name, cfg} ->
+        global = Map.get(user_servers, name)
+
+        cfg.disabled or not workspace_allowed?(cfg, workspace_id) or
+          (global != nil and (global.disabled or not workspace_allowed?(global, workspace_id))) or
+          (not Handbeam.Host.shell?() and is_nil(cfg.url))
+      end)
       |> Map.new()
 
     {:ok, %Config{servers: active, diagnostics: diagnostics}}
@@ -61,9 +69,25 @@ defmodule Handbeam.MCP.ConfigLoader do
     if Keyword.has_key?(opts, :user_config_path) do
       Keyword.get(opts, :user_config_path)
     else
-      opts
-      |> Keyword.get(:user_home, Handbeam.Home.path())
-      |> Path.join(".handbeam/mcp.json")
+      if Keyword.has_key?(opts, :user_home),
+        do: Path.join(Keyword.fetch!(opts, :user_home), ".handbeam/mcp.json"),
+        else: Handbeam.MCP.Settings.path()
+    end
+  end
+
+  defp workspace_allowed?(cfg, workspace_id) do
+    case Map.get(cfg.raw, "workspace_access") do
+      nil ->
+        true
+
+      %{"mode" => "all"} ->
+        true
+
+      %{"mode" => "selected", "workspace_ids" => ids} when is_list(ids) ->
+        is_binary(workspace_id) and workspace_id in ids
+
+      _ ->
+        false
     end
   end
 
@@ -114,8 +138,11 @@ defmodule Handbeam.MCP.ConfigLoader do
           {:error, _} -> {:error, "Invalid JSON in #{path}"}
         end
 
-      {:error, _reason} ->
+      {:error, :enoent} ->
         :not_found
+
+      {:error, _reason} ->
+        {:error, "Cannot read MCP configuration: #{path}"}
     end
   end
 
@@ -139,7 +166,7 @@ defmodule Handbeam.MCP.ConfigLoader do
   defp validate_servers(servers, source) do
     {servers, acc_diags} =
       Enum.reduce(servers, {%{}, []}, fn {name, raw_cfg}, {acc_servers, acc_diags} ->
-        case validate_one_server(name, raw_cfg, source) do
+        case validate_server(name, raw_cfg, source) do
           {:ok, server_config} -> {Map.put(acc_servers, name, server_config), acc_diags}
           {:error, diags} -> {acc_servers, [diags | acc_diags]}
         end
@@ -148,12 +175,14 @@ defmodule Handbeam.MCP.ConfigLoader do
     {servers, acc_diags |> Enum.reverse() |> List.flatten()}
   end
 
-  defp validate_one_server(name, raw_cfg, source) do
+  @doc "Validate one catalog entry using the same contract as file configuration."
+  def validate_server(name, raw_cfg, source) when is_map(raw_cfg) do
     transport_kind = transport_kind(raw_cfg)
 
     errors =
       validate_name(name, source) ++
-        validate_server_type(raw_cfg, name, source, transport_kind)
+        validate_server_type(raw_cfg, name, source, transport_kind) ++
+        validate_maps(raw_cfg, name, source)
 
     if errors != [] do
       {:error, errors}
@@ -163,6 +192,19 @@ defmodule Handbeam.MCP.ConfigLoader do
         errors when is_list(errors) -> {:error, errors}
       end
     end
+  end
+
+  def validate_server(name, _raw_cfg, source),
+    do: {:error, [diagnostic(:error, "Server configuration must be an object", source, name)]}
+
+  defp validate_maps(raw, name, source) do
+    Enum.flat_map(["headers", "env"], fn key ->
+      value = Map.get(raw, key, %{})
+
+      if is_map(value) and Enum.all?(value, fn {k, v} -> is_binary(k) and is_binary(v) end),
+        do: [],
+        else: [diagnostic(:error, "#{key} must be an object of strings", source, name)]
+    end)
   end
 
   # ---------------------------------------------------------------------------

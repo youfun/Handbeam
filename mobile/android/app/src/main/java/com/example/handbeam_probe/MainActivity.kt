@@ -9,10 +9,12 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.Bundle
 import android.util.Log
+import android.os.Build
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.activity.enableEdgeToEdge
+import androidx.core.view.WindowCompat
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.result.contract.ActivityResultContract
 import android.content.Intent
@@ -22,9 +24,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -51,6 +51,9 @@ class MainActivity : ComponentActivity() {
         private const val PHOTO_GENERATION_KEY = "sigil_pending_photo_generation"
         // Activity recreation must reattach, not start a second VM in this process.
         private val beamStarted = java.util.concurrent.atomic.AtomicBoolean(false)
+        // NativeUI :surface. Status/nav bars and the edge-to-edge window
+        // must use this even when MaterialTheme is still on dark fallbacks.
+        private val SURFACE_CREAM = 0xFFFAF9F7.toInt()
         init { System.loadLibrary("handbeam_probe") }
     }
 
@@ -193,11 +196,8 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // Edge-to-edge: lets the content draw behind the (transparent) status
-        // and navigation bars instead of being letterboxed by opaque system
-        // bars. Must be called BEFORE super.onCreate() per AndroidX docs.
-        enableEdgeToEdge()
         super.onCreate(savedInstanceState)
+        applyLightSystemBars()
         pendingSaveRequestId = savedInstanceState?.getString(SAVE_REQUEST_KEY)
         pendingShareIntakeId = savedInstanceState?.getString(SHARE_INTAKE_KEY)
         com.example.handbeam_probe.attachments.ShareIntake.scheduleRecover(filesDir)
@@ -285,38 +285,20 @@ class MainActivity : ComponentActivity() {
             // NativeUI is a light cream surface (#FAF9F7); falling back to
             // Material's stock dark scheme paints the whole window black until
             // the first node arrives, which looks like a hung launch.
-            val colorScheme = themeColors?.let { tc ->
-                darkColorScheme(
-                    primary          = colorFromMap(tc, "primary",          0xFF6750A4),
-                    onPrimary        = colorFromMap(tc, "on_primary",       0xFFFFFFFF),
-                    secondary        = colorFromMap(tc, "secondary",        0xFF625B71),
-                    onSecondary      = colorFromMap(tc, "on_secondary",     0xFFFFFFFF),
-                    background       = colorFromMap(tc, "background",       0xFF1C1B1F),
-                    onBackground     = colorFromMap(tc, "on_background",    0xFFE6E1E5),
-                    surface          = colorFromMap(tc, "surface",          0xFF1C1B1F),
-                    onSurface        = colorFromMap(tc, "on_surface",       0xFFE6E1E5),
-                    // Mob's `surface_raised` / `muted` map onto Material 3's
-                    // surfaceVariant / onSurfaceVariant — same role.
-                    surfaceVariant   = colorFromMap(tc, "surface_raised",   0xFF49454F),
-                    onSurfaceVariant = colorFromMap(tc, "muted",            0xFFCAC4D0),
-                    outline          = colorFromMap(tc, "border",           0xFF938F99),
-                    error            = colorFromMap(tc, "error",            0xFFF2B8B5),
-                    onError          = colorFromMap(tc, "on_error",         0xFFFFFFFF),
-                )
-            } ?: lightColorScheme(
-                primary = Color(0xFF1A1815),
-                onPrimary = Color(0xFFFFFFFF),
-                secondary = Color(0xFF6B6560),
-                onSecondary = Color(0xFFFFFFFF),
-                background = Color(0xFFFAF9F7),
-                onBackground = Color(0xFF1A1815),
-                surface = Color(0xFFFAF9F7),
-                onSurface = Color(0xFF1A1815),
-                surfaceVariant = Color(0xFFF4F3F0),
-                onSurfaceVariant = Color(0xFF6B6560),
-                outline = Color(0xFFE4E0DA),
-                error = Color(0xFFB42318),
-                onError = Color(0xFFFFFFFF),
+            val colorScheme = lightColorScheme(
+                primary = colorFromMap(themeColors, "primary", 0xFF1A1815),
+                onPrimary = colorFromMap(themeColors, "on_primary", 0xFFFFFFFF),
+                secondary = colorFromMap(themeColors, "secondary", 0xFF6B6560),
+                onSecondary = colorFromMap(themeColors, "on_secondary", 0xFFFFFFFF),
+                background = colorFromMap(themeColors, "background", 0xFFFAF9F7),
+                onBackground = colorFromMap(themeColors, "on_background", 0xFF1A1815),
+                surface = colorFromMap(themeColors, "surface", 0xFFFAF9F7),
+                onSurface = colorFromMap(themeColors, "on_surface", 0xFF1A1815),
+                surfaceVariant = colorFromMap(themeColors, "surface_raised", 0xFFF4F3F0),
+                onSurfaceVariant = colorFromMap(themeColors, "muted", 0xFF6B6560),
+                outline = colorFromMap(themeColors, "border", 0xFFE4E0DA),
+                error = colorFromMap(themeColors, "error", 0xFFB42318),
+                onError = colorFromMap(themeColors, "on_error", 0xFFFFFFFF),
             )
 
             MaterialTheme(colorScheme = colorScheme) {
@@ -534,8 +516,27 @@ class MainActivity : ComponentActivity() {
     // Pulls an ARGB long out of the BEAM-pushed theme map, falling back to
     // a Material 3 stock dark value when the key isn't present (e.g. a
     // custom theme that doesn't define every Material 3 slot).
-    private fun colorFromMap(map: Map<String, Long>, key: String, fallback: Long): Color =
-        Color(map[key] ?: fallback)
+    private fun applyLightSystemBars() {
+        // NativeUI is always cream. Do not use enableEdgeToEdge(): on this
+        // Android 16 OEM it leaves an opaque black status strip even with
+        // SystemBarStyle.light. The theme opts out of edge-to-edge
+        // enforcement so these colors stick.
+        window.addFlags(WindowManager.LayoutParams.FLAG_DRAWS_SYSTEM_BAR_BACKGROUNDS)
+        window.statusBarColor = SURFACE_CREAM
+        window.navigationBarColor = SURFACE_CREAM
+        WindowCompat.setDecorFitsSystemWindows(window, true)
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = true
+            isAppearanceLightNavigationBars = true
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            window.isStatusBarContrastEnforced = false
+            window.isNavigationBarContrastEnforced = false
+        }
+    }
+
+    private fun colorFromMap(map: Map<String, Long>?, key: String, fallback: Long): Color =
+        Color(map?.get(key) ?: fallback)
 }
 
 // ── Identity-preserving screen presentation (MOB-146) ──────────────────────
@@ -624,7 +625,7 @@ private fun MobNavHost(state: RootState) {
             // behind the composition — and that is the window background,
             // hardcoded black in styles.xml. Without this a light-themed app
             // gets a black wedge sweeping across it for the whole slide.
-            .background(MaterialTheme.colorScheme.background)
+            .background(Color(0xFFFAF9F7))
             // Clips drawing AND hit-testing to the container, so a screen
             // parked off-screen mid-slide cannot be tapped.
             .clipToBounds()
@@ -665,7 +666,7 @@ private fun MobNavHost(state: RootState) {
                 // root state directly, which would resubscribe every tagged
                 // node to every root update.
                 CompositionLocalProvider(MobBridge.LocalSlotEpoch provides state.navKey) {
-                    RenderNode(node, modifier = Modifier.fillMaxSize().safeDrawingPadding().imePadding())
+                    RenderNode(node, modifier = Modifier.fillMaxSize().imePadding())
                 }
             }
         }

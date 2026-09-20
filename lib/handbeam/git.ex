@@ -299,9 +299,11 @@ defmodule Handbeam.Git do
   end
 
   defp identity(opts) do
+    configured = Handbeam.Git.Settings.identity()
+
     [
-      name: opts[:name] || @identity[:name],
-      email: opts[:email] || @identity[:email]
+      name: opts[:name] || configured[:name] || @identity[:name],
+      email: opts[:email] || configured[:email] || @identity[:email]
     ]
   end
 

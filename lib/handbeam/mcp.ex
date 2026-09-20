@@ -1,174 +1,90 @@
 defmodule Handbeam.MCP do
-  @moduledoc """
-  MCP integration entrypoint.
-  """
-
-  alias Handbeam.MCP.{ConfigLoader, RuntimeSupervisor, ToolBridge}
-
-  require Logger
+  @moduledoc "Owns independent MCP runtime sets for each workspace/configuration source."
   use GenServer
+  alias Handbeam.MCP.{Access, ConfigLoader, RuntimeSupervisor, ServerRuntime, ToolBridge}
 
-  @spec load_config(keyword()) :: {:ok, Handbeam.MCP.Config.t()}
   def load_config(opts \\ []), do: ConfigLoader.load(opts)
-
-  @spec start_runtime(keyword()) :: {:ok, pid()} | {:error, term()}
-  def start_runtime(opts \\ []) do
-    RuntimeSupervisor.start_runtime(opts)
-  end
-
-  @spec bootstrap(keyword()) :: {:ok, map()} | {:error, term()}
-  def bootstrap(opts \\ []) do
-    GenServer.call(__MODULE__, {:bootstrap, opts}, 60_000)
-  end
-
-  @spec teardown_previous(keyword()) :: :ok
-  def teardown_previous(opts \\ []) do
-    GenServer.call(__MODULE__, {:teardown, opts}, 10_000)
-  end
-
-  @spec register_runtime_tools(pid(), Handbeam.MCP.ServerConfig.t()) ::
-          {:ok, [String.t()]} | {:error, term()}
-  def register_runtime_tools(runtime_pid, server_config),
-    do: ToolBridge.register_server_tools(runtime_pid, server_config)
-
-  # ──── GenServer ────
-
-  def child_spec(opts) do
-    %{
-      id: __MODULE__,
-      start: {__MODULE__, :start_link, [opts]},
-      type: :worker,
-      restart: :permanent,
-      shutdown: 500
-    }
-  end
-
-  def start_link(opts) do
-    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
-  end
+  def start_runtime(opts \\ []), do: RuntimeSupervisor.start_runtime(opts)
+  def bootstrap(opts \\ []), do: GenServer.call(__MODULE__, {:bootstrap, opts}, 120_000)
+  def teardown_previous(opts \\ []), do: GenServer.call(__MODULE__, {:teardown, opts}, 120_000)
+  def register_runtime_tools(pid, cfg), do: ToolBridge.register_server_tools(pid, cfg)
+  def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
   @impl true
-  def init(_opts) do
-    {:ok, %{cache: %{}}}
-  end
+  def init(_), do: {:ok, %{}}
 
   @impl true
-  def handle_call({:bootstrap, opts}, _from, state) do
-    case ConfigLoader.load(opts) do
-      {:ok, config} ->
-        cache_key = config_cache_key_from_config(config)
+  def handle_call({:bootstrap, opts}, _from, scopes) do
+    # Include full connection configuration, not just server names, in cache validation.
+    opts = Keyword.put_new(opts, :user_config_path, Handbeam.MCP.Settings.path())
+    key = Access.scope(opts)
+    config = Access.config(opts)
+    previous = Map.get(scopes, key)
 
-        case Map.fetch(state.cache, cache_key) do
-          {:ok, result} ->
-            Logger.debug(
-              "[MCP] bootstrap skipped — same config already loaded (#{length(result.registered)} tools)"
-            )
+    if previous && previous.config == config && previous.server_errors == [] &&
+         Enum.all?(previous.runtime_pids, &Process.alive?/1) &&
+         Enum.all?(previous.registered, &(Handbeam.Tool.Registry.get(&1) != :error)) do
+      {:reply, {:ok, previous}, scopes}
+    else
+      if previous, do: retire(previous)
+      result = start_servers(config, opts)
+      {:reply, {:ok, result}, Map.put(scopes, key, result)}
+    end
+  end
 
-            {:reply, {:ok, result}, state}
+  def handle_call({:teardown, _opts}, _from, scopes) do
+    Enum.each(scopes, fn {_, result} -> retire(result) end)
 
-          :error ->
-            # Only teardown if config differs from every cached entry
-            needs_teardown =
-              Enum.any?(state.cache, fn {_key, cached} ->
-                not configs_match?(cached.config, config)
-              end)
+    Handbeam.Tool.Registry.list()
+    |> Enum.filter(&String.starts_with?(&1, "mcp__"))
+    |> Enum.each(&Handbeam.Tool.Registry.unregister/1)
 
-            new_state = if needs_teardown, do: do_teardown(state), else: state
+    {:reply, :ok, %{}}
+  end
 
-            {runtimes, server_diags} =
-              Enum.reduce(config.servers, {[], []}, fn {name, server}, {rt_acc, diag_acc} ->
-                case start_runtime(server_config: server) do
-                  {:ok, runtime_pid} ->
-                    case register_runtime_tools(runtime_pid, server) do
-                      {:ok, tool_names} ->
-                        {[%{registered: tool_names, runtime_pid: runtime_pid} | rt_acc], diag_acc}
+  defp start_servers(config, opts) do
+    Enum.reduce(
+      config.servers,
+      %{config: config, registered: [], runtime_pids: [], server_errors: []},
+      fn {name, cfg}, acc ->
+        case start_runtime(server_config: cfg) do
+          {:ok, pid} ->
+            case ToolBridge.register_server_tools(pid, cfg, opts) do
+              {:ok, tools} ->
+                %{
+                  acc
+                  | registered: acc.registered ++ tools,
+                    runtime_pids: [pid | acc.runtime_pids]
+                }
 
-                      {:error, reason} ->
-                        Logger.warning(
-                          "[MCP] tool registration failed for \"#{name}\": #{inspect(reason)}"
-                        )
+              {:error, _} ->
+                ServerRuntime.shutdown(pid)
 
-                        {[%{runtime_pid: runtime_pid} | rt_acc], diag_acc}
-                    end
-
-                  {:error, reason} ->
-                    Logger.warning("[MCP] failed to start server \"#{name}\": #{inspect(reason)}")
-                    {rt_acc, [%{server: name, error: inspect(reason)} | diag_acc]}
-                end
-              end)
-
-            runtimes =
-              runtimes
-              |> Enum.reverse()
-              |> Enum.reduce(%{registered: [], runtime_pids: []}, fn
-                %{registered: tools, runtime_pid: pid}, acc ->
-                  %{
-                    acc
-                    | registered: acc.registered ++ tools,
-                      runtime_pids: [pid | acc.runtime_pids]
-                  }
-
-                %{runtime_pid: pid}, acc ->
-                  %{acc | runtime_pids: [pid | acc.runtime_pids]}
-              end)
-
-            result =
-              Map.merge(%{config: config, server_errors: Enum.reverse(server_diags)}, runtimes)
-
-            if server_diags != [] do
-              Logger.warning(
-                "[MCP] #{length(server_diags)} server(s) failed to start: #{inspect(server_diags)}"
-              )
+                %{
+                  acc
+                  | server_errors: [
+                      %{server: name, error: "Tool discovery failed"} | acc.server_errors
+                    ]
+                }
             end
 
-            Logger.info(
-              "[MCP] bootstrap complete: #{length(result.registered)} tools registered from #{map_size(config.servers)} servers"
-            )
-
-            new_state = %{new_state | cache: Map.put(new_state.cache, cache_key, result)}
-            {:reply, {:ok, result}, new_state}
+          {:error, _} ->
+            %{
+              acc
+              | server_errors: [%{server: name, error: "Connection failed"} | acc.server_errors]
+            }
         end
-    end
+      end
+    )
   end
 
-  @impl true
-  def handle_call({:teardown, _opts}, _from, state) do
-    {:reply, :ok, do_teardown(state)}
-  end
-
-  # ──── internal ────
-
-  defp do_teardown(state) do
-    # Unregister all existing mcp__ tools
-    old_tools = Enum.filter(Handbeam.Tool.Registry.list(), &String.starts_with?(&1, "mcp__"))
-    Enum.each(old_tools, &Handbeam.Tool.Registry.unregister/1)
-
-    # Shut down previous ServerRuntime processes
-    old_pids = :ets.tab2list(runtime_pids_table()) |> Enum.map(&elem(&1, 0))
-
-    Enum.each(old_pids, fn pid ->
-      if Process.alive?(pid), do: Handbeam.MCP.ServerRuntime.shutdown(pid)
+  defp retire(result) do
+    Enum.each(result.registered, &Handbeam.Tool.Registry.unregister/1)
+    # Stop behind any in-flight call, without blocking other workspaces or cancelling that call.
+    Enum.each(result.runtime_pids, fn pid ->
+      Task.Supervisor.start_child(Handbeam.AgentRunTaskSupervisor, fn ->
+        if Process.alive?(pid), do: GenServer.stop(pid, :normal, 65_000)
+      end)
     end)
-
-    # Clear cache and ETS tables
-    :ets.delete_all_objects(runtime_pids_table())
-    %{state | cache: %{}}
-  end
-
-  defp configs_match?(a, b) do
-    a == b
-  end
-
-  defp config_cache_key_from_config(config) do
-    names = Enum.map(Enum.sort_by(config.servers, fn {k, _} -> k end), fn {k, _} -> k end)
-    {:servers, names}
-  end
-
-  # ETS set for tracking runtime PIDs
-  defp runtime_pids_table do
-    case :ets.whereis(:handbeam_mcp_runtimes) do
-      :undefined -> :ets.new(:handbeam_mcp_runtimes, [:set, :public])
-      existing -> existing
-    end
   end
 end

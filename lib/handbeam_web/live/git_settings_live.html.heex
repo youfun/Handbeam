@@ -1,0 +1,182 @@
+<div id="git-settings" class="settings-content-wrap">
+  <style>
+    #git-settings { font: 14px/1.5 system-ui, sans-serif; color: var(--sig-text-primary, #202124); padding: 16px; max-width: 960px; margin: auto; }
+    #git-settings * { box-sizing: border-box; }
+    #git-settings .settings-section-title { font-size: 20px; font-weight: 600; }
+    #git-settings .settings-help-text, #git-settings .settings-field-desc { color: var(--sig-text-secondary, #62666b); }
+    #git-settings .settings-card { border: 1px solid var(--sig-border-subtle, #d9dce0); border-radius: 8px; padding: 16px; margin-top: 12px; }
+    #git-settings .flex { display: flex; gap: 12px; align-items: center; }
+    #git-settings .justify-between { justify-content: space-between; }
+    #git-settings button { cursor: pointer; font: inherit; padding: 8px 12px; border: 1px solid var(--sig-border-subtle, #d9dce0); border-radius: 6px; background: var(--sig-bg-elevated, #fff); color: inherit; }
+    #git-settings .settings-save-btn { background: var(--sig-text-primary, #202124); color: var(--sig-bg-elevated, #fff); }
+    #git-settings label { display: block; margin: 12px 0; }
+    #git-settings .settings-input { display: block; width: 100%; padding: 10px; margin-top: 4px; font: inherit; color: inherit; background: var(--sig-bg-elevated, #fff); border: 1px solid var(--sig-border-subtle, #b7bbc1); border-radius: 6px; }
+    #git-settings .text-red-600 { color: #b42318; }
+    #git-settings .grid { display: grid; gap: 12px; }
+    @media (min-width: 800px) { #git-settings .grid-2 { grid-template-columns: 1fr 1fr; } }
+  </style>
+
+  <div class="settings-content-card">
+    <div class="settings-section-title">{gettext("Git")}</div>
+    <div class="settings-help-text">
+      {gettext(
+        "Commit author and HTTPS accounts for clone, fetch, pull, and push. Passwords and tokens are never shown after save. Pick a default account; the agent can also pass a credential name."
+      )}
+    </div>
+
+    <div :if={@load_error} id="git-load-error" class="settings-help-text text-red-600">
+      {@load_error}
+    </div>
+
+    <form id="git-identity" phx-submit="save_identity" class="settings-card">
+      <div class="settings-section-title" style="font-size: 16px;">
+        {gettext("Commit identity")}
+      </div>
+      <div class="grid grid-2">
+        <label>
+          {gettext("Name")}
+          <input
+            type="text"
+            name="identity[name]"
+            value={@identity["name"]}
+            class="settings-input"
+            autocomplete="name"
+          />
+        </label>
+        <label>
+          {gettext("Email")}
+          <input
+            type="email"
+            name="identity[email]"
+            value={@identity["email"]}
+            class="settings-input"
+            autocomplete="email"
+          />
+        </label>
+      </div>
+      <div :if={@identity_error} class="settings-help-text text-red-600">{@identity_error}</div>
+      <button type="submit" class="settings-save-btn">{gettext("Save identity")}</button>
+    </form>
+
+    <div class="settings-card">
+      <div class="flex justify-between">
+        <div class="settings-section-title" style="font-size: 16px;">
+          {gettext("Accounts")}
+        </div>
+        <button
+          :if={is_nil(@form)}
+          id="git-add"
+          type="button"
+          phx-click="new_account"
+          class="settings-save-btn"
+        >
+          {gettext("Add account")}
+        </button>
+      </div>
+
+      <div :if={@accounts == [] and is_nil(@form)} id="git-empty" class="settings-help-text">
+        {gettext("No Git accounts yet.")}
+      </div>
+
+      <div :for={account <- @accounts} id={"git-account-#{account.id}"} class="settings-card">
+        <div class="flex justify-between">
+          <div>
+            <div>{account.name} <span class="settings-help-text">({account.id})</span></div>
+            <div class="settings-help-text">
+              {account.endpoint}
+              <%= if account.username != "" do %>
+                · {account.username}
+              <% end %>
+              <%= if account.default? do %>
+                · {gettext("default")}
+              <% end %>
+            </div>
+          </div>
+          <div class="flex">
+            <button
+              :if={not account.default?}
+              type="button"
+              phx-click="set_default"
+              phx-value-id={account.id}
+            >
+              {gettext("Use as default")}
+            </button>
+            <button type="button" phx-click="edit_account" phx-value-id={account.id}>
+              {gettext("Edit")}
+            </button>
+            <button type="button" phx-click="confirm_delete" phx-value-id={account.id}>
+              {gettext("Delete")}
+            </button>
+          </div>
+        </div>
+        <div :if={@delete_target == account.id} class="flex" style="margin-top: 8px;">
+          <span>{gettext("Delete this account?")}</span>
+          <button type="button" phx-click="delete_account" phx-value-id={account.id}>
+            {gettext("Delete")}
+          </button>
+          <button type="button" phx-click="cancel_delete">{gettext("Cancel")}</button>
+        </div>
+      </div>
+
+      <form :if={@form} id="git-account-form" phx-submit="save_account" class="settings-card">
+        <label>
+          {gettext("Id")}
+          <input
+            type="text"
+            name="account[id]"
+            value={@form["id"]}
+            class="settings-input"
+            readonly={@form["id"] not in [nil, ""]}
+            placeholder="github"
+          />
+        </label>
+        <div class="grid grid-2">
+          <label>
+            {gettext("Display name")}
+            <input type="text" name="account[name]" value={@form["name"]} class="settings-input" />
+          </label>
+          <label>
+            {gettext("Username")}
+            <input
+              type="text"
+              name="account[username]"
+              value={@form["username"]}
+              class="settings-input"
+              autocomplete="username"
+            />
+          </label>
+        </div>
+        <label>
+          {gettext("HTTPS endpoint")}
+          <input
+            type="url"
+            name="account[endpoint]"
+            value={@form["endpoint"]}
+            class="settings-input"
+            placeholder="https://github.com"
+          />
+        </label>
+        <label>
+          {gettext("Password or token")}
+          <input
+            type="password"
+            name="account[password]"
+            value=""
+            class="settings-input"
+            autocomplete="new-password"
+            placeholder={
+              if @form["has_password"],
+                do: gettext("Leave blank to keep the saved token"),
+                else: ""
+            }
+          />
+        </label>
+        <div :if={@form_error} class="settings-help-text text-red-600">{@form_error}</div>
+        <div class="flex">
+          <button type="submit" class="settings-save-btn">{gettext("Save account")}</button>
+          <button type="button" phx-click="cancel_account">{gettext("Cancel")}</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>

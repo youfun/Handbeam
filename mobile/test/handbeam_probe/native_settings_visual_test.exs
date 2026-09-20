@@ -67,6 +67,27 @@ defmodule HandbeamProbe.NativeSettingsVisualTest do
     refute node.props[:weight]
   end
 
+  test "labeled fields do not repeat the label as placeholder" do
+    node = NativeUI.field("API Key", "", {:model_field, :api_key})
+    [label, input] = node.children
+    assert label.props.text == "API Key"
+    assert input.props.placeholder == ""
+
+    custom = NativeUI.field("Display name", "stepfun", :name, placeholder: "Acme")
+    assert hd(tl(custom.children)).props.placeholder == "Acme"
+  end
+
+  test "provider editor keeps API key hint outside the input", %{workspace: ws} do
+    state = ModelSettings.action(:add_provider, ModelSettings.load(ws), ws)
+    tree = ModelSettings.render(state)
+
+    input = find_type(tree, :text_field, "{:model_field, :api_key}")
+    assert input.props.placeholder == ""
+    refute flatten_text(tree) =~ gettext("API Key (leave blank to keep current)")
+    assert flatten_text(tree) =~ gettext("API Key")
+    assert flatten_text(tree) =~ gettext("Saved keys are never shown again.")
+  end
+
   test "Mob.Renderer JSON keeps settings_select option children and tap handles" do
     tree =
       NativeUI.select(
@@ -369,9 +390,28 @@ defmodule HandbeamProbe.NativeSettingsVisualTest do
       )
 
     blob = flatten_text(tree)
-    assert blob =~ gettext("UI (unavailable)")
+    assert blob =~ "UI"
+    assert blob =~ "Git"
     assert blob =~ gettext("Appearance is not available yet")
     refute blob =~ "models.allow.providers"
+  end
+
+  test "git settings page uses native identity and account chrome" do
+    tree =
+      HomeScreen.render(
+        HandbeamProbe.HomeScreen.State.new(
+          page: :git,
+          workspace: %{"id" => "w", "name" => "W", "path" => "/tmp"},
+          approval_open: false
+        )
+      )
+
+    blob = flatten_text(tree)
+    assert blob =~ gettext("Commit identity")
+    assert blob =~ gettext("Accounts")
+    assert blob =~ gettext("No Git accounts yet.")
+    assert blob =~ gettext("Save identity")
+    refute blob =~ "settings-git"
   end
 
   defp save_named(workspace, provider, model) do

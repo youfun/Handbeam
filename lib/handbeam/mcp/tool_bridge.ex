@@ -6,15 +6,30 @@ defmodule Handbeam.MCP.ToolBridge do
   alias Handbeam.MCP.ServerConfig
 
   @spec register_server_tools(pid(), ServerConfig.t()) :: {:ok, [String.t()]} | {:error, term()}
-  def register_server_tools(runtime_pid, %ServerConfig{name: server_name}) do
+  def register_server_tools(runtime_pid, server_config, opts \\ [])
+
+  def register_server_tools(runtime_pid, %ServerConfig{name: server_name} = config, opts) do
+    scope = Handbeam.MCP.Access.scope(opts)
+
     case Handbeam.MCP.ServerRuntime.tools(runtime_pid) do
       {:ok, tools} ->
         registered =
           Enum.map(tools, fn tool ->
-            namespaced = namespaced_name(server_name, tool.name)
+            name = namespaced_name(server_name <> "_" <> String.slice(scope, 0, 12), tool.name)
 
-            executor = fn input, _context ->
-              Handbeam.MCP.ServerRuntime.call_tool(runtime_pid, tool.name, input)
+            namespaced =
+              if byte_size(name) > 64,
+                do:
+                  String.slice(name, 0, 43) <>
+                    "_" <> String.slice(Handbeam.MCP.Access.fingerprint(name), 0, 20),
+                else: name
+
+            executor = fn input, context ->
+              if Handbeam.MCP.Access.allowed?(config, opts, context) do
+                Handbeam.MCP.ServerRuntime.call_tool(runtime_pid, tool.name, input)
+              else
+                {:error, "MCP server is disabled, changed, or not allowed in this workspace"}
+              end
             end
 
             :ok =
@@ -23,7 +38,14 @@ defmodule Handbeam.MCP.ToolBridge do
                 tool.description,
                 tool.input_schema,
                 executor,
-                meta: %{source: :mcp, server: server_name, remote_name: tool.name}
+                meta: %{
+                  source: :mcp,
+                  server: server_name,
+                  remote_name: tool.name,
+                  scope: scope,
+                  fingerprint: Handbeam.MCP.Access.fingerprint(config),
+                  runtime_pid: runtime_pid
+                }
               )
 
             namespaced

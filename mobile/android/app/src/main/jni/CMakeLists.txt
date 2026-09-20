@@ -186,6 +186,25 @@ if(NOT EXISTS "${ZIG_SQLITE_SO}")
     )
 endif()  # NOT EXISTS ZIG_SQLITE_SO
 
+set(ZIG_BCRYPT_SO "${_PROJECT_ROOT}/android/app/src/main/jniLibs/${ANDROID_ABI}/libbcrypt_nif.so")
+if(NOT EXISTS "${ZIG_BCRYPT_SO}")
+    add_library(bcrypt_nif SHARED
+        ${MOB_DEPS_DIR}/bcrypt_elixir/c_src/bcrypt_nif.c
+        ${MOB_DEPS_DIR}/bcrypt_elixir/c_src/blowfish.c
+    )
+
+    target_include_directories(bcrypt_nif PRIVATE
+        ${MOB_DEPS_DIR}/bcrypt_elixir/c_src
+        ${OTP_DIR}/${ERTS_VSN}/include
+    )
+
+    target_link_libraries(bcrypt_nif
+        handbeam_probe
+        android
+        log
+    )
+endif()
+
 # ExGit owns its libgit2/TLS cross-build; Gradle packages this shared target.
 set(EX_GIT_ERTS_INCLUDE_DIR "${OTP_DIR}/${ERTS_VSN}/include")
 set(EX_GIT_BEAM_LIBRARY handbeam_probe)

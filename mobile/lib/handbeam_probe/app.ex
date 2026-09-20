@@ -28,6 +28,7 @@ defmodule HandbeamProbe.App do
     Mob.DNS.configure_pure_beam()
 
     {:ok, _} = Application.ensure_all_started(:ecto_sqlite3)
+    _ = Application.ensure_all_started(:bcrypt_elixir)
     # `:castore` is a Hex OTP app. Mob iOS/Android flatten BEAMs onto `-pa`,
     # so `Application.ensure_all_started(:castore)` raises `unknown application`
     # and `CAStore.file_path/0` cannot resolve `Application.app_dir(:castore)`.
@@ -111,7 +112,7 @@ defmodule HandbeamProbe.App do
       directory_picker: HandbeamProbe.DirectoryPicker,
       script_http: :platform_dns_ca,
       beam_eval: false,
-      mcp: false,
+      mcp: true,
       dist: debug?
     })
 

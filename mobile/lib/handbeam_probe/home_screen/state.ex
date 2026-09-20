@@ -63,6 +63,8 @@ defmodule HandbeamProbe.HomeScreen.State do
 
     # ── settings ──
     models: nil,
+    mcp: nil,
+    git: nil,
 
     # ── platform (composer attachments / system UI requests) ──
     pending_attachments: [],
@@ -95,6 +97,8 @@ defmodule HandbeamProbe.HomeScreen.State do
       %__MODULE__{
         workspaces: NativeWorkspaces.empty_state(),
         models: ModelSettings.empty(),
+        mcp: HandbeamProbe.MCPSettings.empty(),
+        git: HandbeamProbe.GitSettings.empty(),
         approval_export_inflight: MapSet.new(),
         pending_requests: PendingRequests.new(),
         merged_intake_ids: MapSet.new(),

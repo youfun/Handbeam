@@ -61,6 +61,8 @@ pub fn build(b: *std.Build) void {
     // Same shape as the device build — see `build_device.zig` for the
     // companion. Empty if the project has no project-side NIFs.
     const project_root = b.option([]const u8, "project_root", "Absolute path to the project root (for c_src/<name>.c lookups)") orelse "";
+    const bcrypt_src = b.option([]const u8, "bcrypt_src", "Absolute path to deps/bcrypt_elixir/c_src") orelse
+        if (project_root.len > 0) b.fmt("{s}/deps/bcrypt_elixir/c_src", .{project_root}) else "";
     const project_c_nifs = b.option([]const u8, "project_c_nifs", "Comma-separated C NIF names (each at c_src/<name>.c); empty if none") orelse "";
     const project_rust_libs = b.option([]const u8, "project_rust_libs", "Comma-separated absolute paths to Rust NIF .a files (pre-built by mob_dev)") orelse "";
     const project_swift_sources = b.option([]const u8, "project_swift_sources", "Comma-separated absolute paths to extra project Swift sources; empty if none") orelse "";
@@ -230,6 +232,35 @@ pub fn build(b: *std.Build) void {
     });
     installAndCollect(b, objects_step, &objs, enif_lp, "enif_keepalive.o");
 
+    if (bcrypt_src.len > 0) {
+        const bcrypt_flags = &[_][]const u8{
+            "-Os",
+            "-ffunction-sections",
+            "-fdata-sections",
+            "-mios-simulator-version-min=17.0",
+            "-DSTATIC_ERLANG_NIF",
+            "-DSTATIC_ERLANG_NIF_LIBNAME=bcrypt_nif",
+            b.fmt("-I{s}", .{bcrypt_src}),
+        };
+        const bcrypt_specs = [_]CObjectSpec{
+            .{ .name = "bcrypt_nif", .source = b.fmt("{s}/bcrypt_nif.c", .{bcrypt_src}) },
+            .{ .name = "blowfish", .source = b.fmt("{s}/blowfish.c", .{bcrypt_src}) },
+        };
+        for (bcrypt_specs) |spec| {
+            installAndCollect(b, objects_step, &objs, addCObject(b, .{
+                .name = spec.name,
+                .source = spec.source,
+                .target = target,
+                .optimize = optimize,
+                .c_flags = bcrypt_flags,
+                .mob_dir = mob_dir,
+                .otp_root = otp_root,
+                .erts_vsn = erts_vsn,
+                .sdkroot = sdkroot,
+            }), b.fmt("{s}.o", .{spec.name}));
+        }
+    }
+
     // --- ObjC via xcrun cc -----------------------------------------------------
     const objc_specs = [_]ObjcSpec{
         .{ .name = "MobNode", .source = b.fmt("{s}/ios/MobNode.m", .{mob_dir}) },
@@ -363,6 +394,11 @@ pub fn build(b: *std.Build) void {
         .objects = objs.items,
     });
 }
+
+const CObjectSpec = struct {
+    name: []const u8,
+    source: []const u8,
+};
 
 const ObjcSpec = struct {
     name: []const u8,

@@ -40,7 +40,10 @@ defmodule Handbeam.Agent do
       Handbeam.Tool.Extension.Terminal.register()
     end
 
-    maybe_bootstrap_mcp(opts)
+    opts = maybe_bootstrap_mcp(opts)
+
+    interrupted_state =
+      put_in(interrupted_state.config.context[:mcp_scope], opts[:context][:mcp_scope])
 
     # Re-wrap on_event with session broadcast (same pattern as run/2 but for resume)
     wrapped_opts =
@@ -86,7 +89,7 @@ defmodule Handbeam.Agent do
       Handbeam.Tool.Extension.Terminal.register()
     end
 
-    maybe_bootstrap_mcp(opts)
+    opts = maybe_bootstrap_mcp(opts)
 
     config = Config.from_opts(opts)
 
@@ -237,14 +240,7 @@ defmodule Handbeam.Agent do
   end
 
   defp maybe_bootstrap_mcp(opts) do
-    project =
-      if Handbeam.ProjectTrust.enabled?(opts) do
-        Keyword.get(opts, :working_directory, File.cwd!())
-      end
-
-    mcp_opts =
-      [project: project]
-      |> maybe_put_mcp_user_config(opts)
+    mcp_opts = Handbeam.MCP.Access.options(opts)
 
     enabled? =
       case Keyword.fetch(opts, :mcp) do
@@ -262,15 +258,9 @@ defmodule Handbeam.Agent do
             "MCP bootstrap failed (will retry on next run): #{inspect(reason)}"
           end)
       end
-    else
-      :ok
     end
-  end
 
-  defp maybe_put_mcp_user_config(mcp_opts, opts) do
-    case Keyword.get(opts, :mcp_user_config_path) do
-      nil -> mcp_opts
-      path -> Keyword.put(mcp_opts, :user_config_path, path)
-    end
+    context = Keyword.get(opts, :context, %{})
+    Keyword.put(opts, :context, Map.put(context, :mcp_scope, if(enabled?, do: mcp_opts)))
   end
 end

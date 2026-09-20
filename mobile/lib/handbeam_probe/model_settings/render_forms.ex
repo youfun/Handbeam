@@ -102,7 +102,7 @@ defmodule HandbeamProbe.ModelSettings.RenderForms do
           keyboard: "url"
         ),
         field(
-          gettext("API Key (leave blank to keep current)"),
+          gettext("API Key"),
           f.api_key,
           {:model_field, :api_key},
           secure: true

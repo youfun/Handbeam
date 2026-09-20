@@ -6,7 +6,18 @@ defmodule Handbeam.Tool.Builtin.GitTest do
   setup do
     work = Path.join(System.tmp_dir!(), "sigil_git_#{System.unique_integer([:positive])}")
     File.mkdir_p!(work)
-    on_exit(fn -> File.rm_rf(work) end)
+    git_config = Path.join(work, "git.json")
+    previous = Application.get_env(:handbeam, :git_user_config_path)
+    Application.put_env(:handbeam, :git_user_config_path, git_config)
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:handbeam, :git_user_config_path, previous),
+        else: Application.delete_env(:handbeam, :git_user_config_path)
+
+      File.rm_rf(work)
+    end)
+
     {:ok, work: work, ctx: %{working_directory: work}}
   end
 
@@ -225,7 +236,7 @@ defmodule Handbeam.Tool.Builtin.GitTest do
     assert message =~ "raw Git credentials are not accepted"
     refute message =~ "fixture-secret"
 
-    assert {:error, "Git credential is not configured by the host"} =
+    assert {:error, "Git credential is not configured"} =
              Git.execute(%{"action" => "push", "credential" => "missing-review-credential"}, ctx)
   end
 

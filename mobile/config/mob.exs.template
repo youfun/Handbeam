@@ -10,7 +10,8 @@ config :mob_dev,
   static_nifs: [
     %{module: :handbeam_notify, archs: [:android]},
     %{module: :handbeam_browser, archs: [:android]},
-    %{module: :handbeam_ios, archs: [:ios]}
+    %{module: :handbeam_ios, archs: [:ios]},
+    %{module: :bcrypt_nif, init: "bcrypt_nif_nif_init", archs: [:ios]}
   ]
 
 config :mob, :plugins, []
