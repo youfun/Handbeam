@@ -147,16 +147,36 @@ defmodule Handbeam.Settings do
   @spec fetch_effective_model_ai(Path.t(), keyword()) ::
           {:ok, ModelAISettings.t()} | {:error, term()}
   def fetch_effective_model_ai(workspace_root, opts \\ []) do
+    with {:ok, %{settings: settings}} <- inspect_model_ai(workspace_root, opts) do
+      {:ok, settings}
+    end
+  end
+
+  @doc "Effective settings and winning layer per field, using the normal merge path."
+  def inspect_model_ai(workspace_root, opts \\ []) do
     with {:ok, global} <- load_global(opts),
          {:ok, workspace} <- load_workspace_model_ai(workspace_root) do
-      global_model_ai = Map.get(global, "model_ai", %{})
+      global_model_ai = ModelAISettings.normalize_override(Map.get(global, "model_ai", %{}))
+      workspace_model_ai = ModelAISettings.normalize_override(workspace)
 
       settings =
         ModelAISettings.defaults()
-        |> ModelAISettings.merge(ModelAISettings.normalize_override(global_model_ai))
-        |> ModelAISettings.merge(ModelAISettings.normalize_override(workspace))
+        |> ModelAISettings.merge(global_model_ai)
+        |> ModelAISettings.merge(workspace_model_ai)
 
-      {:ok, settings}
+      sources =
+        Map.new(Map.from_struct(settings), fn {key, _} ->
+          source =
+            cond do
+              Map.has_key?(workspace_model_ai, key) -> :workspace_settings
+              Map.has_key?(global_model_ai, key) -> :global_settings
+              true -> :model_ai_defaults
+            end
+
+          {key, source}
+        end)
+
+      {:ok, %{settings: settings, sources: sources}}
     end
   end
 

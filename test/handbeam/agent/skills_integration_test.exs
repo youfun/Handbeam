@@ -96,7 +96,12 @@ defmodule Handbeam.Agent.SkillsIntegrationTest do
     assert_receive {:provider_config, provider_config}
 
     assert state.status == :completed
-    assert provider_config.system_prompt == "Custom prompt"
+
+    assert provider_config.system_prompt ==
+             "Custom prompt" <> Handbeam.Agent.HostEnvironment.describe()
+
+    refute provider_config.system_prompt =~ "<available_skills>"
+    refute provider_config.system_prompt =~ "review-helper"
   end
 
   @tag :tmp_dir
