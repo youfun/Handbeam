@@ -32,6 +32,9 @@ defmodule Handbeam.Agent.Middleware.Logger do
   end
 
   @impl true
+  def call(:after_compaction, %State{} = state), do: state
+
+  @impl true
   def call(:after_tool_request, %State{} = state) do
     state
   end

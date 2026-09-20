@@ -71,6 +71,10 @@ defmodule HandbeamWeb.WorkspaceLive do
       |> assign(:workspaces, workspaces)
       |> assign(:current_workspace_id, current_ws_id)
       |> assign(:current_conversation_id, current_conv_id)
+      |> assign(
+        :thread_collaboration_enabled,
+        HandbeamWeb.ThreadHandoff.enabled?(current_conv_id)
+      )
       |> assign(:workspace_root, workspace_root)
       |> assign(:workspace_label, workspace_label)
       |> assign(:conversations_by_workspace, conversations_by_ws)
@@ -224,6 +228,20 @@ defmodule HandbeamWeb.WorkspaceLive do
      update(socket, :pending_attachments, fn atts ->
        Enum.reject(atts, fn att -> (att[:id] || att["id"]) == id end)
      end)}
+  end
+
+  def handle_event("toggle_thread_collaboration", _params, socket) do
+    id = socket.assigns.current_conversation_id
+    context = %{conversation_id: id, workspace_id: socket.assigns.current_workspace_id}
+
+    with {:ok, _} <- Handbeam.Threads.authorize(context, id) do
+      Handbeam.ConversationStore.update_meta(id,
+        allow_thread_wakeup: not HandbeamWeb.ThreadHandoff.enabled?(id)
+      )
+    end
+
+    {:noreply,
+     assign(socket, :thread_collaboration_enabled, HandbeamWeb.ThreadHandoff.enabled?(id))}
   end
 
   @impl true
@@ -1194,6 +1212,27 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   def handle_info({:conversation_updated, conv_id}, socket) do
     socket = refresh_conversation_in_sidebar(socket, conv_id)
+
+    socket =
+      if socket.assigns.current_conversation_id == conv_id do
+        case Handbeam.ConversationTranscriptStore.list(conv_id) do
+          {:ok, entries} ->
+            entries
+            |> Enum.filter(
+              &(&1["content_type"] == "thread_handoff" or
+                  get_in(&1, ["origin", "kind"]) == "thread")
+            )
+            |> Enum.reduce(socket, fn entry, acc ->
+              timeline_insert(acc, entry, persist?: false)
+            end)
+
+          _ ->
+            socket
+        end
+      else
+        socket
+      end
+
     {:noreply, socket}
   end
 

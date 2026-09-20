@@ -12,6 +12,8 @@ defmodule Handbeam.Agent.Middleware.Security do
   @impl true
   def call(:after_completion, %State{} = state), do: state
   @impl true
+  def call(:after_compaction, %State{} = state), do: state
+  @impl true
   def call(:after_tool_request, %State{} = state), do: state
 
   @impl true

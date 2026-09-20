@@ -177,6 +177,9 @@ defmodule Handbeam.Agent.Config do
     |> Map.merge(%{
       workspace_id: Keyword.get(opts, :workspace_id),
       conversation_id: Keyword.get(opts, :conversation_id),
+      run_id: Keyword.get(opts, :run_id),
+      thread_handoff_id: get_in(Keyword.get(opts, :origin) || %{}, ["handoff_id"]),
+      delegated_read_only: Keyword.get(opts, :delegated_read_only, false),
       memory_scope: get_in(Keyword.get(opts, :om, %{}), [:memory_scope]),
       privacy_mode: get_in(Keyword.get(opts, :om, %{}), [:privacy_mode])
     })

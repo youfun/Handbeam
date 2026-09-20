@@ -78,6 +78,9 @@ defmodule HandbeamWeb.WorkspaceHelper do
   """
   def timeline_summary(entries) when is_list(entries) do
     entries
+    |> Enum.reject(
+      &(get_in(&1, ["origin", "kind"]) == "thread" or &1["content_type"] == "thread_handoff")
+    )
     |> Enum.find_value(fn entry ->
       content = Map.get(entry, "content") || Map.get(entry, :content)
       if is_binary(content) and content != "", do: content
@@ -124,7 +127,8 @@ defmodule HandbeamWeb.WorkspaceHelper do
   def user_message_nav_items(_entries), do: []
 
   defp user_msg_entry?(entry) when is_map(entry) do
-    Map.get(entry, "content_type") == "user_msg" or Map.get(entry, :content_type) == "user_msg"
+    (Map.get(entry, "content_type") == "user_msg" or Map.get(entry, :content_type) == "user_msg") and
+      get_in(entry, ["origin", "kind"]) != "thread"
   end
 
   defp user_msg_entry?(_entry), do: false

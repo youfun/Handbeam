@@ -251,6 +251,11 @@ defmodule Handbeam.Agent.Runner do
       _ ->
         Handbeam.Agent.CandidateQueue.seal(state.queue_pid)
         Session.mark_run_finished(state.conversation_id)
+
+        Task.Supervisor.start_child(Handbeam.AgentRunTaskSupervisor, fn ->
+          Handbeam.Threads.Collaboration.completed(state.conversation_id, result, state.opts)
+        end)
+
         stop_run_supervisor(state)
         {:noreply, %{state | status: :completed, result: result, task: nil}}
     end

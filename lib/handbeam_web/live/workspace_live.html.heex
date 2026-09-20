@@ -388,6 +388,17 @@
 
       <!-- Chat messages -->
       <div class="conversation-nav-host">
+        <button
+          :if={@current_conversation_id}
+          type="button"
+          phx-click="toggle_thread_collaboration"
+          data-confirm="Change permission for paid thread wakeups? Enabling permits up to 3 read-only children and 8 handoffs; each new run is bounded to 3 turns with 2048 output tokens per request. Shared files are not an isolated checkout."
+          class="mx-4 mt-2 text-xs underline opacity-70"
+        >
+          {if @thread_collaboration_enabled,
+            do: "Thread delegation enabled · disable",
+            else: "Enable bounded thread delegation"}
+        </button>
         <div id="ai-messages" class="flex-1 overflow-y-auto p-4 space-y-3" phx-hook="ChatScroll">
           <div :if={length(@timeline) > 1} id="turn-header" class="turn-header">
             <span class="turn-summary">
@@ -401,12 +412,27 @@
             data-running={@running}
           >
             <div :for={{dom_id, entry} <- @streams.timeline} id={dom_id}>
+              <HandbeamWeb.ThreadHandoff.card
+                :if={HandbeamWeb.ThreadHandoff.show?(entry, @timeline)}
+                entry={entry}
+                conversation_id={@current_conversation_id}
+                workspace_id={@current_workspace_id}
+              />
               <div
-                :if={entry["content_type"] == "user_msg"}
+                :if={
+                  entry["content_type"] == "user_msg" and
+                    get_in(entry, ["origin", "kind"]) != "thread"
+                }
                 class="msg-row flex w-full msg-user justify-end"
                 data-user-msg={entry["id"]}
               >
                 <div class="msg-bubble msg-user">
+                  <div
+                    :if={get_in(entry, ["origin", "kind"]) == "automatic"}
+                    class="text-xs opacity-60 mb-1"
+                  >
+                    Automatic · {get_in(entry, ["origin", "source"])}
+                  </div>
                   <div class="whitespace-pre-wrap break-words">{entry["content"]}</div>
                   <div
                     :if={is_list(entry["attachments"]) and entry["attachments"] != []}
