@@ -1565,6 +1565,17 @@
           {format_tokens(@status_info.cache_write_tokens)}
         </span>
       </span>
+      <span
+        id="status-cache-hit-rate"
+        class="whitespace-nowrap"
+        title={
+          gettext(
+            "This run: cached input / total input (including cache reads and writes). Not a cost saving rate. — means no cache activity reported."
+          )
+        }
+      >
+        {gettext("Cache hit")} {format_cache_hit_rate(@status_info)}
+      </span>
       <span :if={@status_info.turns > 0}>
         {gettext("Turns:")} <span id="status-turns">{@status_info.turns}</span>
       </span>

@@ -427,6 +427,26 @@ defmodule HandbeamWeb.WorkspaceHelper do
   end
 
   @doc """
+  Formats the run's token-weighted cache read rate, not a mean of request rates.
+  No reported cache activity (or no input) is shown as unavailable.
+
+  ## Examples
+
+      iex> HandbeamWeb.WorkspaceHelper.format_cache_hit_rate(%{total_input_tokens: 1000, cache_read_tokens: 800, cache_write_tokens: 0})
+      "80.0%"
+  """
+  def format_cache_hit_rate(%{
+        total_input_tokens: total,
+        cache_read_tokens: read,
+        cache_write_tokens: write
+      })
+      when total > 0 and (read > 0 or write > 0) do
+    :erlang.float_to_binary(100 * read / total, decimals: 1) <> "%"
+  end
+
+  def format_cache_hit_rate(_), do: "—"
+
+  @doc """
   Returns the diff line prefix character for a given diff type.
   """
   def diff_prefix("ins"), do: "+"

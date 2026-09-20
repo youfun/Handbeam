@@ -289,10 +289,7 @@ defmodule Handbeam.Agent.Provider.OpenAICompat do
 
     usage_body = body["usage"] || %{}
 
-    usage = %{
-      input_tokens: Map.get(usage_body, "prompt_tokens", 0),
-      output_tokens: Map.get(usage_body, "completion_tokens", 0)
-    }
+    usage = Handbeam.Agent.Provider.openai_usage(usage_body)
 
     {:ok,
      %{

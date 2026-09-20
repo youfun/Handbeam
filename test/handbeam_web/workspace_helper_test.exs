@@ -444,6 +444,46 @@ defmodule HandbeamWeb.WorkspaceHelperTest do
     end
   end
 
+  test "cache rate uses normalized prompt totals and distinguishes cold writes from no activity" do
+    assert WorkspaceHelper.format_cache_hit_rate(%{}) == "—"
+
+    assert WorkspaceHelper.format_cache_hit_rate(%{
+             total_input_tokens: 0,
+             cache_read_tokens: 0,
+             cache_write_tokens: 0
+           }) == "—"
+
+    assert WorkspaceHelper.format_cache_hit_rate(%{
+             total_input_tokens: 100,
+             cache_read_tokens: 0,
+             cache_write_tokens: 0
+           }) == "—"
+
+    assert WorkspaceHelper.format_cache_hit_rate(%{
+             total_input_tokens: 100,
+             cache_read_tokens: 0,
+             cache_write_tokens: 80
+           }) == "0.0%"
+
+    assert WorkspaceHelper.format_cache_hit_rate(%{
+             total_input_tokens: 100,
+             cache_read_tokens: 100,
+             cache_write_tokens: 0
+           }) == "100.0%"
+
+    assert WorkspaceHelper.format_cache_hit_rate(%{
+             total_input_tokens: 300,
+             cache_read_tokens: 100,
+             cache_write_tokens: 0
+           }) == "33.3%"
+
+    assert WorkspaceHelper.format_cache_hit_rate(%{
+             total_input_tokens: 1000,
+             cache_read_tokens: 180,
+             cache_write_tokens: 750
+           }) == "18.0%"
+  end
+
   # ── format_bytes/1 ──
 
   describe "format_bytes/1" do

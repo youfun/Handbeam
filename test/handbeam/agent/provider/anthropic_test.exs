@@ -21,7 +21,12 @@ defmodule Handbeam.Agent.Provider.AnthropicTest do
               "role" => "assistant",
               "content" => [%{"type" => "text", "text" => "Hello!"}],
               "stop_reason" => "end_turn",
-              "usage" => %{"input_tokens" => 10, "output_tokens" => 5}
+              "usage" => %{
+                "input_tokens" => 10,
+                "output_tokens" => 5,
+                "cache_read_input_tokens" => 70,
+                "cache_creation_input_tokens" => 20
+              }
             })
         })
 
@@ -31,6 +36,9 @@ defmodule Handbeam.Agent.Provider.AnthropicTest do
       assert Message.text(hd(result.messages)) == "Hello!"
       assert result.usage.input_tokens == 10
       assert result.usage.output_tokens == 5
+      assert result.usage.total_input_tokens == 100
+      assert result.usage.cache_read_input_tokens == 70
+      assert result.usage.cache_creation_input_tokens == 20
     end
   end
 
@@ -191,7 +199,14 @@ defmodule Handbeam.Agent.Provider.AnthropicTest do
       config =
         config_with_sse_stream([
           ant_event("message_start", %{
-            "message" => %{"usage" => %{"input_tokens" => 10, "output_tokens" => 0}}
+            "message" => %{
+              "usage" => %{
+                "input_tokens" => 10,
+                "output_tokens" => 0,
+                "cache_read_input_tokens" => 70,
+                "cache_creation_input_tokens" => 20
+              }
+            }
           }),
           ant_event("content_block_start", %{
             "index" => 0,
@@ -218,6 +233,8 @@ defmodule Handbeam.Agent.Provider.AnthropicTest do
       assert {:ok, result} = Anthropic.stream([Message.user("Hi")], [], config, on_chunk)
       assert result.stop_reason == :end_turn
       assert Message.text(hd(result.messages)) == "Hello world"
+      assert result.usage.total_input_tokens == 100
+      assert result.usage.cache_read_input_tokens == 70
       assert_received {:chunk, "Hello"}
       assert_received {:chunk, " world"}
     end

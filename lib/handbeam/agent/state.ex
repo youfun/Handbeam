@@ -98,6 +98,14 @@ defmodule Handbeam.Agent.State do
   def merge_usage(%__MODULE__{} = state, usage) when is_map(usage) do
     merged = %{
       input_tokens: (state.usage[:input_tokens] || 0) + (usage[:input_tokens] || 0),
+      total_input_tokens:
+        (state.usage[:total_input_tokens] || 0) +
+          Map.get(
+            usage,
+            :total_input_tokens,
+            (usage[:input_tokens] || 0) + (usage[:cache_read_input_tokens] || 0) +
+              (usage[:cache_creation_input_tokens] || 0)
+          ),
       output_tokens: (state.usage[:output_tokens] || 0) + (usage[:output_tokens] || 0),
       cache_read_input_tokens:
         (state.usage[:cache_read_input_tokens] || 0) +

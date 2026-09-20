@@ -79,6 +79,7 @@ defmodule HandbeamWeb.WorkspaceLive do
       |> assign(:status_info, %{
         model: model_display_name(selected_model, available_models),
         input_tokens: 0,
+        total_input_tokens: 0,
         output_tokens: 0,
         cache_read_tokens: 0,
         cache_write_tokens: 0,
@@ -1193,6 +1194,7 @@ defmodule HandbeamWeb.WorkspaceLive do
       model: model_display_name(payload[:model], socket.assigns.available_models),
       status: :running,
       input_tokens: 0,
+      total_input_tokens: 0,
       output_tokens: 0,
       cache_read_tokens: 0,
       cache_write_tokens: 0,
@@ -2164,6 +2166,7 @@ defmodule HandbeamWeb.WorkspaceLive do
           |> update_status(%{
             status: :running,
             input_tokens: 0,
+            total_input_tokens: 0,
             output_tokens: 0,
             cache_read_tokens: 0,
             cache_write_tokens: 0,
@@ -2684,6 +2687,8 @@ defmodule HandbeamWeb.WorkspaceLive do
 
     %{
       input_tokens: input,
+      total_input_tokens:
+        payload_value(usage, :total_input_tokens, input + cache_read + cache_write),
       output_tokens: output,
       cache_read_tokens: cache_read,
       cache_write_tokens: cache_write
@@ -2691,7 +2696,13 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   defp usage_tokens(_),
-    do: %{input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0}
+    do: %{
+      input_tokens: 0,
+      total_input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0
+    }
 
   # ── Conversation token helpers ──
 
@@ -3322,6 +3333,7 @@ defmodule HandbeamWeb.WorkspaceLive do
   defdelegate format_duration(ms), to: HandbeamWeb.WorkspaceHelper
   defdelegate format_bytes(bytes), to: HandbeamWeb.WorkspaceHelper
   defdelegate format_tokens(tokens), to: HandbeamWeb.WorkspaceHelper
+  defdelegate format_cache_hit_rate(status), to: HandbeamWeb.WorkspaceHelper
   defdelegate diff_prefix(type), to: HandbeamWeb.WorkspaceHelper
   defdelegate file_value(file, key, default), to: HandbeamWeb.WorkspaceHelper
   defdelegate archived_stream_count(entries), to: HandbeamWeb.WorkspaceHelper

@@ -607,11 +607,16 @@ defmodule Handbeam.Agent.Provider.Anthropic do
   defp maybe_put(map, key, val), do: Map.put(map, key, val)
 
   defp parse_usage(usage) do
+    input = Map.get(usage, "input_tokens", 0)
+    read = Map.get(usage, "cache_read_input_tokens", 0)
+    write = Map.get(usage, "cache_creation_input_tokens", 0)
+
     %{
-      input_tokens: Map.get(usage, "input_tokens", 0),
+      input_tokens: input,
+      total_input_tokens: input + read + write,
       output_tokens: Map.get(usage, "output_tokens", 0),
-      cache_creation_input_tokens: Map.get(usage, "cache_creation_input_tokens", 0),
-      cache_read_input_tokens: Map.get(usage, "cache_read_input_tokens", 0)
+      cache_creation_input_tokens: write,
+      cache_read_input_tokens: read
     }
   end
 

@@ -99,6 +99,8 @@ defmodule Handbeam.Agent.Provider.OpenAIStream do
 
   @doc false
   def process_event(acc, %{"choices" => [%{"delta" => delta} | _]} = event) when is_map(delta) do
+    acc = %{acc | usage: event["usage"] || acc.usage}
+
     acc =
       case delta do
         %{"content" => text} when is_binary(text) and text != "" ->
@@ -129,8 +131,9 @@ defmodule Handbeam.Agent.Provider.OpenAIStream do
     end
   end
 
-  # Fallback: choices with nil delta — ignore
-  def process_event(acc, %{"choices" => [%{} | _]}), do: acc
+  # Choices without a text delta can still carry the final usage totals.
+  def process_event(acc, %{"choices" => [%{} | _]} = event),
+    do: %{acc | usage: event["usage"] || acc.usage}
 
   def process_event(acc, %{"choices" => [], "usage" => usage}) when is_map(usage) do
     %{acc | usage: usage}
@@ -232,10 +235,7 @@ defmodule Handbeam.Agent.Provider.OpenAIStream do
          %{
            stop_reason: stop_reason,
            messages: [message],
-           usage: %{
-             input_tokens: Map.get(acc.usage, "prompt_tokens", 0),
-             output_tokens: Map.get(acc.usage, "completion_tokens", 0)
-           }
+           usage: Handbeam.Agent.Provider.openai_usage(acc.usage)
          }}
     end
   end

@@ -1527,6 +1527,46 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert has_element?(view, "#status-output-tokens", "0")
     end
 
+    test "cache hit rate follows cumulative usage through completion and resets for a new run", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, "/")
+      create_default_conversation(view)
+      send(view.pid, {:agent_event, agent_event(:run_start, %{model: "fake"})})
+      assert has_element?(view, "#status-cache-hit-rate", "—")
+
+      usage = %{input_tokens: 100, total_input_tokens: 100, cache_read_input_tokens: 80}
+
+      for seq <- [2, 3] do
+        send(view.pid, {:agent_event, agent_event(:usage_updated, %{usage: usage}, seq)})
+        assert has_element?(view, "#status-cache-hit-rate", "80.0%")
+      end
+
+      cumulative = %{
+        "input_tokens" => 150,
+        "total_input_tokens" => 1000,
+        "cache_read_input_tokens" => 180,
+        "cache_creation_input_tokens" => 750
+      }
+
+      send(view.pid, {:agent_event, agent_event(:usage_updated, %{"usage" => cumulative}, 4)})
+      assert has_element?(view, "#status-cache-hit-rate", "18.0%")
+      assert has_element?(view, "button[phx-click='stop_run']")
+
+      send(
+        view.pid,
+        {:agent_event,
+         agent_event(:run_end, %{"status" => "completed", "usage" => cumulative}, 5)}
+      )
+
+      assert has_element?(view, "#status-cache-hit-rate[title*='This run:']", "18.0%")
+      assert has_element?(view, "#status-input-tokens[title='150']", "150")
+      refute has_element?(view, "button[phx-click='stop_run']")
+
+      send(view.pid, {:agent_event, agent_event(:run_start, %{model: "fake"}, 6)})
+      assert has_element?(view, "#status-cache-hit-rate", "—")
+    end
+
     test "token footer formats live and final usage while preserving exact titles", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/")
       create_default_conversation(view)
