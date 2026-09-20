@@ -133,6 +133,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
       |> assign(:conversations_by_workspace, conversations_by_ws)
       |> reload_conversation_stream()
       |> assign_current(ws, ConversationState.conversation_id(conversation))
+      |> ConversationState.sync_conv_state(opts)
       |> reset_new_conversation_projection(opts)
       |> ConversationState.sync_conv_to()
 

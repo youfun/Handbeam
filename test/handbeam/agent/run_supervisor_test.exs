@@ -5,6 +5,9 @@ defmodule Handbeam.Agent.RunSupervisorTest do
   alias Handbeam.Agent.CandidateQueue
 
   setup do
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Handbeam.Repo)
+    Ecto.Adapters.SQL.Sandbox.mode(Handbeam.Repo, {:shared, self()})
+
     old_home = System.get_env("HOME")
     home_dir = Path.join(System.tmp_dir!(), "sigil_run_supervisor_home_#{Ecto.UUID.generate()}")
     File.mkdir_p!(home_dir)

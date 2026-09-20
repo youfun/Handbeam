@@ -8,6 +8,8 @@ defmodule HandbeamWeb.WorkspaceHelper do
 
   use Gettext, backend: HandbeamWeb.Gettext
 
+  alias Handbeam.TranscriptEntry
+
   @doc """
   Returns the CSS class for the status indicator dot.
   """
@@ -346,21 +348,13 @@ defmodule HandbeamWeb.WorkspaceHelper do
   defp tool_entry?(_), do: false
 
   defp tool_terminal?(entry) do
-    status =
-      Map.get(entry, "tool_status") ||
-        Map.get(entry, "status") ||
-        Map.get(entry, :tool_status) ||
-        Map.get(entry, :status)
+    status = TranscriptEntry.tool_status(entry)
 
     status in [nil, "", :done, :error, "done", "error"]
   end
 
   defp tool_name(entry) when is_map(entry) do
-    Map.get(entry, "tool_name") ||
-      Map.get(entry, "tool") ||
-      Map.get(entry, :tool_name) ||
-      Map.get(entry, :tool) ||
-      "tool"
+    TranscriptEntry.tool_name(entry) || "tool"
   end
 
   defp tool_name(_), do: "tool"

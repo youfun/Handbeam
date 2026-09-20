@@ -40,4 +40,22 @@ defmodule Handbeam.TranscriptEntryTest do
     assert TranscriptEntry.input("not a map") == %{}
     assert TranscriptEntry.input_summary(%{"input_summary" => "ls"}) == "ls"
   end
+
+  test "reads atom-keyed transient projections" do
+    entry = %{
+      tool_name: "read",
+      tool_status: :done,
+      tool_duration_ms: 9,
+      tool_error: :none,
+      tool_input: %{path: "README.md"},
+      tool_input_summary: "README.md"
+    }
+
+    assert TranscriptEntry.tool_name(entry) == "read"
+    assert TranscriptEntry.tool_status(entry) == :done
+    assert TranscriptEntry.duration_ms(entry) == 9
+    assert TranscriptEntry.error(entry) == :none
+    assert TranscriptEntry.input(entry) == %{path: "README.md"}
+    assert TranscriptEntry.input_summary(entry) == "README.md"
+  end
 end

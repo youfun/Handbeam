@@ -1,8 +1,7 @@
 import Config
 
-# 本地工具，关闭 check_origin 以允许局域网访问
 config :handbeam, HandbeamWeb.Endpoint,
-  check_origin: false,
+  check_origin: true,
   force_ssl: [
     rewrite_on: [:x_forwarded_proto],
     exclude: [

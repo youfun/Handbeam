@@ -144,15 +144,18 @@ defmodule Handbeam.Agent.Runner do
       }}, state}
   end
 
-  def handle_call(:cancel, _from, %{status: status, task: task} = state)
+  def handle_call(:cancel, from, %{status: status, task: task} = state)
       when status in [:running, :awaiting_approval] do
     shutdown_run_task(task)
     persist_cancelled_run(state)
     Handbeam.Agent.CandidateQueue.seal(state.queue_pid)
     Session.broadcast_event(state.conversation_id, :run_end, %{status: "cancelled", turns: 0})
     Session.mark_run_finished(state.conversation_id)
+    # A shutdown worker can stop this Runner before handle_call returns.
+    # Acknowledge the completed cancellation before starting that worker.
+    GenServer.reply(from, :ok)
     stop_run_supervisor(state.conversation_id)
-    {:reply, :ok, %{state | status: :cancelled, task: nil, interrupted_state: nil}}
+    {:noreply, %{state | status: :cancelled, task: nil, interrupted_state: nil}}
   end
 
   def handle_call(:cancel, _from, state) do
@@ -218,11 +221,13 @@ defmodule Handbeam.Agent.Runner do
   end
 
   defp persist_cancelled_run(state) do
-    event = {:run_end, %{status: "cancelled", turns: 0}}
+    persist_terminal_event(state, %{status: "cancelled", turns: 0})
+  end
 
+  defp persist_terminal_event(state, payload) do
     case Handbeam.Agent.TranscriptPersistence.handle_event(
            state.conversation_id,
-           event,
+           {:run_end, payload},
            state.opts
          ) do
       :ok ->
@@ -230,21 +235,32 @@ defmodule Handbeam.Agent.Runner do
 
       {:error, reason} ->
         Logger.error(
-          "[Runner] cancelled run transcript persist failed conversation=#{state.conversation_id} " <>
+          "[Runner] terminal transcript persist failed conversation=#{state.conversation_id} " <>
             "reason=#{inspect(reason)}"
         )
     end
+  rescue
+    error ->
+      # An unavailable disk must not crash/restart Runner and execute the run
+      # again. Persisted streaming entries remain recoverable on the next boot.
+      Logger.error("[Runner] terminal transcript persist failed: #{Exception.message(error)}")
+  catch
+    :exit, reason ->
+      Logger.error("[Runner] terminal transcript owner unavailable: #{inspect(reason)}")
   end
 
   defp finish_error(state, reason) do
     message = inspect(reason)
     Handbeam.Agent.CandidateQueue.seal(state.queue_pid)
 
-    Session.broadcast_event(state.conversation_id, :run_end, %{
+    payload = %{
       status: "error",
       turns: 0,
       error: message
-    })
+    }
+
+    persist_terminal_event(state, payload)
+    Session.broadcast_event(state.conversation_id, :run_end, payload)
 
     Session.mark_run_finished(state.conversation_id)
     Logger.error("[Runner] Agent run failed: #{message}")
@@ -304,7 +320,11 @@ defmodule Handbeam.Agent.Runner do
   defp persist_and_callback(conversation_id, event, opts, user_on_event) do
     # 2. Normal persistence + session broadcast
     log_runner_event(conversation_id, event)
-    Handbeam.Agent.TranscriptPersistence.handle_event(conversation_id, event, opts)
+
+    case Handbeam.Agent.TranscriptPersistence.handle_event(conversation_id, event, opts) do
+      :ok -> :ok
+      {:error, reason} -> raise "Transcript persistence failed: #{inspect(reason)}"
+    end
 
     # 3. User callback (if any)
     if is_function(user_on_event, 1) do

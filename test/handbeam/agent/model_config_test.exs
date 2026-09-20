@@ -98,7 +98,7 @@ defmodule Handbeam.Agent.ModelConfigTest do
         end)
 
       assert result[:base_url] == "https://api.stepfun.com/step_plan/v1"
-      assert result[:model] == "step-router-v1"
+      assert result[:model] == "step-5-preview"
       refute Map.has_key?(result, :api_key)
     end
   end
@@ -483,7 +483,7 @@ defmodule Handbeam.Agent.ModelConfigTest do
         end)
 
       assert result[:base_url] == "https://api.stepfun.com/step_plan/v1"
-      assert result[:model] == "step-router-v1"
+      assert result[:model] == "step-5-preview"
     end
   end
 

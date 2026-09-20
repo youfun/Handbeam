@@ -7,6 +7,8 @@ defmodule HandbeamWeb.ChangeHelper do
   dependency on LiveView socket or assigns.
   """
 
+  alias Handbeam.TranscriptEntry
+
   @doc """
   Normalizes a list of diff line maps to have string keys `"type"` and `"text"`.
   Returns `nil` for non-list inputs.
@@ -74,7 +76,7 @@ defmodule HandbeamWeb.ChangeHelper do
     raw_change
     |> stringify_keys()
     |> put_if_missing("change_id", value(entry, "change_id") || value(details, "change_id"))
-    |> put_if_missing("change_type", value(entry, "tool_name") || value(entry, "tool"))
+    |> put_if_missing("change_type", TranscriptEntry.tool_name(entry))
     |> put_if_missing("file_path", value(entry, "file_path") || value(details, "file_path"))
     |> put_if_missing("diff_lines", value(entry, "diff_lines") || value(details, "diff_lines"))
     |> Map.update("diff_lines", nil, &normalize_diff_lines/1)

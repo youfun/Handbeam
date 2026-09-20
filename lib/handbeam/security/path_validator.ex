@@ -69,45 +69,20 @@ defmodule Handbeam.Security.PathValidator do
   @doc """
   Validate that a directory path is under the allowed root directory.
 
-  Uses `Path.safe_relative_to/2` when the root exists (strict validation with
-  symlink resolution). Falls back to a string-prefix check when the root does
-  not yet exist (e.g. a brand new `session_store_dir` before `mkdir_p`).
+  Canonicalizes both paths, resolving every existing symlink ancestor while
+  retaining nonexistent tails. Like other path-based checks, this is not an
+  atomic filesystem operation and cannot prevent a concurrent symlink swap.
 
   Returns `:ok` or `{:error, reason}`.
   """
   @spec validate_under_root(String.t(), String.t()) :: :ok | {:error, String.t()}
   def validate_under_root(path, root) do
-    expanded_path = Path.expand(path)
-    expanded_root = Path.expand(root)
-
-    # When the path exists (real file or directory), use Path.safe_relative_to/2
-    # for strict containment with symlink resolution.  This is the authoritative
-    # check because it operates on the *resolved* path on disk.
-    #
-    # When the path does NOT yet exist (e.g. a subdirectory that will be created),
-    # Path.safe_relative_to returns :error for non-existent targets, which would
-    # incorrectly flag legitimate sub-paths.  Fall back to a string-prefix check.
-    if expanded_path == expanded_root do
+    with {:ok, resolved_path} <- canonicalize(path),
+         {:ok, resolved_root} <- canonicalize(root),
+         true <- contained?(resolved_path, resolved_root) do
       :ok
     else
-      # When the path exists (real file or directory), use Path.safe_relative_to/2
-      # for strict containment with symlink resolution.
-      if File.exists?(expanded_path) do
-        case Path.safe_relative_to(expanded_path, expanded_root) do
-          {:ok, _relative} -> :ok
-          :error -> {:error, "Path traversal blocked: #{path} is outside #{root}"}
-        end
-      else
-        # Path doesn't exist yet — fall back to string-prefix check.
-        root_prefix =
-          if String.ends_with?(expanded_root, "/"), do: expanded_root, else: expanded_root <> "/"
-
-        if String.starts_with?(expanded_path, root_prefix) do
-          :ok
-        else
-          {:error, "Path traversal blocked: #{path} is outside #{root}"}
-        end
-      end
+      _ -> {:error, "Path traversal blocked: #{path} is outside #{root}"}
     end
   end
 

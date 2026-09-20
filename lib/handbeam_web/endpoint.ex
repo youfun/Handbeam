@@ -11,9 +11,9 @@ defmodule HandbeamWeb.Endpoint do
     same_site: "Lax"
   ]
 
-  socket "/live", Phoenix.LiveView.Socket,
-    websocket: [connect_info: [session: @session_options]],
-    longpoll: [connect_info: [session: @session_options]]
+  socket "/live", HandbeamWeb.LiveSocket,
+    websocket: [connect_info: [:peer_data, :uri, session: @session_options]],
+    longpoll: [connect_info: [:peer_data, :uri, session: @session_options]]
 
   # Serve at "/" the static files from "priv/static" directory.
   #
@@ -28,7 +28,9 @@ defmodule HandbeamWeb.Endpoint do
     raise_on_missing_only: code_reloading?
 
   if code_reloading? do
-    socket "/phoenix/live_reload/socket", Phoenix.LiveReloader.Socket
+    socket "/phoenix/live_reload/socket", HandbeamWeb.LiveReloaderSocket,
+      websocket: [connect_info: [:peer_data, :uri, session: @session_options]]
+
     plug Phoenix.LiveReloader
     plug Phoenix.CodeReloader
     plug Phoenix.Ecto.CheckRepoStatus, otp_app: :handbeam
@@ -45,5 +47,9 @@ defmodule HandbeamWeb.Endpoint do
   plug Plug.MethodOverride
   plug Plug.Head
   plug Plug.Session, @session_options
+  # Endpoint-level so controllers and non-router transports cannot accidentally
+  # acquire an unprotected HTTP path. LiveSocket repeats the boundary because
+  # Phoenix dispatches socket transports independently of the router pipeline.
+  plug HandbeamWeb.Access
   plug HandbeamWeb.Router
 end

@@ -929,6 +929,20 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         )
 
       sid = conversation["id"]
+
+      on_exit(fn ->
+        _ = Handbeam.Agent.Coordinator.cancel(sid)
+
+        case Registry.lookup(Handbeam.AgentRunRegistry, sid) do
+          [{pid, _value}] ->
+            ref = Process.monitor(pid)
+            assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 1_000
+
+          [] ->
+            :ok
+        end
+      end)
+
       {:ok, view, _html} = live(conn, "/w/default/c/#{sid}")
       topic = "session:#{sid}"
 
@@ -1692,9 +1706,6 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert File.exists?(messages_path),
              "Expected conversation messages file to exist after initial run_end"
 
-      # Capture item content after initial persistence.
-      content_before = File.read!(messages_path)
-
       # Now send streaming chunks — display history should be durable before run_end.
       for i <- 1..20 do
         Handbeam.Agent.TranscriptPersistence.handle_event(
@@ -1703,10 +1714,14 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         )
       end
 
-      content_after_streaming = File.read!(messages_path)
-      assert content_after_streaming == content_before
+      assert {:ok, [streaming]} =
+               Handbeam.ConversationTranscriptStore.list(conversation_id)
 
-      # Now send run_end — buffered chunks should persist without losing streamed content.
+      expected = Enum.map_join(1..20, &"chunk#{&1} ")
+      assert streaming["content"] == expected
+      assert streaming["status"] == "streaming"
+
+      # Finalization must preserve the already durable content.
       Handbeam.Agent.TranscriptPersistence.handle_event(
         conversation_id,
         {:run_end,
@@ -1719,8 +1734,9 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert content_after_run_end =~ "chunk20"
 
       assert {:ok, conversation} = Handbeam.ConversationStore.get(conversation_id)
-      assert Enum.any?(conversation["timeline"], &(&1["content"] =~ "chunk1"))
-      assert Enum.any?(conversation["timeline"], &(&1["content"] =~ "chunk20"))
+      assert [completed] = conversation["timeline"]
+      assert completed["content"] == expected
+      assert completed["status"] == "completed"
     end
   end
 
@@ -2362,7 +2378,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       # Ensure no config is set
       Application.delete_env(:handbeam, :openai)
 
-      {:ok, _view, html} = build_conn() |> live("/")
+      {:ok, _view, html} = build_conn() |> Map.put(:host, "localhost") |> live("/")
 
       # Status bar should show default OpenAI model
       assert html =~ "step-router-v1"
@@ -2691,7 +2707,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       second_html = render(view)
       second_conversation_id = session_id_from_html(second_html)
       assert second_conversation_id != first_conversation_id
-      refute second_html =~ "sui2api / GPT-5.5"
+      assert has_element?(view, "#model-picker option[selected][value='stepfun/step-router-v1']")
 
       view
       |> element(
@@ -2744,7 +2760,28 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         assert rendered =~ "你好"
 
         {:ok, added_ws} = Handbeam.WorkspaceStore.get_by_path(project_dir)
-        assert [_conversation] = Handbeam.ConversationStore.list_for_workspace(added_ws["id"])
+        assert [conversation] = Handbeam.ConversationStore.list_for_workspace(added_ws["id"])
+
+        runner_pid =
+          case Registry.lookup(Handbeam.AgentRunRegistry, conversation["id"]) do
+            [{pid, _value}] -> pid
+            [] -> nil
+          end
+
+        runner_ref = if is_pid(runner_pid), do: Process.monitor(runner_pid)
+        _ = Handbeam.Agent.Runner.cancel(conversation["id"])
+
+        if runner_ref,
+          do: assert_receive({:DOWN, ^runner_ref, :process, ^runner_pid, _reason}, 1_000)
+
+        case Registry.lookup(Handbeam.AgentRunRegistry, conversation["id"]) do
+          [{pid, _value}] ->
+            ref = Process.monitor(pid)
+            assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 1_000
+
+          [] ->
+            :ok
+        end
       after
         System.delete_env("HANDBEAM_MODELS_FILE")
         if File.exists?(models_path), do: File.rm!(models_path)
@@ -3163,7 +3200,9 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert c1 == ""
 
       # Combined: </thi + nk> = </think> closes block, "after" is outside, "/think> visible" is trailing
-      {t2, c2, buf2} = HandbeamWeb.WorkspaceLive.strip_think_tags(buf1, "nk>after</think> visible")
+      {t2, c2, buf2} =
+        HandbeamWeb.WorkspaceLive.strip_think_tags(buf1, "nk>after</think> visible")
+
       assert t2 == ""
       assert c2 == "after</think> visible"
       assert buf2 == ""
@@ -3790,7 +3829,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
 
       # Initial state: menu should not be visible
       refute html =~ "permission-dropdown-menu"
-      assert html =~ "Full Access" or html =~ "完整存取"
+      assert has_element?(view, "button[phx-click='toggle_permission_menu']")
 
       # Click the permission pill to toggle menu
       view |> element("button[phx-click='toggle_permission_menu']") |> render_click()

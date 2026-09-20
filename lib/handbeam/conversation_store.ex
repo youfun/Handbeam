@@ -137,6 +137,14 @@ defmodule Handbeam.ConversationStore do
     end
   end
 
+  @doc "Read only a conversation's metadata, without loading transcript or editor files."
+  @spec get_meta(String.t()) :: {:ok, map()} | {:error, :not_found | :corrupted}
+  def get_meta(id) when is_binary(id), do: read_meta(id)
+
+  @doc "Return whether a conversation metadata record exists and is readable."
+  @spec exists?(String.t()) :: boolean()
+  def exists?(id) when is_binary(id), do: match?({:ok, _}, read_meta(id))
+
   @doc "Create a new conversation for a workspace."
   @spec create(String.t(), keyword()) :: {:ok, conversation()} | {:error, term()}
   def create(workspace_id, opts \\ []) do
@@ -225,15 +233,12 @@ defmodule Handbeam.ConversationStore do
   @spec append_message(String.t(), map()) :: :ok | {:error, term()}
   def append_message(conversation_id, entry) when is_map(entry) do
     with {:ok, _meta} <- read_meta(conversation_id) do
-      path = messages_path(conversation_id)
-
-      case Handbeam.JSON.encode(entry) do
-        {:ok, json} ->
-          File.write(path, json <> "\n", [:append])
-
-        {:error, reason} ->
-          Logger.error("[ConversationStore] Failed to encode message entry: #{inspect(reason)}")
-          {:error, reason}
+      case Handbeam.ConversationTranscriptStore.Journal.append(
+             messages_path(conversation_id),
+             entry
+           ) do
+        {:ok, _entry} -> :ok
+        {:error, reason} -> {:error, reason}
       end
     end
   end
@@ -241,38 +246,23 @@ defmodule Handbeam.ConversationStore do
   @doc "Load all messages from messages.jsonl for a conversation."
   @spec load_messages(String.t()) :: [map()]
   def load_messages(conversation_id) when is_binary(conversation_id) do
-    path = messages_path(conversation_id)
-
-    case File.read(path) do
-      {:ok, content} ->
-        content
-        |> String.split("\n", trim: true)
-        |> Enum.reduce([], fn line, acc ->
-          case Handbeam.JSON.decode(line) do
-            {:ok, entry} when is_map(entry) ->
-              [entry | acc]
-
-            {:ok, _} ->
-              acc
-
-            {:error, _} ->
-              Logger.warning(fn ->
-                "[ConversationStore] Skipping malformed JSONL line in #{path}: #{String.slice(line, 0, 80)}"
-              end)
-
-              acc
-          end
-        end)
-        |> Enum.reverse()
-
-      {:error, :enoent} ->
-        []
+    case load_messages_result(conversation_id) do
+      {:ok, entries} ->
+        entries
 
       {:error, reason} ->
-        Logger.error("[ConversationStore] Error reading messages #{path}: #{inspect(reason)}")
+        Logger.error(
+          "[ConversationStore] Error reading messages #{messages_path(conversation_id)}: #{inspect(reason)}"
+        )
 
         []
     end
+  end
+
+  @doc "Load messages while preserving filesystem and corruption errors."
+  @spec load_messages_result(String.t()) :: {:ok, [map()]} | {:error, term()}
+  def load_messages_result(conversation_id) when is_binary(conversation_id) do
+    Handbeam.ConversationTranscriptStore.Journal.load(messages_path(conversation_id))
   end
 
   @doc """
@@ -295,8 +285,10 @@ defmodule Handbeam.ConversationStore do
 
         {:error, :encode_failed}
       else
-        lines = Enum.map(encoded, fn {:ok, json} -> json <> "\n" end)
-        atomic_write_raw(messages_path(conversation_id), lines)
+        Handbeam.ConversationTranscriptStore.Journal.replace(
+          messages_path(conversation_id),
+          Enum.map(entries, &Handbeam.JsonSafe.normalize/1)
+        )
       end
     end
   end
@@ -657,23 +649,7 @@ defmodule Handbeam.ConversationStore do
   defp maybe_write_messages_file(id, timeline), do: write_messages_file(id, timeline)
 
   defp write_messages_file(id, timeline) when is_list(timeline) do
-    {lines, errors} =
-      Enum.reduce(timeline, {[], []}, fn entry, {lines, errors} ->
-        case Handbeam.JSON.encode(entry) do
-          {:ok, json} -> {[json <> "\n" | lines], errors}
-          {:error, reason} -> {lines, [reason | errors]}
-        end
-      end)
-
-    if errors != [] do
-      Logger.error(
-        "[ConversationStore] Dropped #{length(errors)} unencodable entries " <>
-          "from messages.jsonl for #{id}: #{inspect(hd(errors))}"
-      )
-    end
-
-    # lines were accumulated by prepending; reverse to restore original order
-    atomic_write_raw(messages_path(id), Enum.reverse(lines))
+    Handbeam.ConversationTranscriptStore.Journal.replace(messages_path(id), timeline)
   end
 
   # ── Files helpers ─────────────────────────────────────────────────────
@@ -704,21 +680,6 @@ defmodule Handbeam.ConversationStore do
 
     with {:ok, json} <- Handbeam.JSON.encode(data, pretty: true),
          :ok <- File.write(tmp_path, json) do
-      File.rename!(tmp_path, path)
-      :ok
-    else
-      {:error, reason} ->
-        File.rm(tmp_path)
-        Logger.error("[ConversationStore] Error writing #{path}: #{inspect(reason)}")
-        {:error, reason}
-    end
-  end
-
-  defp atomic_write_raw(path, content) do
-    File.mkdir_p!(Path.dirname(path))
-    tmp_path = "#{path}.tmp.#{System.unique_integer([:positive])}"
-
-    with :ok <- File.write(tmp_path, content) do
       File.rename!(tmp_path, path)
       :ok
     else

@@ -20,20 +20,54 @@ if System.get_env("PHX_SERVER") do
   config :handbeam, HandbeamWeb.Endpoint, server: true
 end
 
+public_bind? = System.get_env("AMP_ORB") == "1"
 http_opts = [port: String.to_integer(System.get_env("PORT", "5002"))]
 
 http_opts =
-  if System.get_env("AMP_ORB") == "1" do
+  if public_bind? do
     Keyword.put(http_opts, :ip, {0, 0, 0, 0})
   else
-    http_opts
+    Keyword.put(http_opts, :ip, {127, 0, 0, 1})
   end
 
 config :handbeam, HandbeamWeb.Endpoint, http: http_opts
 
+access_mode =
+  case System.get_env("HANDBEAM_ACCESS_MODE", if(public_bind?, do: "password", else: "local")) do
+    "local" -> :local
+    "password" -> :password
+    value -> raise "HANDBEAM_ACCESS_MODE must be 'local' or 'password', got: #{inspect(value)}"
+  end
+
+access_username = System.get_env("HANDBEAM_ACCESS_USERNAME", "handbeam")
+access_password = System.get_env("HANDBEAM_ACCESS_PASSWORD")
+
+if public_bind? and access_mode != :password do
+  raise """
+  Refusing a non-loopback bind without authentication. AMP_ORB=1 requires
+  HANDBEAM_ACCESS_MODE=password and HANDBEAM_ACCESS_PASSWORD.
+  """
+end
+
+if access_mode == :password and (is_nil(access_password) or access_password == "") do
+  raise """
+  HANDBEAM_ACCESS_PASSWORD is required when HANDBEAM_ACCESS_MODE=password.
+  Use a long, randomly generated secret.
+  """
+end
+
+config :handbeam, :access,
+  mode: access_mode,
+  username: access_username,
+  password: access_password
+
 config :handbeam,
   trust_project_code:
-    String.downcase(System.get_env("HANDBEAM_TRUST_PROJECT_CODE", "false")) in ["1", "true", "yes"]
+    String.downcase(System.get_env("HANDBEAM_TRUST_PROJECT_CODE", "false")) in [
+      "1",
+      "true",
+      "yes"
+    ]
 
 # ── OpenAI-compatible provider config ──
 openai_base_url =
@@ -97,13 +131,7 @@ if config_env() == :prod do
 
   config :handbeam, HandbeamWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
-    http: [
-      # Bind to localhost only — access via reverse proxy (nginx/Caddy).
-      # Use {0, 0, 0, 0, 0, 0, 0, 0} to bind all interfaces (not recommended).
-      # See the documentation on https://hexdocs.pm/bandit/Bandit.html#t:options/0
-      # for details about using IPv6 vs IPv4 and loopback vs public addresses.
-      ip: {127, 0, 0, 1}
-    ],
+    http: http_opts,
     secret_key_base: secret_key_base
 
   # ## SSL Support

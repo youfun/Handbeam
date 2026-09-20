@@ -14,9 +14,19 @@ defmodule Handbeam.Extension.HotReloadTest do
   @tmp_base Path.join(System.tmp_dir!(), "sigil_hot_reload_test")
 
   setup do
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Handbeam.Repo)
+    Ecto.Adapters.SQL.Sandbox.mode(Handbeam.Repo, {:shared, self()})
+
     tmp = Path.join(@tmp_base, "case_#{System.unique_integer([:positive])}")
     File.mkdir_p!(tmp)
-    on_exit(fn -> File.rm_rf!(tmp) end)
+    {:ok, tmp} = Handbeam.Security.PathValidator.canonicalize(tmp)
+    old_home = System.get_env("HOME")
+    System.put_env("HOME", tmp)
+
+    on_exit(fn ->
+      if old_home, do: System.put_env("HOME", old_home), else: System.delete_env("HOME")
+      File.rm_rf!(tmp)
+    end)
 
     registry = :"hot_reload_reg_#{System.unique_integer([:positive])}"
     {:ok, _} = ExtRegistry.start_link(name: registry)
@@ -74,7 +84,8 @@ defmodule Handbeam.Extension.HotReloadTest do
         ext_registry: registry
       )
 
-    conversation_id = "hot-reload-#{System.unique_integer([:positive])}"
+    assert {:ok, conversation} = Handbeam.ConversationStore.create("default", timeline: [])
+    conversation_id = conversation["id"]
     parent = self()
 
     assert {:ok, %{action: :started}} =
@@ -404,11 +415,13 @@ defmodule Handbeam.Extension.HotReloadTest do
       )
 
     assert Process.alive?(pid)
-    # inotifywait attaches asynchronously; give the backend a beat.
-    Process.sleep(150)
+    watcher = :sys.get_state(pid).watcher
+    assert is_pid(watcher)
+    assert pid in (:sys.get_state(watcher).subscribers |> Map.values())
+    :ok = FileSystem.subscribe(watcher)
 
     write_entry_extension!(tmp, "hotdemo", version: "0.2.0", result: ":v2")
-    File.touch!(Path.join(tmp, ".handbeam/extensions/hotdemo/extension.json"))
+    assert_receive {:file_event, ^watcher, {_path, _events}}, 5_000
 
     assert_eventually(fn ->
       assert {:ok, reloaded} = ExtRegistry.get(registry, "hotdemo")

@@ -497,7 +497,7 @@
                 :if={entry["content_type"] == "tool"}
                 class={[
                   "tool-event tool-card",
-                  render_tool_status(entry["tool_status"] || entry["status"]),
+                  render_tool_status(tool_entry_status(entry)),
                   if(entry["work_group_first"], do: "tool-work-lead"),
                   if(entry["work_group_id"] && !entry["work_group_first"],
                     do: "tool-work-follow"
@@ -533,26 +533,26 @@
                     {gettext("Hide Work")}
                   </button>
                   <div class="flex items-center gap-2">
-                    <span class="tool-name text-xs">{entry["tool_name"] || entry["tool"]}</span>
+                    <span class="tool-name text-xs">{tool_entry_name(entry)}</span>
                     <span
-                      :if={(entry["tool_input_summary"] || entry["input_summary"] || "") != ""}
+                      :if={(tool_entry_input_summary(entry) || "") != ""}
                       class="tool-summary truncate flex-1"
                     >
-                      {entry["tool_input_summary"] || entry["input_summary"]}
+                      {tool_entry_input_summary(entry)}
                     </span>
                     <span
-                      :if={entry["tool_duration_ms"] || entry["duration_ms"]}
+                      :if={tool_entry_duration(entry)}
                       class="tool-duration tabular-nums"
                     >
-                      {format_duration(entry["tool_duration_ms"] || entry["duration_ms"])}
+                      {format_duration(tool_entry_duration(entry))}
                     </span>
                   </div>
                   <div class={[
                     "tool-status-line",
-                    tool_status_class(entry["tool_status"] || entry["status"])
+                    tool_status_class(tool_entry_status(entry))
                   ]}>
-                    {tool_status_icon(entry["tool_status"] || entry["status"])}
-                    {entry["tool_status"] || entry["status"]}
+                    {tool_status_icon(tool_entry_status(entry))}
+                    {tool_entry_status(entry)}
                   </div>
                   <% install_prompt = browser_install_prompt(entry) %>
                   <% preview_card = preview_card(entry) %>
@@ -630,14 +630,14 @@
                     <p class="mt-1 text-xs text-tertiary">{install_prompt.hint}</p>
                   </div>
                   <div
-                    :if={is_nil(install_prompt) and (entry["tool_error"] || entry["error"])}
+                    :if={is_nil(install_prompt) and tool_entry_error(entry)}
                     class="mt-1 text-error truncate"
                   >
-                    {inspect(entry["tool_error"] || entry["error"])}
+                    {inspect(tool_entry_error(entry))}
                   </div>
                   <button
                     :if={
-                      (entry["tool_name"] || entry["tool"]) in ["edit", "write"] and
+                      tool_entry_name(entry) in ["edit", "write"] and
                         is_list(entry["diff_lines"]) and
                         entry["diff_lines"] != []
                     }

@@ -138,13 +138,25 @@ defmodule Handbeam.Tool.Builtin.ReadTest do
 
   describe "long line truncation" do
     test "truncates lines exceeding max_line_length" do
-      {:ok, output, _meta} =
-        Read.execute(
-          %{"file_path" => Path.join(@fixtures_dir, "long_lines.txt")},
-          %{working_directory: @fixtures_dir}
+      path =
+        Path.join(
+          @fixtures_dir,
+          "_long_lines_#{System.unique_integer([:positive])}.txt"
         )
 
-      assert output =~ "truncated"
+      File.write!(path, String.duplicate("x", 3_000))
+
+      try do
+        {:ok, output, _meta} =
+          Read.execute(
+            %{"file_path" => path},
+            %{working_directory: @fixtures_dir}
+          )
+
+        assert output =~ "truncated"
+      after
+        File.rm(path)
+      end
     end
   end
 
@@ -205,15 +217,22 @@ defmodule Handbeam.Tool.Builtin.ReadTest do
 
   describe "binary file rejection" do
     test "[BDD-READ-022] 二进制文件拒绝读取" do
-      bin_path = Path.join(@fixtures_dir, "_binary.bin")
+      bin_path =
+        Path.join(@fixtures_dir, "_binary_#{System.unique_integer([:positive])}.bin")
 
-      {:error, reason} =
-        Read.execute(
-          %{"file_path" => bin_path},
-          %{working_directory: @fixtures_dir}
-        )
+      File.write!(bin_path, <<0, 1, 2, 3, 255>>)
 
-      assert reason =~ "Binary file"
+      try do
+        {:error, reason} =
+          Read.execute(
+            %{"file_path" => bin_path},
+            %{working_directory: @fixtures_dir}
+          )
+
+        assert reason =~ "Binary file"
+      after
+        File.rm(bin_path)
+      end
     end
   end
 

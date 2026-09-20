@@ -2,6 +2,7 @@ defmodule Handbeam.ConversationTranscriptStoreTest do
   use ExUnit.Case, async: false
 
   alias Handbeam.ConversationTranscriptStore
+  alias Handbeam.ConversationTranscriptStore.Journal
 
   setup do
     old_home = System.get_env("HOME")
@@ -137,5 +138,134 @@ defmodule Handbeam.ConversationTranscriptStoreTest do
 
     assert Enum.sort(Enum.map(entries, & &1["id"])) ==
              Enum.sort(["streamed" | Enum.map(2..40//2, &"appended-#{&1}")])
+  end
+
+  test "replays legacy entries and journal revisions after owner restart" do
+    {:ok, conversation} = Handbeam.ConversationStore.create("default", id: "transcript-replay")
+    id = conversation["id"]
+    path = Handbeam.ConversationStore.messages_path(id)
+
+    File.write!(
+      path,
+      Jason.encode!(%{"id" => "legacy", "content" => "a", "sequence" => 7}) <> "\n"
+    )
+
+    assert {:ok, _} =
+             ConversationTranscriptStore.update(id, "legacy", %{"content" => %{"$append" => "b"}})
+
+    assert {:ok, appended} =
+             ConversationTranscriptStore.append(id, %{"id" => "new", "content" => "c"})
+
+    assert appended["sequence"] == 8
+
+    restart_journal()
+
+    assert {:ok, entries} = ConversationTranscriptStore.list(id)
+    assert Enum.map(entries, &{&1["id"], &1["content"]}) == [{"legacy", "ab"}, {"new", "c"}]
+  end
+
+  test "ignores only a partial trailing crash record and reports non-tail corruption" do
+    {:ok, conversation} = Handbeam.ConversationStore.create("default", id: "transcript-partial")
+    id = conversation["id"]
+    path = Handbeam.ConversationStore.messages_path(id)
+    File.write!(path, Jason.encode!(%{"id" => "ok"}) <> "\n{\"partial\":")
+
+    assert {:ok, [%{"id" => "ok"}]} = ConversationTranscriptStore.list(id)
+
+    assert {:ok, _} = ConversationTranscriptStore.append(id, %{"id" => "after"})
+    restart_journal()
+
+    assert {:ok, entries} = ConversationTranscriptStore.list(id)
+    assert Enum.map(entries, & &1["id"]) == ["ok", "after"]
+
+    File.write!(path, "broken\n" <> Jason.encode!(%{"id" => "hidden"}) <> "\n")
+    Journal.invalidate(path)
+    assert {:error, {:corrupt_journal, 1}} = ConversationTranscriptStore.list(id)
+  end
+
+  test "preserves a valid final unterminated record when appending" do
+    {:ok, conversation} = Handbeam.ConversationStore.create("default", id: "unterminated")
+    id = conversation["id"]
+    path = Handbeam.ConversationStore.messages_path(id)
+    File.write!(path, Jason.encode!(%{"id" => "first", "sequence" => 4}))
+
+    assert {:ok, %{"sequence" => 5}} =
+             ConversationTranscriptStore.append(id, %{"id" => "second"})
+
+    restart_journal()
+    assert {:ok, entries} = ConversationTranscriptStore.list(id)
+    assert Enum.map(entries, & &1["id"]) == ["first", "second"]
+  end
+
+  test "rejects unknown journal record versions" do
+    {:ok, conversation} = Handbeam.ConversationStore.create("default", id: "unknown-version")
+    id = conversation["id"]
+    path = Handbeam.ConversationStore.messages_path(id)
+
+    File.write!(
+      path,
+      Jason.encode!(%{"$handbeam_journal" => 99, "op" => "delete", "id" => "x"}) <> "\n"
+    )
+
+    Journal.invalidate(path)
+
+    assert {:error, {:corrupt_journal, 1, {:unsupported_version, 99}}} =
+             ConversationTranscriptStore.list(id)
+  end
+
+  test "invalid update payload fails the read without killing the journal owner" do
+    {:ok, conversation} = Handbeam.ConversationStore.create("default")
+    id = conversation["id"]
+    {:ok, _} = ConversationTranscriptStore.append(id, %{"id" => "existing"})
+    path = Handbeam.ConversationStore.messages_path(id)
+    owner = Process.whereis(Journal)
+
+    File.write!(
+      path,
+      Jason.encode!(%{
+        "$handbeam_journal" => 1,
+        "op" => "update",
+        "id" => "existing",
+        "patch" => "invalid"
+      }) <> "\n",
+      [:append]
+    )
+
+    assert {:error, {:corrupt_journal, 2, _reason}} = ConversationTranscriptStore.list(id)
+    assert Process.whereis(Journal) == owner
+  end
+
+  test "cache notices atomic same-size replacement" do
+    {:ok, conversation} = Handbeam.ConversationStore.create("default", id: "same-size-replace")
+    id = conversation["id"]
+    path = Handbeam.ConversationStore.messages_path(id)
+    first = Jason.encode!(%{"id" => "one"}) <> "\n"
+    second = Jason.encode!(%{"id" => "two"}) <> "\n"
+    assert byte_size(first) == byte_size(second)
+    File.write!(path, first)
+    Journal.invalidate(path)
+    assert {:ok, [%{"id" => "one"}]} = ConversationTranscriptStore.list(id)
+
+    replacement = path <> ".replacement"
+    File.write!(replacement, second)
+    File.rename!(replacement, path)
+
+    assert {:ok, [%{"id" => "two"}]} = ConversationTranscriptStore.list(id)
+  end
+
+  test "returns storage read failures instead of treating them as empty" do
+    {:ok, conversation} =
+      Handbeam.ConversationStore.create("default", id: "transcript-read-error")
+
+    path = Handbeam.ConversationStore.messages_path(conversation["id"])
+    File.rm!(path)
+    File.mkdir!(path)
+
+    assert {:error, :eisdir} = ConversationTranscriptStore.list(conversation["id"])
+  end
+
+  defp restart_journal do
+    :ok = Supervisor.terminate_child(Handbeam.Supervisor, Journal)
+    {:ok, _pid} = Supervisor.restart_child(Handbeam.Supervisor, Journal)
   end
 end

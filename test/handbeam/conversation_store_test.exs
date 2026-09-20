@@ -572,7 +572,7 @@ defmodule Handbeam.ConversationStoreTest do
       assert ids == ["1", "2", "3"]
     end
 
-    test "skips malformed JSONL lines and logs warning" do
+    test "does not hide malformed non-tail JSONL records" do
       {:ok, conv} = ConversationStore.create("ws_badline")
       id = conv["id"]
 
@@ -580,16 +580,7 @@ defmodule Handbeam.ConversationStoreTest do
       msg_path = ConversationStore.messages_path(id)
       File.write!(msg_path, "this is not json\n{\"id\":\"ok\",\"role\":\"user\"}\n")
 
-      import ExUnit.CaptureLog
-
-      {messages, log} =
-        with_log(fn ->
-          ConversationStore.load_messages(id)
-        end)
-
-      assert length(messages) == 1
-      assert hd(messages)["id"] == "ok"
-      assert log =~ "Skipping malformed JSONL line"
+      assert {:error, {:corrupt_journal, 1}} = ConversationStore.load_messages_result(id)
     end
 
     test "returns [] for missing messages.jsonl" do

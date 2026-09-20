@@ -33,7 +33,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
     Handbeam.ConversationTranscriptStore.append(conversation_id, entry, opts)
   end
 
-  @spec handle_event(String.t(), {atom(), map()}, keyword()) :: :ok
+  @spec handle_event(String.t(), {atom(), map()}, keyword()) :: :ok | {:error, term()}
   def handle_event(conversation_id, event, opts \\ [])
 
   def handle_event(conversation_id, {:run_start, payload}, opts)
@@ -47,7 +47,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
     :ok
   end
 
-  def handle_event(conversation_id, {:message_delta, %{chunk: chunk}}, _opts)
+  def handle_event(conversation_id, {:message_delta, %{chunk: chunk}}, opts)
       when is_binary(conversation_id) and is_binary(chunk) and chunk != "" do
     {thinking_text, clean_chunk, new_buffer} =
       Handbeam.Agent.ThinkingFilter.strip(thinking_buffer(conversation_id), chunk)
@@ -55,6 +55,9 @@ defmodule Handbeam.Agent.TranscriptPersistence do
     put_thinking_buffer(conversation_id, new_buffer)
     append_thinking(conversation_id, thinking_text)
     append_to_buffer(conversation_id, clean_chunk)
+    # The journal syncs the delta before the runtime broadcasts it. The task
+    # process is no longer the only owner of an acknowledged visible reply.
+    flush!(conversation_id, opts)
     :ok
   end
 
@@ -71,12 +74,11 @@ defmodule Handbeam.Agent.TranscriptPersistence do
   def handle_event(conversation_id, {:tool_start, payload}, opts)
       when is_binary(conversation_id) do
     flush!(conversation_id, opts)
-    finalize_assistant(conversation_id, "commentary", opts)
+    :ok = finalize_assistant(conversation_id, "commentary", opts)
     Process.put(assistant_key(conversation_id), nil)
 
     tool_name = payload_value(payload, :tool, payload_value(payload, :name, "unknown"))
     tool_use_id = payload_value(payload, :tool_use_id, tool_name)
-    add_running_tool(conversation_id, tool_use_id, tool_name)
 
     entry =
       base_entry(conversation_id, opts)
@@ -95,7 +97,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
         "started_at" => now_iso8601()
       })
 
-    append_or_update(conversation_id, entry, opts)
+    {:ok, _saved} = append_or_update(conversation_id, entry, opts)
     :ok
   end
 
@@ -104,7 +106,6 @@ defmodule Handbeam.Agent.TranscriptPersistence do
 
     tool_name = payload_value(payload, :tool, payload_value(payload, :name, "unknown"))
     tool_use_id = payload_value(payload, :tool_use_id, tool_name)
-    remove_running_tool(conversation_id, tool_use_id)
     error = payload_value(payload, :error)
     status = tool_status(payload, error)
     details = payload |> payload_value(:details, %{}) |> Handbeam.JsonSafe.normalize()
@@ -137,60 +138,37 @@ defmodule Handbeam.Agent.TranscriptPersistence do
       })
       |> Map.merge(patch)
 
-    append_or_update(conversation_id, entry, opts)
+    {:ok, _saved} = append_or_update(conversation_id, entry, opts)
     :ok
   end
 
   def handle_event(conversation_id, {:run_end, payload}, opts) when is_binary(conversation_id) do
     flush!(conversation_id, opts)
-    finalize_assistant(conversation_id, "final", opts)
 
     run_error = payload_value(payload, :error)
 
-    cond do
-      cancelled_run?(payload) ->
-        case cancel_running_tools(conversation_id, opts) do
-          :ok ->
-            :ok
+    result =
+      cond do
+        cancelled_run?(payload) ->
+          settle_unfinished(conversation_id, "cancelled", nil, opts)
 
-          {:error, reason} ->
-            Logger.error(
-              "[TranscriptPersistence] cancel_running_tools failed conversation=#{conversation_id} " <>
-                "reason=#{inspect(reason)}"
-            )
-        end
+        not is_nil(run_error) ->
+          with :ok <- persist_run_error(conversation_id, run_error, opts) do
+            settle_unfinished(conversation_id, "error", run_error, opts)
+          end
 
-      is_nil(run_error) ->
-        :ok
+        true ->
+          finalize_assistant(conversation_id, "final", opts)
+      end
 
-      true ->
-        # Mark unfinished tools as error before writing the system error entry
-        mark_running_tools_as_error(conversation_id, opts)
-
-        entry =
-          base_entry(conversation_id, opts)
-          |> Map.merge(%{
-            "id" => unique_id("msg-system"),
-            "content_type" => "system_msg",
-            "message_type" => "error",
-            "role" => "system",
-            "direction" => "outbound",
-            "content" => "Run error: #{run_error}",
-            "status" => "final"
-          })
-
-        {:ok, saved} = Handbeam.ConversationTranscriptStore.append(conversation_id, entry, opts)
-        deliver(saved, opts)
+    with :ok <- result do
+      Process.put(assistant_key(conversation_id), nil)
+      clear_buffer(conversation_id)
+      clear_thinking_buffer(conversation_id)
+      Process.delete(run_opts_key(conversation_id))
+      Process.delete(run_payload_key(conversation_id))
+      :ok
     end
-
-    Process.put(assistant_key(conversation_id), nil)
-    clear_buffer(conversation_id)
-    clear_thinking_buffer(conversation_id)
-    clear_running_tools(conversation_id)
-    Process.delete(run_opts_key(conversation_id))
-    Process.delete(run_payload_key(conversation_id))
-    Logger.debug("[TranscriptPersistence] run_end conversation=#{conversation_id}")
-    :ok
   end
 
   def handle_event(conversation_id, _event, opts) when is_binary(conversation_id) do
@@ -260,25 +238,6 @@ defmodule Handbeam.Agent.TranscriptPersistence do
   defp assistant_key(conversation_id), do: {__MODULE__, :assistant_entry_id, conversation_id}
   defp run_opts_key(conversation_id), do: {__MODULE__, :run_opts, conversation_id}
   defp run_payload_key(conversation_id), do: {__MODULE__, :run_payload, conversation_id}
-  defp running_tools_key(conversation_id), do: {__MODULE__, :running_tools, conversation_id}
-
-  # ── Running tools tracking (for crash recovery) ──
-
-  defp add_running_tool(conversation_id, tool_use_id, tool_name) do
-    tools = Process.get(running_tools_key(conversation_id), %{})
-    Process.put(running_tools_key(conversation_id), Map.put(tools, tool_use_id, tool_name))
-  end
-
-  defp remove_running_tool(conversation_id, tool_use_id) do
-    case Process.get(running_tools_key(conversation_id)) do
-      nil -> :ok
-      tools -> Process.put(running_tools_key(conversation_id), Map.delete(tools, tool_use_id))
-    end
-  end
-
-  defp clear_running_tools(conversation_id) do
-    Process.delete(running_tools_key(conversation_id))
-  end
 
   defp patch_running_tools_cancelled(conversation_id, entries, run_id, opts) do
     errors =
@@ -366,31 +325,63 @@ defmodule Handbeam.Agent.TranscriptPersistence do
   defp blank?(value) when value in [nil, ""], do: true
   defp blank?(_value), do: false
 
-  defp mark_running_tools_as_error(conversation_id, opts) do
-    case Process.get(running_tools_key(conversation_id)) do
-      nil ->
-        :ok
+  defp settle_unfinished(conversation_id, status, error, opts) do
+    with {:ok, entries} <- Handbeam.ConversationTranscriptStore.list(conversation_id, opts) do
+      entries
+      |> Enum.filter(&(Map.get(&1, "run_id") == opts[:run_id]))
+      |> Enum.reduce_while(:ok, fn entry, :ok ->
+        patch =
+          cond do
+            tool_entry?(entry) and
+                running_tool_status?(Handbeam.TranscriptEntry.tool_status(entry)) ->
+              %{
+                "status" => status,
+                "tool_status" => status,
+                "error" => error,
+                "tool_error" => error
+              }
 
-      tools when map_size(tools) == 0 ->
-        :ok
+            entry["role"] == "assistant" and entry["status"] == "streaming" ->
+              %{"status" => status, "phase" => "final", "error" => error}
 
-      tools ->
-        Enum.each(tools, fn {tool_use_id, tool_name} ->
-          entry_id = tool_entry_id(tool_use_id, tool_name)
+            true ->
+              nil
+          end
 
-          Handbeam.ConversationTranscriptStore.update(
-            conversation_id,
-            entry_id,
-            %{
-              "status" => "error",
-              "tool_status" => "error",
-              "error" => "Run terminated before tool completed"
-            },
-            opts
-          )
-        end)
+        if patch do
+          case Handbeam.ConversationTranscriptStore.update(
+                 conversation_id,
+                 entry["id"],
+                 patch,
+                 opts
+               ) do
+            {:ok, _} -> {:cont, :ok}
+            {:error, reason} -> {:halt, {:error, reason}}
+          end
+        else
+          {:cont, :ok}
+        end
+      end)
+    end
+  end
 
-        :ok
+  defp persist_run_error(conversation_id, error, opts) do
+    # Stable across retries and boot recovery; do not append duplicate errors.
+    entry =
+      base_entry(conversation_id, opts)
+      |> Map.merge(%{
+        "id" => "msg-run-error-#{opts[:run_id] || "legacy"}",
+        "content_type" => "system_msg",
+        "message_type" => "error",
+        "role" => "system",
+        "direction" => "outbound",
+        "content" => "Run error: #{error}",
+        "status" => "final"
+      })
+
+    with {:ok, saved} <- append_or_update(conversation_id, entry, opts) do
+      deliver(saved, opts)
+      :ok
     end
   end
 
@@ -539,12 +530,15 @@ defmodule Handbeam.Agent.TranscriptPersistence do
 
   defp finalize_assistant(conversation_id, phase, opts) do
     if assistant_id = Process.get(assistant_key(conversation_id)) do
-      Handbeam.ConversationTranscriptStore.update(
-        conversation_id,
-        assistant_id,
-        Map.put(@assistant_completed_patch, "phase", phase),
-        opts
-      )
+      case Handbeam.ConversationTranscriptStore.update(
+             conversation_id,
+             assistant_id,
+             Map.put(@assistant_completed_patch, "phase", phase),
+             opts
+           ) do
+        {:ok, _} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
     else
       :ok
     end
@@ -666,6 +660,6 @@ defmodule Handbeam.Agent.TranscriptPersistence do
   defp now_iso8601, do: DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
 
   defp unique_id(prefix) do
-    "#{prefix}-#{System.unique_integer([:positive, :monotonic])}"
+    "#{prefix}-#{Ecto.UUID.generate()}"
   end
 end
