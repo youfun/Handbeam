@@ -24,7 +24,7 @@ config :handbeam, HandbeamWeb.Endpoint,
     System.get_env("SECRET_KEY_BASE") ||
       "4q06/NhjIcyS+rVbrFZwpEUfBdrXzc70mUo4pQwFco7LB/q/QE9B6xkPp0hTMlfO",
   watchers: [
-    node: ["build_assets.mjs", "--watch", cd: Path.expand("..", __DIR__)]
+    esbuild: {Esbuild, :install_and_run, [:handbeam, ~w(--watch --sourcemap=inline)]}
   ]
 
 # ## SSL Support

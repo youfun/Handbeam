@@ -186,7 +186,7 @@ defmodule Mix.Tasks.Mob.PackApk do
     sigil = Path.expand("..", File.cwd!())
     Mix.shell().info("  building Handbeam assets…")
 
-    case System.cmd("node", ["build_assets.mjs"], cd: sigil, stderr_to_stdout: true) do
+    case System.cmd("mix", ["assets.build"], cd: sigil, stderr_to_stdout: true) do
       {_, 0} -> :ok
       {out, rc} -> Mix.raise("sigil asset build failed (#{rc}): #{out}")
     end

@@ -31,12 +31,18 @@ Requires Elixir 1.20, OTP 28+, and Node.
 
 ```bash
 cp models.example.json models.json   # set apiKey, or use env:OPENAI_API_KEY
-npm install
 mix setup
 mix phx.server                       # http://localhost:5002
 ```
 
-Pick a workspace and chat. Frontend assets are not in git. Run `mix setup` (or at least build assets) once, or replies look like unrendered markdown.
+Pick a workspace and chat. CSS and JavaScript sources live in `assets/`; generated
+files in `priv/static/assets/` are not committed. The original styles are preserved
+in `assets/css/`, with the prebuilt baseline stylesheet in `assets/default.css`.
+
+`mix setup` installs dependencies and builds assets. For assets alone, use
+`mix assets.setup` then `mix assets.build`. `mix phx.server` watches CSS and JS
+sources and rebuilds them automatically. Release builds use `mix assets.deploy`
+to minify assets and generate Phoenix digests. `mix compile` only compiles Elixir.
 
 ```bash
 mix test --exclude slow --exclude e2e

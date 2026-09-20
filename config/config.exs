@@ -22,6 +22,16 @@ config :handbeam, HandbeamWeb.Endpoint,
   pubsub_server: Handbeam.PubSub,
   live_view: [signing_salt: "Wkzn+39Y"]
 
+# Keep the existing stylesheet order in the layout; build each source separately.
+config :esbuild,
+  version: "0.25.12",
+  handbeam: [
+    args:
+      ~w(js/app.js css/app.css css/theme-system.css css/theme-light.css css/workspace.css css/composer.css css/motion.css default.css --bundle --target=es2020 --outbase=. --outdir=../priv/static/assets --external:/fonts/* --external:/images/*),
+    cd: Path.expand("../assets", __DIR__),
+    env: %{"NODE_PATH" => Path.expand("../deps", __DIR__)}
+  ]
+
 # Configure Elixir's Logger
 config :logger, :default_formatter,
   format: "$time $metadata[$level] $message\n",

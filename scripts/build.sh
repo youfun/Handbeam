@@ -26,13 +26,8 @@ mix compile
 # 3. 前端资源
 echo ""
 echo "➡ 构建前端资源..."
-npm install --silent
-npm run build
-
-# 4. digest 静态资源
-echo ""
-echo "➡ digest 静态资源..."
-mix phx.digest
+mix assets.setup
+mix assets.deploy
 
 # 5. 构建 OTP Release
 echo ""

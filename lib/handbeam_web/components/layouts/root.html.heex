@@ -15,31 +15,7 @@
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/workspace.css"} />
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/composer.css"} />
     <link phx-track-static rel="stylesheet" href={~p"/assets/css/motion.css"} />
-    <script phx-track-static type="text/javascript" src={~p"/assets/js/phoenix.js"}>
-    </script>
-    <script phx-track-static type="text/javascript" src={~p"/assets/js/phoenix_live_view.js"}>
-    </script>
     <script defer phx-track-static type="text/javascript" src={~p"/assets/js/app.js"}>
-    </script>
-    <script>
-      window.addEventListener("load", function () {
-        if (window.liveSocket) return
-        var LiveView = window.LiveView
-        var Phoenix = window.Phoenix
-        if (!LiveView || !LiveView.LiveSocket || !Phoenix || !Phoenix.Socket) return
-        var csrf = document.querySelector("meta[name='csrf-token']")
-        if (!csrf) return
-        try {
-          var liveSocket = new LiveView.LiveSocket("/live", Phoenix.Socket, {
-            params: {_csrf_token: csrf.getAttribute("content")},
-            longPollFallbackMs: 2500
-          })
-          liveSocket.connect()
-          window.liveSocket = liveSocket
-        } catch (error) {
-          console.error("Handbeam LiveSocket fallback failed", error)
-        }
-      })
     </script>
     <style>
       :root {

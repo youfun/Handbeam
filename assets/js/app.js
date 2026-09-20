@@ -1,3 +1,5 @@
+import { Socket } from "phoenix";
+import { LiveSocket } from "phoenix_live_view";
 import { StreamingMarkdown } from "./hooks/streaming_markdown.js";
 import { ChatScroll } from "./hooks/chat_scroll.js";
 import { ConversationNav } from "./hooks/conversation_nav.js";
@@ -13,11 +15,6 @@ try {
 } catch (_) {}
 
 document.documentElement.setAttribute('data-theme', theme);
-
-// Phoenix LiveView client-side integration
-// Dependencies loaded as regular scripts in the layout:
-// - /assets/js/phoenix.js  (provides window.Phoenix.Socket)
-// - /assets/js/phoenix_live_view.js (provides window.LiveView.LiveSocket)
 
 // MobHook — Mob LiveView bridge. Native WebView injects window.mob pointing
 // at the NIF. In LiveView mode this hook replaces it so handle_event/3 in
@@ -36,7 +33,7 @@ let csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("
 let Hooks = { StreamingMarkdown, ChatScroll, ConversationNav, ComposerPasteUpload, WorkspacePanel, CopyText, GhosttyTerminal, MobHook };
 
 try {
-  let liveSocket = new window.LiveView.LiveSocket("/live", window.Phoenix.Socket, {
+  let liveSocket = new LiveSocket("/live", Socket, {
     hooks: Hooks,
     params: {_csrf_token: csrfToken},
     longPollFallbackMs: 2500

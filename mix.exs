@@ -57,6 +57,7 @@ defmodule Handbeam.MixProject do
       {:phoenix_html, "~> 4.1"},
       {:file_system, "~> 1.1"},
       {:phoenix_live_reload, "~> 1.2", only: :dev},
+      {:esbuild, "~> 0.10", runtime: Mix.env() == :dev},
       {:phoenix_live_view, "~> 1.2.0"},
       {:lazy_html, ">= 0.1.0", only: :test},
       {:phoenix_test, "~> 0.12.0", only: :test, runtime: false},
@@ -98,14 +99,15 @@ defmodule Handbeam.MixProject do
   # See the documentation for `Mix` for more info on aliases.
   defp aliases do
     [
-      setup: ["deps.get", "ecto.setup", "assets.build"],
+      setup: ["deps.get", "ecto.setup", "assets.setup", "assets.build"],
       "ecto.setup": ["ecto.create", "ecto.migrate", "run priv/repo/seeds.exs"],
       "ecto.reset": ["ecto.drop", "ecto.setup"],
       test: ["ecto.create --quiet", "ecto.migrate --quiet", "test"],
       precommit: ["compile --warnings-as-errors", "deps.unlock --unused", "format", "test"],
       "test.quality": ["run test/support/credence_check.exs"],
-      "assets.build": ["cmd node build_assets.mjs"],
-      "assets.deploy": ["assets.build", "phx.digest"]
+      "assets.setup": ["cmd npm ci", "esbuild.install --if-missing"],
+      "assets.build": ["esbuild handbeam"],
+      "assets.deploy": ["esbuild handbeam --minify", "phx.digest"]
     ]
   end
 

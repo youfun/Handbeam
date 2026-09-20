@@ -31,12 +31,17 @@ Android 原生聊天主界面，英文界面真机截图。
 
 ```bash
 cp models.example.json models.json   # 填 apiKey，或用 env:OPENAI_API_KEY
-npm install
 mix setup
 mix phx.server                       # http://localhost:5002
 ```
 
-选一个工作区即可聊天。前端资源不进 git，第一次要先 `mix setup`（或至少编过 assets），否则回复 markdown 出不来。
+选一个工作区即可聊天。CSS 和 JavaScript 源文件放在 `assets/`，生成的
+`priv/static/assets/` 不提交 Git。原有样式保留在 `assets/css/`，预生成的基础样式保留在
+`assets/default.css`，均作为资源构建的输入。
+
+`mix setup` 会安装依赖并构建资源。只处理资源时，依次运行 `mix assets.setup` 和
+`mix assets.build`。开发时 `mix phx.server` 自动监听 CSS / JS 修改并重建；发布时使用
+`mix assets.deploy` 压缩资源并生成 Phoenix digest。`mix compile` 只编译 Elixir。
 
 ```bash
 mix test --exclude slow --exclude e2e

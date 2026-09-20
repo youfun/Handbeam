@@ -69,12 +69,8 @@ MIX_ENV="$MIX_ENV" MIX_BUILD_ROOT="$MIX_BUILD_ROOT" mix compile
 
 echo ""
 echo "➡ 构建前端资源..."
-npm install --silent
-npm run build
-
-echo ""
-echo "➡ digest 静态资源..."
-MIX_ENV="$MIX_ENV" MIX_BUILD_ROOT="$MIX_BUILD_ROOT" mix phx.digest
+MIX_ENV="$MIX_ENV" MIX_BUILD_ROOT="$MIX_BUILD_ROOT" mix assets.setup
+MIX_ENV="$MIX_ENV" MIX_BUILD_ROOT="$MIX_BUILD_ROOT" mix assets.deploy
 
 echo ""
 echo "➡ 构建 OTP Release..."
