@@ -2920,7 +2920,60 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       end
     end
 
-    test "selected model is scoped to each conversation in the same workspace", %{conn: conn} do
+    for {default_model, expected_model} <- [
+          {"stepfun/step-router-v1", "stepfun/step-router-v1"},
+          {"removed/model", "sui2api/gpt-5.5"}
+        ] do
+      @default_model default_model
+      @expected_model expected_model
+
+      test "new conversations resolve workspace default #{default_model} before persisting", %{
+        conn: conn,
+        ws_dir: ws_dir
+      } do
+        configure_test_models!()
+        :ok = Handbeam.Settings.save_global(%{"default_model" => "sui2api/gpt-5.5"})
+        {:ok, view, _html} = live(conn, "/")
+        first_id = create_default_conversation(view)
+        render_change(view, "select_model", %{"model" => "sui2api/gpt-5.5"})
+
+        # Read the workspace setting afresh, rather than the mounted socket's cached settings.
+        :ok =
+          Handbeam.Settings.save_workspace_model_ai(ws_dir, %{"default_model" => @default_model})
+
+        second_id = create_default_conversation(view)
+
+        assert second_id != first_id
+        assert has_element?(view, "#model-picker option[value='#{@expected_model}'][selected]")
+
+        assert {:ok, %{"selected_model" => @expected_model}} =
+                 Handbeam.ConversationStore.get(second_id)
+
+        assert {:ok, %{"selected_model" => "sui2api/gpt-5.5"}} =
+                 Handbeam.ConversationStore.get(first_id)
+
+        view
+        |> element(
+          ".conversation-item[phx-click='select_conversation'][phx-value-id='#{first_id}']"
+        )
+        |> render_click()
+
+        assert has_element?(view, "#model-picker option[value='sui2api/gpt-5.5'][selected]")
+
+        view
+        |> element(
+          ".conversation-item[phx-click='select_conversation'][phx-value-id='#{second_id}']"
+        )
+        |> render_click()
+
+        assert has_element?(view, "#model-picker option[value='#{@expected_model}'][selected]")
+      end
+    end
+
+    test "new conversations without a default inherit the model and retain independent selections",
+         %{
+           conn: conn
+         } do
       models_path =
         Path.join(
           System.tmp_dir!(),
@@ -2940,7 +2993,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
 
       render_change(view, "select_model", %{"model" => "sui2api/gpt-5.5"})
 
-      assert render(view) =~ "sui2api / GPT-5.5"
+      assert has_element?(view, "#model-picker option[value='sui2api/gpt-5.5'][selected]")
 
       view
       |> element("button[phx-click='new_conversation_in_workspace'][phx-value-ws_id='default']")
@@ -2949,7 +3002,20 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       second_html = render(view)
       second_conversation_id = session_id_from_html(second_html)
       assert second_conversation_id != first_conversation_id
-      assert has_element?(view, "#model-picker option[selected][value='stepfun/step-router-v1']")
+      assert has_element?(view, "#model-picker option[value='sui2api/gpt-5.5'][selected]")
+
+      assert {:ok, %{"selected_model" => "sui2api/gpt-5.5"}} =
+               Handbeam.ConversationStore.get(second_conversation_id)
+
+      render_change(view, "select_model", %{"model" => "stepfun/step-router-v1"})
+
+      assert has_element?(view, "#model-picker option[value='stepfun/step-router-v1'][selected]")
+
+      assert {:ok, %{"selected_model" => "stepfun/step-router-v1"}} =
+               Handbeam.ConversationStore.get(second_conversation_id)
+
+      assert {:ok, %{"selected_model" => "sui2api/gpt-5.5"}} =
+               Handbeam.ConversationStore.get(first_conversation_id)
 
       view
       |> element(
@@ -2957,13 +3023,15 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       )
       |> render_click()
 
-      assert render(view) =~ "sui2api / GPT-5.5"
+      assert has_element?(view, "#model-picker option[value='sui2api/gpt-5.5'][selected]")
 
       view
       |> element(
         ".conversation-item[phx-click='select_conversation'][phx-value-id='#{second_conversation_id}']"
       )
       |> render_click()
+
+      assert has_element?(view, "#model-picker option[value='stepfun/step-router-v1'][selected]")
     end
 
     test "sending in a newly added workspace creates the first conversation", %{conn: conn} do

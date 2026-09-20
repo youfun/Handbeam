@@ -1784,6 +1784,7 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   defp conversation_switching_opts do
     Keyword.take(conversation_state_opts(), [:model_display_name, :update_status])
+    |> Keyword.put(:initialize_model, &initialize_conversation_model/1)
   end
 
   defp current_workspace_path(socket) do
@@ -3438,6 +3439,16 @@ defmodule HandbeamWeb.WorkspaceLive do
           assign(socket, :effective_settings, Handbeam.Settings.ModelAISettings.defaults())
       end
     end
+  end
+
+  defp initialize_conversation_model(socket) do
+    available =
+      Handbeam.Agent.ModelConfig.available_models_for_workspace(socket.assigns.workspace_root)
+
+    socket
+    |> assign(:available_models, available)
+    |> load_effective_settings()
+    |> apply_effective_model_ai_settings()
   end
 
   defp apply_effective_model_ai_settings(socket) do
