@@ -136,6 +136,82 @@ defmodule Handbeam.Agent.CoordinatorTest do
     )
   end
 
+  test "inbound write failure rejects both idle entry points before starting a run" do
+    for entry_point <- [:add_message, :start_run] do
+      sid = "coord-write-failure-#{entry_point}-#{System.unique_integer([:positive])}"
+      {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
+
+      messages_path =
+        Path.join([
+          System.get_env("HOME"),
+          ".handbeam",
+          "conversations",
+          "items",
+          sid,
+          "messages.jsonl"
+        ])
+
+      File.rm!(messages_path)
+      File.mkdir!(messages_path)
+
+      assert {:error, :eisdir} = apply(Coordinator, entry_point, [sid, "not accepted", opts()])
+      assert {:error, :not_found} = Handbeam.Agent.Runner.status(sid)
+      assert %{meta: %{running?: false}, events: []} = Session.snapshot(sid)
+    end
+  end
+
+  test "inbound write failure leaves running queues unchanged" do
+    sid = "coord-queue-write-failure-#{System.unique_integer([:positive])}"
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
+    {:ok, _session} = Session.start_or_get(session_id: sid, model: "fake")
+    queue = start_supervised!({Handbeam.Agent.CandidateQueue, session_id: sid, owner: self()})
+    :ok = Session.attach_run(sid, self(), queue)
+
+    messages_path =
+      Path.join([
+        System.get_env("HOME"),
+        ".handbeam",
+        "conversations",
+        "items",
+        sid,
+        "messages.jsonl"
+      ])
+
+    File.rm!(messages_path)
+    File.mkdir!(messages_path)
+
+    for delivery <- [:steer, :follow_up] do
+      assert {:error, :eisdir} =
+               Coordinator.add_message(sid, "not queued", opts(deliver_as: delivery))
+    end
+
+    assert [] = Handbeam.Agent.CandidateQueue.get_messages(queue)
+    assert %{events: []} = Session.snapshot(sid)
+  end
+
+  test "deleting a pending message preserves the other transcript entries" do
+    sid = "coord-delete-#{System.unique_integer([:positive])}"
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
+    {:ok, _session} = Session.start_or_get(session_id: sid, model: "fake")
+    queue = start_supervised!({Handbeam.Agent.CandidateQueue, session_id: sid, owner: self()})
+    :ok = Session.attach_run(sid, self(), queue)
+
+    assert {:ok, _} = Coordinator.add_message(sid, "remove", opts(message_id: "pending-delete"))
+    assert {:ok, _} = Coordinator.add_message(sid, "keep", opts(message_id: "pending-keep"))
+
+    assert {:ok, saved} =
+             Handbeam.ConversationTranscriptStore.append(sid, %{
+               "id" => "reply",
+               "content" => "working"
+             })
+
+    assert :ok = Coordinator.delete_pending_message(sid, "pending-delete")
+    assert [%{message: %{id: "pending-keep"}}] = Handbeam.Agent.CandidateQueue.get_messages(queue)
+    assert {:ok, [kept, ^saved]} = Handbeam.ConversationTranscriptStore.list(sid)
+    assert kept["id"] == "pending-keep"
+    assert {:error, :not_found} = Coordinator.delete_pending_message(sid, "pending-delete")
+  end
+
   test "add_message starts a supervised run when session is idle" do
     sid = "coord-idle-#{System.unique_integer([:positive])}"
     {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
@@ -399,6 +475,7 @@ defmodule Handbeam.Agent.CoordinatorTest do
   test "concurrent task_instructions cannot silently enqueue on a racing run" do
     sid = "coord-review-race-#{System.unique_integer([:positive])}"
     {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
+    :ok = Session.subscribe(sid)
     parent = self()
 
     hold_opts =
@@ -445,6 +522,7 @@ defmodule Handbeam.Agent.CoordinatorTest do
     assert length(contents) == 1
     assert hd(contents) in ["first review", "second review"]
     refute Enum.any?(contents, &(&1 && String.contains?(&1, "task_instructions")))
+    assert_receive {:agent_event, %{kind: :run_end}}, 1_000
   end
 
   test "add_message returns no_active_run when idle and require_running? is true" do
@@ -514,6 +592,7 @@ defmodule Handbeam.Agent.CoordinatorTest do
 
   test "task crash is isolated from caller and broadcasts error run_end" do
     sid = "coord-crash-#{System.unique_integer([:positive])}"
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
 
     assert {:ok, %{action: :started, run_pid: pid}} =
              Coordinator.add_message(sid, "boom", opts(provider: CrashProvider))
@@ -733,6 +812,7 @@ defmodule Handbeam.Agent.CoordinatorTest do
       })
 
       sid = "coord-policy-allow-#{System.unique_integer([:positive])}"
+      {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
 
       assert {:ok, %{action: :started}} =
                Coordinator.add_message(sid, "hello", restricted_opts(ws))
@@ -750,6 +830,7 @@ defmodule Handbeam.Agent.CoordinatorTest do
       File.mkdir_p!(ws)
 
       sid = "coord-policy-none-#{System.unique_integer([:positive])}"
+      {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
 
       assert {:ok, %{action: :started}} =
                Coordinator.add_message(

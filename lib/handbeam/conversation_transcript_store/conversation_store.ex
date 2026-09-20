@@ -56,10 +56,28 @@ defmodule Handbeam.ConversationTranscriptStore.ConversationStore do
               end
             end)
 
-          with :ok <- Handbeam.ConversationStore.replace_messages(conversation_id, updated_entries) do
+          with :ok <-
+                 Handbeam.ConversationStore.replace_messages(conversation_id, updated_entries) do
             touch_meta(conversation_id)
             {:ok, updated_entry}
           end
+      end
+    end)
+  end
+
+  @impl true
+  def delete(conversation_id, entry_id, _opts) do
+    with_lock(conversation_id, fn ->
+      entries = Handbeam.ConversationStore.load_messages(conversation_id)
+      remaining = Enum.reject(entries, &(Map.get(&1, "id") == entry_id))
+
+      if remaining == entries do
+        :ok
+      else
+        with :ok <- Handbeam.ConversationStore.replace_messages(conversation_id, remaining) do
+          touch_meta(conversation_id)
+          :ok
+        end
       end
     end)
   end

@@ -4,6 +4,21 @@ defmodule Handbeam.Agent.RunSupervisorTest do
   alias Handbeam.Agent.Coordinator
   alias Handbeam.Agent.CandidateQueue
 
+  setup do
+    old_home = System.get_env("HOME")
+    home_dir = Path.join(System.tmp_dir!(), "sigil_run_supervisor_home_#{Ecto.UUID.generate()}")
+    File.mkdir_p!(home_dir)
+    System.put_env("HOME", home_dir)
+    {:ok, conversation} = Handbeam.ConversationStore.create("default", timeline: [])
+
+    on_exit(fn ->
+      if old_home, do: System.put_env("HOME", old_home), else: System.delete_env("HOME")
+      File.rm_rf!(home_dir)
+    end)
+
+    %{sid: conversation["id"]}
+  end
+
   defmodule BlockingProvider do
     @behaviour Handbeam.Agent.Provider
 
@@ -39,9 +54,7 @@ defmodule Handbeam.Agent.RunSupervisorTest do
     )
   end
 
-  test "queue lifecycle is bound to run and stale queue is sealed after cancel" do
-    sid = "run-supervisor-#{System.unique_integer([:positive])}"
-
+  test "queue lifecycle is bound to run and stale queue is sealed after cancel", %{sid: sid} do
     assert {:ok, %{action: :started}} = Coordinator.add_message(sid, "hello", opts())
     assert_receive {:run_supervisor_provider_started, _task_pid}
     assert {:ok, %{queue_pid: queue}} = Coordinator.status(sid)
@@ -54,9 +67,7 @@ defmodule Handbeam.Agent.RunSupervisorTest do
     end)
   end
 
-  test "same conversation allows at most one active run" do
-    sid = "run-singleton-#{System.unique_integer([:positive])}"
-
+  test "same conversation allows at most one active run", %{sid: sid} do
     assert {:ok, %{action: :started}} = Coordinator.start_run(sid, "one", opts())
     assert_receive {:run_supervisor_provider_started, _task_pid}
 
@@ -64,9 +75,7 @@ defmodule Handbeam.Agent.RunSupervisorTest do
     assert :ok = Coordinator.cancel(sid)
   end
 
-  test "completed run releases conversation for a later run" do
-    sid = "run-restart-#{System.unique_integer([:positive])}"
-
+  test "completed run releases conversation for a later run", %{sid: sid} do
     assert {:ok, %{action: :started}} =
              Coordinator.start_run(
                sid,

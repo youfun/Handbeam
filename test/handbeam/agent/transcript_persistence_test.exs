@@ -3,6 +3,32 @@ defmodule Handbeam.Agent.TranscriptPersistenceTest do
 
   alias Handbeam.Agent.TranscriptPersistence
 
+  defmodule FailingStore do
+    alias Handbeam.ConversationTranscriptStore.ConversationStore, as: Store
+
+    def append(id, entry, opts) do
+      if opts[:fail_operation] == :append,
+        do: {:error, :enospc},
+        else: Store.append(id, entry, opts)
+    end
+
+    def update(id, entry_id, patch, opts) do
+      if opts[:fail_operation] == :update,
+        do: {:error, :eacces},
+        else: Store.update(id, entry_id, patch, opts)
+    end
+  end
+
+  defmodule TestDelivery do
+    @behaviour Handbeam.Delivery
+
+    @impl true
+    def deliver(entry, opts) do
+      send(Keyword.fetch!(opts, :notify), {:delivered, entry})
+      :ok
+    end
+  end
+
   defmodule ApprovalFinalProvider do
     @behaviour Handbeam.Agent.Provider
 
@@ -83,6 +109,82 @@ defmodule Handbeam.Agent.TranscriptPersistenceTest do
     final = Enum.find(entries, &(&1["content"] == "Approval finished"))
     assert final["phase"] == "final"
     assert final["status"] == "completed"
+  end
+
+  test "failed append preserves the buffer and does not complete or deliver the reply" do
+    {:ok, conversation} = Handbeam.ConversationStore.create("default", timeline: [])
+    id = conversation["id"]
+
+    opts = [
+      transcript_store: FailingStore,
+      delivery: TestDelivery,
+      delivery_opts: [notify: self()]
+    ]
+
+    :ok = TranscriptPersistence.handle_event(id, {:run_start, %{}}, opts)
+    :ok = TranscriptPersistence.handle_event(id, {:message_delta, %{chunk: "first "}}, opts)
+    :ok = TranscriptPersistence.handle_event(id, {:message_delta, %{chunk: "second"}}, opts)
+
+    assert_raise RuntimeError, ~r/Assistant transcript persistence failed.*enospc/, fn ->
+      TranscriptPersistence.handle_event(
+        id,
+        {:run_end, %{status: :completed}},
+        Keyword.put(opts, :fail_operation, :append)
+      )
+    end
+
+    assert [] = Handbeam.ConversationStore.load_messages(id)
+    refute_received {:delivered, _}
+
+    :ok = TranscriptPersistence.handle_event(id, {:message_delta, %{chunk: " third"}}, opts)
+    assert :ok = TranscriptPersistence.handle_event(id, {:run_end, %{status: :completed}}, opts)
+
+    assert [%{"content" => "first second third", "status" => "completed", "phase" => "final"}] =
+             Handbeam.ConversationStore.load_messages(id)
+
+    assert_received {:delivered, %{"delivery_delta" => "first second third"}}
+    refute_received {:delivered, _}
+  end
+
+  test "failed update retains only unsaved deltas and cannot advance the tool boundary" do
+    {:ok, conversation} = Handbeam.ConversationStore.create("default", timeline: [])
+    id = conversation["id"]
+
+    opts = [
+      transcript_store: FailingStore,
+      delivery: TestDelivery,
+      delivery_opts: [notify: self()]
+    ]
+
+    :ok = TranscriptPersistence.handle_event(id, {:run_start, %{}}, opts)
+    :ok = TranscriptPersistence.handle_event(id, {:message_delta, %{chunk: "saved"}}, opts)
+    :ok = TranscriptPersistence.handle_event(id, {:turn_end, %{}}, opts)
+    assert_received {:delivered, %{"delivery_delta" => "saved"}}
+    :ok = TranscriptPersistence.handle_event(id, {:message_delta, %{chunk: " pending"}}, opts)
+    tool_event = {:tool_start, %{tool: "read", tool_use_id: "read-1", input: %{}}}
+
+    assert_raise RuntimeError, ~r/Assistant transcript persistence failed.*eacces/, fn ->
+      TranscriptPersistence.handle_event(
+        id,
+        tool_event,
+        Keyword.put(opts, :fail_operation, :update)
+      )
+    end
+
+    assert [%{"content" => "saved", "status" => "streaming"}] =
+             Handbeam.ConversationStore.load_messages(id)
+
+    refute_received {:delivered, _}
+    :ok = TranscriptPersistence.handle_event(id, {:message_delta, %{chunk: " later"}}, opts)
+    assert :ok = TranscriptPersistence.handle_event(id, tool_event, opts)
+
+    assert [
+             %{"content" => "saved pending later", "phase" => "commentary"},
+             %{"id" => "tool-read-1"}
+           ] = Handbeam.ConversationStore.load_messages(id)
+
+    assert_received {:delivered, %{"delivery_delta" => " pending later"}}
+    refute_received {:delivered, _}
   end
 
   test "persists assistant deltas without a LiveView process" do

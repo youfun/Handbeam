@@ -5,6 +5,28 @@ defmodule Handbeam.Agent.RunnerTest do
   alias Handbeam.Agent.TranscriptPersistence
   alias Handbeam.PubSub.Session
 
+  setup do
+    old_home = System.get_env("HOME")
+    home_dir = Path.join(System.tmp_dir!(), "sigil_runner_home_#{Ecto.UUID.generate()}")
+    File.mkdir_p!(home_dir)
+    System.put_env("HOME", home_dir)
+
+    on_exit(fn ->
+      if old_home, do: System.put_env("HOME", old_home), else: System.delete_env("HOME")
+      File.rm_rf!(home_dir)
+    end)
+
+    :ok
+  end
+
+  defmodule FailingAssistantStore do
+    alias Handbeam.ConversationTranscriptStore.ConversationStore, as: Store
+
+    def append(_id, %{"role" => "assistant"}, _opts), do: {:error, :enospc}
+    defdelegate append(id, entry, opts), to: Store
+    defdelegate update(id, entry_id, patch, opts), to: Store
+  end
+
   defmodule BlockingProvider do
     @behaviour Handbeam.Agent.Provider
 
@@ -88,6 +110,7 @@ defmodule Handbeam.Agent.RunnerTest do
 
   test "Coordinator.status/1 reports active Runner state" do
     sid = "runner-status-#{System.unique_integer([:positive])}"
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
 
     assert {:ok, %{action: :started, run_pid: runner_pid}} =
              Coordinator.add_message(
@@ -107,6 +130,7 @@ defmodule Handbeam.Agent.RunnerTest do
 
   test "Coordinator.cancel/1 terminates active run and marks session idle" do
     sid = "runner-cancel-#{System.unique_integer([:positive])}"
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
 
     assert {:ok, %{action: :started}} =
              Coordinator.add_message(
@@ -124,22 +148,6 @@ defmodule Handbeam.Agent.RunnerTest do
   end
 
   test "cancel marks durable in-flight tools after task shutdown" do
-    old_home = System.get_env("HOME")
-
-    home_dir =
-      Path.join(
-        System.tmp_dir!(),
-        "sigil_runner_cancel_home_#{System.unique_integer([:positive])}"
-      )
-
-    File.mkdir_p!(home_dir)
-    System.put_env("HOME", home_dir)
-
-    on_exit(fn ->
-      if old_home, do: System.put_env("HOME", old_home), else: System.delete_env("HOME")
-      File.rm_rf!(home_dir)
-    end)
-
     {:ok, conversation} = Handbeam.ConversationStore.create("default", timeline: [])
     sid = conversation["id"]
     :ok = Session.subscribe(sid)
@@ -185,6 +193,7 @@ defmodule Handbeam.Agent.RunnerTest do
 
   test "task crash broadcasts run_end status error" do
     sid = "runner-crash-#{System.unique_integer([:positive])}"
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
 
     assert {:ok, %{action: :started}} =
              Coordinator.add_message(sid, "boom", opts(provider: CrashProvider))
@@ -195,8 +204,29 @@ defmodule Handbeam.Agent.RunnerTest do
     end)
   end
 
+  test "assistant persistence failure ends the run as error, never completed" do
+    sid = "runner-persistence-error-#{System.unique_integer([:positive])}"
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
+    :ok = Session.subscribe(sid)
+
+    assert {:ok, %{action: :started}} =
+             Coordinator.add_message(sid, "hello", opts(transcript_store: FailingAssistantStore))
+
+    assert_receive {:agent_event, %{kind: :run_end, payload: %{status: "error", error: reason}}},
+                   1_000
+
+    assert reason =~ "Assistant transcript persistence failed"
+    assert reason =~ "enospc"
+    %{events: events} = Session.snapshot(sid)
+    refute Enum.any?(events, &match?(%{kind: :run_end, payload: %{status: :completed}}, &1))
+
+    assert [%{"role" => "user", "content" => "hello"}] =
+             Handbeam.ConversationStore.load_messages(sid)
+  end
+
   test "streaming coordinator run broadcasts message_delta into session" do
     sid = "runner-streaming-#{System.unique_integer([:positive])}"
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
 
     assert {:ok, %{action: :started}} =
              Coordinator.add_message(

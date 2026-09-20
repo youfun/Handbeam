@@ -12,6 +12,7 @@ defmodule Handbeam.ConversationTranscriptStore do
   @callback list(String.t(), keyword()) :: {:ok, [entry()]} | {:error, term()}
   @callback append(String.t(), entry(), keyword()) :: {:ok, entry()} | {:error, term()}
   @callback update(String.t(), String.t(), map(), keyword()) :: {:ok, entry()} | {:error, term()}
+  @callback delete(String.t(), String.t(), keyword()) :: :ok | {:error, term()}
   @callback replace_all(String.t(), [entry()], keyword()) :: :ok | {:error, term()}
 
   @doc "Load all transcript entries for a conversation."
@@ -32,6 +33,13 @@ defmodule Handbeam.ConversationTranscriptStore do
   def update(conversation_id, entry_id, patch, opts \\ [])
       when is_binary(conversation_id) and is_binary(entry_id) and is_map(patch) do
     impl(opts).update(conversation_id, entry_id, patch, opts)
+  end
+
+  @doc "Delete one entry atomically with respect to other transcript writes. Missing ids are a no-op."
+  @spec delete(String.t(), String.t(), keyword()) :: :ok | {:error, term()}
+  def delete(conversation_id, entry_id, opts \\ [])
+      when is_binary(conversation_id) and is_binary(entry_id) do
+    impl(opts).delete(conversation_id, entry_id, opts)
   end
 
   @doc "Replace the complete transcript for a conversation."

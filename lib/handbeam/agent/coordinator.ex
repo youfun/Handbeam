@@ -35,31 +35,21 @@ defmodule Handbeam.Agent.Coordinator do
           else
             opts = Keyword.put_new(opts, :deliver_as, :steer)
 
-            _ = Handbeam.Agent.TranscriptPersistence.append_inbound(conversation_id, content, opts)
-
-            enqueue_candidate(conversation_id, content, opts)
+            with {:ok, _entry} <-
+                   Handbeam.Agent.TranscriptPersistence.append_inbound(
+                     conversation_id,
+                     content,
+                     opts
+                   ) do
+              enqueue_candidate(conversation_id, content, opts)
+            end
           end
 
         {:ok, %{running?: false}} ->
           if Keyword.get(opts, :require_running?, false) do
             {:error, :no_active_run}
           else
-            if present_task_instructions?(opts) do
-              # Exclusive accept is Runner/RunSupervisor start. Inbound is
-              # persisted in Runner.init before the agent task starts.
-              start_run(conversation_id, content, opts)
-            else
-              inbound_opts = Keyword.put(opts, :deliver_as, :new_run)
-
-              _ =
-                Handbeam.Agent.TranscriptPersistence.append_inbound(
-                  conversation_id,
-                  content,
-                  inbound_opts
-                )
-
-              start_run(conversation_id, content, Keyword.put(opts, :persist_inbound?, false))
-            end
+            start_run(conversation_id, content, opts)
           end
 
         {:error, reason} ->
@@ -78,19 +68,8 @@ defmodule Handbeam.Agent.Coordinator do
          :ok <- validate_model_policy(opts),
          opts <- ensure_run_id(opts),
          {:ok, _pid} <- Session.start_or_get(session_id: conversation_id, model: opts[:model]),
-         {:ok, %{running?: false}} <- status(conversation_id) do
-      persist_before_start? =
-        Keyword.get(opts, :persist_inbound?, true) and not present_task_instructions?(opts)
-
-      _ =
-        if persist_before_start? do
-          Handbeam.Agent.TranscriptPersistence.append_inbound(
-            conversation_id,
-            content,
-            Keyword.put(opts, :deliver_as, :new_run)
-          )
-        end
-
+         {:ok, %{running?: false}} <- status(conversation_id),
+         :ok <- persist_inbound_before_start(conversation_id, content, opts) do
       run_opts = agent_run_opts(conversation_id, opts)
 
       case Handbeam.Agent.Runner.start_run(conversation_id, content, run_opts) do
@@ -151,12 +130,8 @@ defmodule Handbeam.Agent.Coordinator do
   @spec delete_pending_message(String.t(), String.t()) :: :ok | {:error, term()}
   def delete_pending_message(conversation_id, message_id)
       when is_binary(conversation_id) and is_binary(message_id) do
-    with {:ok, _info} <- Session.delete_pending_message(conversation_id, message_id),
-         {:ok, entries} <- Handbeam.ConversationTranscriptStore.list(conversation_id) do
-      filtered_entries = Enum.reject(entries, &(Map.get(&1, "id") == message_id))
-      Handbeam.ConversationTranscriptStore.replace_all(conversation_id, filtered_entries)
-    else
-      {:error, reason} -> {:error, reason}
+    with {:ok, _info} <- Session.delete_pending_message(conversation_id, message_id) do
+      Handbeam.ConversationTranscriptStore.delete(conversation_id, message_id)
     end
   end
 
@@ -262,6 +237,22 @@ defmodule Handbeam.Agent.Coordinator do
     case Keyword.get(opts, :task_instructions) do
       text when is_binary(text) -> String.trim(text) != ""
       _ -> false
+    end
+  end
+
+  defp persist_inbound_before_start(conversation_id, content, opts) do
+    # Task instructions are persisted inside Runner.init after exclusive acceptance.
+    if Keyword.get(opts, :persist_inbound?, true) and not present_task_instructions?(opts) do
+      case Handbeam.Agent.TranscriptPersistence.append_inbound(
+             conversation_id,
+             content,
+             Keyword.put(opts, :deliver_as, :new_run)
+           ) do
+        {:ok, _entry} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      :ok
     end
   end
 

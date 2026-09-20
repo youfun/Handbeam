@@ -229,8 +229,7 @@ defmodule Handbeam.ConversationStore do
 
       case Handbeam.JSON.encode(entry) do
         {:ok, json} ->
-          File.write!(path, json <> "\n", [:append])
-          :ok
+          File.write(path, json <> "\n", [:append])
 
         {:error, reason} ->
           Logger.error("[ConversationStore] Failed to encode message entry: #{inspect(reason)}")
@@ -286,7 +285,8 @@ defmodule Handbeam.ConversationStore do
   @spec replace_messages(String.t(), [map()]) :: :ok | {:error, term()}
   def replace_messages(conversation_id, entries) when is_list(entries) do
     with {:ok, _meta} <- read_meta(conversation_id) do
-      encoded = entries |> Enum.map(&Handbeam.JsonSafe.normalize/1) |> Enum.map(&Handbeam.JSON.encode/1)
+      encoded =
+        entries |> Enum.map(&Handbeam.JsonSafe.normalize/1) |> Enum.map(&Handbeam.JSON.encode/1)
 
       if error = Enum.find(encoded, &match?({:error, _}, &1)) do
         Logger.error(

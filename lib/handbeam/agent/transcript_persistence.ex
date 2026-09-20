@@ -70,7 +70,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
 
   def handle_event(conversation_id, {:tool_start, payload}, opts)
       when is_binary(conversation_id) do
-    flush(conversation_id, opts)
+    flush!(conversation_id, opts)
     finalize_assistant(conversation_id, "commentary", opts)
     Process.put(assistant_key(conversation_id), nil)
 
@@ -100,7 +100,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
   end
 
   def handle_event(conversation_id, {:tool_end, payload}, opts) when is_binary(conversation_id) do
-    flush(conversation_id, opts)
+    flush!(conversation_id, opts)
 
     tool_name = payload_value(payload, :tool, payload_value(payload, :name, "unknown"))
     tool_use_id = payload_value(payload, :tool_use_id, tool_name)
@@ -142,7 +142,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
   end
 
   def handle_event(conversation_id, {:run_end, payload}, opts) when is_binary(conversation_id) do
-    flush(conversation_id, opts)
+    flush!(conversation_id, opts)
     finalize_assistant(conversation_id, "final", opts)
 
     run_error = payload_value(payload, :error)
@@ -194,7 +194,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
   end
 
   def handle_event(conversation_id, _event, opts) when is_binary(conversation_id) do
-    flush(conversation_id, opts)
+    flush!(conversation_id, opts)
     :ok
   end
 
@@ -423,8 +423,8 @@ defmodule Handbeam.Agent.TranscriptPersistence do
     :ok
   end
 
-  defp take_buffer(conversation_id) do
-    case Process.delete(buffer_key(conversation_id)) do
+  defp buffered_text(conversation_id) do
+    case Process.get(buffer_key(conversation_id)) do
       nil -> ""
       list when is_list(list) -> list |> Enum.reverse() |> IO.iodata_to_binary()
     end
@@ -436,8 +436,8 @@ defmodule Handbeam.Agent.TranscriptPersistence do
     :ok
   end
 
-  defp flush(conversation_id, opts) do
-    case take_buffer(conversation_id) do
+  defp flush!(conversation_id, opts) do
+    case buffered_text(conversation_id) do
       "" ->
         :ok
 
@@ -458,8 +458,14 @@ defmodule Handbeam.Agent.TranscriptPersistence do
           })
 
         case persist_assistant_delta(conversation_id, entry_id, entry, buffered, opts) do
-          {:ok, saved} -> deliver_delta(saved, buffered, opts)
-          {:error, _reason} -> :ok
+          {:ok, saved} ->
+            Process.delete(buffer_key(conversation_id))
+            deliver_delta(saved, buffered, opts)
+
+          {:error, reason} ->
+            # Do not advance the message boundary or report a successful run.
+            # Keep the buffer intact for a caller that can retry in this process.
+            raise "Assistant transcript persistence failed for #{conversation_id}: #{inspect(reason)}"
         end
 
         Process.put(last_flush_key(conversation_id), System.monotonic_time(:millisecond))
