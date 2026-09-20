@@ -387,6 +387,31 @@ defmodule Handbeam.Jobs.BeamTest do
     refute MixOwner.busy?()
   end
 
+  test "script return and exception truncation flags survive the job boundary", %{
+    context: ctx,
+    work: work
+  } do
+    for {name, source, status, flag} <- [
+          {"return", "List.duplicate(String.duplicate(\"z\", 2000), 20)", :completed,
+           :return_truncated?},
+          {"error", "raise String.duplicate(\"z\", 20000)", :failed, :error_truncated?}
+        ] do
+      path = name <> ".exs"
+      File.write!(Path.join(work, path), source)
+
+      assert {:ok, _, %{job: %{job_id: id}}} =
+               RunElixirScript.execute(
+                 %{"path" => path, "job" => true, "wait_ms" => 100},
+                 %{ctx | tool_call_id: name}
+               )
+
+      assert {:ok, %{state: ^status, result_truncated: false} = result} =
+               Jobs.status(id, 0, 5000, ctx)
+
+      assert result[flag] == true
+    end
+  end
+
   test "mix_project tool returns a failed job rather than requiring a shell", %{context: ctx} do
     assert {:ok, _, %{job: %{job_id: id}}} =
              MixProject.execute(%{"action" => "compile", "job" => true, "wait_ms" => 100}, ctx)

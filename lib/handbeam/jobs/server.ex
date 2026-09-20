@@ -143,7 +143,7 @@ defmodule Handbeam.Jobs.Server do
         details =
           case result do
             {_, _, details} when is_map(details) ->
-              Map.take(details, [:stdout_truncated?, :value_truncated?])
+              Map.take(details, [:stdout_truncated?, :return_truncated?, :error_truncated?])
 
             _ ->
               %{}
