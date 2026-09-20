@@ -160,6 +160,56 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       end
     end)
     |> Enum.each(&wait_for_process/1)
+
+    # Stopping producers does not drain their cast/PubSub consumers. In order:
+    # Session forwards lifecycle events, TaskTracker reads conversation metadata,
+    # and Journal may create the storage root while serving those reads.
+    Registry.select(Handbeam.SessionRegistry, [{{:"$1", :_, :_}, [], [:"$1"]}])
+    |> Enum.each(&Handbeam.PubSub.Session.snapshot/1)
+
+    GenServer.call(Handbeam.Runtime.TaskTracker, :snapshot)
+
+    :ok =
+      Handbeam.ConversationTranscriptStore.Journal.invalidate(
+        Handbeam.ConversationStore.index_path()
+      )
+  end
+
+  test "cleanup waits for queued lifecycle consumers before removing their HOME" do
+    {:ok, conversation} = Handbeam.ConversationStore.create("default", title: "Cleanup barrier")
+    id = conversation["id"]
+    {:ok, _session} = Handbeam.PubSub.Session.start_or_get(session_id: id)
+    consumer = Process.whereis(Handbeam.Runtime.TaskTracker)
+    tracker = Process.get(:workspace_live_test_tracker)
+    :ok = :sys.suspend(consumer)
+    :erlang.trace(consumer, true, [:receive])
+
+    try do
+      Handbeam.PubSub.Session.broadcast_event(id, :run_start, %{run_id: "cleanup-barrier"})
+      Handbeam.PubSub.Session.snapshot(id)
+      cleanup = Task.async(fn -> stop_test_runtime!(tracker) end)
+
+      # The ordinary call is queued behind lifecycle work. A system get_state
+      # call would be served while suspended and would not provide this barrier.
+      assert_receive {:trace, ^consumer, :receive, {:"$gen_call", _, :snapshot}}, 1_000
+      ref = cleanup.ref
+      refute_received {^ref, _}
+      :ok = :sys.resume(consumer)
+      assert :ok = Task.await(cleanup)
+
+      File.rm_rf!(System.get_env("HOME"))
+      GenServer.call(Handbeam.Runtime.TaskTracker, :snapshot)
+
+      :ok =
+        Handbeam.ConversationTranscriptStore.Journal.invalidate(
+          Handbeam.ConversationStore.index_path()
+        )
+
+      refute File.exists?(System.get_env("HOME"))
+    after
+      :erlang.trace(consumer, false, [:receive])
+      :sys.resume(consumer)
+    end
   end
 
   defp stop_and_wait(pid, stop) when is_pid(pid) do
