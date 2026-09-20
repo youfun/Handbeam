@@ -129,6 +129,11 @@ defmodule Handbeam.Tool.Registry do
   """
   @spec host_tool_modules() :: [module()]
   def host_tool_modules do
+    for %{module: mod, enabled: true} <- host_tool_configuration(), do: mod
+  end
+
+  @doc "Host seed decisions, not registration, dependency or run authorization facts."
+  def host_tool_configuration do
     base = [
       Handbeam.Tool.Builtin.Edit,
       Handbeam.Tool.Builtin.FileSearch,
@@ -151,23 +156,45 @@ defmodule Handbeam.Tool.Registry do
     ]
 
     base
-    |> maybe_add(Handbeam.Host.shell?(), Handbeam.Tool.Builtin.Bash)
-    |> maybe_add(
+    |> Enum.map(&%{module: &1, enabled: true, source: :unconditional_seed})
+    |> host_gate(Handbeam.Host.shell?(), Handbeam.Tool.Builtin.Bash, :shell)
+    |> host_gate(
       Handbeam.Host.desktop_browser?() or Handbeam.Host.webview_browser?(),
-      Handbeam.Tool.Builtin.Browser
+      Handbeam.Tool.Builtin.Browser,
+      :desktop_or_webview_browser
     )
-    |> maybe_add(Handbeam.Host.webview_browser?(), Handbeam.Tool.Builtin.PreviewServe)
-    |> maybe_add(Handbeam.Host.system_intents?(), Handbeam.Tool.Builtin.AndroidOpenUrl)
-    |> maybe_add(Handbeam.Host.system_intents?(), Handbeam.Tool.Builtin.AndroidOpenFile)
-    |> maybe_add(Handbeam.Host.system_intents?(), Handbeam.Tool.Builtin.AndroidShareFile)
-    |> maybe_add(Handbeam.Host.system_intents?(), Handbeam.Tool.Builtin.RunElixirScript)
-    |> maybe_add(Handbeam.Host.beam_eval?(), Handbeam.Tool.Extension.Beam.Docs)
-    |> maybe_add(Handbeam.Host.beam_eval?(), Handbeam.Tool.Extension.Beam.Source)
-    |> maybe_add(Handbeam.Host.beam_eval?(), Handbeam.Tool.Extension.Beam.Sql)
+    |> host_gate(
+      Handbeam.Host.webview_browser?(),
+      Handbeam.Tool.Builtin.PreviewServe,
+      :webview_browser
+    )
+    |> host_gate(
+      Handbeam.Host.system_intents?(),
+      Handbeam.Tool.Builtin.AndroidOpenUrl,
+      :system_intents
+    )
+    |> host_gate(
+      Handbeam.Host.system_intents?(),
+      Handbeam.Tool.Builtin.AndroidOpenFile,
+      :system_intents
+    )
+    |> host_gate(
+      Handbeam.Host.system_intents?(),
+      Handbeam.Tool.Builtin.AndroidShareFile,
+      :system_intents
+    )
+    |> host_gate(
+      Handbeam.Host.system_intents?(),
+      Handbeam.Tool.Builtin.RunElixirScript,
+      :system_intents
+    )
+    |> host_gate(Handbeam.Host.beam_eval?(), Handbeam.Tool.Extension.Beam.Docs, :beam_eval)
+    |> host_gate(Handbeam.Host.beam_eval?(), Handbeam.Tool.Extension.Beam.Source, :beam_eval)
+    |> host_gate(Handbeam.Host.beam_eval?(), Handbeam.Tool.Extension.Beam.Sql, :beam_eval)
   end
 
-  defp maybe_add(list, true, mod), do: list ++ [mod]
-  defp maybe_add(list, false, _mod), do: list
+  defp host_gate(list, enabled, mod, source),
+    do: list ++ [%{module: mod, enabled: enabled, source: source}]
 
   # ── BEAM introspection tools (registered on-demand for security) ──
 

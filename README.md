@@ -27,6 +27,34 @@ On a phone, chat with the agent to create, edit, and run Elixir/Mix projects in 
 
 Requires Elixir 1.20, OTP 28+, and Node.
 
+## Inspect effective host configuration
+
+`mix handbeam.inspect_config --workspace /path/to/workspace` prints a redacted
+JSON report without starting Handbeam, initializing stores, resolving credentials
+or bootstrapping MCP. It loads normal Mix configuration and compiles when needed;
+it inspects this Mix VM, **not** an already running phone or Web session. Inside
+an existing host, use `Handbeam.ConfigInspection.report(workspace: path)`.
+
+The report separates Host seed decisions, observed registry membership, passive
+dependency checks, and unknown run authorization/model visibility. It explains
+Host defaults/overrides (including browser precedence), effective Model/AI field
+sources, workspace approval defaults, and injected environment section IDs.
+Global settings override defaults; normalized workspace settings override global
+settings. Runtime provider environment overrides apply above catalog values;
+entry-point model selection and per-run options are not reconstructed. Approval
+defaults are not per-call decisions: arguments, session overrides and capability
+rules still apply. `unknown` is intentional, not a claim of availability.
+
+For safe sharing, arbitrary strings are withheld: paths, model IDs, permission
+patterns, dynamic tool names, URLs, credentials and prompt bodies. Sources identify
+the owning layer, not the original writer of an Application environment value.
+No executable, native callback, browser or network availability probe is run.
+Desktop/Web/native/headless share the same runtime. Default and custom agent
+prompts append the same Host-derived environment contract; Android/iOS have no
+agent shell when Host disables it. Script API details remain in ScriptEnvironment,
+not duplicated platform-specific prompts. Later runtime hooks can still transform
+the outgoing prompt, which this report does not evaluate.
+
 ## Run
 
 ```bash

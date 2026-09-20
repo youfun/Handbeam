@@ -195,6 +195,7 @@ defmodule Handbeam.Agent.Config do
     |> maybe_inject_project_context(opts)
     |> maybe_inject_skills(opts)
     |> maybe_append_task_instructions(opts)
+    |> append_prompt_section(Handbeam.Agent.HostEnvironment.describe())
   end
 
   defp maybe_append_task_instructions(system_prompt, opts) do
@@ -253,7 +254,7 @@ defmodule Handbeam.Agent.Config do
           "The `bash` tool runs commands from the current workspace by default. Do not prefix commands with `cd #{working_directory} &&`; call the command directly, or set the `cwd` argument only when you need to run inside a subdirectory of the workspace."
 
         true ->
-          no_shell_contract()
+          ""
       end
 
     """
@@ -265,7 +266,7 @@ defmodule Handbeam.Agent.Config do
 
   defp maybe_inject_project_context(system_prompt, opts) do
     # If the user explicitly provided a system_prompt, skip context injection
-    # (they get full control). Otherwise, inject AGENTS.md context.
+    # (host execution facts are still appended). Otherwise, inject AGENTS.md context.
     if Keyword.has_key?(opts, :system_prompt) do
       system_prompt
     else
@@ -315,6 +316,7 @@ defmodule Handbeam.Agent.Config do
   end
 
   defp append_prompt_section(system_prompt, ""), do: system_prompt
+  defp append_prompt_section(nil, section), do: section
   defp append_prompt_section(system_prompt, section), do: system_prompt <> section
 
   defp build_compaction(opts) do
@@ -362,40 +364,12 @@ defmodule Handbeam.Agent.Config do
        of multiple separate `edit` calls. Each `edits[].old_string` is matched
        against the original file, not incrementally. Keep each `old_string` minimal
        and unique; merge nearby changes into one entry.
-    #{tool_rule_five()}
+    5. **Execution**: Follow the host execution environment below and the tools
+       exposed in this request; never assume a command or backend is available.
     6. **Edit Failures**: If an `edit` fails because old_string does not match, re-read
        the file to get the current exact text, then retry with the correct old_string.
        Do not abandon the task — adjust and try again.
     """ <> "\n\n" <> String.trim_trailing(memory_section) <> "\n"
-  end
-
-  defp tool_rule_five do
-    if Handbeam.Host.shell?() do
-      """
-      5. **Bash**: Only use `bash` for safe, necessary operations. Prefer read/edit/write
-         for file operations, and use `grep` for content search.
-      """
-      |> String.trim()
-    else
-      """
-      5. **No shell**: Do not call `bash`. Search local files with `grep`/`file_search`.
-      #{no_shell_script_rule()}
-      """
-      |> String.trim()
-    end
-  end
-
-  defp no_shell_contract do
-    "There is no Unix shell on this host. Do not call `bash`. Use only tools provided in this request; browser availability is independent of shell access." <>
-      no_shell_script_rule()
-  end
-
-  defp no_shell_script_rule do
-    if Handbeam.Host.system_intents?() do
-      " For local computation, file processing or HTTP, use `run_elixir_script` when exposed. When Mix is present, install host-compatible pure Elixir/Erlang Hex packages with Mix.install/2 inside the .exs (top of the script, before using those modules). Follow the script tool environment for Mix/Hex availability; write the script, execute it and verify outputs. Treat it as high-privilege host BEAM code."
-    else
-      ""
-    end
   end
 
   defp default_middleware do
