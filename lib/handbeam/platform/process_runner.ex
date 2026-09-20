@@ -6,7 +6,7 @@ defmodule Handbeam.Platform.ProcessRunner do
   timeout handling, and cross-platform process tree termination.
   """
 
-  alias Handbeam.Platform.{ShellResolver, ProcessManager}
+  alias Handbeam.Platform.{ShellResolver, ProcessManager, ProcessSandbox}
 
   @max_output_bytes 50_000
   @max_output_lines 2_000
@@ -18,18 +18,29 @@ defmodule Handbeam.Platform.ProcessRunner do
   Job cleanup must be registered before releasing the gate.
   """
   def open_gated_bash(command, cwd, opts \\ []) do
-    with {:ok, shell} <- ShellResolver.resolve(opts) do
-      options = [:binary, :exit_status, :use_stdio, :stderr_to_stdout, :hide]
-      options = if cwd, do: [{:cd, String.to_charlist(cwd)} | options], else: options
+    script =
+      "printf 'handbeam-ready\\n'; IFS= read -r gate && [ \"$gate\" = go ] || exit 125; eval \"$1\""
 
-      script =
-        "printf 'handbeam-ready\\n'; IFS= read -r gate && [ \"$gate\" = go ] || exit 125; eval \"$1\""
+    with {:ok, shell} <- ShellResolver.resolve(opts),
+         {:ok, invocation} <-
+           ProcessSandbox.wrap(
+             %{shell | args: shell.args ++ [script, "handbeam-job"]},
+             command,
+             cwd,
+             opts
+           ) do
+      options = [:binary, :exit_status, :use_stdio, :stderr_to_stdout, :hide]
+
+      options =
+        if invocation.cwd,
+          do: [{:cd, String.to_charlist(invocation.cwd)} | options],
+          else: options
 
       try do
         port =
           Port.open(
-            {:spawn_executable, shell.path},
-            [{:args, shell.args ++ [script, "handbeam-job", command]} | options]
+            {:spawn_executable, invocation.executable},
+            [{:args, invocation.args} | options]
           )
 
         deadline =
