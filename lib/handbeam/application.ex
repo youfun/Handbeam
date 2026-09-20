@@ -26,6 +26,7 @@ defmodule Handbeam.Application do
         {Registry, keys: :unique, name: Handbeam.AgentRunRegistry},
         {Registry, keys: :unique, name: Handbeam.AgentRunSupervisorRegistry},
         {Registry, keys: :unique, name: Handbeam.AgentRunQueueRegistry},
+        Handbeam.ConversationTranscriptStore.Journal,
         Handbeam.Preview.Store,
         Handbeam.ExportSnapshot.Binding,
         Handbeam.Preview.Listener,
@@ -52,7 +53,7 @@ defmodule Handbeam.Application do
           Handbeam.Runtime.TaskTracker
         ] ++
         mcp_children() ++
-        [HandbeamWeb.Endpoint]
+        recovery_children() ++ [HandbeamWeb.Endpoint]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
@@ -70,6 +71,18 @@ defmodule Handbeam.Application do
 
   defp skip_migrations?() do
     System.get_env("RELEASE_NAME") == nil
+  end
+
+  defp recovery_children do
+    if Application.get_env(:handbeam, :recover_transcripts, true) do
+      [
+        Supervisor.child_spec({Task, &Handbeam.Agent.TranscriptRecovery.run/0},
+          id: Handbeam.Agent.TranscriptRecovery
+        )
+      ]
+    else
+      []
+    end
   end
 
   defp terminal_children do

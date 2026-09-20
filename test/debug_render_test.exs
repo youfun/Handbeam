@@ -28,8 +28,8 @@ defmodule DebugRenderTest do
     :ok
   end
 
-  test "debug render with isolate_home" do
-    {:ok, view, html} = live(build_conn(), "/")
+  test "debug render with isolate_home", %{conn: conn} do
+    {:ok, view, html} = live(conn, "/")
     IO.puts("--- HTML (first 500 chars) ---")
     IO.puts(String.slice(html, 0, 500))
     IO.puts("--- Looking for data-session-id ---")

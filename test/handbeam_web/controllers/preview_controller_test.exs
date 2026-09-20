@@ -31,7 +31,7 @@ defmodule HandbeamWeb.PreviewControllerTest do
     assert response(conn, 200) == "static-ok"
     assert Plug.Conn.get_resp_header(conn, "content-security-policy") == ["sandbox allow-scripts"]
 
-    conn = build_conn()
+    conn = recycle(conn)
     conn = get(conn, "/preview/#{record.id}/files/../secret.txt")
     assert response(conn, 404) =~ "not found"
   end

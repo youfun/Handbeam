@@ -33,6 +33,6 @@ defmodule HandbeamWeb.ConnCase do
 
   setup tags do
     Handbeam.DataCase.setup_sandbox(tags)
-    {:ok, conn: Phoenix.ConnTest.build_conn()}
+    {:ok, conn: Phoenix.ConnTest.build_conn() |> Map.put(:host, "localhost")}
   end
 end

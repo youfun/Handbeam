@@ -47,6 +47,7 @@ config :phoenix_test, :endpoint, HandbeamWeb.Endpoint
 config :handbeam,
   event_recorder_enabled?: false,
   session_store_enabled?: false,
+  recover_transcripts: false,
   extension_hot_reload: false
 
 config :handbeam, HandbeamWeb.Gettext,

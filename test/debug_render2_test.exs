@@ -18,8 +18,8 @@ defmodule DebugRender2Test do
     :ok
   end
 
-  test "debug full html" do
-    {:ok, _view, html} = live(build_conn(), "/")
+  test "debug full html", %{conn: conn} do
+    {:ok, _view, html} = live(conn, "/")
     IO.puts("Has status-bar: #{String.contains?(html, "status-bar")}")
     IO.puts("Has data-session-id: #{String.contains?(html, "data-session-id")}")
     IO.puts("Has workspace-panel: #{String.contains?(html, "workspace-panel-header")}")

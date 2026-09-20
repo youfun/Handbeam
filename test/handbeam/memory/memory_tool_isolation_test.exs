@@ -10,6 +10,8 @@ defmodule Handbeam.Memory.MemoryToolIsolationTest do
 
   describe "memory tool isolation" do
     test "agent config exposes workspace memory policy to tool context" do
+      :ok = Handbeam.Tool.Registry.register(MemLearn)
+
       config =
         Config.from_opts(
           workspace_id: "tool-workspace",

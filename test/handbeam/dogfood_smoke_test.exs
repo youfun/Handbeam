@@ -2,10 +2,8 @@ defmodule Handbeam.DogfoodSmoke do
   @moduledoc """
   End-to-end dogfood smoke tests against a mock OpenAI-compatible server.
 
-  The mock server is started automatically in `setup_all` on a random free port
-  and stopped in `on_exit`.  No manual server start is needed.
-
-  **Requires** `python3` on `PATH`.
+  A local Bandit server is started automatically in `setup_all` on a random
+  free port and stopped in `on_exit`. No external runtime is needed.
 
   Coverage:
   - Normal conversation: user sends message → mock returns assistant text
@@ -25,55 +23,166 @@ defmodule Handbeam.DogfoodSmoke do
   alias Handbeam.Agent.Message
   alias Handbeam.Agent.Provider.OpenAICompat
 
+  defmodule MockOpenAI do
+    @moduledoc false
+
+    import Plug.Conn
+
+    def init(opts), do: opts
+
+    def call(%Plug.Conn{method: "POST", request_path: "/v1/chat/completions"} = conn, _opts) do
+      {:ok, raw_body, conn} = read_body(conn)
+      {:ok, body} = Jason.decode(raw_body)
+
+      with ["Bearer sk-mock-key"] <- get_req_header(conn, "authorization"),
+           %{"model" => "gpt-4o", "messages" => messages, "stream" => false} <- body,
+           true <- is_list(messages) do
+        json(conn, completion(messages))
+      else
+        _ -> json(conn, %{"error" => %{"message" => "invalid mock request"}}, 400)
+      end
+    end
+
+    def call(conn, _opts) do
+      json(conn, %{"error" => %{"message" => "not found"}}, 404)
+    end
+
+    defp completion(messages) do
+      if Enum.any?(messages, &(&1["role"] == "tool")) do
+        response("Tool completed successfully by the Handbeam mock.")
+      else
+        prompt =
+          messages
+          |> Enum.find(&(&1["role"] == "user"))
+          |> Map.fetch!("content")
+          |> to_string()
+
+        initial_response(prompt)
+      end
+    end
+
+    defp initial_response(prompt) do
+      downcased = String.downcase(prompt)
+
+      cond do
+        String.contains?(downcased, "show me the mix.exs") ->
+          tool_response([
+            tool_call("read", %{"file_path" => "mix.exs"}),
+            tool_call("bash", %{"command" => "pwd"})
+          ])
+
+        String.contains?(downcased, "read the mix.exs") ->
+          tool_response([tool_call("read", %{"file_path" => "mix.exs"})])
+
+        String.contains?(downcased, "smoke_test.txt") ->
+          tool_response([
+            tool_call("write", %{
+              "file_path" => "smoke_test.txt",
+              "content" => "Dogfood smoke test fixture\n"
+            })
+          ])
+
+        String.contains?(downcased, "safe_test.txt") ->
+          tool_response([
+            tool_call("write", %{
+              "file_path" => "safe_test.txt",
+              "content" => "safe smoke test fixture\n"
+            })
+          ])
+
+        String.contains?(downcased, "edit the file") ->
+          filename =
+            Regex.run(~r/edit the file ([^ ]+)/i, prompt, capture: :all_but_first) |> hd()
+
+          tool_response([
+            tool_call("edit", %{
+              "file_path" => filename,
+              "old_string" => "original",
+              "new_string" => "modified"
+            })
+          ])
+
+        String.contains?(downcased, "pwd") ->
+          tool_response([tool_call("bash", %{"command" => "pwd"})])
+
+        String.contains?(downcased, "elixir") ->
+          response("Elixir is a concurrent language running on the BEAM.")
+
+        true ->
+          response("Hello from the Handbeam mock server.")
+      end
+    end
+
+    defp tool_call(name, arguments) do
+      %{
+        "id" => "call_#{name}",
+        "type" => "function",
+        "function" => %{"name" => name, "arguments" => Jason.encode!(arguments)}
+      }
+    end
+
+    defp tool_response(tool_calls) do
+      envelope(
+        %{"role" => "assistant", "content" => nil, "tool_calls" => tool_calls},
+        "tool_calls"
+      )
+    end
+
+    defp response(content) do
+      envelope(%{"role" => "assistant", "content" => content}, "stop")
+    end
+
+    defp envelope(message, finish_reason) do
+      %{
+        "id" => "chatcmpl-dogfood",
+        "object" => "chat.completion",
+        "model" => "gpt-4o",
+        "choices" => [%{"index" => 0, "message" => message, "finish_reason" => finish_reason}],
+        "usage" => %{"prompt_tokens" => 10, "completion_tokens" => 5, "total_tokens" => 15}
+      }
+    end
+
+    defp json(conn, body, status \\ 200) do
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(status, Jason.encode!(body))
+    end
+  end
+
   # ── Lifecycle ──────────────────────────────────────────────
 
   setup_all do
     {:ok, _} = Application.ensure_all_started(:handbeam)
-
-    python = System.find_executable("python3")
-
-    if is_nil(python) do
-      raise """
-      python3 not found on PATH.
-
-      The dogfood smoke tests need a local Python 3 installation to run the
-      mock OpenAI-compatible server.  Install Python 3, ensure 'python3' is on
-      your PATH, then re-run:
-
-          mix test test/handbeam/dogfood_smoke_test.exs
-      """
-    end
 
     # Bind to port 0 to let the OS pick a free port
     {:ok, socket} = :gen_tcp.listen(0, [:binary, {:active, false}])
     {:ok, {_addr, port}} = :inet.sockname(socket)
     :gen_tcp.close(socket)
 
-    mock_script = Path.expand("../../mock_server.py", __DIR__)
-
-    port_handle =
-      Port.open({:spawn_executable, python}, [
-        :binary,
-        :exit_status,
-        :stderr_to_stdout,
-        args: [mock_script, Integer.to_string(port)]
-      ])
+    {:ok, server} = Bandit.start_link(plug: MockOpenAI, port: port)
 
     base_url = "http://127.0.0.1:#{port}/v1"
-
-    wait_for_server(port)
-
-    on_exit(fn ->
-      # :erlang.port_info/1 returns :undefined if port is already dead
-      if :erlang.port_info(port_handle) != :undefined do
-        Port.close(port_handle)
-      end
-    end)
+    on_exit(fn -> Supervisor.stop(server) end)
 
     {:ok, %{base_url: base_url}}
   end
 
-  setup ctx, do: ctx
+  setup ctx do
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Handbeam.Repo)
+    Ecto.Adapters.SQL.Sandbox.mode(Handbeam.Repo, {:shared, self()})
+
+    Enum.each(
+      [
+        Handbeam.Tool.Builtin.Read,
+        Handbeam.Tool.Builtin.Write,
+        Handbeam.Tool.Builtin.Edit,
+        Handbeam.Tool.Builtin.Bash
+      ],
+      &ensure_registered/1
+    )
+
+    ctx
+  end
 
   # ── Helpers ────────────────────────────────────────────────
 
@@ -87,25 +196,10 @@ defmodule Handbeam.DogfoodSmoke do
     }
   end
 
-  defp wait_for_server(port, timeout_ms \\ 5_000, interval_ms \\ 100) do
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
-    wait_for_server_loop(~c"127.0.0.1", port, deadline, interval_ms)
-  end
-
-  defp wait_for_server_loop(host, port, deadline, interval_ms) do
-    if System.monotonic_time(:millisecond) > deadline do
-      raise "Mock server @ #{host}:#{port} did not become healthy within timeout"
-    end
-
-    # Quick TCP connect check — the server is ready once the port is open
-    case :gen_tcp.connect(host, port, [:binary, {:active, false}], interval_ms) do
-      {:ok, sock} ->
-        :gen_tcp.close(sock)
-        :ok
-
-      {:error, _} ->
-        Process.sleep(interval_ms)
-        wait_for_server_loop(host, port, deadline, interval_ms)
+  defp ensure_registered(tool) do
+    case Handbeam.Tool.Registry.get(tool.name()) do
+      {:ok, _entry} -> :ok
+      :error -> :ok = Handbeam.Tool.Registry.register(tool)
     end
   end
 

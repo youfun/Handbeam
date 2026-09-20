@@ -193,5 +193,38 @@ defmodule Handbeam.Security.PathValidator.Test do
       {:error, reason} = PathValidator.validate_under_root(outside, new_root)
       assert reason =~ "Path traversal blocked"
     end
+
+    test "blocks a nonexistent tail through an existing symlink ancestor" do
+      outside =
+        Path.join(System.tmp_dir!(), "sigil_sec_target_#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(outside)
+      File.ln_s!(outside, Path.join(@allowed_root, "escape"))
+      on_exit(fn -> File.rm_rf!(outside) end)
+
+      target = Path.join(@allowed_root, "escape/not-created/yet")
+      assert {:error, reason} = PathValidator.validate_under_root(target, @allowed_root)
+      assert reason =~ "Path traversal blocked"
+    end
+
+    test "resolves a symlink root and permits nonexistent descendants" do
+      real_root = Path.join(@allowed_root, "real")
+      linked_root = Path.join(@allowed_root, "linked")
+      File.mkdir_p!(real_root)
+      File.ln_s!(real_root, linked_root)
+
+      assert PathValidator.validate_under_root(Path.join(linked_root, "new/tail"), linked_root) ==
+               :ok
+    end
+
+    test "rejects symlink loops for either target or root" do
+      a = Path.join(@allowed_root, "loop-a")
+      b = Path.join(@allowed_root, "loop-b")
+      File.ln_s!(b, a)
+      File.ln_s!(a, b)
+
+      assert {:error, _} = PathValidator.validate_under_root(Path.join(a, "tail"), @allowed_root)
+      assert {:error, _} = PathValidator.validate_under_root(@allowed_root, a)
+    end
   end
 end

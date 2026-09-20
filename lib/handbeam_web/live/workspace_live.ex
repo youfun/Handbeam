@@ -18,9 +18,10 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   require Logger
 
-  alias HandbeamWeb.ChangeHelper
   alias HandbeamWeb.WorkspaceLive.ConversationState
   alias HandbeamWeb.WorkspaceLive.ConversationSwitching
+  alias HandbeamWeb.WorkspaceLive.EditorProjection
+  alias HandbeamWeb.WorkspaceLive.ToolProjection
   alias Handbeam.Settings
   alias Handbeam.WorkspaceFiles
 
@@ -587,22 +588,7 @@ defmodule HandbeamWeb.WorkspaceLive do
   def handle_event("view_diff", %{"id" => id}, socket) do
     case find_timeline_entry(socket.assigns.timeline, id) do
       %{} = entry ->
-        change = change_from_entry(entry)
-        diff_lines = Map.get(change, "diff_lines")
-        path = Map.get(change, "file_path")
-
-        if is_binary(path) and is_list(diff_lines) and diff_lines != [] do
-          {:noreply,
-           socket
-           |> assign(:active_file, path)
-           |> assign(:show_diff, true)
-           |> assign(:diff_lines, diff_lines)
-           |> assign(:active_change, change)
-           |> assign(:revert_confirm_change_id, nil)
-           |> assign(:revert_message, nil)}
-        else
-          {:noreply, socket}
-        end
+        {:noreply, EditorProjection.open_diff(socket, entry)}
 
       _ ->
         {:noreply, socket}
@@ -625,7 +611,13 @@ defmodule HandbeamWeb.WorkspaceLive do
          {:not_running, false} <- {:not_running, running_for_current_conversation?(socket)} do
       result = Handbeam.ChangeReverter.revert(change, current_workspace_path(socket))
 
-      {:noreply, handle_revert_result(socket, change, result)}
+      {:noreply,
+       EditorProjection.apply_revert_result(
+         socket,
+         change,
+         result,
+         current_workspace_path(socket)
+       )}
     else
       {:not_running, true} ->
         {:noreply,
@@ -643,13 +635,7 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   @impl true
   def handle_event("close_diff", _params, socket) do
-    {:noreply,
-     socket
-     |> assign(:show_diff, false)
-     |> assign(:diff_lines, nil)
-     |> assign(:active_change, nil)
-     |> assign(:revert_confirm_change_id, nil)
-     |> assign(:revert_message, nil)}
+    {:noreply, EditorProjection.close_diff(socket)}
   end
 
   @impl true
@@ -1447,34 +1433,7 @@ defmodule HandbeamWeb.WorkspaceLive do
   defp handle_agent_event(_event, socket), do: socket
 
   defp do_handle_tool_start(payload, socket) do
-    tool_name = Map.get(payload, :tool, Map.get(payload, :name, "unknown"))
-    tool_use_id = Map.get(payload, :tool_use_id) || Map.get(payload, "tool_use_id") || tool_name
-    input = Map.get(payload, :input, %{})
-
-    entry_id =
-      if Map.has_key?(payload, :tool_use_id) or Map.has_key?(payload, "tool_use_id"),
-        do: "tool-#{tool_use_id}",
-        else: "tool-event-#{tool_name}"
-
-    event = %{
-      "id" => entry_id,
-      "content_type" => "tool",
-      "tool_use_id" => tool_use_id,
-      "tool" => tool_name,
-      "tool_name" => tool_name,
-      "status" => :running,
-      "tool_status" => "running",
-      "input" => input,
-      "input_summary" => summarize_input(input, tool_name),
-      "tool_input_summary" => summarize_input(input, tool_name),
-      "duration_ms" => nil,
-      "tool_duration_ms" => nil,
-      "error" => nil,
-      "tool_error" => nil,
-      "file_path" => nil,
-      "diff_lines" => nil,
-      "started_at" => System.os_time(:millisecond)
-    }
+    %{entry: event, tool_name: tool_name} = ToolProjection.start(payload, &summarize_input/2)
 
     tools_active = Map.put(socket.assigns.tools_active, tool_name, :running)
 
@@ -1486,30 +1445,7 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   defp do_handle_tool_end(payload, socket) do
-    tool_name = Map.get(payload, :tool, Map.get(payload, :name, "unknown"))
-    tool_use_id = Map.get(payload, :tool_use_id) || Map.get(payload, "tool_use_id") || tool_name
-    duration_ms = Map.get(payload, :duration_ms)
-    error = Map.get(payload, :error)
-
-    status = if error, do: :error, else: :done
-    tool_status = if error, do: "error", else: "done"
-    tools_active = Map.put(socket.assigns.tools_active, tool_name, status)
-
-    details = Map.get(payload, :details, %{})
-
-    file_path =
-      Map.get(payload, :file_path) ||
-        (Map.get(details, :file_path) || Map.get(details, "file_path"))
-
-    diff_lines =
-      normalize_diff_lines(Map.get(details, :diff_lines) || Map.get(details, "diff_lines"))
-
-    change = change_from_details(details, file_path, diff_lines, tool_name)
-
-    id =
-      if Map.has_key?(payload, :tool_use_id) or Map.has_key?(payload, "tool_use_id"),
-        do: "tool-#{tool_use_id}",
-        else: "tool-event-#{tool_name}"
+    {id, tool_name, tool_use_id} = ToolProjection.identity(payload)
 
     base_entry =
       find_timeline_entry(socket.assigns.timeline, id) ||
@@ -1521,71 +1457,23 @@ defmodule HandbeamWeb.WorkspaceLive do
           "tool_input_summary" => ""
         }
 
-    entry =
-      Map.merge(base_entry, %{
-        "tool" => tool_name,
-        "tool_name" => tool_name,
-        "status" => status,
-        "tool_status" => tool_status,
-        "duration_ms" => duration_ms,
-        "tool_duration_ms" => duration_ms,
-        "error" => error,
-        "tool_error" => error,
-        "details" => details,
-        "file_path" => file_path,
-        "diff_lines" => diff_lines,
-        "change" => change,
-        "change_id" => Map.get(change, "change_id"),
-        "change_type" => Map.get(change, "change_type"),
-        "reversible" => Map.get(change, "reversible"),
-        "revert_status" => Map.get(change, "revert_status"),
-        "revert_reason" => Map.get(change, "revert_reason")
-      })
+    projection = ToolProjection.finish(payload, base_entry)
+    %{entry: entry, status: status, file_path: file_path, diff_lines: diff_lines} = projection
+    tools_active = Map.put(socket.assigns.tools_active, tool_name, status)
 
-    socket
-    |> assign(:tools_active, tools_active)
-    |> timeline_insert(entry, persist?: false)
-    |> maybe_add_diff_editor_file(file_path, diff_lines)
-  end
+    updated =
+      socket
+      |> assign(:tools_active, tools_active)
+      |> timeline_insert(entry, persist?: false)
+      |> EditorProjection.maybe_add_diff_file(
+        file_path,
+        diff_lines,
+        current_workspace_path(socket)
+      )
 
-  defp handle_revert_result(socket, change, {:ok, result}) do
-    apply_revert_projection(socket, change, result, "reverted")
-  end
-
-  defp handle_revert_result(socket, change, {:conflict, result}) do
-    apply_revert_projection(socket, change, result, "conflict")
-  end
-
-  defp handle_revert_result(socket, change, {:error, result}) do
-    apply_revert_projection(socket, change, result, "error")
-  end
-
-  defp apply_revert_projection(socket, change, result, status) do
-    message = Map.get(result, "message") || "Revert #{status}"
-    change_id = Map.get(result, "change_id") || Map.get(change, "change_id")
-    file_path = Map.get(result, "file_path") || Map.get(change, "file_path")
-
-    revert_entry = %{
-      "id" => unique_id("change-revert"),
-      "content_type" => "change_revert",
-      "message_type" => "change_revert",
-      "role" => "system",
-      "change_id" => change_id,
-      "file_path" => file_path,
-      "status" => status,
-      "message" => message,
-      "inserted_at" => DateTime.utc_now() |> DateTime.to_iso8601()
-    }
-
-    socket
-    |> update_timeline_change_status(change_id, status)
-    |> update_active_change_status(change_id, status)
-    |> assign(:revert_confirm_change_id, nil)
-    |> assign(:revert_message, %{"status" => status, "message" => message})
-    |> append_revert_transcript(revert_entry)
-    |> timeline_insert(revert_entry, persist?: false)
-    |> refresh_active_file_preview(file_path)
-    |> persist_revert_status(change_id, status)
+    if updated.assigns.editor_files != socket.assigns.editor_files,
+      do: refresh_loaded_tree_parent(updated, Path.expand(file_path)),
+      else: updated
   end
 
   defp do_handle_run_end(payload, status, socket) do
@@ -1859,10 +1747,6 @@ defmodule HandbeamWeb.WorkspaceLive do
       {:ok, ws} -> ws["path"]
       {:error, _} -> Handbeam.Workspace.root()
     end
-  end
-
-  defp validate_within(path, workspace_root) do
-    Handbeam.Security.PathValidator.validate_within_workspace(Path.expand(path), workspace_root)
   end
 
   # ── Tool event helpers ──
@@ -2585,166 +2469,8 @@ defmodule HandbeamWeb.WorkspaceLive do
     "#{prefix}-#{System.unique_integer([:positive, :monotonic])}"
   end
 
-  defp normalize_diff_lines(lines), do: ChangeHelper.normalize_diff_lines(lines)
-
-  defp change_from_entry(entry), do: ChangeHelper.change_from_entry(entry)
-
-  defp change_from_details(details, file_path, diff_lines, tool_name),
-    do: ChangeHelper.change_from_details(details, file_path, diff_lines, tool_name)
-
-  defp find_change(timeline, change_id), do: ChangeHelper.find_change(timeline, change_id)
-
-  defp update_timeline_change_status(socket, change_id, status) do
-    timeline =
-      Enum.map(socket.assigns.timeline, &update_entry_change_status(&1, change_id, status))
-
-    socket
-    |> assign(:timeline, timeline)
-    |> stream(:timeline, timeline, reset: true)
-  end
-
-  defp update_entry_change_status(entry, change_id, status) do
-    change = change_from_entry(entry)
-
-    if Map.get(change, "change_id") == change_id do
-      details = Map.get(entry, "details") || %{}
-      change = Map.put(change, "revert_status", status)
-
-      entry
-      |> Map.put("revert_status", status)
-      |> Map.put("change", change)
-      |> Map.put(
-        "details",
-        details
-        |> stringify_keys()
-        |> Map.put("change", change)
-        |> Map.put("revert_status", status)
-      )
-    else
-      entry
-    end
-  end
-
-  defp update_active_change_status(socket, change_id, status) do
-    case socket.assigns.active_change do
-      %{"change_id" => ^change_id} = change ->
-        assign(socket, :active_change, Map.put(change, "revert_status", status))
-
-      _ ->
-        socket
-    end
-  end
-
-  defp persist_revert_status(socket, change_id, status) do
-    conv_id = socket.assigns.current_conversation_id
-
-    if is_binary(conv_id) and is_binary(change_id) do
-      socket.assigns.timeline
-      |> Enum.find(fn entry -> Map.get(change_from_entry(entry), "change_id") == change_id end)
-      |> case do
-        %{"id" => entry_id} ->
-          _ =
-            Handbeam.ConversationTranscriptStore.update(
-              conv_id,
-              entry_id,
-              %{
-                "revert_status" => status,
-                "change" => %{"revert_status" => status},
-                "details" => %{
-                  "revert_status" => status,
-                  "change" => %{"revert_status" => status}
-                }
-              },
-              []
-            )
-
-          socket
-
-        _ ->
-          socket
-      end
-    else
-      socket
-    end
-  end
-
-  defp append_revert_transcript(socket, entry) do
-    conv_id = socket.assigns.current_conversation_id
-
-    if is_binary(conv_id) do
-      _ = Handbeam.ConversationTranscriptStore.append(conv_id, entry, [])
-    end
-
-    socket
-  end
-
-  defp refresh_active_file_preview(socket, file_path) when is_binary(file_path) do
-    if socket.assigns.active_file == Path.expand(file_path) do
-      assign(
-        socket,
-        :file_preview_error,
-        load_file_error(file_path, current_workspace_path(socket))
-      )
-    else
-      socket
-    end
-  end
-
-  defp refresh_active_file_preview(socket, _file_path), do: socket
-
-  defp stringify_keys(map), do: ChangeHelper.stringify_keys(map)
-
-  defp maybe_add_diff_editor_file(socket, file_path, diff_lines)
-       when is_binary(file_path) and is_list(diff_lines) and diff_lines != [] do
-    maybe_add_editor_file(socket, file_path)
-  end
-
-  defp maybe_add_diff_editor_file(socket, _file_path, _diff_lines), do: socket
-
-  defp maybe_add_editor_file(socket, file_path) when is_binary(file_path) do
-    # Validate the path is within the CURRENT workspace
-    ws_path = current_workspace_path(socket)
-
-    case validate_within(file_path, ws_path) do
-      :ok ->
-        abs_path = Path.expand(file_path)
-
-        if File.exists?(abs_path) do
-          do_maybe_add_editor_file(socket, abs_path)
-        else
-          socket
-        end
-
-      {:error, _reason} ->
-        socket
-    end
-  end
-
-  defp do_maybe_add_editor_file(socket, abs_path) do
-    existing = socket.assigns.editor_files
-
-    already_there? = Enum.any?(existing, fn f -> file_value(f, "path", nil) == abs_path end)
-
-    if already_there? do
-      socket
-    else
-      relative = workspace_relative_path(abs_path, socket)
-      new_file = %{path: abs_path, name: relative}
-
-      socket =
-        socket
-        |> assign(:editor_files, existing ++ [new_file])
-        |> refresh_loaded_tree_parent(abs_path)
-
-      if socket.assigns.active_file == nil do
-        socket
-        |> assign(:active_file, abs_path)
-        |> assign(:file_preview_error, load_file_error(abs_path, current_workspace_path(socket)))
-      else
-        socket
-      end
-    end
-  end
+  defp find_change(timeline, change_id),
+    do: HandbeamWeb.ChangeHelper.find_change(timeline, change_id)
 
   defp refresh_loaded_tree_parent(socket, abs_path) do
     relative = Path.relative_to(abs_path, current_workspace_path(socket))
@@ -2759,15 +2485,6 @@ defmodule HandbeamWeb.WorkspaceLive do
       load_workspace_tree(socket, parent)
     else
       socket
-    end
-  end
-
-  defp workspace_relative_path(abs_path, socket) do
-    ws_path = current_workspace_path(socket) <> "/"
-
-    case String.split(abs_path, ws_path) do
-      [_, relative] -> relative
-      _ -> Path.basename(abs_path)
     end
   end
 
@@ -2932,19 +2649,6 @@ defmodule HandbeamWeb.WorkspaceLive do
   """
   def strip_think_tags(buffer, chunk) do
     Handbeam.Agent.ThinkingFilter.strip(buffer, chunk)
-  end
-
-  defp load_file_error(path, workspace_root) do
-    case workspace_validate(path, workspace_root) do
-      {:ok, _} ->
-        case File.read(path) do
-          {:ok, _} -> nil
-          {:error, reason} -> reason
-        end
-
-      {:error, reason} ->
-        reason
-    end
   end
 
   defp default_tools, do: Handbeam.Agent.default_tools()
@@ -3188,15 +2892,6 @@ defmodule HandbeamWeb.WorkspaceLive do
 
       _ ->
         {false, nil, nil}
-    end
-  end
-
-  # ── Workspace validation helper ──
-
-  defp workspace_validate(path, workspace_root) do
-    case Handbeam.Workspace.resolve(path, workspace_root) do
-      {:ok, resolved} -> {:ok, resolved}
-      {:error, _} = error -> error
     end
   end
 
@@ -3540,6 +3235,11 @@ defmodule HandbeamWeb.WorkspaceLive do
   defdelegate browser_install_prompt(entry), to: HandbeamWeb.WorkspaceHelper
   defdelegate preview_card(entry), to: HandbeamWeb.WorkspaceHelper
   defdelegate browser_takeover_prompt(entry), to: HandbeamWeb.WorkspaceHelper
+  defdelegate tool_entry_name(entry), to: Handbeam.TranscriptEntry, as: :tool_name
+  defdelegate tool_entry_status(entry), to: Handbeam.TranscriptEntry, as: :tool_status
+  defdelegate tool_entry_duration(entry), to: Handbeam.TranscriptEntry, as: :duration_ms
+  defdelegate tool_entry_error(entry), to: Handbeam.TranscriptEntry, as: :error
+  defdelegate tool_entry_input_summary(entry), to: Handbeam.TranscriptEntry, as: :input_summary
 
   defdelegate render_file_preview(path, workspace_root \\ Handbeam.Workspace.root()),
     to: HandbeamWeb.WorkspaceHelper

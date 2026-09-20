@@ -5,6 +5,9 @@ defmodule Handbeam.Agent.CoordinatorTest do
   alias Handbeam.PubSub.Session
 
   setup do
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Handbeam.Repo)
+    Ecto.Adapters.SQL.Sandbox.mode(Handbeam.Repo, {:shared, self()})
+
     old_home = System.get_env("HOME")
 
     home_dir = Path.join(System.tmp_dir!(), "sigil_coord_home_#{Ecto.UUID.generate()}")

@@ -122,13 +122,11 @@ defmodule Handbeam.Agent.TranscriptPersistenceTest do
     ]
 
     :ok = TranscriptPersistence.handle_event(id, {:run_start, %{}}, opts)
-    :ok = TranscriptPersistence.handle_event(id, {:message_delta, %{chunk: "first "}}, opts)
-    :ok = TranscriptPersistence.handle_event(id, {:message_delta, %{chunk: "second"}}, opts)
 
     assert_raise RuntimeError, ~r/Assistant transcript persistence failed.*enospc/, fn ->
       TranscriptPersistence.handle_event(
         id,
-        {:run_end, %{status: :completed}},
+        {:message_delta, %{chunk: "first second"}},
         Keyword.put(opts, :fail_operation, :append)
       )
     end
@@ -160,13 +158,12 @@ defmodule Handbeam.Agent.TranscriptPersistenceTest do
     :ok = TranscriptPersistence.handle_event(id, {:message_delta, %{chunk: "saved"}}, opts)
     :ok = TranscriptPersistence.handle_event(id, {:turn_end, %{}}, opts)
     assert_received {:delivered, %{"delivery_delta" => "saved"}}
-    :ok = TranscriptPersistence.handle_event(id, {:message_delta, %{chunk: " pending"}}, opts)
     tool_event = {:tool_start, %{tool: "read", tool_use_id: "read-1", input: %{}}}
 
     assert_raise RuntimeError, ~r/Assistant transcript persistence failed.*eacces/, fn ->
       TranscriptPersistence.handle_event(
         id,
-        tool_event,
+        {:message_delta, %{chunk: " pending"}},
         Keyword.put(opts, :fail_operation, :update)
       )
     end
@@ -222,7 +219,7 @@ defmodule Handbeam.Agent.TranscriptPersistenceTest do
            )
   end
 
-  test "buffers message_delta without immediate persistence" do
+  test "persists each message_delta before acknowledging it" do
     {:ok, conversation} = Handbeam.ConversationStore.create("default", timeline: [])
     conversation_id = conversation["id"]
 
@@ -235,14 +232,13 @@ defmodule Handbeam.Agent.TranscriptPersistenceTest do
 
     messages = Handbeam.ConversationStore.load_messages(conversation_id)
 
-    # Should NOT be in transcript yet — only buffered in Process dict
-    refute Enum.any?(
+    assert Enum.any?(
              messages,
              &match?(%{"role" => "assistant", "content" => "delayed write"}, &1)
            )
   end
 
-  test "flushes buffered text at run_end boundary" do
+  test "run_end finalizes already durable text" do
     {:ok, conversation} = Handbeam.ConversationStore.create("default", timeline: [])
     conversation_id = conversation["id"]
 
@@ -258,15 +254,15 @@ defmodule Handbeam.Agent.TranscriptPersistenceTest do
       {:message_delta, %{chunk: "second"}}
     )
 
-    # Before boundary: nothing persisted
+    # Text is durable even before the final boundary.
     messages_before = Handbeam.ConversationStore.load_messages(conversation_id)
 
-    refute Enum.any?(
+    assert Enum.any?(
              messages_before,
              &match?(%{"role" => "assistant"}, &1)
            )
 
-    # run_end triggers flush
+    # run_end marks the reply completed.
     TranscriptPersistence.handle_event(conversation_id, {:run_end, %{status: "completed"}})
 
     messages_after = Handbeam.ConversationStore.load_messages(conversation_id)
@@ -322,8 +318,8 @@ defmodule Handbeam.Agent.TranscriptPersistenceTest do
 
     messages = Handbeam.ConversationStore.load_messages(conversation_id)
 
-    # Assistant text should still be buffered, not written
-    refute Enum.any?(
+    # Thinking must not alter the already persisted visible text.
+    assert Enum.any?(
              messages,
              &match?(%{"role" => "assistant", "content" => "keep buffered"}, &1)
            )
@@ -348,7 +344,7 @@ defmodule Handbeam.Agent.TranscriptPersistenceTest do
 
     messages = Handbeam.ConversationStore.load_messages(conversation_id)
 
-    refute Enum.any?(
+    assert Enum.any?(
              messages,
              &match?(%{"role" => "assistant", "content" => "unflushed"}, &1)
            )

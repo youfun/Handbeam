@@ -4,6 +4,7 @@ defmodule HandbeamWeb.Router do
   pipeline :browser do
     plug :accepts, ["html"]
     plug :fetch_session
+    plug HandbeamWeb.Access
     plug :fetch_live_flash
     plug :put_root_layout, html: {HandbeamWeb.Layouts, :root}
     plug :protect_from_forgery
@@ -15,7 +16,9 @@ defmodule HandbeamWeb.Router do
   # 优先级：query param > session > Accept-Language header > default (zh_CN)
   defp put_locale(conn, _opts) do
     conn = Plug.Conn.fetch_query_params(conn)
-    default_locale = Application.get_env(:handbeam, HandbeamWeb.Gettext)[:default_locale] || "zh_CN"
+
+    default_locale =
+      Application.get_env(:handbeam, HandbeamWeb.Gettext)[:default_locale] || "zh_CN"
 
     locale =
       case conn.query_params["locale"] do

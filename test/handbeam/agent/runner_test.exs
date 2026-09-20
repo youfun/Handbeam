@@ -6,6 +6,9 @@ defmodule Handbeam.Agent.RunnerTest do
   alias Handbeam.PubSub.Session
 
   setup do
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Handbeam.Repo)
+    Ecto.Adapters.SQL.Sandbox.mode(Handbeam.Repo, {:shared, self()})
+
     old_home = System.get_env("HOME")
     home_dir = Path.join(System.tmp_dir!(), "sigil_runner_home_#{Ecto.UUID.generate()}")
     File.mkdir_p!(home_dir)
@@ -25,6 +28,7 @@ defmodule Handbeam.Agent.RunnerTest do
     def append(_id, %{"role" => "assistant"}, _opts), do: {:error, :enospc}
     defdelegate append(id, entry, opts), to: Store
     defdelegate update(id, entry_id, patch, opts), to: Store
+    defdelegate list(id, opts), to: Store
   end
 
   defmodule BlockingProvider do
@@ -52,6 +56,17 @@ defmodule Handbeam.Agent.RunnerTest do
 
     @impl true
     def stream(messages, tool_defs, config, _on_chunk), do: complete(messages, tool_defs, config)
+  end
+
+  defmodule UnavailableErrorStore do
+    alias Handbeam.ConversationTranscriptStore.ConversationStore, as: Store
+
+    def update(_id, "msg-run-error-" <> _run_id, _patch, _opts),
+      do: exit({:noproc, {GenServer, :call, [:journal, :update]}})
+
+    defdelegate update(id, entry_id, patch, opts), to: Store
+    defdelegate append(id, entry, opts), to: Store
+    defdelegate list(id, opts), to: Store
   end
 
   defmodule CrashProvider do
@@ -230,6 +245,11 @@ defmodule Handbeam.Agent.RunnerTest do
       %{events: events} = Session.snapshot(sid)
       assert Enum.any?(events, &match?(%{kind: :run_end, payload: %{status: "error"}}, &1))
     end)
+
+    assert [_, %{"role" => "system", "content" => content}] =
+             Handbeam.ConversationStore.load_messages(sid)
+
+    assert content =~ "runner crash"
   end
 
   test "assistant persistence failure ends the run as error, never completed" do
@@ -248,8 +268,36 @@ defmodule Handbeam.Agent.RunnerTest do
     %{events: events} = Session.snapshot(sid)
     refute Enum.any?(events, &match?(%{kind: :run_end, payload: %{status: :completed}}, &1))
 
-    assert [%{"role" => "user", "content" => "hello"}] =
+    assert [
+             %{"role" => "user", "content" => "hello"},
+             %{"role" => "system", "content" => content}
+           ] =
              Handbeam.ConversationStore.load_messages(sid)
+
+    assert content =~ "enospc"
+  end
+
+  test "unavailable transcript owner during crash closure does not restart Runner" do
+    {:ok, conversation} = Handbeam.ConversationStore.create("default")
+    sid = conversation["id"]
+    :ok = Session.subscribe(sid)
+
+    assert {:ok, %{run_pid: runner}} =
+             Coordinator.add_message(
+               sid,
+               "hello",
+               opts(
+                 provider: BlockingProvider,
+                 provider_config: %{notify: self()},
+                 transcript_store: UnavailableErrorStore
+               )
+             )
+
+    assert_receive {:blocking_provider_started, task}
+    ref = Process.monitor(runner)
+    Process.exit(task, :kill)
+    assert_receive {:agent_event, %{kind: :run_end, payload: %{status: "error"}}}, 1_000
+    assert_receive {:DOWN, ^ref, :process, ^runner, :shutdown}, 1_000
   end
 
   test "streaming coordinator run broadcasts message_delta into session" do

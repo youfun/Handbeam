@@ -3,6 +3,21 @@ defmodule Handbeam.Agent.SkillsIntegrationTest do
 
   import ExUnit.CaptureLog, only: [with_log: 1]
 
+  setup %{tmp_dir: tmp_dir} do
+    previous_home = System.get_env("HOME")
+    System.put_env("HOME", tmp_dir)
+
+    on_exit(fn ->
+      if previous_home do
+        System.put_env("HOME", previous_home)
+      else
+        System.delete_env("HOME")
+      end
+    end)
+
+    :ok
+  end
+
   defp write_skill(dir, name, description) do
     File.mkdir_p!(dir)
 
