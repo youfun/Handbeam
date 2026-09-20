@@ -140,6 +140,15 @@ defmodule Handbeam.Jobs.Server do
             {:error, text} -> {:failed, text}
           end
 
+        details =
+          case result do
+            {_, _, details} when is_map(details) ->
+              Map.take(details, [:stdout_truncated?, :value_truncated?])
+
+            _ ->
+              %{}
+          end
+
         result = Handbeam.Utils.Truncate.truncate(text, :head, max_bytes: 50_000)
 
         job =
@@ -147,6 +156,8 @@ defmodule Handbeam.Jobs.Server do
             state: job.target || status,
             result: result.content,
             result_truncated: result.truncated,
+            result_details: details,
+            cleanup_error: nil,
             finished_at: now()
           })
 
@@ -453,6 +464,7 @@ defmodule Handbeam.Jobs.Server do
     Buffer.read(job.buffer, cursor, job.state in @terminal)
     |> Map.merge(%{job_id: job.id, state: job.state, cleanup_error: job.cleanup_error})
     |> Map.merge(Map.take(job, [:result, :result_truncated]))
+    |> Map.merge(Map.get(job, :result_details, %{}))
     |> then(fn result ->
       if is_integer(job.exit_code), do: Map.put(result, :exit_code, job.exit_code), else: result
     end)

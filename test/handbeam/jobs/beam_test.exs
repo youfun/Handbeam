@@ -235,6 +235,83 @@ defmodule Handbeam.Jobs.BeamTest do
     refute_receive {:started, _, _}
   end
 
+  test "owner kill drains unlinked descendants before reporting failure", %{context: ctx} do
+    parent = self()
+
+    assert {:ok, %{job_id: id}} =
+             Jobs.start_beam(
+               :script,
+               fn _ ->
+                 child = spawn(fn -> receive do: (:never -> :ok) end)
+                 send(parent, {:started, self(), child})
+                 receive do: (:never -> {:ok, "never"})
+               end,
+               30_000,
+               100,
+               ctx
+             )
+
+    assert_receive {:started, worker, child}
+    on_exit(fn -> for pid <- [worker, child], do: Process.exit(pid, :kill) end)
+    owner = :sys.get_state(Jobs.Server).jobs[id].beam
+    Process.exit(owner, :kill)
+    assert {:ok, %{state: :failed, cleanup_error: nil}} = Jobs.status(id, 0, 5_000, ctx)
+    refute Process.alive?(worker)
+    refute Process.alive?(child)
+  end
+
+  test "script streams beyond snapshot cap and reports failed snapshot truncation", %{
+    context: ctx,
+    work: work
+  } do
+    name = :"beam_output_#{System.unique_integer([:positive])}"
+    Process.register(self(), name)
+
+    File.write!(Path.join(work, "output.exs"), """
+    IO.write(String.duplicate("x", 40000))
+    caller = String.to_existing_atom(hd(args))
+    send(caller, {:ready, self()})
+    receive do: (:more -> :ok)
+    IO.write(String.duplicate("y", 20000) <> "TAIL")
+    send(caller, :tail_written)
+    receive do: (:finish -> raise "output failure")
+    """)
+
+    assert {:ok, _, %{job: %{job_id: id}}} =
+             RunElixirScript.execute(
+               %{
+                 "path" => "output.exs",
+                 "job" => true,
+                 "wait_ms" => 100,
+                 "args" => [Atom.to_string(name)]
+               },
+               ctx
+             )
+
+    assert_receive {:ready, worker}
+    assert {:ok, %{output: first, cursor: cursor, truncated: false}} = Jobs.status(id, 0, 0, ctx)
+    assert first == String.duplicate("x", 40000)
+    send(worker, :more)
+    assert_receive :tail_written
+    assert {:ok, %{output: tail, truncated: false}} = Jobs.status(id, cursor, 0, ctx)
+    assert tail == String.duplicate("y", 20000) <> "TAIL"
+    send(worker, :finish)
+
+    assert {:ok,
+            %{
+              state: :failed,
+              stdout_truncated?: true,
+              truncated: true,
+              output: output,
+              result: result
+            }} =
+             Jobs.status(id, 0, 5_000, ctx)
+
+    assert byte_size(output) == 50000
+    assert String.ends_with?(output, "TAIL")
+    assert result =~ "output failure"
+  end
+
   test "bounded results and worker failure remain queryable without rerunning", %{context: ctx} do
     assert {:ok, %{job_id: id}} =
              Jobs.start_beam(

@@ -29,14 +29,7 @@ defmodule Handbeam.Tool.Builtin.ElixirScriptIO do
   defp loop(state) do
     receive do
       {:io_request, from, reply_as, request} ->
-        previous_size = state.size
         {reply, state} = handle_request(request, state)
-
-        if state.sink && state.size > previous_size do
-          text = IO.iodata_to_binary(state.acc)
-          state.sink.(binary_part(text, previous_size, state.size - previous_size))
-        end
-
         send(from, {:io_reply, reply_as, reply})
         loop(state)
 
@@ -75,7 +68,7 @@ defmodule Handbeam.Tool.Builtin.ElixirScriptIO do
   defp handle_request({:get_geometry, _kind}, state), do: {{:error, :enotsup}, state}
   defp handle_request(_other, state), do: {{:error, :enotsup}, state}
 
-  defp append_chars(%{truncated?: true} = state, _encoding, _chars), do: state
+  defp append_chars(%{truncated?: true, sink: nil} = state, _encoding, _chars), do: state
 
   defp append_chars(state, encoding, chars) do
     case encode_chars(encoding, chars) do
@@ -83,9 +76,12 @@ defmodule Handbeam.Tool.Builtin.ElixirScriptIO do
         state
 
       {:ok, bin} ->
+        if state.sink, do: state.sink.(bin)
         put_bytes(state, bin)
 
       {:invalid, good} ->
+        if state.sink && good != "", do: state.sink.(good)
+
         good
         |> case do
           "" -> state
