@@ -111,6 +111,7 @@ defmodule HandbeamProbe.App do
       system_intents: true,
       directory_picker: HandbeamProbe.DirectoryPicker,
       script_http: :platform_dns_ca,
+      dns_resolver: &HandbeamProbe.ReqDNS.resolve/1,
       beam_eval: false,
       mcp: true,
       dist: debug?

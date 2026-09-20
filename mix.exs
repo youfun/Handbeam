@@ -62,6 +62,8 @@ defmodule Handbeam.MixProject do
       {:lazy_html, ">= 0.1.0", only: :test},
       {:phoenix_test, "~> 0.12.0", only: :test, runtime: false},
       {:req, "~> 0.7.4"},
+      {:mint, "~> 1.10.1"},
+      {:floki, "~> 0.38.4"},
       {:llm_db, "~> 2026.9"},
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},

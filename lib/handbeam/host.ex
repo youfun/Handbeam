@@ -19,6 +19,10 @@ defmodule Handbeam.Host do
   `script_http: :platform_dns_ca` declares that the host configured Req's
   platform DNS and CA certificates before tool registration. It is guidance,
   not a network permission or a promise of connectivity.
+
+  `dns_resolver` optionally supplies a native `fun/1` returning `{:ok, [ip]}`
+  or `{:error, reason}` for direct connections. Consumers still validate and
+  pin the returned addresses; the callback does not grant network access.
   """
 
   @keys [
@@ -31,6 +35,7 @@ defmodule Handbeam.Host do
     :system_intents,
     :directory_picker,
     :script_http,
+    :dns_resolver,
     :beam_eval,
     :mcp,
     :dist

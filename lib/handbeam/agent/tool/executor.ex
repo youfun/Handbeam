@@ -48,7 +48,11 @@ defmodule Handbeam.Agent.Tool.Executor do
   @spec execute_all_with_details([map()], State.t()) :: {:ok, Message.t(), [map()]}
   def execute_all_with_details(tool_calls, %State{} = state) do
     context = build_context(state)
-    tool_fns = Handbeam.Tool.Registry.tool_fns()
+
+    tool_fns =
+      Handbeam.Tool.Registry.tool_fns()
+      |> Map.take(authorized_tools(state.config))
+
     {sequential, concurrent} = partition_by_concurrency(tool_calls, tool_fns)
     tool_timeout = state.config.tool_timeout
 
@@ -122,8 +126,10 @@ defmodule Handbeam.Agent.Tool.Executor do
     t0 = System.monotonic_time(:millisecond)
     Logger.debug("[Executor] start tool=#{name} id=#{id}")
 
+    authorized = name in authorized_tools(context.delegation_config)
+
     result =
-      case fetch_tool(tool_fns, name) do
+      case if(authorized, do: fetch_tool(tool_fns, name), else: :error) do
         {:ok, entry} ->
           try do
             case entry.executor.(input || %{}, Map.put(context, :tool_call_id, id)) do
@@ -176,10 +182,15 @@ defmodule Handbeam.Agent.Tool.Executor do
     tool_id = (call && (call[:id] || call["id"] || Map.get(call, :id))) || "unknown"
     tool_name = (call && (call[:name] || call["name"])) || "unknown"
 
+    start_task = if context.delegation_config.delegated?, do: :async, else: :async_nolink
+
     task =
-      Task.Supervisor.async_nolink(Handbeam.AgentRunTaskSupervisor, fn ->
-        execute_one(call, tool_fns, context)
-      end)
+      apply(Task.Supervisor, start_task, [
+        Handbeam.AgentRunTaskSupervisor,
+        fn ->
+          execute_one(call, tool_fns, context)
+        end
+      ])
 
     # Outer guard: tool-specific timeout + small grace period for kill/cleanup.
     guard_ms = timeout_ms + 5_000
@@ -294,13 +305,48 @@ defmodule Handbeam.Agent.Tool.Executor do
     Enum.map(tool_calls, fn call -> Map.get(seq_map, call) || Map.get(par_map, call) end)
   end
 
-  defp build_context(%State{config: config, run_metadata: run_metadata}) do
+  @doc "The run's authorization ceiling, intersected with the live session policy."
+  def authorized_tools(config) do
+    registered = Map.keys(Handbeam.Tool.Registry.tool_fns())
+    session_id = config.context[:conversation_id] || config.context[:session_id]
+    active = if session_id, do: Handbeam.Tool.Registry.active_for_session(session_id)
+    parent = config.context[:delegation_parent]
+
+    parent_active =
+      if parent, do: Handbeam.Tool.Registry.active_for_session(parent.conversation_id)
+
+    registered
+    |> Enum.filter(&(is_nil(config.allowed_tools) or &1 in config.allowed_tools))
+    |> Enum.filter(&(is_nil(active) or &1 in active))
+    |> Enum.filter(&(is_nil(parent_active) or &1 in parent_active))
+    |> Enum.filter(fn _ ->
+      is_nil(parent) or Handbeam.Agent.Delegation.Policy.live_parent?(parent)
+    end)
+  end
+
+  defp build_context(%State{
+         config: config,
+         run_metadata: run_metadata,
+         usage: usage,
+         tool_guard_overrides: overrides
+       }) do
     context = config.context || %{}
     metadata = run_metadata || %{}
 
     context
     |> Map.merge(%{
       working_directory: config.working_directory,
+      skill_paths: config.skill_paths,
+      tool_timeout: config.tool_timeout,
+      run_id: config.run_id,
+      runner_pid: config.runner_pid,
+      delegation_config: config,
+      parent_usage: usage,
+      authorized_tools:
+        Enum.reject(authorized_tools(config), fn name ->
+          mode = Map.get(overrides || %{}, name, :auto)
+          mode not in [:auto, "auto"]
+        end),
       conversation_id:
         Map.get(context, :conversation_id) || Map.get(metadata, :conversation_id) ||
           Map.get(metadata, :session_id),

@@ -21,7 +21,8 @@ defmodule Handbeam.Agent.Runner do
     :status,
     :error,
     :result,
-    :interrupted_state
+    :interrupted_state,
+    :delegation_monitor
   ]
 
   def start_link(opts) do
@@ -38,6 +39,14 @@ defmodule Handbeam.Agent.Runner do
 
   def status(conversation_id) do
     call_runner(conversation_id, :status)
+  end
+
+  @doc "Nonblocking identity check for owners monitoring a run scope."
+  def active?(conversation_id, run_id, pid) do
+    case Registry.lookup(Handbeam.AgentRunRegistry, conversation_id) do
+      [{^pid, %{run_id: ^run_id, active?: true}}] -> Process.alive?(pid)
+      _ -> false
+    end
   end
 
   def cancel(conversation_id) do
@@ -62,17 +71,26 @@ defmodule Handbeam.Agent.Runner do
     state = %__MODULE__{
       conversation_id: conversation_id,
       content: content,
-      opts: run_opts,
+      opts: Keyword.put(run_opts, :runner_pid, self()),
       queue_pid: queue_pid,
       status: :idle
     }
 
-    case accept_inbound(conversation_id, content, run_opts) do
-      :ok ->
-        {:ok, state, {:continue, :start_task}}
-
+    with :ok <- attach_delegation(run_opts, conversation_id),
+         :ok <- accept_inbound(conversation_id, content, run_opts) do
+      owner = Keyword.get(run_opts, :delegation_owner)
+      monitor = if is_pid(owner), do: Process.monitor(owner)
+      {:ok, %{state | delegation_monitor: monitor}, {:continue, :start_task}}
+    else
       {:error, reason} ->
         {:stop, {:inbound_persist_failed, reason}}
+    end
+  end
+
+  defp attach_delegation(opts, conversation_id) do
+    case Keyword.get(opts, :delegation_owner) do
+      nil -> :ok
+      owner -> Handbeam.Agent.Delegation.attach(owner, conversation_id, self())
     end
   end
 
@@ -110,6 +128,15 @@ defmodule Handbeam.Agent.Runner do
 
   @impl true
   def handle_continue(:start_task, state) do
+    Registry.update_value(Handbeam.AgentRunRegistry, state.conversation_id, fn _ ->
+      %{run_id: state.opts[:run_id], active?: true}
+    end)
+
+    case Handbeam.Jobs.open_run(job_context(state), self()) do
+      :ok -> :ok
+      {:error, reason} -> Logger.warning("[Runner] job scope unavailable: #{reason}")
+    end
+
     :ok =
       Session.attach_run(state.conversation_id, self(), state.queue_pid,
         run_id: Keyword.get(state.opts, :run_id),
@@ -122,10 +149,23 @@ defmodule Handbeam.Agent.Runner do
       |> Keyword.put(:candidate_queue, state.queue_pid)
       |> put_persistence_callback(state.conversation_id)
 
+    start_task = if state.opts[:delegated?], do: :async, else: :async_nolink
+
     task =
-      Task.Supervisor.async_nolink(Handbeam.AgentRunTaskSupervisor, fn ->
-        Handbeam.Agent.run(state.content, run_opts)
-      end)
+      apply(Task.Supervisor, start_task, [
+        Handbeam.AgentRunTaskSupervisor,
+        fn ->
+          owner = run_opts[:delegation_owner]
+
+          with :ok <-
+                 if(owner,
+                   do: Handbeam.Agent.Delegation.attach_task(owner, state.conversation_id),
+                   else: :ok
+                 ) do
+            Handbeam.Agent.run(state.content, run_opts)
+          end
+        end
+      ])
 
     {:noreply, %{state | status: :running, task: task}}
   end
@@ -139,6 +179,7 @@ defmodule Handbeam.Agent.Runner do
         running?: state.status in [:running, :awaiting_approval],
         status: state.status,
         run_pid: self(),
+        run_id: state.opts[:run_id],
         queue_pid: state.queue_pid,
         error: state.error
       }}, state}
@@ -146,12 +187,13 @@ defmodule Handbeam.Agent.Runner do
 
   def handle_call(:cancel, _from, %{status: status, task: task} = state)
       when status in [:running, :awaiting_approval] do
+    close_scope(state)
     shutdown_run_task(task)
     persist_cancelled_run(state)
     Handbeam.Agent.CandidateQueue.seal(state.queue_pid)
     Session.broadcast_event(state.conversation_id, :run_end, %{status: "cancelled", turns: 0})
     Session.mark_run_finished(state.conversation_id)
-    stop_run_supervisor(state.conversation_id)
+    stop_run_supervisor(state)
     {:reply, :ok, %{state | status: :cancelled, task: nil, interrupted_state: nil}}
   end
 
@@ -183,6 +225,15 @@ defmodule Handbeam.Agent.Runner do
   end
 
   @impl true
+  def handle_info({:DOWN, ref, :process, _pid, _reason}, %{delegation_monitor: ref} = state)
+      when is_reference(ref) do
+    shutdown_run_task(state.task)
+    persist_cancelled_run(state)
+    Session.mark_run_finished(state.conversation_id)
+    stop_run_supervisor(state)
+    {:stop, :normal, %{state | task: nil}}
+  end
+
   def handle_info({ref, {:ok, result}}, %{task: %{ref: ref}} = state) do
     Process.demonitor(ref, [:flush])
 
@@ -194,7 +245,7 @@ defmodule Handbeam.Agent.Runner do
       _ ->
         Handbeam.Agent.CandidateQueue.seal(state.queue_pid)
         Session.mark_run_finished(state.conversation_id)
-        stop_run_supervisor(state.conversation_id)
+        stop_run_supervisor(state)
         {:noreply, %{state | status: :completed, result: result, task: nil}}
     end
   end
@@ -248,16 +299,34 @@ defmodule Handbeam.Agent.Runner do
 
     Session.mark_run_finished(state.conversation_id)
     Logger.error("[Runner] Agent run failed: #{message}")
-    stop_run_supervisor(state.conversation_id)
+    stop_run_supervisor(state)
     {:noreply, %{state | status: :error, error: reason, task: nil}}
   end
 
-  defp stop_run_supervisor(conversation_id) do
+  defp stop_run_supervisor(state) do
+    close_scope(state)
+
     Task.Supervisor.start_child(Handbeam.AgentRunTaskSupervisor, fn ->
-      Handbeam.AgentRunSupervisor.stop_run(conversation_id)
+      Handbeam.AgentRunSupervisor.stop_run(state.conversation_id)
     end)
 
     :ok
+  end
+
+  defp close_scope(state) do
+    Registry.update_value(Handbeam.AgentRunRegistry, state.conversation_id, fn metadata ->
+      Map.put(metadata || %{}, :active?, false)
+    end)
+
+    Handbeam.Jobs.close_run(job_context(state), :completed)
+  end
+
+  defp job_context(state) do
+    %{
+      conversation_id: state.conversation_id,
+      run_id: state.opts[:run_id],
+      working_directory: state.opts[:working_directory] || state.opts[:workspace_path]
+    }
   end
 
   @blockable_events [:before_agent_start, :tool_call, :context]
@@ -269,7 +338,12 @@ defmodule Handbeam.Agent.Runner do
       {kind, payload} = event
 
       # 1. Run extension hooks (may block/transform)
-      case Handbeam.Extension.HookPipeline.run(conversation_id, event) do
+      hook_result =
+        if Keyword.get(opts, :delegated?, false),
+          do: :ok,
+          else: Handbeam.Extension.HookPipeline.run(conversation_id, event)
+
+      case hook_result do
         {:block, reason} ->
           if kind in @blockable_events do
             Logger.debug(

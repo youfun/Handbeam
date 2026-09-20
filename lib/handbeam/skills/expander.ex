@@ -79,9 +79,7 @@ defmodule Handbeam.Skills.Expander do
       %Handbeam.Skills.Skill{location: location, base_dir: base_dir} = _skill ->
         case File.read(location) do
           {:ok, content} ->
-            body = strip_frontmatter(content)
-            skill_block = build_skill_block(skill_name, location, base_dir, body)
-            result = if args != "", do: skill_block <> "\n\n" <> args, else: skill_block
+            result = format_content(skill_name, location, base_dir, content, args)
             Logger.debug("[Skills] expanded /skill:#{skill_name} -> #{byte_size(result)} bytes")
             result
 
@@ -93,6 +91,13 @@ defmodule Handbeam.Skills.Expander do
             original_text
         end
     end
+  end
+
+  @doc false
+  def format_content(name, location, base_dir, content, args) do
+    body = strip_frontmatter(content)
+    skill_block = build_skill_block(name, location, base_dir, body)
+    if args != "", do: skill_block <> "\n\n" <> args, else: skill_block
   end
 
   defp build_skill_block(name, location, base_dir, body) do

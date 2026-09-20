@@ -5,11 +5,21 @@ defmodule Handbeam.Skills.Loader do
   Discovery rules:
   1. If a directory contains SKILL.md, it is a skill root — stop recursion.
   2. Supports recursive discovery of SKILL.md in subdirectories.
-  3. Skips hidden directories, node_modules, unreadable files.
+  3. Skips hidden directories, node_modules, unreadable files and symlinks.
   4. .gitignore / .ignore / .fdignore support is P1 — not yet implemented.
+
+  Skill files are limited to 64 KiB of UTF-8 text. Configured roots may not
+  redirect through symlinks outside their trusted workspace/home anchor.
+  Symlinks within a skill tree are conservatively unsupported, including
+  links whose targets are inside the tree. This is not an OS filesystem sandbox.
+  Validation and file opening are separate operations, not an atomic guarantee
+  against a hostile local process concurrently replacing filesystem entries.
   """
 
+  alias Handbeam.Security.PathValidator
   alias Handbeam.Skills.Skill
+
+  @max_file_bytes 65_536
 
   defmodule LoadResult do
     @moduledoc false
@@ -26,80 +36,149 @@ defmodule Handbeam.Skills.Loader do
 
   Project skill directories are loaded before user-level directories so a project
   skill wins when it has the same name as a global skill.
+  Trusted `:skill_paths` are loaded last, only within the workspace or the
+  allowed global skill roots. Arbitrary host paths are not skill sources.
   """
   @spec load(keyword()) :: load_result()
   def load(opts \\ []) do
-    workspace = Keyword.get(opts, :workspace, File.cwd!())
-    user_home = Keyword.get(opts, :user_home, Handbeam.Home.path())
-
-    dirs = [
-      {Path.join(workspace, ".handbeam/skills"), :project},
-      {Path.join(workspace, ".agents/skills"), :project},
-      {Path.join(user_home, ".handbeam/skills"), :user},
-      {Path.join(user_home, ".agents/skills"), :user}
-    ]
-
-    Enum.reduce(dirs, %LoadResult{}, fn {dir, source}, acc ->
+    Enum.reduce(skill_dirs(opts), %LoadResult{}, fn {dir, source}, acc ->
       sub = load_from_dir(dir, source)
       merge_result(acc, sub)
     end)
   end
 
+  @doc """
+  Load current content by discovered name for model invocation.
+
+  Rechecks both the file boundary and current frontmatter at invocation time.
+  User `/skill:` expansion remains independent of model-invocation permission.
+
+  ## Examples
+
+      iex> Handbeam.Skills.Loader.load_named("../secret", workspace: "/tmp")
+      {:error, "Invalid skill name"}
+  """
+  def load_named(name, opts \\ []) do
+    with :ok <- validate_name(name) do
+      result = load(opts)
+
+      case Enum.find(result.skills, &(&1.name == name)) do
+        nil ->
+          {:error, "Unknown or unavailable skill (missing, unreadable, unsafe or oversized)"}
+
+        skill ->
+          with {:ok, current, _diagnostics, content} <-
+                 load_skill_file(skill.location, skill.source),
+               :ok <- validate_invocation(current, name) do
+            {:ok, current, content}
+          else
+            {:error, reason} when is_binary(reason) -> {:error, reason}
+            {:error, _diagnostics} -> {:error, "Skill is no longer readable or safe"}
+          end
+      end
+    end
+  end
+
   @doc "Load skills from a single directory."
   @spec load_from_dir(String.t(), Skill.source()) :: load_result()
   def load_from_dir(dir, source) do
-    do_load_from_dir(dir, source)
+    do_load_from_dir(Path.expand(dir), source)
   end
 
   # ── Internal ──
 
-  defp do_load_from_dir(dir, source) do
-    result = %LoadResult{}
+  defp skill_dirs(opts) do
+    workspace = Keyword.get(opts, :workspace, File.cwd!())
 
-    if not File.dir?(dir) do
-      result
+    anchors = [
+      {workspace, :project},
+      {Keyword.get(opts, :user_home, Handbeam.Home.path()), :user}
+    ]
+
+    dirs =
+      Enum.flat_map(anchors, fn {anchor, source} ->
+        case PathValidator.canonicalize(anchor) do
+          {:ok, resolved} ->
+            [
+              {Path.join(resolved, ".handbeam/skills"), source},
+              {Path.join(resolved, ".agents/skills"), source}
+            ]
+
+          {:error, _} ->
+            []
+        end
+      end)
+
+    user_roots = for {dir, :user} <- dirs, validate_unlinked(dir) == :ok, do: dir
+    allowed_roots = [workspace | user_roots]
+
+    explicit_dirs =
+      for path <- List.wrap(Keyword.get(opts, :skill_paths, [])),
+          is_binary(path),
+          expanded = Path.expand(path, workspace),
+          Enum.any?(
+            allowed_roots,
+            &(PathValidator.validate_within_workspace(expanded, &1) == :ok)
+          ),
+          do: {expanded, :explicit}
+
+    dirs ++ explicit_dirs
+  end
+
+  defp validate_name(name) when is_binary(name) do
+    if byte_size(name) in 1..256 and String.valid?(name) and
+         not String.contains?(name, ["/", "\\", "\0"]) and name not in [".", ".."] do
+      :ok
     else
-      entries = File.ls!(dir)
+      {:error, "Invalid skill name"}
+    end
+  end
 
+  defp validate_name(_), do: {:error, "Invalid skill name"}
+
+  defp validate_invocation(%Skill{name: name, disable_model_invocation: false}, name),
+    do: :ok
+
+  defp validate_invocation(%Skill{disable_model_invocation: true}, _),
+    do:
+      {:error,
+       "Skill disables model invocation; only an explicit user /skill: command may load it"}
+
+  defp validate_invocation(_, _), do: {:error, "Skill name changed; discover skills again"}
+
+  defp do_load_from_dir(dir, source) do
+    with :ok <- validate_unlinked(dir),
+         {:ok, %{type: :directory}} <- File.lstat(dir),
+         {:ok, entries} <- File.ls(dir) do
       if "SKILL.md" in entries do
         full_path = Path.join(dir, "SKILL.md")
 
-        try do
-          if File.stat!(full_path).type == :regular do
-            case load_skill_file(full_path, source) do
-              {:ok, skill, diagnostics} ->
-                %LoadResult{skills: [skill], diagnostics: diagnostics}
+        case load_skill_file(full_path, source) do
+          {:ok, skill, diagnostics, _content} ->
+            %LoadResult{skills: [skill], diagnostics: diagnostics}
 
-              {:error, diagnostics} ->
-                %LoadResult{diagnostics: diagnostics}
-            end
-          else
-            result
-          end
-        rescue
-          _ -> result
+          {:error, diagnostics} ->
+            %LoadResult{diagnostics: diagnostics}
         end
       else
-        Enum.reduce(entries, result, fn entry, acc ->
+        Enum.reduce(Enum.sort(entries), %LoadResult{}, fn entry, acc ->
           next = Path.join(dir, entry)
 
           if String.starts_with?(entry, ".") || entry == "node_modules" do
             acc
           else
-            if File.dir?(next) do
-              sub = do_load_from_dir(next, source)
-              merge_result(acc, sub)
-            else
-              acc
-            end
+            sub = do_load_from_dir(next, source)
+            merge_result(acc, sub)
           end
         end)
       end
+    else
+      _ -> %LoadResult{}
     end
   end
 
   defp load_skill_file(file_path, source) do
-    case File.read(file_path) do
+    case read_content(file_path) do
       {:error, reason} ->
         {:error,
          [
@@ -113,9 +192,51 @@ defmodule Handbeam.Skills.Loader do
       {:ok, content} ->
         {frontmatter, _} = parse_frontmatter(content)
         parent_dir_name = file_path |> Path.dirname() |> Path.basename()
-        Skill.build(frontmatter, file_path, parent_dir_name, source)
+
+        if is_binary(Map.get(frontmatter, "name", parent_dir_name)) and
+             is_binary(Map.get(frontmatter, "description", "")) do
+          case Skill.build(frontmatter, file_path, parent_dir_name, source) do
+            {:ok, skill, diagnostics} -> {:ok, skill, diagnostics, content}
+            {:error, diagnostics} -> {:error, diagnostics}
+          end
+        else
+          {:error,
+           [%{type: :error, message: "name and description must be strings", path: file_path}]}
+        end
     end
   end
+
+  defp validate_unlinked(path) do
+    case PathValidator.canonicalize(path) do
+      {:ok, ^path} -> :ok
+      _ -> {:error, :symlink_not_allowed}
+    end
+  end
+
+  defp read_content(path) do
+    with :ok <- validate_unlinked(path),
+         {:ok, %{type: :regular, size: size, access: access, mode: mode}} <- File.lstat(path),
+         true <- size <= @max_file_bytes,
+         true <- access in [:read, :read_write] and Bitwise.band(mode, 0o444) != 0,
+         {:ok, result} <- File.open(path, [:read, :binary], &IO.binread(&1, @max_file_bytes + 1)) do
+      validate_content(result)
+    else
+      {:error, reason} -> {:error, reason}
+      _ -> {:error, :unreadable_or_oversized}
+    end
+  end
+
+  defp validate_content(content) when is_binary(content) do
+    if byte_size(content) <= @max_file_bytes and String.valid?(content) and
+         not String.contains?(content, "\0") do
+      {:ok, content}
+    else
+      {:error, :oversized_or_invalid_text}
+    end
+  end
+
+  defp validate_content(:eof), do: {:ok, ""}
+  defp validate_content({:error, reason}), do: {:error, reason}
 
   @doc false
   def parse_frontmatter(content) do

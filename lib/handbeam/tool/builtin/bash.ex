@@ -19,7 +19,10 @@ defmodule Handbeam.Tool.Builtin.Bash do
       "Returns stdout and stderr. Use Unix-style commands and forward-slash paths " <>
       "(ls, cat, grep, find, rm, ./scripts/test.sh) even on Windows — " <>
       "this tool always runs in a bash environment. " <>
-      "Supports timeout control and working directory override."
+      "Supports timeout control and working directory override. " <>
+      "Set job=true for a run-scoped Linux job. Query job_status until finished before " <>
+      "ending this run: run completion cancels unfinished jobs. Not a detached dev server " <>
+      "or a sandbox; descendants that escape the process group are not contained."
   end
 
   @impl true
@@ -35,6 +38,13 @@ defmodule Handbeam.Tool.Builtin.Bash do
               "working directory automatically."
         },
         timeout: %{type: "integer", description: "Timeout in seconds", default: 120},
+        job: %{type: "boolean", default: false, description: "Explicit run-scoped job mode"},
+        wait_ms: %{
+          type: "integer",
+          default: 1_000,
+          description:
+            "Job response wait, capped at 5000ms and half the tool timeout. Must be positive for launch."
+        },
         cwd: %{
           type: "string",
           description:
@@ -60,7 +70,26 @@ defmodule Handbeam.Tool.Builtin.Bash do
     with :ok <- validate_command(command),
          {:ok, cwd} <- resolve_cwd(Map.get(input, "cwd"), working_directory),
          :ok <- validate_command_paths(command, cwd) do
-      execute_command(command, timeout_sec, cwd, working_directory)
+      case Map.get(input, "job", false) do
+        false ->
+          execute_command(command, timeout_sec, cwd, working_directory)
+
+        true when is_integer(timeout_sec) and timeout_sec in 1..3_600 ->
+          Handbeam.Jobs.start(
+            command,
+            cwd,
+            timeout_sec * 1_000,
+            Map.get(input, "wait_ms", 1_000),
+            context
+          )
+          |> Handbeam.Jobs.format()
+
+        true ->
+          {:error, "Job timeout must be an integer from 1 to 3600 seconds"}
+
+        _ ->
+          {:error, "job must be a boolean"}
+      end
     end
   end
 

@@ -8,8 +8,25 @@ defmodule Handbeam.ConversationTranscriptStore.ConversationStore do
   require Logger
 
   @impl true
-  def list(conversation_id, _opts) do
-    {:ok, Handbeam.ConversationStore.load_messages(conversation_id)}
+  def list(conversation_id, opts) do
+    if Handbeam.ConversationStore.internal?(conversation_id) and
+         not runtime_reader?(conversation_id, opts) do
+      with {:ok, conversation} <- Handbeam.ConversationStore.get(conversation_id, opts) do
+        {:ok, conversation["timeline"]}
+      end
+    else
+      {:ok, Handbeam.ConversationStore.load_messages(conversation_id)}
+    end
+  end
+
+  # Cancellation must read its own running tool entries after closing admission.
+  # Require the actual registered Runner caller, not just model-supplied ids.
+  defp runtime_reader?(id, opts) do
+    caller = self()
+    run_id = opts[:run_id]
+
+    opts[:runner_pid] == caller and is_binary(run_id) and
+      match?([{^caller, %{run_id: ^run_id}}], Registry.lookup(Handbeam.AgentRunRegistry, id))
   end
 
   @impl true

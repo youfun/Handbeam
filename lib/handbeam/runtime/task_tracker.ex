@@ -75,7 +75,17 @@ defmodule Handbeam.Runtime.TaskTracker do
     {:noreply, update_in(state.viewers, &Map.delete(&1, pid))}
   end
 
-  def handle_info({:run_lifecycle, conversation_id, :run_start, payload}, state) do
+  def handle_info({:run_lifecycle, conversation_id, _kind, _payload} = event, state) do
+    if Handbeam.ConversationStore.internal?(conversation_id) do
+      {:noreply, state}
+    else
+      handle_lifecycle(event, state)
+    end
+  end
+
+  def handle_info(_message, state), do: {:noreply, state}
+
+  defp handle_lifecycle({:run_lifecycle, conversation_id, :run_start, payload}, state) do
     task = %{
       conversation_id: conversation_id,
       run_id: resolve_run_id(payload, conversation_id, conversation_id),
@@ -89,11 +99,14 @@ defmodule Handbeam.Runtime.TaskTracker do
     {:noreply, state}
   end
 
-  def handle_info({:run_lifecycle, conversation_id, :tool_approval_requested, payload}, state) do
+  defp handle_lifecycle(
+         {:run_lifecycle, conversation_id, :tool_approval_requested, payload},
+         state
+       ) do
     {:noreply, put_waiting(state, conversation_id, payload)}
   end
 
-  def handle_info({:run_lifecycle, conversation_id, :run_end, payload}, state) do
+  defp handle_lifecycle({:run_lifecycle, conversation_id, :run_end, payload}, state) do
     if waiting_status?(payload) do
       {:noreply, put_waiting(state, conversation_id, payload)}
     else
@@ -101,7 +114,7 @@ defmodule Handbeam.Runtime.TaskTracker do
     end
   end
 
-  def handle_info(_message, state), do: {:noreply, state}
+  defp handle_lifecycle(_message, state), do: {:noreply, state}
 
   defp dispatch(state, event) do
     snapshot = notify_snapshot(state)

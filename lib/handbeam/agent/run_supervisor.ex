@@ -8,6 +8,15 @@ defmodule Handbeam.Agent.RunSupervisor do
 
   use Supervisor
 
+  def child_spec(opts) do
+    %{
+      id: __MODULE__,
+      start: {__MODULE__, :start_link, [opts]},
+      type: :supervisor,
+      restart: if(get_in(opts, [:run_opts, :delegated?]), do: :temporary, else: :permanent)
+    }
+  end
+
   def start_link(opts) do
     conversation_id = Keyword.fetch!(opts, :conversation_id)
 
@@ -31,15 +40,17 @@ defmodule Handbeam.Agent.RunSupervisor do
       opts
       |> Keyword.put(:queue_name, queue_name)
 
+    restart = if get_in(opts, [:run_opts, :delegated?]), do: :temporary, else: :transient
+
     Supervisor.init(
       [
         Supervisor.child_spec({Handbeam.Agent.CandidateQueue, queue_opts},
           id: Handbeam.Agent.CandidateQueue,
-          restart: :transient
+          restart: restart
         ),
         Supervisor.child_spec({Handbeam.Agent.Runner, runner_opts},
           id: Handbeam.Agent.Runner,
-          restart: :transient
+          restart: restart
         )
       ],
       strategy: :one_for_all,
