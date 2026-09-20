@@ -93,7 +93,7 @@ defmodule Handbeam.ConversationStore do
       )
 
       entries
-      |> Enum.map(&load_from_index_entry/1)
+      |> Enum.map(&load_from_index_entry(&1, opts))
       |> Enum.reject(&is_nil/1)
       |> Enum.reject(&(not Keyword.get(opts, :include_internal?, false) and internal?(&1)))
     else
@@ -132,7 +132,7 @@ defmodule Handbeam.ConversationStore do
   @doc "Get one conversation by id."
   @spec get(String.t()) :: {:ok, conversation()} | {:error, :not_found}
   def get(id, opts \\ []) when is_binary(id) do
-    case read_item(id) do
+    case read_item(id, opts) do
       {:ok, conversation} ->
         if accessible?(conversation, opts), do: {:ok, conversation}, else: {:error, :not_found}
 
@@ -160,6 +160,16 @@ defmodule Handbeam.ConversationStore do
          conversation["parent_run_id"] == context[:run_id] and
          conversation["workspace_id"] == context[:workspace_id] and
          Handbeam.Agent.Delegation.Policy.live_parent?(context))
+  end
+
+  @doc false
+  def authorize_read(id, opts) do
+    with {:ok, meta} <- read_meta(id),
+         true <- accessible?(meta, opts) do
+      :ok
+    else
+      _ -> {:error, :not_found}
+    end
   end
 
   @doc "Read only a conversation's metadata, without loading transcript or editor files."
@@ -344,7 +354,7 @@ defmodule Handbeam.ConversationStore do
   def load_files(conversation_id) when is_binary(conversation_id) do
     path = files_path(conversation_id)
 
-    case File.read(path) do
+    case storage_read(path) do
       {:ok, content} when content == "" ->
         %{"editor_files" => [], "active_file" => nil, "file_preview_error" => nil}
 
@@ -488,7 +498,7 @@ defmodule Handbeam.ConversationStore do
   end
 
   defp read_index do
-    File.read(index_path())
+    storage_read(index_path())
     |> case do
       {:ok, content} when content == "" ->
         {:ok, %{"conversations" => []}}
@@ -570,7 +580,7 @@ defmodule Handbeam.ConversationStore do
   end
 
   defp read_index_meta_file(path) do
-    case File.read(path) do
+    case storage_read(path) do
       {:ok, content} ->
         case Handbeam.JSON.decode(content) do
           {:ok, data} when is_map(data) -> {:ok, data}
@@ -617,9 +627,9 @@ defmodule Handbeam.ConversationStore do
 
   # ── Item file helpers ───────────────────────────────────────────────────
 
-  defp read_item(id) do
+  defp read_item(id, opts) do
     with {:ok, meta} <- read_meta(id) do
-      timeline = load_messages(id)
+      timeline = if Keyword.get(opts, :include_timeline?, true), do: load_messages(id), else: []
       files = load_files(id)
 
       conversation =
@@ -654,7 +664,7 @@ defmodule Handbeam.ConversationStore do
   defp read_meta(id) do
     path = meta_path(id)
 
-    case File.read(path) do
+    case storage_read(path) do
       {:ok, content} when content == "" ->
         {:error, :not_found}
 
@@ -753,27 +763,26 @@ defmodule Handbeam.ConversationStore do
   # ── Atomic write (tmp + rename) ─────────────────────────────────────────
 
   defp atomic_write_json(path, data) do
-    File.mkdir_p!(Path.dirname(path))
-    tmp_path = "#{path}.tmp.#{System.unique_integer([:positive])}"
+    case Handbeam.ConversationTranscriptStore.Journal.write_json(storage_dir(), path, data) do
+      :ok ->
+        :ok
 
-    with {:ok, json} <- Handbeam.JSON.encode(data, pretty: true),
-         :ok <- File.write(tmp_path, json) do
-      File.rename!(tmp_path, path)
-      :ok
-    else
       {:error, reason} ->
-        File.rm(tmp_path)
         Logger.error("[ConversationStore] Error writing #{path}: #{inspect(reason)}")
         {:error, reason}
     end
   end
 
+  defp storage_read(path) do
+    Handbeam.ConversationTranscriptStore.Journal.read_file(storage_dir(), path)
+  end
+
   # ── Normalization ───────────────────────────────────────────────────────
 
-  defp load_from_index_entry(entry) do
+  defp load_from_index_entry(entry, opts) do
     id = entry["id"]
 
-    case read_item(id) do
+    case read_item(id, opts) do
       {:ok, conversation} ->
         conversation
 

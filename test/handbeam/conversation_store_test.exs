@@ -104,13 +104,10 @@ defmodule Handbeam.ConversationStoreTest do
       assert meta_json["workspace_id"] == "ws_1"
       refute Map.has_key?(meta_json, "timeline")
 
-      # messages.jsonl exists and contains one message per line
+      # Physical journal records are replayed into the public history.
       msg_path = ConversationStore.messages_path(id)
       assert File.exists?(msg_path)
-      lines = File.read!(msg_path) |> String.split("\n", trim: true)
-      assert length(lines) == 1
-      [line] = lines
-      assert {:ok, entry} = Jason.decode(line)
+      assert {:ok, [entry]} = ConversationStore.load_messages_result(id)
       assert entry["content"] == "hello"
       assert entry["id"] == "msg-1"
 
@@ -143,13 +140,13 @@ defmodule Handbeam.ConversationStoreTest do
       assert conversation["timeline"] == []
     end
 
-    test "messages.jsonl is empty when no timeline" do
+    test "journal projects an empty history when no timeline" do
       {:ok, conversation} = ConversationStore.create("ws_empty")
       id = conversation["id"]
 
       msg_path = ConversationStore.messages_path(id)
       assert File.exists?(msg_path)
-      assert File.read!(msg_path) == ""
+      assert {:ok, []} = ConversationStore.load_messages_result(id)
     end
   end
 
@@ -283,10 +280,8 @@ defmodule Handbeam.ConversationStoreTest do
 
       refute Map.has_key?(meta_json, "timeline")
 
-      # messages.jsonl should have 2 lines
-      msg_content = File.read!(ConversationStore.messages_path(conversation["id"]))
-      lines = String.split(msg_content, "\n", trim: true)
-      assert length(lines) == 2
+      assert {:ok, entries} = ConversationStore.load_messages_result(conversation["id"])
+      assert entries == updated["timeline"]
     end
 
     test "upsert preserves title_source field" do
@@ -496,6 +491,7 @@ defmodule Handbeam.ConversationStoreTest do
       # Capture meta/index content before append
       meta_before = File.read!(ConversationStore.meta_path(id))
       index_before = File.read!(ConversationStore.index_path())
+      log_before = File.read!(ConversationStore.messages_path(id))
 
       # Append a message
       :ok =
@@ -505,16 +501,19 @@ defmodule Handbeam.ConversationStoreTest do
           "content" => "reply"
         })
 
-      # messages.jsonl now has 2 lines
-      lines =
-        File.read!(ConversationStore.messages_path(id))
-        |> String.split("\n", trim: true)
+      # A normal append preserves the existing bytes and adds one durable record.
+      log_after = File.read!(ConversationStore.messages_path(id))
+      assert String.starts_with?(log_after, log_before)
 
-      assert length(lines) == 2
+      appended =
+        binary_part(
+          log_after,
+          byte_size(log_before),
+          byte_size(log_after) - byte_size(log_before)
+        )
 
-      # Verify second line
-      [_, line2] = lines
-      assert {:ok, entry2} = Jason.decode(line2)
+      assert length(String.split(appended, "\n", trim: true)) == 1
+      assert {:ok, [_, entry2]} = ConversationStore.load_messages_result(id)
       assert entry2["id"] == "e2"
       assert entry2["content"] == "reply"
 

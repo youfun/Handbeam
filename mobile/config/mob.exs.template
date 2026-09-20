@@ -8,6 +8,7 @@ config :mob_dev,
   elixir_lib:
     System.get_env("MOB_ELIXIR_LIB", :code.lib_dir(:elixir) |> to_string() |> Path.dirname()),
   static_nifs: [
+    %{module: :handbeam_storage, archs: [:android, :ios]},
     %{module: :handbeam_notify, archs: [:android]},
     %{module: :handbeam_browser, archs: [:android]},
     %{module: :handbeam_ios, archs: [:ios]},

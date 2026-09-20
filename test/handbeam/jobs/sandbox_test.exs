@@ -28,6 +28,7 @@ defmodule Handbeam.Jobs.SandboxTest do
     %{workspace: workspace, context: context}
   end
 
+  @tag :linux_sandbox
   test "job Bash persists workspace writes but isolates computed outside writes", %{
     workspace: workspace,
     context: context
@@ -43,6 +44,7 @@ defmodule Handbeam.Jobs.SandboxTest do
     refute File.exists?(workspace <> "-outside")
   end
 
+  @tag :linux_sandbox
   test "sandbox gate retains verified group cancellation before user code executes", %{
     workspace: workspace
   } do
@@ -68,7 +70,9 @@ defmodule Handbeam.Jobs.SandboxTest do
                sandbox_path: Path.join(workspace, "missing-bwrap")
              )
 
-    assert message =~ "Sandbox executable not found"
+    assert message =~ "Sandbox executable not found" or
+             message =~ "Workspace-confined bash is not supported"
+
     refute File.exists?(Path.join(workspace, "marker"))
   end
 end

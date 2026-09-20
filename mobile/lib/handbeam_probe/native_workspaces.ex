@@ -43,11 +43,9 @@ defmodule HandbeamProbe.NativeWorkspaces do
   end
 
   def canonicalize(path) when is_binary(path) do
-    expanded = Path.expand(path)
-
-    case :file.read_link_all(String.to_charlist(expanded)) do
-      {:ok, chars} -> List.to_string(chars)
-      {:error, _} -> PathValidator.resolve_symlink(expanded)
+    case PathValidator.canonicalize(path) do
+      {:ok, canonical} -> canonical
+      {:error, _} -> Path.expand(path)
     end
   end
 

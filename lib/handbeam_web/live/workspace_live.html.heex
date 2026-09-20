@@ -388,6 +388,16 @@
       <!-- Chat messages -->
       <div class="conversation-nav-host">
         <div id="ai-messages" class="flex-1 overflow-y-auto p-4 space-y-3" phx-hook="ChatScroll">
+          <div :if={@history_has_more?} class="flex justify-center">
+            <button
+              id="load-older-history"
+              type="button"
+              phx-click="load_older_history"
+              class="text-xs text-secondary hover:text-primary"
+            >
+              {gettext("加载更早消息")}
+            </button>
+          </div>
           <div :if={length(@timeline) > 1} id="turn-header" class="turn-header">
             <span class="turn-summary">
               {timeline_summary(@timeline)}

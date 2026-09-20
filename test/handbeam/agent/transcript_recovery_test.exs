@@ -83,6 +83,7 @@ defmodule Handbeam.Agent.TranscriptRecoveryTest do
     end
 
     assert {:error, :not_found} = ConversationTranscriptStore.list(id, source: :recovery)
+    assert {:error, :not_found} = ConversationTranscriptStore.page(id, source: :recovery)
     assert :ok = TranscriptRecovery.recover(id)
     assert :ok = TranscriptRecovery.recover(id)
     assert {:ok, [tool, assistant, error]} = Handbeam.ConversationStore.load_messages_result(id)
@@ -91,6 +92,7 @@ defmodule Handbeam.Agent.TranscriptRecoveryTest do
     assert assistant["content"] == "已落盘"
     assert error["id"] == "msg-run-error-orphan"
     assert {:error, :not_found} = ConversationTranscriptStore.list(id)
+    assert {:error, :not_found} = ConversationTranscriptStore.page(id)
     assert {:error, :not_found} = Handbeam.ConversationStore.get(id)
   end
 

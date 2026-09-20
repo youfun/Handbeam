@@ -89,9 +89,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
         "role" => "tool",
         "direction" => "internal",
         "tool_use_id" => tool_use_id,
-        "tool" => tool_name,
         "tool_name" => tool_name,
-        "status" => "running",
         "tool_status" => "running",
         "input" => Handbeam.Log.Redactor.redact(payload_value(payload, :input, %{})),
         "started_at" => now_iso8601()
@@ -112,13 +110,9 @@ defmodule Handbeam.Agent.TranscriptPersistence do
     output = payload |> payload_value(:output) |> Handbeam.JsonSafe.normalize()
 
     patch = %{
-      "tool" => tool_name,
       "tool_name" => tool_name,
-      "status" => status,
       "tool_status" => status,
-      "duration_ms" => payload_value(payload, :duration_ms),
       "tool_duration_ms" => payload_value(payload, :duration_ms),
-      "error" => error,
       "tool_error" => error,
       "output" => output,
       "details" => details,
@@ -258,7 +252,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
             case Handbeam.ConversationTranscriptStore.update(
                    conversation_id,
                    id,
-                   %{"status" => "cancelled", "tool_status" => "cancelled"},
+                   %{"tool_status" => "cancelled"},
                    opts
                  ) do
               {:ok, _} ->
@@ -335,9 +329,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
             tool_entry?(entry) and
                 running_tool_status?(Handbeam.TranscriptEntry.tool_status(entry)) ->
               %{
-                "status" => status,
                 "tool_status" => status,
-                "error" => error,
                 "tool_error" => error
               }
 
@@ -455,7 +447,10 @@ defmodule Handbeam.Agent.TranscriptPersistence do
 
           {:error, reason} ->
             # Do not advance the message boundary or report a successful run.
-            # Keep the buffer intact for a caller that can retry in this process.
+            # A retry intent now owns this delta; retaining it here would
+            # append it twice when a same-process retry drains the durable queue.
+            if match?({:queued, _}, reason), do: Process.delete(buffer_key(conversation_id))
+
             raise "Assistant transcript persistence failed for #{conversation_id}: #{inspect(reason)}"
         end
 

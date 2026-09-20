@@ -52,7 +52,8 @@ defmodule Handbeam.Platform.ProcessRunnerTest do
                  sandbox_path: "/nonexistent/bwrap"
                )
 
-      assert reason =~ "Sandbox executable not found"
+      assert reason =~ "Sandbox executable not found" or
+               reason =~ "Workspace-confined bash is not supported"
     end
   end
 end

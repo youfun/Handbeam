@@ -37,6 +37,19 @@ defmodule Handbeam.Agent.TranscriptRecovery do
 
   def handle_call({:recover, id}, _from, state), do: {:reply, recover_orphan(id), state}
 
+  @impl true
+  def handle_info({:transcript_retry_persisted, id}, state) do
+    case recover_orphan(id) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error("[TranscriptRecovery] retry closure #{id}: #{inspect(reason)}")
+    end
+
+    {:noreply, state}
+  end
+
   defp recover_all do
     items = Path.join(Handbeam.ConversationStore.storage_dir(), "items")
 

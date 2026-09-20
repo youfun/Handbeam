@@ -13,9 +13,18 @@ defmodule Handbeam.Agent.TranscriptPersistenceTest do
     end
 
     def update(id, entry_id, patch, opts) do
-      if opts[:fail_operation] == :update,
-        do: {:error, :eacces},
-        else: Store.update(id, entry_id, patch, opts)
+      case opts[:fail_operation] do
+        :update ->
+          {:error, :eacces}
+
+        :queued ->
+          # The journal synced the record, but clearing its intent failed.
+          {:ok, _} = Store.update(id, entry_id, patch, opts)
+          {:error, {:queued, :eacces}}
+
+        _ ->
+          Store.update(id, entry_id, patch, opts)
+      end
     end
   end
 
@@ -142,6 +151,25 @@ defmodule Handbeam.Agent.TranscriptPersistenceTest do
 
     assert_received {:delivered, %{"delivery_delta" => "first second third"}}
     refute_received {:delivered, _}
+  end
+
+  test "a queued delta transfers buffer ownership and cannot be appended twice" do
+    {:ok, conversation} = Handbeam.ConversationStore.create("default", timeline: [])
+    id = conversation["id"]
+    opts = [transcript_store: FailingStore]
+    :ok = TranscriptPersistence.handle_event(id, {:run_start, %{}}, opts)
+    :ok = TranscriptPersistence.handle_event(id, {:message_delta, %{chunk: "saved"}}, opts)
+
+    assert_raise RuntimeError, ~r/queued/, fn ->
+      TranscriptPersistence.handle_event(
+        id,
+        {:message_delta, %{chunk: " queued"}},
+        Keyword.put(opts, :fail_operation, :queued)
+      )
+    end
+
+    :ok = TranscriptPersistence.handle_event(id, {:message_delta, %{chunk: " later"}}, opts)
+    assert [%{"content" => "saved queued later"}] = Handbeam.ConversationStore.load_messages(id)
   end
 
   test "failed update retains only unsaved deltas and cannot advance the tool boundary" do
@@ -404,8 +432,15 @@ defmodule Handbeam.Agent.TranscriptPersistenceTest do
              "id" => "tool-toolu_1",
              "message_type" => "tool",
              "direction" => "internal",
+             "tool_name" => "read",
+             "tool_duration_ms" => 12,
              "tool_status" => "done"
-           } = Enum.find(messages, &(&1["id"] == "tool-toolu_1"))
+           } = tool = Enum.find(messages, &(&1["id"] == "tool-toolu_1"))
+
+    refute Map.has_key?(tool, "tool")
+    refute Map.has_key?(tool, "status")
+    refute Map.has_key?(tool, "duration_ms")
+    refute Map.has_key?(tool, "error")
   end
 
   test "redacts sensitive tool inputs before writing durable history" do
@@ -579,7 +614,6 @@ defmodule Handbeam.Agent.TranscriptPersistenceTest do
         &(&1["id"] == "tool-toolu_hold")
       )
 
-    assert tool["status"] == "cancelled"
     assert tool["tool_status"] == "cancelled"
   end
 
@@ -650,12 +684,10 @@ defmodule Handbeam.Agent.TranscriptPersistenceTest do
     messages = Handbeam.ConversationStore.load_messages(conversation_id)
     by_id = Map.new(messages, &{&1["id"], &1})
 
-    assert by_id["tool-a-running"]["status"] == "cancelled"
     assert by_id["tool-a-running"]["tool_status"] == "cancelled"
-    assert by_id["tool-a-done"]["status"] == "done"
-    assert by_id["tool-a-error"]["status"] == "error"
-    assert by_id["tool-a-cancelled"]["status"] == "cancelled"
-    assert by_id["tool-b-running"]["status"] == "running"
+    assert by_id["tool-a-done"]["tool_status"] == "done"
+    assert by_id["tool-a-error"]["tool_status"] == "error"
+    assert by_id["tool-a-cancelled"]["tool_status"] == "cancelled"
     assert by_id["tool-b-running"]["tool_status"] == "running"
   end
 
@@ -680,7 +712,6 @@ defmodule Handbeam.Agent.TranscriptPersistenceTest do
         &(&1["id"] == "tool-approval-running")
       )
 
-    assert tool["status"] == "running"
     assert tool["tool_status"] == "running"
   end
 end

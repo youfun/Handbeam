@@ -19,6 +19,19 @@ defmodule Handbeam.Agent.Tool.ExecutorTest do
   alias Handbeam.Agent.{Config, State}
   alias Handbeam.Agent.Tool.{Executor, Result}
 
+  defmodule ResultFixtureTool do
+    @behaviour Handbeam.Agent.Tool
+
+    def name, do: "result_fixture"
+    def description, do: "Deterministic executor result fixture"
+    def input_schema, do: %{type: "object", properties: %{mode: %{type: "string"}}}
+
+    def execute(%{"mode" => "nonzero"}, _context),
+      do: {:ok, "exited with code 42", %{exit_code: 42}}
+
+    def execute(_input, _context), do: {:ok, "hello", %{exit_code: 0}}
+  end
+
   @fixtures_dir Path.join(File.cwd!(), "test/fixtures")
 
   # Avoid re-registration warnings by only registering if not already present
@@ -32,6 +45,7 @@ defmodule Handbeam.Agent.Tool.ExecutorTest do
   setup do
     ensure_registered(Handbeam.Tool.Builtin.Read)
     ensure_registered(Handbeam.Tool.Builtin.Bash)
+    ensure_registered(ResultFixtureTool)
     :ok
   end
 
@@ -124,16 +138,16 @@ defmodule Handbeam.Agent.Tool.ExecutorTest do
 
       state = State.init(config, "Write test")
 
-      # Bash returns {:ok, text, data} — originally has details but stripped in execute_all
+      # Fixture returns {:ok, text, data}; details are stripped by execute_all.
       tool_calls = [
-        %{id: "tool_bash", name: "bash", input: %{"command" => "echo hello"}}
+        %{id: "tool_result", name: "result_fixture", input: %{}}
       ]
 
       {:ok, result_msg} = Executor.execute_all(tool_calls, state)
 
       [block] = result_msg.content
       assert block[:type] == "tool_result"
-      assert block[:tool_use_id] == "tool_bash"
+      assert block[:tool_use_id] == "tool_result"
       assert block[:is_error] == false
       assert block[:content] =~ "hello"
       # Details MUST be stripped — not sent to LLM, not stored in state
@@ -144,9 +158,7 @@ defmodule Handbeam.Agent.Tool.ExecutorTest do
       config = %Config{working_directory: @fixtures_dir}
       state = State.init(config, "Bad bash")
 
-      tool_calls = [
-        %{id: "tool_fail", name: "bash", input: %{"command" => "exit 42"}}
-      ]
+      tool_calls = [%{id: "tool_fail", name: "result_fixture", input: %{"mode" => "nonzero"}}]
 
       {:ok, result_msg} = Executor.execute_all(tool_calls, state)
 
@@ -214,7 +226,9 @@ defmodule Handbeam.Agent.Tool.ExecutorTest do
       ensure_registered(Handbeam.Tool.Builtin.Edit)
       ensure_registered(Handbeam.Tool.Builtin.Write)
 
-      tmp_dir = Path.join(System.tmp_dir!(), "handbeam_test_#{System.unique_integer([:positive])}")
+      tmp_dir =
+        Path.join(System.tmp_dir!(), "handbeam_test_#{System.unique_integer([:positive])}")
+
       File.mkdir_p!(tmp_dir)
 
       on_exit(fn -> File.rm_rf!(tmp_dir) end)
@@ -268,6 +282,7 @@ defmodule Handbeam.Agent.Tool.ExecutorTest do
       refute Map.has_key?(block, "details")
     end
 
+    @tag :linux_sandbox
     test "[TOOLRES-102] bash returns dual-channel ToolResult", %{tmp_dir: tmp_dir} do
       context = %{working_directory: tmp_dir}
 

@@ -16,6 +16,8 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
     |> assign(:workspace_label, ws["name"])
     |> assign(:expanded_tool_groups, MapSet.new())
     |> assign(:pending_messages, %{})
+    |> assign(:history_before, nil)
+    |> assign(:history_has_more?, false)
   end
 
   def select_workspace(socket, ws_id) do
@@ -141,7 +143,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
   end
 
   def refresh_conversation_in_sidebar(socket, conv_id) do
-    case Handbeam.ConversationStore.get(conv_id) do
+    case Handbeam.ConversationStore.get(conv_id, include_timeline?: false) do
       {:ok, updated_conv} ->
         ws_id = ConversationState.conv_value(updated_conv, "workspace_id", nil)
         convs = socket.assigns.conversations_by_workspace
@@ -190,15 +192,13 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
 
       convs =
         Handbeam.ConversationStore.list_for_workspace(ws_id,
-          include_archived?: include_archived?
+          include_archived?: include_archived?,
+          include_timeline?: false
         )
         |> Enum.reject(fn conv ->
           String.starts_with?(ConversationState.conv_value(conv, "title", ""), "New chat") and
             ConversationState.conv_value(conv, "title_source", nil) in [nil, "manual"] and
-            ConversationState.load_transcript_entries(
-              ConversationState.conversation_id(conv),
-              ConversationState.conv_value(conv, "timeline", [])
-            ) == []
+            transcript_empty?(ConversationState.conversation_id(conv))
         end)
 
       dev_log(
@@ -379,6 +379,13 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
 
   defp first_active_conversation(conversations) do
     Enum.find(conversations, &(not archived_conversation?(&1)))
+  end
+
+  defp transcript_empty?(conversation_id) do
+    case Handbeam.ConversationTranscriptStore.page(conversation_id, limit: 1) do
+      {:ok, %{entries: []}} -> true
+      _ -> false
+    end
   end
 
   defp maybe_sort_conversations(conversations, true) do

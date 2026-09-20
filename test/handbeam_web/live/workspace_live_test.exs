@@ -21,14 +21,52 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
 
   use HandbeamWeb.ConnCase, async: false
 
-  import Phoenix.LiveViewTest
+  import Phoenix.LiveViewTest, except: [live: 2]
   import ExUnit.CaptureLog
 
   alias Handbeam.PubSub.AgentEvent
 
   setup do
+    {:ok, tracker} = Agent.start(fn -> %{views: MapSet.new(), homes: []} end)
+    Process.put(:workspace_live_test_tracker, tracker)
+    original_home = System.get_env("HOME")
+
+    on_exit(fn ->
+      stop_test_runtime!(tracker)
+
+      tracker
+      |> Agent.get(& &1.homes)
+      |> Enum.each(fn home_dir ->
+        if File.exists?(home_dir), do: File.rm_rf!(home_dir)
+      end)
+
+      if original_home,
+        do: System.put_env("HOME", original_home),
+        else: System.delete_env("HOME")
+
+      Agent.stop(tracker)
+    end)
+
     isolate_conversation_home!()
     :ok
+  end
+
+  defp live(conn, path) do
+    result = Phoenix.LiveViewTest.live(conn, path)
+
+    case result do
+      {:ok, view, _html} ->
+        {_, _, proxy_pid} = view.proxy
+
+        Agent.update(Process.get(:workspace_live_test_tracker), fn state ->
+          update_in(state.views, &MapSet.put(&1, {proxy_pid, view.pid}))
+        end)
+
+      _other ->
+        :ok
+    end
+
+    result
   end
 
   # ── Helper: build an AgentEvent for tests ──
@@ -75,31 +113,66 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
     |> length()
   end
 
-  defp assert_eventually(fun, attempts \\ 50)
-  defp assert_eventually(fun, 0), do: fun.()
-
-  defp assert_eventually(fun, attempts) do
-    fun.()
-  rescue
-    ExUnit.AssertionError ->
-      Process.sleep(20)
-      assert_eventually(fun, attempts - 1)
-  end
-
   defp isolate_conversation_home! do
-    old_home = System.get_env("HOME")
     home_dir = Path.join(System.tmp_dir!(), "sigil_lv_home_#{System.unique_integer([:positive])}")
     System.put_env("HOME", home_dir)
 
     safe_rm_test_rune!(home_dir)
 
-    on_exit(fn ->
-      if old_home, do: System.put_env("HOME", old_home), else: System.delete_env("HOME")
-
-      if File.exists?(home_dir), do: File.rm_rf!(home_dir)
+    Agent.update(Process.get(:workspace_live_test_tracker), fn state ->
+      %{state | homes: [home_dir | state.homes]}
     end)
 
     home_dir
+  end
+
+  defp stop_test_runtime!(tracker) do
+    views = Agent.get(tracker, & &1.views)
+    view_pids = MapSet.new(views, &elem(&1, 1))
+
+    views
+    |> Enum.each(fn {proxy, view_pid} ->
+      stop_and_wait(proxy, fn -> Phoenix.LiveViewTest.ClientProxy.stop(proxy, :shutdown) end)
+      stop_and_wait(view_pid, fn -> Process.exit(view_pid, :shutdown) end)
+    end)
+
+    Registry.select(Handbeam.AgentRunSupervisorRegistry, [{{:"$1", :_, :_}, [], [:"$1"]}])
+    |> Enum.each(fn conversation_id ->
+      case Registry.lookup(Handbeam.AgentRunSupervisorRegistry, conversation_id) do
+        [{pid, _}] ->
+          stop_and_wait(pid, fn -> Handbeam.AgentRunSupervisor.stop_run(conversation_id) end)
+
+        [] ->
+          :ok
+      end
+    end)
+
+    Process.list()
+    |> Enum.filter(fn pid ->
+      case Process.info(pid, :dictionary) do
+        {:dictionary, dictionary} ->
+          dictionary
+          |> Keyword.get(:"$ancestors", [])
+          |> Enum.any?(&MapSet.member?(view_pids, &1))
+
+        nil ->
+          false
+      end
+    end)
+    |> Enum.each(&wait_for_process/1)
+  end
+
+  defp stop_and_wait(pid, stop) when is_pid(pid) do
+    if Process.alive?(pid) do
+      ref = Process.monitor(pid)
+      _ = stop.()
+      assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 1_000
+    end
+  end
+
+  defp wait_for_process(pid) do
+    ref = Process.monitor(pid)
+    assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 1_000
   end
 
   defp safe_rm_test_rune!(home_dir) do
@@ -370,6 +443,53 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert rendered_after =~ "Earlier context"
       assert rendered_after =~ "Previous reply"
       assert rendered_after =~ "New question"
+    end
+
+    test "pages long history backward without losing newly appended messages", %{conn: conn} do
+      timeline =
+        for index <- 1..250 do
+          %{
+            "id" => "long-history-#{index}",
+            "content_type" => "user_msg",
+            "role" => "user",
+            "content" => "history item #{index}"
+          }
+        end
+
+      {:ok, conversation} =
+        Handbeam.ConversationStore.create("default",
+          id: "conv-long-history",
+          title: "Long history",
+          timeline: timeline
+        )
+
+      {:ok, view, _html} = live(conn, "/w/default/c/#{conversation["id"]}")
+
+      assert render(view) =~ "history item 250"
+      refute render(view) =~ "history item 150"
+      assert has_element?(view, "#load-older-history")
+
+      send(
+        view.pid,
+        {:agent_event,
+         agent_event(
+           :message_delta,
+           %{chunk: "live after newest page"},
+           1,
+           "session:#{conversation["id"]}"
+         )}
+      )
+
+      view |> element("#load-older-history") |> render_click()
+      rendered = render(view)
+      assert rendered =~ "history item 51"
+      assert rendered =~ "live after newest page"
+
+      view |> element("#load-older-history") |> render_click()
+      rendered = render(view)
+      assert rendered =~ "history item 1"
+      assert rendered =~ "live after newest page"
+      refute has_element?(view, "#load-older-history")
     end
 
     test "switching away and back reloads persisted streaming display history", %{conn: conn} do
@@ -2498,15 +2618,16 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
     test "full run_start → tool_start → tool_end → message_delta → run_end cycle", %{conn: conn} do
       with_log(fn ->
         {:ok, view, _html} = live(conn, "/")
-        sid = view |> render() |> session_id_from_html()
+        sid = create_default_conversation(view)
         {:ok, _session} = Handbeam.PubSub.Session.start_or_get(session_id: sid)
         {:ok, queue} = Handbeam.Agent.CandidateQueue.start_link(session_id: sid, owner: self())
         :ok = Handbeam.PubSub.Session.attach_run(sid, self(), queue)
+        topic = "session:#{sid}"
 
         # 1. User submits message
         send(
           view.pid,
-          {:agent_event, agent_event(:run_start, %{model: "step-router-v1"}, 1, sid)}
+          {:agent_event, agent_event(:run_start, %{model: "step-router-v1"}, 1, topic)}
         )
 
         view |> element("form") |> render_submit(%{"message" => "Read the config"})
@@ -2515,7 +2636,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         # 2. Agent starts
         send(
           view.pid,
-          {:agent_event, agent_event(:run_start, %{model: "step-router-v1"}, 1, sid)}
+          {:agent_event, agent_event(:run_start, %{model: "step-router-v1"}, 1, topic)}
         )
 
         assert render(view) =~ "running"
@@ -2528,7 +2649,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
              :tool_start,
              %{tool: "read", input: %{file_path: "config/runtime.exs"}},
              2,
-             sid
+             topic
            )}
         )
 
@@ -2537,7 +2658,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         # 4. Tool ends
         send(
           view.pid,
-          {:agent_event, agent_event(:tool_end, %{tool: "read", duration_ms: 150}, 3, sid)}
+          {:agent_event, agent_event(:tool_end, %{tool: "read", duration_ms: 150}, 3, topic)}
         )
 
         rendered = render(view)
@@ -2547,12 +2668,12 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         # 5. Assistant streams response
         send(
           view.pid,
-          {:agent_event, agent_event(:message_delta, %{chunk: "The config contains"}, 4, sid)}
+          {:agent_event, agent_event(:message_delta, %{chunk: "The config contains"}, 4, topic)}
         )
 
         send(
           view.pid,
-          {:agent_event, agent_event(:message_delta, %{chunk: " useful settings."}, 5, sid)}
+          {:agent_event, agent_event(:message_delta, %{chunk: " useful settings."}, 5, topic)}
         )
 
         assert render(view) =~ "The config contains useful settings."
@@ -2560,7 +2681,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         # 6. Run ends
         send(
           view.pid,
-          {:agent_event, agent_event(:run_end, %{status: "completed", turns: 2}, 6, sid)}
+          {:agent_event, agent_event(:run_end, %{status: "completed", turns: 2}, 6, topic)}
         )
 
         rendered = render(view)
@@ -2992,6 +3113,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
             :ok
         end
       after
+        stop_test_runtime!(Process.get(:workspace_live_test_tracker))
         System.delete_env("HANDBEAM_MODELS_FILE")
         if File.exists?(models_path), do: File.rm!(models_path)
         File.rm_rf!(project_dir)

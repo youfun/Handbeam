@@ -12,7 +12,8 @@ defmodule Handbeam.MixProject do
       aliases: aliases(),
       deps: deps(),
       releases: releases(),
-      compilers: [:phoenix_live_view] ++ Mix.compilers(),
+      compilers: [:elixir_make, :phoenix_live_view] ++ Mix.compilers(),
+      make_clean: ["clean"],
       listeners: [Phoenix.CodeReloader],
       package: [
         licenses: ["AGPL-3.0-only"],
@@ -89,7 +90,8 @@ defmodule Handbeam.MixProject do
       {:gettext, "~> 1.0"},
 
       # 终端仿真器 — Ghostty VT NIFs + PTY + LiveView 组件
-      {:ghostty, "~> 0.5"}
+      {:ghostty, "~> 0.5"},
+      {:elixir_make, "~> 0.9", runtime: false}
     ]
   end
 

@@ -9,6 +9,7 @@ defmodule HandbeamProbe.NativeApprovalTest do
   use ExUnit.Case, async: false
 
   alias Handbeam.Agent.Coordinator
+  alias Handbeam.ConversationTranscriptStore
   alias Handbeam.PubSub.Session
   alias HandbeamProbe.{NativeApproval, NativeChat}
 
@@ -53,6 +54,10 @@ defmodule HandbeamProbe.NativeApprovalTest do
       Path.join(System.tmp_dir!(), "native_approval_#{System.unique_integer([:positive])}")
 
     File.mkdir_p!(Path.join(path, ".handbeam"))
+    previous_host = Application.get_env(:handbeam, :host)
+    previous_home = System.get_env("HOME")
+    Handbeam.Host.put!(%{data_dir: path, shell: false, mcp: false})
+    System.put_env("HOME", path)
 
     File.write!(
       Handbeam.WorkspaceSettings.path(path),
@@ -77,6 +82,12 @@ defmodule HandbeamProbe.NativeApprovalTest do
 
     on_exit(fn ->
       Coordinator.cancel(id)
+
+      if previous_host,
+        do: Application.put_env(:handbeam, :host, previous_host),
+        else: Application.delete_env(:handbeam, :host)
+
+      if previous_home, do: System.put_env("HOME", previous_home), else: System.delete_env("HOME")
       File.rm_rf(path)
     end)
 
@@ -116,11 +127,18 @@ defmodule HandbeamProbe.NativeApprovalTest do
            "native_approval.ex must not call NativeChat.load (WP4)"
 
     # Positive control: the trace must see a real reload, or the guard is void.
+    transcript_loaders = [
+      {NativeChat, :load, :_},
+      {ConversationTranscriptStore, :list, :_},
+      {Handbeam.ConversationStore, :load_messages, :_},
+      {Handbeam.ConversationStore, :load_messages_result, :_}
+    ]
+
     assert [{NativeChat, :load, _} | _] =
-             traced_calls([NativeChat], fn -> NativeChat.load(chat.conversation) end)
+             traced_calls(transcript_loaders, fn -> NativeChat.load(chat.conversation) end)
 
     calls =
-      traced_calls([NativeChat, Handbeam.ConversationStore], fn ->
+      traced_calls(transcript_loaders, fn ->
         assert :ok = NativeApproval.decide(chat, workspace, :deny, :once)
       end)
 
@@ -361,7 +379,7 @@ defmodule HandbeamProbe.NativeApprovalTest do
   # Runs `fun` in the test process with call tracing on `modules`. A process
   # cannot be its own tracer, so a collector receives the trace messages and
   # hands back the `{module, function, args}` calls once `fun` returns.
-  defp traced_calls(modules, fun) do
+  defp traced_calls(targets, fun) do
     me = self()
 
     collector =
@@ -377,14 +395,14 @@ defmodule HandbeamProbe.NativeApprovalTest do
         collect.(collect, [])
       end)
 
-    Enum.each(modules, &:erlang.trace_pattern({&1, :_, :_}, true, [:local]))
+    Enum.each(targets, &:erlang.trace_pattern(&1, true, [:local]))
     :erlang.trace(me, true, [:call, {:tracer, collector}])
 
     try do
       fun.()
     after
       :erlang.trace(me, false, [:call])
-      Enum.each(modules, &:erlang.trace_pattern({&1, :_, :_}, false, [:local]))
+      Enum.each(targets, &:erlang.trace_pattern(&1, false, [:local]))
     end
 
     send(collector, {:flush, me})

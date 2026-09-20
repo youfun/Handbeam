@@ -20,6 +20,12 @@ defmodule Handbeam.Tool.RegistryTest do
   # Note: Handbeam.Tool.Registry is a named GenServer shared across tests.
   # async:false ensures serial execution to avoid race conditions.
 
+  setup do
+    registry_state = :sys.get_state(Registry)
+
+    on_exit(fn -> :sys.replace_state(Registry, fn _current -> registry_state end) end)
+  end
+
   describe "register/1" do
     test "registers a tool module" do
       mod = Handbeam.Tool.Builtin.Read
@@ -220,11 +226,6 @@ defmodule Handbeam.Tool.RegistryTest do
 
     setup do
       Registry.reset()
-
-      on_exit(fn ->
-        Registry.reset()
-      end)
-
       :ok
     end
 

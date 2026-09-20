@@ -215,7 +215,7 @@ defmodule Handbeam.Agent.RunnerTest do
     tool =
       Enum.find(Handbeam.ConversationStore.load_messages(sid), &(&1["id"] == "tool-hold-1"))
 
-    assert tool["status"] == "cancelled"
+    refute Map.has_key?(tool, "status")
     assert tool["tool_status"] == "cancelled"
 
     cancelled =

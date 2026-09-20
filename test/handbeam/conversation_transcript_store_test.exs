@@ -219,6 +219,7 @@ defmodule Handbeam.ConversationTranscriptStoreTest do
     {:ok, _} = ConversationTranscriptStore.append(id, %{"id" => "existing"})
     path = Handbeam.ConversationStore.messages_path(id)
     owner = Process.whereis(Journal)
+    File.write!(path, Jason.encode!(%{"id" => "existing"}) <> "\n")
 
     File.write!(
       path,
