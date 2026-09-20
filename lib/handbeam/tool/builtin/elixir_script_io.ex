@@ -4,8 +4,8 @@ defmodule Handbeam.Tool.Builtin.ElixirScriptIO do
   @type snapshot :: %{text: binary(), truncated?: boolean()}
 
   @spec start_link(pos_integer()) :: pid()
-  def start_link(max_bytes) when is_integer(max_bytes) and max_bytes > 0 do
-    spawn_link(fn -> loop(%{max: max_bytes, acc: [], size: 0, truncated?: false}) end)
+  def start_link(max_bytes, sink \\ nil) when is_integer(max_bytes) and max_bytes > 0 do
+    spawn_link(fn -> loop(%{max: max_bytes, acc: [], size: 0, truncated?: false, sink: sink}) end)
   end
 
   @spec snapshot(pid()) :: snapshot()
@@ -68,7 +68,7 @@ defmodule Handbeam.Tool.Builtin.ElixirScriptIO do
   defp handle_request({:get_geometry, _kind}, state), do: {{:error, :enotsup}, state}
   defp handle_request(_other, state), do: {{:error, :enotsup}, state}
 
-  defp append_chars(%{truncated?: true} = state, _encoding, _chars), do: state
+  defp append_chars(%{truncated?: true, sink: nil} = state, _encoding, _chars), do: state
 
   defp append_chars(state, encoding, chars) do
     case encode_chars(encoding, chars) do
@@ -76,9 +76,12 @@ defmodule Handbeam.Tool.Builtin.ElixirScriptIO do
         state
 
       {:ok, bin} ->
+        if state.sink, do: state.sink.(bin)
         put_bytes(state, bin)
 
       {:invalid, good} ->
+        if state.sink && good != "", do: state.sink.(good)
+
         good
         |> case do
           "" -> state

@@ -39,8 +39,9 @@ defmodule Handbeam.Skills.PromptFormatterTest do
       result = PromptFormatter.format_available_skills([skill])
 
       assert result =~ "The following skills provide specialized instructions"
-      assert result =~ "Use the read tool to load"
-      assert result =~ "When a skill file references a relative path"
+      assert result =~ "Use the skill tool with the skill's name and optional arguments"
+      refute result =~ "Use the read tool to load"
+      assert result =~ "untrusted guidance"
       assert result =~ "<available_skills>"
       assert result =~ "<name>test-skill</name>"
       assert result =~ "<description>A test skill</description>"
@@ -182,11 +183,14 @@ defmodule Handbeam.Skills.PromptFormatterTest do
   # ── Relative path instruction ──
 
   describe "relative path instruction" do
-    test "includes instruction about resolving relative paths against skill directory" do
+    test "explains resource base directory without expanding read permissions" do
       skill = build_skill()
       result = PromptFormatter.format_available_skills([skill])
 
-      assert result =~ "resolve it against the skill directory"
+      assert result =~ "References are relative to the returned resource base directory"
+      assert result =~ "loads the body only"
+      assert result =~ "read remains workspace-only"
+      assert result =~ "cannot access global skill resources outside the workspace"
     end
   end
 end

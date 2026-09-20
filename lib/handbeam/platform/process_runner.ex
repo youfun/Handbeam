@@ -12,6 +12,57 @@ defmodule Handbeam.Platform.ProcessRunner do
   @max_output_lines 2_000
   @buffer_limit 102_400
 
+  @doc """
+  Opens a gated shell using the same shell resolution and Port transport as synchronous Bash.
+  No user command executes until the owner sends `go\\n`. EOF before that exits the shell.
+  Job cleanup must be registered before releasing the gate.
+  """
+  def open_gated_bash(command, cwd, opts \\ []) do
+    with {:ok, shell} <- ShellResolver.resolve(opts) do
+      options = [:binary, :exit_status, :use_stdio, :stderr_to_stdout, :hide]
+      options = if cwd, do: [{:cd, String.to_charlist(cwd)} | options], else: options
+
+      script =
+        "printf 'handbeam-ready\\n'; IFS= read -r gate && [ \"$gate\" = go ] || exit 125; eval \"$1\""
+
+      try do
+        port =
+          Port.open(
+            {:spawn_executable, shell.path},
+            [{:args, shell.args ++ [script, "handbeam-job", command]} | options]
+          )
+
+        deadline =
+          System.monotonic_time(:millisecond) + Keyword.get(opts, :startup_timeout, 1_000)
+
+        case await_gate(port, "", deadline) do
+          :ok ->
+            {:ok, port, get_os_pid(port)}
+
+          :error ->
+            safe_close_port(port)
+            {:error, "Job shell did not reach its startup gate"}
+        end
+      rescue
+        _ -> {:error, "Failed to open job shell"}
+      end
+    end
+  end
+
+  # Port.open may return before the OS child has established its own session.
+  # A shell handshake, not a sleep/retry, makes group verification deterministic.
+  defp await_gate(_port, "handbeam-ready\n", _deadline), do: :ok
+  defp await_gate(_port, output, _deadline) when byte_size(output) >= 15, do: :error
+
+  defp await_gate(port, output, deadline) do
+    receive do
+      {^port, {:data, data}} -> await_gate(port, output <> data, deadline)
+      {^port, {:exit_status, _}} -> :error
+    after
+      max(0, deadline - System.monotonic_time(:millisecond)) -> :error
+    end
+  end
+
   @type run_meta :: %{
           optional(:exit_code) => non_neg_integer(),
           timed_out: boolean()

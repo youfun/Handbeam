@@ -336,7 +336,7 @@ defmodule Handbeam.Agent.Turn do
         max_turns: state.config.max_turns
       }
 
-      case HookPipeline.run(session_id, {:before_agent_start, payload}) do
+      case run_extension_hook(state, session_id, {:before_agent_start, payload}) do
         {:block, reason} ->
           %{state | status: :halted, error: "Blocked by extension: #{reason}"}
 
@@ -376,7 +376,7 @@ defmodule Handbeam.Agent.Turn do
         system_prompt: provider_config.system_prompt
       }
 
-      case HookPipeline.run(session_id, {:context, payload}) do
+      case run_extension_hook(state, session_id, {:context, payload}) do
         {:transform, transformed} ->
           # Request-scoped only: outbound messages + system_prompt for this
           # provider call. Durable State / transcript stay untouched.
@@ -406,6 +406,11 @@ defmodule Handbeam.Agent.Turn do
   end
 
   # ── Middleware helper ──
+
+  defp run_extension_hook(%State{config: %{delegated?: true}}, _session_id, _event),
+    do: :ok
+
+  defp run_extension_hook(_state, session_id, event), do: HookPipeline.run(session_id, event)
 
   defp mw_run(%State{} = state, hook) do
     middleware = state.config.middleware || []
@@ -601,6 +606,8 @@ defmodule Handbeam.Agent.Turn do
         if is_function(on_chunk, 1), do: Map.put(pc, :on_chunk, on_chunk), else: pc
       end)
 
+    authorized_tools = Executor.authorized_tools(state.config)
+
     tool_defs =
       Keyword.get(opts, :session_id)
       |> case do
@@ -608,6 +615,7 @@ defmodule Handbeam.Agent.Turn do
         sid -> Handbeam.Tool.Registry.tool_defs_for_session(sid)
       end
       |> Handbeam.MCP.Access.filter(state.config.context)
+      |> Enum.filter(&(&1.name in authorized_tools))
 
     # context hook — extensions can filter/modify messages and system_prompt
     # for this provider call only (does NOT modify persistent state/transcript)
@@ -655,6 +663,7 @@ defmodule Handbeam.Agent.Turn do
           |> State.put_provider_response_metadata(Map.get(response, :response_metadata, %{}))
 
         emit(opts, :usage_updated, %{usage: state.usage})
+        if state.config.delegated?, do: emit(opts, :delegation_usage, state.usage)
 
         state = mw_run(state, :after_tool_request)
 
@@ -683,6 +692,7 @@ defmodule Handbeam.Agent.Turn do
           |> State.put_provider_response_metadata(Map.get(response, :response_metadata, %{}))
 
         emit(opts, :usage_updated, %{usage: state.usage})
+        if state.config.delegated?, do: emit(opts, :delegation_usage, state.usage)
 
         state = mw_run(state, :after_completion)
 
@@ -1042,7 +1052,8 @@ defmodule Handbeam.Agent.Turn do
     {blocked_calls, allowed_calls_w_ctx} =
       if session_id do
         Enum.reduce(tool_calls, {[], []}, fn call, {blocked, allowed} ->
-          case HookPipeline.run(
+          case run_extension_hook(
+                 state,
                  session_id,
                  {:tool_call,
                   %{

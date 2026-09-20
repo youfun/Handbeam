@@ -147,6 +147,34 @@ defmodule Handbeam.Agent.RunnerTest do
     end)
   end
 
+  test "cancel acknowledges completion before scheduling supervisor teardown" do
+    {:ok, conversation} = Handbeam.ConversationStore.create("default")
+    sid = conversation["id"]
+
+    assert {:ok, %{run_pid: runner}} =
+             Coordinator.add_message(
+               sid,
+               "hello",
+               opts(provider: BlockingProvider, provider_config: %{notify: self()})
+             )
+
+    assert_receive {:blocking_provider_started, _task_pid}
+    ref = Process.monitor(runner)
+    parent = self()
+    supervisor = Handbeam.AgentRunTaskSupervisor
+    :ok = :sys.suspend(supervisor)
+
+    try do
+      spawn_link(fn -> send(parent, {:cancel_result, Coordinator.cancel(sid)}) end)
+      assert_receive {:cancel_result, :ok}, 1_000
+      assert %{meta: %{running?: false}} = Session.snapshot(sid)
+    after
+      :sys.resume(supervisor)
+    end
+
+    assert_receive {:DOWN, ^ref, :process, ^runner, :shutdown}, 1_000
+  end
+
   test "cancel marks durable in-flight tools after task shutdown" do
     {:ok, conversation} = Handbeam.ConversationStore.create("default", timeline: [])
     sid = conversation["id"]

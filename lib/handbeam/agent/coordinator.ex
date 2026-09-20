@@ -24,7 +24,8 @@ defmodule Handbeam.Agent.Coordinator do
              is_list(opts) do
     {content, opts} = stamp_message_ids(content, opts)
 
-    with :ok <- validate_required_opts(opts),
+    with :ok <- validate_conversation_access(conversation_id, opts),
+         :ok <- validate_required_opts(opts),
          :ok <- validate_model_policy(opts),
          opts <- ensure_run_id(opts),
          {:ok, _pid} <- Session.start_or_get(session_id: conversation_id, model: opts[:model]) do
@@ -64,7 +65,8 @@ defmodule Handbeam.Agent.Coordinator do
       when is_binary(conversation_id) and
              (is_binary(content) or is_struct(content, Handbeam.Agent.Message)) and
              is_list(opts) do
-    with :ok <- validate_required_opts(opts),
+    with :ok <- validate_conversation_access(conversation_id, opts),
+         :ok <- validate_required_opts(opts),
          :ok <- validate_model_policy(opts),
          opts <- ensure_run_id(opts),
          {:ok, _pid} <- Session.start_or_get(session_id: conversation_id, model: opts[:model]),
@@ -138,7 +140,11 @@ defmodule Handbeam.Agent.Coordinator do
   @spec resume(String.t(), [map()]) :: :ok | {:error, term()}
   def resume(conversation_id, decisions)
       when is_binary(conversation_id) and is_list(decisions) do
-    Handbeam.Agent.Runner.resume(conversation_id, decisions)
+    if Handbeam.ConversationStore.internal?(conversation_id) do
+      {:error, :internal_conversation}
+    else
+      Handbeam.Agent.Runner.resume(conversation_id, decisions)
+    end
   end
 
   defp validate_required_opts(opts) do
@@ -148,6 +154,16 @@ defmodule Handbeam.Agent.Coordinator do
       :ok
     else
       {:error, {:missing_opts, missing}}
+    end
+  end
+
+  defp validate_conversation_access(id, opts) do
+    if Handbeam.ConversationStore.internal?(id) and
+         not (opts[:delegated?] == true and is_pid(opts[:delegation_owner]) and
+                opts[:delegation_owner] == Process.whereis(Handbeam.Agent.Delegation)) do
+      {:error, :internal_conversation}
+    else
+      :ok
     end
   end
 

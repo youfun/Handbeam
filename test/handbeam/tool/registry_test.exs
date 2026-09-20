@@ -87,6 +87,7 @@ defmodule Handbeam.Tool.RegistryTest do
       assert "browser" in names
       assert "mix_project" in names
       assert "git" in names
+      for tool <- ~w(web_fetch skill task job_status job_cancel), do: assert(tool in names)
       refute "preview_serve" in names
       assert :ok = Registry.register(Handbeam.Tool.Builtin.Browser)
       assert {:ok, entry} = Registry.get("browser")
@@ -110,6 +111,7 @@ defmodule Handbeam.Tool.RegistryTest do
       assert "android_open_file" in names
       assert "android_share_file" in names
       assert "run_elixir_script" in names
+      for tool <- ~w(web_fetch skill task job_status job_cancel), do: assert(tool in names)
       assert "mix_project" in names
       assert "git" in names
       refute "bash" in names

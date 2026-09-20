@@ -23,6 +23,8 @@ defmodule Handbeam.Tool.Builtin.RunElixirScript do
   @impl true
   def description do
     "Run a workspace .exs file on the installed OTP/Elixir VM.\n\n" <>
+      "Set job=true for long work without a Mix project. Wait briefly, then query job_status " <>
+      "until finished before ending the run. No shell or restart recovery. Host-privileged, not a sandbox.\n\n" <>
       Handbeam.Tool.ScriptEnvironment.describe()
   end
 
@@ -31,6 +33,8 @@ defmodule Handbeam.Tool.Builtin.RunElixirScript do
     %{
       type: "object",
       properties: %{
+        job: %{type: "boolean", default: false},
+        wait_ms: %{type: "integer", minimum: 1, default: 1_000},
         path: %{
           type: "string",
           description:
@@ -45,7 +49,7 @@ defmodule Handbeam.Tool.Builtin.RunElixirScript do
         timeout_ms: %{
           type: "integer",
           description:
-            "Script timeout in milliseconds (default 30000, max 60000; aligned with the agent tool timeout).",
+            "Execution limit: default 30000ms, synchronous max 60000ms; job mode max 3600000ms. Job wait is separate.",
           default: @default_timeout_ms
         }
       },
@@ -54,7 +58,7 @@ defmodule Handbeam.Tool.Builtin.RunElixirScript do
   end
 
   @impl true
-  def max_result_chars, do: @max_stdout_bytes + @max_value_bytes + 2_000
+  def max_result_chars, do: 105_000
 
   @impl true
   def concurrent?, do: false
@@ -65,10 +69,30 @@ defmodule Handbeam.Tool.Builtin.RunElixirScript do
 
     with {:ok, workspace} <- require_workspace(workspace),
          {:ok, args} <- parse_args(Map.get(input, "args", [])),
-         {:ok, timeout_ms} <- parse_timeout(Map.get(input, "timeout_ms", @default_timeout_ms)),
+         {:ok, timeout_ms} <-
+           parse_timeout(
+             Map.get(input, "timeout_ms", @default_timeout_ms),
+             Map.get(input, "job", false)
+           ),
          {:ok, resolved} <- resolve_script(path, workspace),
          {:ok, source} <- read_source(resolved) do
-      run_script(resolved, source, args, workspace, timeout_ms)
+      if input["job"] == true do
+        Handbeam.Jobs.start_beam(
+          :script,
+          fn sink ->
+            capture = ElixirScriptIO.start_link(@max_stdout_bytes, sink)
+            Process.group_leader(self(), capture)
+            result = eval_source(source, [args: args, workspace: workspace], resolved)
+            format_result(resolved, result, ElixirScriptIO.snapshot(capture))
+          end,
+          timeout_ms,
+          Map.get(input, "wait_ms", 1_000),
+          context
+        )
+        |> Handbeam.Jobs.format()
+      else
+        run_script(resolved, source, args, workspace, timeout_ms)
+      end
     end
   end
 
@@ -91,10 +115,15 @@ defmodule Handbeam.Tool.Builtin.RunElixirScript do
 
   defp parse_args(_), do: {:error, "args must be a list of strings"}
 
-  defp parse_timeout(ms) when is_integer(ms) and ms >= 1 and ms <= @max_timeout_ms, do: {:ok, ms}
+  defp parse_timeout(ms, true) when is_integer(ms) and ms in 1..3_600_000, do: {:ok, ms}
 
-  defp parse_timeout(_),
-    do: {:error, "timeout_ms must be an integer from 1 to #{@max_timeout_ms}"}
+  defp parse_timeout(ms, false) when is_integer(ms) and ms >= 1 and ms <= @max_timeout_ms,
+    do: {:ok, ms}
+
+  defp parse_timeout(_, job),
+    do:
+      {:error,
+       "job must be boolean; timeout_ms must be 1..#{if job == true, do: 3_600_000, else: @max_timeout_ms}"}
 
   defp resolve_script(path, workspace) do
     with {:ok, resolved} <- Handbeam.Workspace.resolve(path, workspace),

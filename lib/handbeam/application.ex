@@ -32,6 +32,9 @@ defmodule Handbeam.Application do
         Handbeam.Browser.Display,
         Handbeam.Tool.Registry,
         Handbeam.Workspace.MixOwner,
+        Handbeam.Jobs.Cleaner,
+        {DynamicSupervisor, name: Handbeam.Jobs.BeamSupervisor, strategy: :one_for_one},
+        Handbeam.Jobs.Server,
         {Handbeam.Extension.Registry, name: Handbeam.Extension.Registry},
         Handbeam.Extension.Supervisor,
         Handbeam.Extension.Mount,
@@ -45,6 +48,7 @@ defmodule Handbeam.Application do
           Handbeam.SessionSupervisor,
           Handbeam.AgentRunSupervisor,
           {Task.Supervisor, name: Handbeam.AgentRunTaskSupervisor},
+          Handbeam.Agent.Delegation,
           Handbeam.Runtime.TaskTracker
         ] ++
         mcp_children() ++

@@ -39,7 +39,7 @@ defmodule Handbeam.Workspace.MixProject do
           {:ok, String.t(), map()} | {:error, String.t(), map()}
   def perform(action, project_path, opts \\ []) do
     timeout_ms = Keyword.get(opts, :timeout_ms, @default_timeout_ms)
-    capture = ElixirScriptIO.start_link(@max_stdout_bytes)
+    capture = ElixirScriptIO.start_link(@max_stdout_bytes, opts[:on_output])
 
     try do
       result =

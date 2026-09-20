@@ -32,6 +32,11 @@ defmodule Handbeam.Agent.Config do
     :max_tokens,
     :compaction,
     :on_compaction,
+    :allowed_tools,
+    :runner_pid,
+    :run_id,
+    skill_paths: [],
+    delegated?: false,
     context: @default_context,
     tool_timeout: @default_tool_timeout
   ]
@@ -45,6 +50,11 @@ defmodule Handbeam.Agent.Config do
           max_budget_cents: pos_integer() | nil,
           timeout_ms: pos_integer(),
           tool_timeout: pos_integer(),
+          allowed_tools: [String.t()] | nil,
+          runner_pid: pid() | nil,
+          run_id: String.t() | nil,
+          skill_paths: [String.t()],
+          delegated?: boolean(),
           until_tool: String.t() | nil,
           reasoning_level: String.t(),
           memory: module() | nil,
@@ -90,6 +100,11 @@ defmodule Handbeam.Agent.Config do
 
     %__MODULE__{
       provider: provider,
+      allowed_tools: Keyword.get(opts, :allowed_tools),
+      runner_pid: Keyword.get(opts, :runner_pid),
+      run_id: Keyword.get(opts, :run_id),
+      skill_paths: List.wrap(Keyword.get(opts, :skill_paths, [])),
+      delegated?: Keyword.get(opts, :delegated?, false),
       system_prompt: build_system_prompt(opts),
       working_directory: Keyword.get(opts, :working_directory, File.cwd!()),
       model: Keyword.get(opts, :model, @default_model),
@@ -99,7 +114,11 @@ defmodule Handbeam.Agent.Config do
       tool_timeout: Keyword.get(opts, :tool_timeout, @default_tool_timeout),
       until_tool: Keyword.get(opts, :until_tool),
       reasoning_level:
-        Keyword.get(opts, :reasoning_level, Handbeam.Settings.ModelAISettings.defaults().reasoning),
+        Keyword.get(
+          opts,
+          :reasoning_level,
+          Handbeam.Settings.ModelAISettings.defaults().reasoning
+        ),
       memory: Keyword.get(opts, :memory),
       context: build_context(opts),
       middleware: Keyword.get(opts, :middleware, default_middleware()),
@@ -130,10 +149,14 @@ defmodule Handbeam.Agent.Config do
     - default → `Handbeam.Agent.Provider.OpenAICompat`
   """
   @spec resolve_provider_from_api(atom() | nil, String.t() | nil, String.t() | nil) :: module()
-  def resolve_provider_from_api(:anthropic, _model, _provider), do: Handbeam.Agent.Provider.Anthropic
+  def resolve_provider_from_api(:anthropic, _model, _provider),
+    do: Handbeam.Agent.Provider.Anthropic
 
   def resolve_provider_from_api(_api, _model, "zenmux"), do: Handbeam.Agent.Provider.ZenMux
-  def resolve_provider_from_api(_api, _model, "openrouter"), do: Handbeam.Agent.Provider.OpenRouter
+
+  def resolve_provider_from_api(_api, _model, "openrouter"),
+    do: Handbeam.Agent.Provider.OpenRouter
+
   def resolve_provider_from_api(_api, _model, "deepseek"), do: Handbeam.Agent.Provider.DeepSeek
   def resolve_provider_from_api(_api, _model, "stepfun"), do: Handbeam.Agent.Provider.StepFun
 
@@ -273,17 +296,9 @@ defmodule Handbeam.Agent.Config do
   defp load_skills(opts) do
     working_directory = Keyword.get(opts, :working_directory, File.cwd!())
 
-    default_result = Loader.load(workspace: working_directory)
+    result =
+      Loader.load(workspace: working_directory, skill_paths: Keyword.get(opts, :skill_paths, []))
 
-    explicit_result =
-      opts
-      |> Keyword.get(:skill_paths, [])
-      |> List.wrap()
-      |> Enum.reduce(%Loader.LoadResult{}, fn path, acc ->
-        Loader.merge_result(acc, Loader.load_from_dir(path, :explicit))
-      end)
-
-    result = Loader.merge_result(default_result, explicit_result)
     log_skill_diagnostics(result.diagnostics)
 
     result.skills

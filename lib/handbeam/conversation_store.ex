@@ -83,7 +83,7 @@ defmodule Handbeam.ConversationStore do
 
   @doc "List every persisted conversation (full objects for backward compat)."
   @spec list :: [conversation()]
-  def list do
+  def list(opts \\ []) do
     with {:ok, index} <- read_index() do
       entries = Map.get(index, "conversations", [])
 
@@ -95,6 +95,7 @@ defmodule Handbeam.ConversationStore do
       entries
       |> Enum.map(&load_from_index_entry/1)
       |> Enum.reject(&is_nil/1)
+      |> Enum.reject(&(not Keyword.get(opts, :include_internal?, false) and internal?(&1)))
     else
       {:error, :not_found} ->
         dev_log("[ConversationStore] list index not found path=#{index_path()}")
@@ -122,7 +123,7 @@ defmodule Handbeam.ConversationStore do
   def list_for_workspace(workspace_id, opts) do
     include_archived? = Keyword.get(opts, :include_archived?, false)
 
-    list()
+    list(opts)
     |> Enum.filter(&(&1["workspace_id"] == workspace_id))
     |> maybe_filter_archived(include_archived?)
     |> Enum.sort_by(&(&1["updated_at"] || ""), :desc)
@@ -130,11 +131,35 @@ defmodule Handbeam.ConversationStore do
 
   @doc "Get one conversation by id."
   @spec get(String.t()) :: {:ok, conversation()} | {:error, :not_found}
-  def get(id) when is_binary(id) do
+  def get(id, opts \\ []) when is_binary(id) do
     case read_item(id) do
-      {:ok, conversation} -> {:ok, conversation}
-      {:error, _reason} -> {:error, :not_found}
+      {:ok, conversation} ->
+        if accessible?(conversation, opts), do: {:ok, conversation}, else: {:error, :not_found}
+
+      {:error, _reason} ->
+        {:error, :not_found}
     end
+  end
+
+  def internal?(%{"visibility" => "internal"}), do: true
+
+  def internal?(id) when is_binary(id) do
+    case read_meta(id) do
+      {:ok, meta} -> internal?(meta)
+      _ -> false
+    end
+  end
+
+  def internal?(_), do: false
+
+  defp accessible?(conversation, opts) do
+    context = Keyword.get(opts, :access_context, %{})
+
+    not internal?(conversation) or
+      (conversation["parent_conversation_id"] == context[:conversation_id] and
+         conversation["parent_run_id"] == context[:run_id] and
+         conversation["workspace_id"] == context[:workspace_id] and
+         Handbeam.Agent.Delegation.Policy.live_parent?(context))
   end
 
   @doc "Create a new conversation for a workspace."
@@ -145,6 +170,10 @@ defmodule Handbeam.ConversationStore do
     conversation = %{
       "id" => Keyword.get(opts, :id, Ecto.UUID.generate()),
       "workspace_id" => workspace_id,
+      "visibility" => Keyword.get(opts, :visibility, "user"),
+      "parent_conversation_id" => Keyword.get(opts, :parent_conversation_id),
+      "parent_run_id" => Keyword.get(opts, :parent_run_id),
+      "parent_tool_call_id" => Keyword.get(opts, :parent_tool_call_id),
       "title" => Keyword.get(opts, :title, "New chat"),
       "title_source" => Keyword.get(opts, :title_source, "manual"),
       "timeline" => Keyword.get(opts, :timeline, []),
@@ -188,6 +217,21 @@ defmodule Handbeam.ConversationStore do
   @spec upsert(conversation()) :: {:ok, conversation()} | {:error, term()}
   def upsert(conversation) when is_map(conversation) do
     normalized = normalize_conversation(conversation)
+
+    normalized =
+      case read_meta(normalized["id"]) do
+        {:ok, existing} ->
+          Map.merge(
+            normalized,
+            Map.take(
+              existing,
+              ~w(visibility parent_conversation_id parent_run_id parent_tool_call_id delegated_usage)
+            )
+          )
+
+        _ ->
+          normalized
+      end
 
     with :ok <- write_item(normalized),
          :ok <- sync_index_entry(normalized) do
@@ -436,6 +480,21 @@ defmodule Handbeam.ConversationStore do
 
   # ── Index helpers ───────────────────────────────────────────────────────
 
+  @doc "Record each child run's raw usage once, separately from parent provider usage."
+  def record_delegated_usage(conversation_id, child_run_id, usage) do
+    with {:ok, meta} <- read_meta(conversation_id) do
+      write_meta_file(conversation_id, Map.put(meta, "delegated_usage", %{child_run_id => usage}))
+    end
+  end
+
+  @doc "Child usage keyed by child run id; never included in the parent's raw token_usage."
+  def delegated_usage(conversation_id) do
+    case read_meta(conversation_id) do
+      {:ok, meta} -> Map.get(meta, "delegated_usage", %{})
+      _ -> %{}
+    end
+  end
+
   defp read_index do
     File.read(index_path())
     |> case do
@@ -551,6 +610,10 @@ defmodule Handbeam.ConversationStore do
   defp index_entry(conversation) do
     %{
       "id" => conversation["id"],
+      "visibility" => conversation["visibility"] || "user",
+      "parent_conversation_id" => conversation["parent_conversation_id"],
+      "parent_run_id" => conversation["parent_run_id"],
+      "parent_tool_call_id" => conversation["parent_tool_call_id"],
       "workspace_id" => conversation["workspace_id"],
       "title" => conversation["title"],
       "title_source" => conversation["title_source"],
@@ -620,12 +683,27 @@ defmodule Handbeam.ConversationStore do
   end
 
   defp write_meta_file(id, meta) do
-    atomic_write_json(meta_path(id), meta)
+    :global.trans({{__MODULE__, :meta, id}, self()}, fn ->
+      children =
+        case read_meta(id) do
+          {:ok, existing} -> Map.get(existing, "delegated_usage", %{})
+          _ -> %{}
+        end
+
+      # Preserve immutable child facts even when another writer read older meta.
+      children = Map.merge(Map.get(meta, "delegated_usage", %{}), children)
+      atomic_write_json(meta_path(id), Map.put(meta, "delegated_usage", children))
+    end)
   end
 
   defp extract_meta(conversation) do
     %{
       "id" => conversation["id"],
+      "visibility" => conversation["visibility"] || "user",
+      "parent_conversation_id" => conversation["parent_conversation_id"],
+      "parent_run_id" => conversation["parent_run_id"],
+      "parent_tool_call_id" => conversation["parent_tool_call_id"],
+      "delegated_usage" => conversation["delegated_usage"] || %{},
       "workspace_id" => conversation["workspace_id"],
       "title" => conversation["title"],
       "title_source" => conversation["title_source"],
@@ -758,6 +836,11 @@ defmodule Handbeam.ConversationStore do
 
     %{
       "id" => string_value(conversation, "id") || Ecto.UUID.generate(),
+      "visibility" => string_value(conversation, "visibility") || "user",
+      "parent_conversation_id" => string_value(conversation, "parent_conversation_id"),
+      "parent_run_id" => string_value(conversation, "parent_run_id"),
+      "parent_tool_call_id" => string_value(conversation, "parent_tool_call_id"),
+      "delegated_usage" => value(conversation, "delegated_usage") || %{},
       "workspace_id" => string_value(conversation, "workspace_id"),
       "title" => string_value(conversation, "title") || "New chat",
       "title_source" => string_value(conversation, "title_source") || "manual",
