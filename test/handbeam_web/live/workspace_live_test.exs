@@ -26,6 +26,20 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
 
   alias Handbeam.PubSub.AgentEvent
 
+  defmodule CleanupProvider do
+    @behaviour Handbeam.Agent.Provider
+
+    def complete(_messages, _tools, config) do
+      send(config.notify, {:cleanup_provider_waiting, self()})
+
+      receive do
+        :finish -> {:ok, %{stop_reason: :end_turn, messages: [], usage: %{}}}
+      end
+    end
+
+    def stream(messages, tools, config, _on_chunk), do: complete(messages, tools, config)
+  end
+
   setup do
     {:ok, tracker} = Agent.start(fn -> %{views: MapSet.new(), homes: []} end)
     Process.put(:workspace_live_test_tracker, tracker)
@@ -147,6 +161,15 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       end
     end)
 
+    # Runner's async_nolink tasks belong to a different supervisor, not to
+    # RunSupervisor or the LiveView ancestry. They can outlive both owners.
+    Task.Supervisor.children(Handbeam.AgentRunTaskSupervisor)
+    |> Enum.each(fn pid ->
+      stop_and_wait(pid, fn ->
+        Task.Supervisor.terminate_child(Handbeam.AgentRunTaskSupervisor, pid)
+      end)
+    end)
+
     Process.list()
     |> Enum.filter(fn pid ->
       case Process.info(pid, :dictionary) do
@@ -165,7 +188,10 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
     # Session forwards lifecycle events, TaskTracker reads conversation metadata,
     # and Journal may create the storage root while serving those reads.
     Registry.select(Handbeam.SessionRegistry, [{{:"$1", :_, :_}, [], [:"$1"]}])
-    |> Enum.each(&Handbeam.PubSub.Session.snapshot/1)
+    |> Enum.each(fn id ->
+      Handbeam.PubSub.Session.snapshot(id)
+      :ok = Handbeam.SessionSupervisor.stop_session(id)
+    end)
 
     GenServer.call(Handbeam.Runtime.TaskTracker, :snapshot)
 
@@ -173,6 +199,30 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       Handbeam.ConversationTranscriptStore.Journal.invalidate(
         Handbeam.ConversationStore.index_path()
       )
+  end
+
+  test "cleanup stops the unlinked provider task even after its Runner has exited" do
+    {:ok, conversation} = Handbeam.ConversationStore.create("default")
+    id = conversation["id"]
+
+    assert {:ok, %{action: :started}} =
+             Handbeam.Agent.Coordinator.add_message(id, "hold",
+               provider: CleanupProvider,
+               provider_config: %{notify: self()},
+               model: "cleanup-fixture",
+               workspace_path: File.cwd!(),
+               source: :cli,
+               streaming: false,
+               tools: []
+             )
+
+    assert_receive {:cleanup_provider_waiting, task}, 1_000
+    ref = Process.monitor(task)
+    on_exit(fn -> Task.Supervisor.terminate_child(Handbeam.AgentRunTaskSupervisor, task) end)
+    :ok = Handbeam.AgentRunSupervisor.stop_run(id)
+    assert Process.alive?(task)
+    :ok = stop_test_runtime!(Process.get(:workspace_live_test_tracker))
+    assert_receive {:DOWN, ^ref, :process, ^task, _}, 1_000
   end
 
   test "cleanup waits for queued lifecycle consumers before removing their HOME" do
