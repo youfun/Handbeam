@@ -51,6 +51,7 @@
         </svg>
       </button>
       <button
+        :if={@terminal_available?}
         id="mobile-open-terminal"
         phx-click="select_mobile_right_panel_view"
         phx-value-view="terminal"
@@ -1113,6 +1114,7 @@
           {gettext("Files")}
         </button>
         <button
+          :if={@terminal_available?}
           type="button"
           phx-click="select_right_panel_view"
           phx-value-view="terminal"
@@ -1296,7 +1298,7 @@
         </div>
       </div>
 
-      <div :if={@right_panel_view == :terminal} class="flex-1 min-h-0">
+      <div :if={@terminal_available? and @right_panel_view == :terminal} class="flex-1 min-h-0">
         <.live_component
           module={HandbeamWeb.Live.TerminalPanel}
           id="terminal-panel"
@@ -1580,6 +1582,7 @@
   >
     <div id="status-bar-left" class="flex items-center space-x-4">
       <button
+        :if={@terminal_available?}
         phx-click="toggle_terminal"
         class={[
           "text-xs transition-colors px-1.5 py-0.5 rounded",

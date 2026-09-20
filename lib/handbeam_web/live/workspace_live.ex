@@ -100,6 +100,7 @@ defmodule HandbeamWeb.WorkspaceLive do
       |> assign(:file_browser_path, nil)
       |> assign(:sandbox_workspace?, sandbox_workspace?())
       |> subscribe_workspace_import()
+      |> assign(:terminal_available?, Handbeam.Host.terminal?())
       |> assign(:show_terminal, false)
       |> assign(:right_panel_view, :files)
       |> assign(:workspace_tree, %{})
@@ -574,10 +575,7 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   def handle_event("select_mobile_right_panel_view", %{"view" => "terminal"}, socket) do
-    {:noreply,
-     socket
-     |> show_terminal_panel()
-     |> assign(:mobile_right_panel_open, true)}
+    {:noreply, show_terminal_panel(socket, true)}
   end
 
   def handle_event("close_mobile_right_panel", _params, socket) do
@@ -1070,7 +1068,15 @@ defmodule HandbeamWeb.WorkspaceLive do
     end
   end
 
-  defp show_terminal_panel(socket) do
+  defp show_terminal_panel(socket, mobile? \\ false) do
+    if Handbeam.Host.terminal?() do
+      open_terminal_panel(socket, mobile?)
+    else
+      socket
+    end
+  end
+
+  defp open_terminal_panel(socket, mobile?) do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(
         Handbeam.PubSub,
@@ -1082,6 +1088,7 @@ defmodule HandbeamWeb.WorkspaceLive do
     |> assign(:show_terminal, true)
     |> assign(:right_panel_view, :terminal)
     |> assign(:right_panel_collapsed, false)
+    |> assign(:mobile_right_panel_open, mobile? or socket.assigns.mobile_right_panel_open)
   end
 
   @impl true

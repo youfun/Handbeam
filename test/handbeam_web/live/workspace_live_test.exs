@@ -1460,6 +1460,39 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       end
     end
 
+    test "hosts without terminal capability hide every entry and reject direct open events", %{
+      conn: conn
+    } do
+      previous = Application.get_env(:handbeam, :host)
+      Handbeam.Host.put!(Map.put(previous || %{}, :terminal, false))
+
+      on_exit(fn ->
+        if previous,
+          do: Application.put_env(:handbeam, :host, previous),
+          else: Application.delete_env(:handbeam, :host)
+      end)
+
+      {:ok, view, _html} = live(conn, "/")
+      assert has_element?(view, "#mobile-open-files")
+      refute has_element?(view, "#mobile-open-terminal")
+      refute has_element?(view, "button[phx-value-view='terminal']")
+      refute has_element?(view, "button[phx-click='toggle_terminal']")
+
+      for {event, params} <- [
+            {"select_right_panel_view", %{"view" => "terminal"}},
+            {"select_mobile_right_panel_view", %{"view" => "terminal"}},
+            {"toggle_terminal", %{}}
+          ] do
+        render_click(view, event, params)
+        refute has_element?(view, "#terminal-panel")
+        refute has_element?(view, "#workspace-panel.mobile-panel-open")
+      end
+
+      view |> element("#mobile-open-files") |> render_click()
+      assert has_element?(view, "#workspace-panel.mobile-panel-open")
+      assert has_element?(view, ".workspace-panel-tab.active", "Files")
+    end
+
     test "terminal opens inside the right workspace panel instead of a bottom dock", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/")
 
