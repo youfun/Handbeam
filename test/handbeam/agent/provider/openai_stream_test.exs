@@ -18,7 +18,8 @@ defmodule Handbeam.Agent.Provider.OpenAIStreamTest do
       tool_calls: %{},
       finish_reason: nil,
       usage: %{},
-      on_chunk: fn _ -> :ok end
+      on_chunk: fn _ -> :ok end,
+      tool_defs: []
     }
   end
 
@@ -372,6 +373,100 @@ defmodule Handbeam.Agent.Provider.OpenAIStreamTest do
                OpenAIStream.build_response(acc)
 
       assert Enum.all?(msg.content, &(&1[:type] != "text" or &1[:text] == ""))
+    end
+
+    test "recovers a missing streamed tool name when arguments match one definition" do
+      args = Jason.encode!(%{url: "https://example.com"})
+
+      acc = %{
+        new_acc()
+        | tool_calls: %{0 => %{id: "", name: nil, arguments_buffer: args}},
+          finish_reason: "tool_calls",
+          tool_defs: [
+            %{
+              "type" => "function",
+              "function" => %{
+                "name" => "web_fetch",
+                "parameters" => %{
+                  "type" => "object",
+                  "properties" => %{"url" => %{"type" => "string"}},
+                  "required" => ["url"]
+                }
+              }
+            },
+            %{
+              "type" => "function",
+              "function" => %{
+                "name" => "read",
+                "parameters" => %{
+                  "type" => "object",
+                  "properties" => %{"file_path" => %{"type" => "string"}},
+                  "required" => ["file_path"]
+                }
+              }
+            }
+          ]
+      }
+
+      assert {:ok, %{stop_reason: :tool_use, messages: [msg]}} = OpenAIStream.build_response(acc)
+      tc = Enum.find(msg.content, &(&1[:type] == "tool_use"))
+      assert tc[:name] == "web_fetch"
+      assert tc[:id] == "call_0"
+      assert tc[:input]["url"] == "https://example.com"
+    end
+
+    test "recovers a missing name from atom-keyed tool definitions" do
+      args = Jason.encode!(%{url: "https://example.com"})
+
+      acc = %{
+        new_acc()
+        | tool_calls: %{0 => %{id: "", name: nil, arguments_buffer: args}},
+          finish_reason: "tool_calls",
+          tool_defs: [
+            %{
+              type: "function",
+              function: %{
+                name: "web_fetch",
+                parameters: %{
+                  type: "object",
+                  properties: %{url: %{type: "string"}},
+                  required: ["url"]
+                }
+              }
+            }
+          ]
+      }
+
+      assert {:ok, %{messages: [msg]}} = OpenAIStream.build_response(acc)
+      assert Enum.find(msg.content, &(&1[:type] == "tool_use"))[:name] == "web_fetch"
+    end
+
+    test "drops a missing tool name when more than one definition matches" do
+      args = Jason.encode!(%{url: "https://example.com"})
+
+      url_tool = fn name ->
+        %{
+          "type" => "function",
+          "function" => %{
+            "name" => name,
+            "parameters" => %{
+              "type" => "object",
+              "properties" => %{"url" => %{"type" => "string"}},
+              "required" => ["url"]
+            }
+          }
+        }
+      end
+
+      acc = %{
+        new_acc()
+        | tool_calls: %{0 => %{id: "", name: "", arguments_buffer: args}},
+          finish_reason: "tool_calls",
+          tool_defs: [url_tool.("web_fetch"), url_tool.("android_open_url")]
+      }
+
+      assert {:ok, %{messages: [msg]}} = OpenAIStream.build_response(acc)
+      refute Enum.any?(msg.content, &(&1[:type] == "tool_use"))
     end
 
     test "returns error for invalid tool call JSON" do

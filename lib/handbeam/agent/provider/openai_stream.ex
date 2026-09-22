@@ -31,6 +31,8 @@ defmodule Handbeam.Agent.Provider.OpenAIStream do
   @spec stream(String.t(), [{String.t(), String.t()}], map(), (String.t() -> :ok), keyword()) ::
           {:ok, Handbeam.Agent.Provider.completion_response()} | {:error, term()}
   def stream(url, headers, body, on_chunk, req_options) when is_function(on_chunk, 1) do
+    tool_defs = tool_defs_from_body(body)
+
     body =
       body
       |> Map.put("stream", true)
@@ -43,7 +45,8 @@ defmodule Handbeam.Agent.Provider.OpenAIStream do
       tool_calls: %{},
       finish_reason: nil,
       usage: %{},
-      on_chunk: on_chunk
+      on_chunk: on_chunk,
+      tool_defs: tool_defs
     }
 
     stream_handler = SSE.req_stream_handler(initial_acc, &handle_event/2)
@@ -200,22 +203,28 @@ defmodule Handbeam.Agent.Provider.OpenAIStream do
             args -> Handbeam.JSON.decode(args)
           end
 
-        case input_result do
-          {:ok, input} when is_binary(tc.name) and tc.name != "" ->
+        name = resolved_tool_name(tc, input_result, acc)
+
+        case {input_result, name} do
+          {{:ok, input}, name} when is_binary(name) and name != "" ->
             # Streaming tool_call deltas from some providers (StepFun)
-            # omit the top-level id field. Generate one when missing so
-            # the downstream to_openai_messages can serialize valid tool_calls.
-            id = tc.id || "call_#{index}"
-            block = %{type: "tool_use", id: id, name: tc.name, input: input}
+            # omit the top-level id and function name. Generate an id when
+            # missing. Recover a name only when the arguments match exactly
+            # one tool definition from this request.
+            id = present(tc.id) || "call_#{index}"
+            block = %{type: "tool_use", id: id, name: name, input: input}
             {:cont, [block | blocks]}
 
-          {:ok, _input} ->
+          {{:ok, _input}, _} ->
             dev_log(
               "[OpenAIStream] dropping tool_call with missing name " <>
                 "index=#{inspect(index)} id=#{inspect(tc.id)} args=#{inspect(tc.arguments_buffer)}"
             )
 
             {:cont, blocks}
+
+          {{:error, reason}, _} ->
+            {:halt, {:error, "Invalid tool call JSON for #{tc.name}: #{inspect(reason)}"}}
 
           {:error, reason} ->
             {:halt, {:error, "Invalid tool call JSON for #{tc.name}: #{inspect(reason)}"}}
@@ -239,6 +248,102 @@ defmodule Handbeam.Agent.Provider.OpenAIStream do
          }}
     end
   end
+
+  defp resolved_tool_name(tc, {:ok, input}, acc) when is_map(input) do
+    case present(tc.name) do
+      name when is_binary(name) -> name
+      _ -> unique_tool_name(input, Map.get(acc, :tool_defs, []))
+    end
+  end
+
+  defp resolved_tool_name(_tc, _input_result, _acc), do: nil
+
+  defp unique_tool_name(input, tool_defs) when is_map(input) and is_list(tool_defs) do
+    matches =
+      Enum.filter(tool_defs, fn defn ->
+        schema = function_schema(defn)
+        required = required_keys(schema)
+        properties = schema_map(schema, "properties")
+
+        required != [] and
+          Enum.all?(required, &Map.has_key?(input, &1)) and
+          Enum.all?(Map.keys(input), &property?(properties, &1))
+      end)
+
+    case matches do
+      [defn] -> function_name(defn)
+      _ -> nil
+    end
+  end
+
+  defp unique_tool_name(_input, _tool_defs), do: nil
+
+  defp tool_defs_from_body(body) when is_map(body) do
+    body
+    |> Map.get("tools", Map.get(body, :tools, []))
+    |> List.wrap()
+  end
+
+  defp tool_defs_from_body(_), do: []
+
+  defp function_schema(%{"function" => function}) when is_map(function),
+    do: schema_map(function, "parameters")
+
+  defp function_schema(%{function: function}) when is_map(function),
+    do: schema_map(function, "parameters")
+
+  defp function_schema(_), do: %{}
+
+  defp function_name(%{"function" => function}) when is_map(function),
+    do: present(schema_get(function, "name"))
+
+  defp function_name(%{function: function}) when is_map(function),
+    do: present(schema_get(function, "name"))
+
+  defp function_name(_), do: nil
+
+  defp required_keys(schema) do
+    schema
+    |> schema_map("required")
+    |> Enum.filter(&is_binary/1)
+  end
+
+  defp schema_map(map, key) when is_map(map) do
+    case schema_get(map, key) do
+      value when is_map(value) or is_list(value) -> value
+      _ -> if key == "required", do: [], else: %{}
+    end
+  end
+
+  defp schema_map(_, "required"), do: []
+  defp schema_map(_, _), do: %{}
+
+  defp property?(properties, key) when is_map(properties) and is_binary(key) do
+    Map.has_key?(properties, key) or
+      (existing_atom?(key) and Map.has_key?(properties, String.to_existing_atom(key)))
+  end
+
+  defp property?(_, _), do: false
+
+  defp schema_get(map, key) when is_map(map) and is_binary(key) do
+    Map.get(map, key) || Map.get(map, schema_atom(key))
+  end
+
+  defp schema_atom("function"), do: :function
+  defp schema_atom("parameters"), do: :parameters
+  defp schema_atom("properties"), do: :properties
+  defp schema_atom("required"), do: :required
+  defp schema_atom("name"), do: :name
+
+  defp existing_atom?(key) do
+    _ = String.to_existing_atom(key)
+    true
+  rescue
+    ArgumentError -> false
+  end
+
+  defp present(value) when is_binary(value) and value != "", do: value
+  defp present(_), do: nil
 
   defp parse_finish_reason("stop"), do: :end_turn
   defp parse_finish_reason("tool_calls"), do: :tool_use

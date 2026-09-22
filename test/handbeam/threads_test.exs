@@ -179,8 +179,10 @@ defmodule Handbeam.ThreadsTest do
     assert {:ok, []} = ConversationTranscriptStore.list(c.target)
   end
 
-  test "explicit opt-in, child cap, trusted parent and immutable read-only metadata", c do
+  test "default permission allows a child; explicit denial and the child cap still apply", c do
     input = %{"title" => "Audit", "message" => "Inspect", "request_id" => "child"}
+    ConversationStore.update_meta(c.source, allow_thread_wakeup: nil)
+    refute Collaboration.create(input, c.context) == {:error, :delegation_not_permitted}
     ConversationStore.update_meta(c.source, allow_thread_wakeup: false)
     assert {:error, :delegation_not_permitted} = Collaboration.create(input, c.context)
     ConversationStore.update_meta(c.source, allow_thread_wakeup: true)

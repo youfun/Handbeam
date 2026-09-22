@@ -104,7 +104,7 @@ defmodule HandbeamWeb.ThreadHandoffTest do
     {:ok, _} = ConversationStore.update_meta(c.parent, allow_thread_wakeup: true)
     {:ok, view, _} = live(c.conn, "/w/#{c.ws}/c/#{c.parent}")
 
-    assert has_element?(view, "button[phx-click='toggle_thread_collaboration']", "enabled")
+    refute has_element?(view, "button[phx-click='toggle_thread_collaboration']")
     assert has_element?(view, "button[phx-click='load_older_history']")
     refute has_element?(view, "[data-user-msg='history-1']")
     assert has_element?(view, "[data-thread-handoff='audit-a'] details")
@@ -114,12 +114,12 @@ defmodule HandbeamWeb.ThreadHandoffTest do
     refute has_element?(view, "button[phx-click='load_older_history']")
 
     render_patch(view, "/w/#{c.ws}/c/#{c.child}")
-    refute has_element?(view, "button[phx-click='toggle_thread_collaboration']", "enabled")
+    refute has_element?(view, "button[phx-click='toggle_thread_collaboration']")
     refute has_element?(view, "button[phx-click='load_older_history']")
     refute has_element?(view, "[data-user-msg='history-1']")
 
     render_patch(view, "/w/#{c.ws}/c/#{c.parent}")
-    assert has_element?(view, "button[phx-click='toggle_thread_collaboration']", "enabled")
+    refute has_element?(view, "button[phx-click='toggle_thread_collaboration']")
     assert has_element?(view, "button[phx-click='load_older_history']")
     assert has_element?(view, "[data-thread-handoff='audit-a'] details")
     refute has_element?(view, "[data-user-msg='history-1']")
@@ -127,14 +127,11 @@ defmodule HandbeamWeb.ThreadHandoffTest do
     assert Handbeam.Agent.Runner.status(c.child) == {:error, :not_found}
   end
 
-  test "human permission toggle persists but never wakes a thread", c do
+  test "thread wakeup is allowed without a per-conversation switch", c do
     {:ok, view, _} = live(c.conn, "/w/#{c.ws}/c/#{c.parent}")
-    view |> element("button[phx-click='toggle_thread_collaboration']") |> render_click()
-    assert HandbeamWeb.ThreadHandoff.enabled?(c.parent)
-    assert has_element?(view, "button[phx-click='toggle_thread_collaboration']", "enabled")
+    refute has_element?(view, "button[phx-click='toggle_thread_collaboration']")
+    refute has_element?(view, "Enable bounded thread delegation")
     assert Handbeam.Agent.Runner.status(c.parent) == {:error, :not_found}
-    view |> element("button[phx-click='toggle_thread_collaboration']") |> render_click()
-    refute HandbeamWeb.ThreadHandoff.enabled?(c.parent)
   end
 
   test "two tasks with the same peer stay separate on both sides, including results", c do
