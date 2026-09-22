@@ -208,8 +208,9 @@ defmodule Handbeam.Threads.Collaboration do
     end
   end
 
-  defp permitted_route?(%{"collaboration" => %{"parent" => parent}}, target),
-    do: parent == target["id"]
+  defp permitted_route?(%{"collaboration" => %{"parent" => parent}}, target) when is_binary(parent) do
+    parent == target["id"] or get_in(target, ["collaboration", "parent"]) == parent
+  end
 
   defp permitted_route?(_, _), do: true
 

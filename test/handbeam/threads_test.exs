@@ -209,7 +209,19 @@ defmodule Handbeam.ThreadsTest do
     assert parent == c.source
     assert {:error, :delegation_not_permitted} = Collaboration.create(input, child_context)
 
-    for i <- 2..3,
+    {:ok, sibling} = Collaboration.create(%{input | "request_id" => "sibling"}, c.context)
+
+    assert {:ok, _} =
+             Collaboration.send_message(
+               %{
+                 "thread" => sibling.thread,
+                 "message" => "from sibling",
+                 "request_id" => "sib-msg"
+               },
+               child_context
+             )
+
+    for i <- 3..3,
         do:
           assert(
             {:ok, _} = Collaboration.create(%{input | "request_id" => "child#{i}"}, c.context)
