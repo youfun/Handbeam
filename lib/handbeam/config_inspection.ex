@@ -35,7 +35,8 @@ defmodule Handbeam.ConfigInspection do
         webview: %{configured: Host.webview_browser?(), operational: :unknown},
         script: %{configured: Host.system_intents?(), backend: :host_beam_not_sandbox},
         mix_project: %{backend: :host_beam_not_shell, toolchain: toolchain()},
-        git: %{backend: :libgit2_not_shell, operational: :unknown},
+        git: git_backend(),
+        code_index: code_index(workspace),
         mcp: %{configured: Host.mcp?(), operational: :unknown, reason: :not_probed}
       },
       ui: %{
@@ -149,6 +150,37 @@ defmodule Handbeam.ConfigInspection do
       operational: :unknown,
       reason: if(found, do: :not_executed, else: :executable_missing)
     }
+  end
+
+  defp code_index(workspace) do
+    embeddings = Handbeam.CodeIndex.embeddings_configured?()
+
+    case Handbeam.WorkspaceStore.get_by_path(workspace) do
+      {:ok, %{"id" => id}} when is_binary(id) ->
+        case Handbeam.CodeIndex.status(workspace, id) do
+          {:ok, %{exists: exists}} ->
+            %{index_present: exists, embeddings_configured: embeddings}
+
+          {:error, _} ->
+            %{index_present: :unknown, embeddings_configured: embeddings}
+        end
+
+      _ ->
+        %{index_present: false, embeddings_configured: embeddings, workspace: :unregistered}
+    end
+  end
+
+  defp git_backend do
+    if Code.ensure_loaded?(Handbeam.Git) and function_exported?(Handbeam.Git, :backend_kind, 0) do
+      %{
+        backend: apply(Handbeam.Git, :backend_kind, []),
+        source: :host_default,
+        operational: :unknown,
+        reason: :not_probed
+      }
+    else
+      %{backend: :libgit2_not_shell, operational: :unknown}
+    end
   end
 
   defp shell_backend do

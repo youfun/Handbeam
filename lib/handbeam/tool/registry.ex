@@ -135,6 +135,7 @@ defmodule Handbeam.Tool.Registry do
   @doc "Host seed decisions, not registration, dependency or run authorization facts."
   def host_tool_configuration do
     base = [
+      Handbeam.Tool.Builtin.CodeSearch,
       Handbeam.Tool.Builtin.Edit,
       Handbeam.Tool.Builtin.FileSearch,
       Handbeam.Tool.Builtin.Git,

@@ -16,7 +16,9 @@ defmodule Handbeam.PathsTest do
   test "priv_dir uses Application.app_dir off device" do
     Application.delete_env(:handbeam, :host)
     assert Handbeam.Paths.priv_dir() == Application.app_dir(:handbeam, "priv")
-    assert Handbeam.Paths.static_root() == Path.join(Application.app_dir(:handbeam, "priv"), "static")
+
+    assert Handbeam.Paths.static_root() ==
+             Path.join(Application.app_dir(:handbeam, "priv"), "static")
   end
 
   test "priv_dir uses Host.priv_dir when configured" do
@@ -27,7 +29,9 @@ defmodule Handbeam.PathsTest do
 
   test "Home.expand maps ~/.handbeam onto Host.data_dir" do
     Handbeam.Host.put!(%{data_dir: "/tmp/mob-data"})
-    assert Handbeam.Home.expand("~/.handbeam/models.json") == "/tmp/mob-data/.handbeam/models.json"
+
+    assert Handbeam.Home.expand("~/.handbeam/models.json") ==
+             "/tmp/mob-data/.handbeam/models.json"
   end
 
   test "phone host tools drop bash and keep grep" do
@@ -52,6 +56,7 @@ defmodule Handbeam.PathsTest do
     assert "run_elixir_script" in names
     assert "read" in names
     assert "grep" in names
+    assert "code_search" in names
     refute "ext__beam__eval" in names
     refute "ext__beam__sql" in names
   end

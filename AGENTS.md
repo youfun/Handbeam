@@ -50,7 +50,7 @@ Intent Layer (LiveView / CLI / SNS / Webhook)
 |----|----------|------|
 | Agent Runtime | `lib/handbeam/agent/` | Agent loop、Provider、Middleware、Compactor、Runner、Coordinator |
 | Tool Registry | `lib/handbeam/tool/` | 工具注册、查找、defs 生成 |
-| Builtin Tools | `lib/handbeam/tool/builtin/` | Read / Edit / Bash / Write / FileSearch |
+| Builtin Tools | `lib/handbeam/tool/builtin/` | Read / Edit / Bash / Write / FileSearch / Grep / CodeSearch |
 | Extension Tools | `lib/handbeam/tool/extension/` | ext__beam__docs / source / sql / eval / schemas / sup_tree / top / process_info |
 | Memory Tools | `lib/handbeam/tool/memory/` | mem_recall / mem_learn / mem_reinforce / mem_associate |
 | MCP Runtime | `lib/handbeam/mcp/` | Protocol / ServerRuntime / ToolBridge / Config / Diagnostic |
@@ -340,6 +340,8 @@ find ~/.handbeam/conversations/items -maxdepth 2 -type f
 | Builtin | `run_elixir_script` | `Host.system_intents?` 主机（手机）：执行工作区 `.exs`（`args`/`workspace` 绑定，非沙箱） |
 | Builtin | `mix_project` | Mix/Hex 项目：deps.get / compile / test / run。纯 Elixir/Erlang 包；NIF/外部构建明确报错。单一 MixOwner 串行化并恢复 VM cwd |
 | Builtin | `file_search` | 模糊文件搜索（ex_fff，typo-tolerant） |
+| Builtin | `grep` | 字面量/正则内容搜索。桌面优先 `rg`，无 `rg` 时纯 Elixir |
+| Builtin | `code_search` | 工作区代码位置（路径+行号）。无 embeddings 时是符号/token 检索，不是自然语言语义；命中后用 `read` 读内容。桌面与手机同一实现 |
 | Memory | `mem_recall` | 记忆检索 |
 | Memory | `mem_learn` | 记忆学习（短期 → 长期） |
 | Memory | `mem_reinforce` | 记忆强化 |

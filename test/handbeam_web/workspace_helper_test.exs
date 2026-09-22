@@ -300,6 +300,7 @@ defmodule HandbeamWeb.WorkspaceHelperTest do
       assert WorkspaceHelper.tool_work_kind("write") == :file
       assert WorkspaceHelper.tool_work_kind("grep") == :search
       assert WorkspaceHelper.tool_work_kind("file_search") == :search
+      assert WorkspaceHelper.tool_work_kind("code_search") == :search
       assert WorkspaceHelper.tool_work_kind("bash") == :command
     end
   end

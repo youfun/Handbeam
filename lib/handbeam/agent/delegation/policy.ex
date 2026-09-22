@@ -1,7 +1,7 @@
 defmodule Handbeam.Agent.Delegation.Policy do
   @moduledoc "Read-only delegation policy; never grants capabilities absent from the parent."
 
-  @allowlist ~w(read grep file_search web_fetch web_search)
+  @allowlist ~w(read grep file_search code_search web_fetch web_search)
 
   def budget(timeout) when is_integer(timeout) and timeout >= 4_000,
     do: {:ok, min(45_000, div(timeout, 2))}

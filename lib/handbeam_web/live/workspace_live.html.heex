@@ -1553,20 +1553,6 @@
     class="h-8 border-t bg-surface flex items-center justify-between px-4 text-xs text-tertiary flex-shrink-0"
   >
     <div id="status-bar-left" class="flex items-center space-x-4">
-      <button
-        :if={@terminal_available?}
-        phx-click="toggle_terminal"
-        class={[
-          "text-xs transition-colors px-1.5 py-0.5 rounded",
-          if(@right_panel_view == :terminal && !@right_panel_collapsed,
-            do: "bg-accent/10 text-accent",
-            else: "text-tertiary hover:text-primary"
-          )
-        ]}
-        title={gettext("Toggle Terminal")}
-      >
-        ▸_ Terminal
-      </button>
       <.link
         id="open-settings"
         navigate={settings_href(@current_workspace_id, @current_conversation_id)}

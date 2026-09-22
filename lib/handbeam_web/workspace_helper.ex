@@ -212,7 +212,7 @@ defmodule HandbeamWeb.WorkspaceHelper do
   defp known_detail_atom(_), do: nil
 
   @search_tools ~w(
-    grep search file_search glob glob_file_search find rg ripgrep
+    grep search file_search code_search glob glob_file_search find rg ripgrep
     semantic_search codebase_search
   )
   @file_tools ~w(read read_file write edit apply_patch list_dir)

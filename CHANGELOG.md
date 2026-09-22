@@ -1,5 +1,13 @@
 # 更新日志 (CHANGELOG)
 
+## [2026-09-22] - 工作区代码索引
+
+### 新增
+- `code_search`：在工作区里按符号、路径或已配置的 embeddings 返回路径和行号，内容仍由 `read` 读取。
+- 未配置 embeddings 时只做本地 FTS keyword 检索，不把切块发到外部。keyword 未命中或 `index=partial` 不表示仓库里没有这段代码。
+- 索引是独立 SQLite，不进 Memory Repo。导入/只读工作区写到 `Host.data_dir()`，不写进工作区副本。
+- 工作台底栏不再放终端入口；终端仍从右侧面板打开。
+
 ## [2026-09-19] - Handbeam Android 实验版
 
 ### 新增与改进

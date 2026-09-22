@@ -242,13 +242,13 @@ defmodule Handbeam.Agent.Config do
     tools =
       cond do
         Handbeam.Host.shell?() ->
-          "`read`, `edit`, `write`, `bash`, `file_search`"
+          "`read`, `edit`, `write`, `bash`, `file_search`, `code_search`"
 
         Handbeam.Host.system_intents?() ->
-          "`read`, `edit`, `write`, `grep`, `file_search`, `run_elixir_script`"
+          "`read`, `edit`, `write`, `grep`, `file_search`, `code_search`, `run_elixir_script`"
 
         true ->
-          "`read`, `edit`, `write`, `grep`, `file_search`"
+          "`read`, `edit`, `write`, `grep`, `file_search`, `code_search`"
       end
 
     extra =

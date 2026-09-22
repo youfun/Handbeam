@@ -1716,7 +1716,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert has_element?(view, "#mobile-open-files")
       refute has_element?(view, "#mobile-open-terminal")
       refute has_element?(view, "button[phx-value-view='terminal']")
-      refute has_element?(view, "button[phx-click='toggle_terminal']")
+      refute has_element?(view, "#status-bar button[phx-click='toggle_terminal']")
 
       for {event, params} <- [
             {"select_right_panel_view", %{"view" => "terminal"}},
@@ -1742,6 +1742,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
 
       assert has_element?(view, "#workspace-panel #terminal-panel")
       refute has_element?(view, "#terminal-dock")
+      refute has_element?(view, "#status-bar button[phx-click='toggle_terminal']")
     end
 
     test "mobile header can open files and terminal in the workspace panel", %{conn: conn} do

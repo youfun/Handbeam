@@ -2,7 +2,7 @@
 
 [English](README.md) · [中文](README.zh.md)
 
-本地 agent 助手。对话、工具、记忆都在本机；一套 OTP runtime，[LiveView](lib/handbeam_web/live) 和 [mobile](mobile/)（Android + iOS）共用。
+本地 agent 助手。对话、工具、记忆都在本机；一套 OTP runtime，[LiveView](lib/handbeam_web/live) 和 [mobile](mobile/)（Android + iOS）共用。`code_search` 按符号或已配置的 embeddings 返回路径和行号，文件内容仍走 `read`。
 
 - 读、改、写文件，跑 shell，模糊搜文件
 - 工作区权限（auto / prompt / deny）
@@ -63,7 +63,8 @@ config :handbeam, :git_credentials, %{
 ```
 
 工具参数只需 `{"action":"push","credential":"project-origin"}`。
-新的认证挑战必须匹配配置的 HTTPS endpoint。libgit2 拒绝跨主机重定向和 HTTPS 降级，
+新的认证挑战必须匹配配置的 HTTPS endpoint。
+libgit2 拒绝跨主机重定向和 HTTPS 降级，
 但可能在同一主机的其他 HTTPS 端口或路径复用凭据。**配置凭据意味着信任该主机上的全部
 HTTPS 服务，不提供端口或仓库路径隔离。** 不要为包含不可信服务的主机配置凭据；
 同时应使用最小权限、仅授权目标仓库的 PAT。

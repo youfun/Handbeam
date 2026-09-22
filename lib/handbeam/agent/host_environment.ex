@@ -38,8 +38,9 @@ defmodule Handbeam.Agent.HostEnvironment do
   end
 
   defp text(:workspace_files) do
-    "Read/edit/write and grep/file_search operate on workspace files when exposed; paths remain subject to tool permissions. " <>
-      "The git tool uses libgit2, not a Git shell command. Registration does not prove native dependencies are usable."
+    "Read/edit/write, grep/file_search, and code_search operate on workspace files when exposed; paths remain subject to tool permissions. " <>
+      "code_search returns path and line numbers. Without an embeddings config it matches symbols and tokens, not natural-language questions; a miss is not proof the code is absent. " <>
+      git_backend_text()
   end
 
   defp text(:shell) do
@@ -49,7 +50,7 @@ defmodule Handbeam.Agent.HostEnvironment do
 
   defp text(:no_shell) do
     "There is no Unix shell on this host available to the agent. Do not call `bash`, shell pipelines, or external mix/elixir commands. " <>
-      "Use grep/file_search for local search; browser availability is independent of shell access."
+      "Use grep/file_search for exact or filename search, and code_search for symbol or configured semantic search. Browser availability is independent of shell access."
   end
 
   defp text(:mix_project) do
@@ -76,4 +77,18 @@ defmodule Handbeam.Agent.HostEnvironment do
   defp text(:no_browser),
     do:
       "Neither desktop nor WebView browser capability is enabled by the host. Do not assume a browser is available."
+
+  defp git_backend_text do
+    if Code.ensure_loaded?(Handbeam.Git) and function_exported?(Handbeam.Git, :backend_kind, 0) do
+      case apply(Handbeam.Git, :backend_kind, []) do
+        :ex_git_libgit2 ->
+          "The git tool uses libgit2, not a Git shell command. Registration does not prove native dependencies are usable."
+
+        _ ->
+          "The git tool uses the host Git CLI as argv, not a shell command string. Registration does not prove Git is installed or that a probe of `git --version` will succeed."
+      end
+    else
+      "The git tool uses libgit2, not a Git shell command. Registration does not prove native dependencies are usable."
+    end
+  end
 end

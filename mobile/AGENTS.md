@@ -167,6 +167,8 @@ with WebUI; the Git tab uses `HomeScreen.GitSettings` under `:git_settings`. Cre
 never appear in list/edit payloads. `bcrypt_elixir` is packed like `exqlite` (Android
 `libbcrypt_nif.so`, iOS static NIF) so workspace Mix can reuse the host hasher.
 Workspace permissions are checked at discovery and invocation, not just in UI.
+`code_search` is the same root `Handbeam.CodeIndex` as desktop. It is an unconditional builtin seed. Keyword search does not need a shell or Git. Do not start a full index in `on_start`.
+
 Do not register Terminal or bash on device. `run_elixir_script` is
 seeded with `Host.system_intents?` (falls back to `webview_browser?` when
 undeclared): Agent writes a workspace `.exs` via `write`/`edit`, then evaluates

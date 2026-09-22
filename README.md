@@ -4,7 +4,7 @@
 
 A local agent assistant. Chat, tools, and memory stay on the machine. One OTP runtime is shared by [LiveView](lib/handbeam_web/live) and [mobile](mobile/) (Android + iOS).
 
-- Read, edit, and write files; run a shell; fuzzy-search files
+- Read, edit, and write files; run a shell; fuzzy-search files; locate code by symbol or configured embeddings (`code_search` returns paths and line numbers, then `read` loads the file)
 - Workspace permissions (auto / prompt / deny)
 - Streaming replies and tool status
 - Anthropic and OpenAI-compatible APIs (StepFun, DeepSeek, OpenRouter, and others)

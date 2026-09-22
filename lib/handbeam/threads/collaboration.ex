@@ -9,7 +9,7 @@ defmodule Handbeam.Threads.Collaboration do
   """
   alias Handbeam.{ConversationStore, ConversationTranscriptStore, Threads}
 
-  @read_tools ~w(read file_search grep find_thread read_thread get_thread_status reply_to_parent_thread)
+  @read_tools ~w(read file_search grep code_search find_thread read_thread get_thread_status reply_to_parent_thread)
 
   # A request budget, not a promise about a provider's currency pricing.
   def bound_opts(opts) do
