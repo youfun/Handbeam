@@ -12,6 +12,7 @@
       class="mobile-header-workspace-btn"
     >
       <div class="mobile-header-title">
+        <img src={~p"/images/logo.svg"} class="brand-mark" width="18" height="18" alt="" />
         <span class="mobile-brand">Handbeam</span>
         <span class="mobile-workspace truncate">{@workspace_label}</span>
       </div>
@@ -118,7 +119,8 @@
     >
       <div class="projects-panel-header">
         <h2 class="projects-panel-title">
-          {gettext("专案")}
+          <img src={~p"/images/logo.svg"} class="brand-mark" width="16" height="16" alt="" />
+          <span>{gettext("专案")}</span>
         </h2>
         <button
           phx-click="open_add_project"

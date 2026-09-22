@@ -1394,11 +1394,34 @@ button.workspace-file-row:hover,
 }
 
 .projects-panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   font-size: 13px;
   font-weight: 500;
   color: var(--sig-text-secondary);
   letter-spacing: 0;
   text-transform: none;
+}
+
+.brand-mark {
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  display: block;
+}
+
+.mobile-header-title .brand-mark {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+}
+
+.settings-topbar-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
 #activity-bar > .p-3 button,
