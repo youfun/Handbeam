@@ -446,6 +446,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       {:ok, _view, html} = live(conn, "/")
 
       refute html =~ "id=\"diff-view\""
+      refute html =~ "file-change-diff"
     end
 
     test "workspace panel starts in the Files view", %{conn: conn} do
@@ -2336,9 +2337,10 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
           })
         )
 
-        # Click the file tab
         view
-        |> element("button", "sigil_lv_test_ui.txt")
+        |> element(
+          "button[phx-click='select_workspace_file'][phx-value-path='sigil_lv_test_ui.txt']"
+        )
         |> render_click()
 
         rendered = render(view)
@@ -2396,14 +2398,20 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
            )}
         )
 
-        view |> element("#tool-tu_edit_1 button", "Show diff") |> render_click()
+        view |> element("#chat-file-change-tool-tu_edit_1-toggle") |> render_click()
 
         rendered = render(view)
-        assert rendered =~ "id=\"diff-view\""
+        assert rendered =~ "id=\"chat-file-change-tool-tu_edit_1-diff\""
         assert rendered =~ "&lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;"
         refute rendered =~ "<script>"
-        assert rendered =~ "+"
-        assert rendered =~ "-"
+        assert rendered =~ "Edited"
+        assert rendered =~ "+1"
+        assert rendered =~ "diff-lineno"
+
+        view |> element("button[phx-value-view='changes']") |> render_click()
+        changes = render(view)
+        assert changes =~ "id=\"changes-file-tool-tu_edit_1-diff\""
+        assert changes =~ "&lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;"
       after
         File.rm(file_path)
       end
@@ -2438,8 +2446,8 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       )
 
       rendered = render(view)
-      refute has_element?(view, "#tool-tu_edit_empty .tool-diff-link")
-      refute rendered =~ "Show diff"
+      refute has_element?(view, "#chat-file-change-tool-tu_edit_empty")
+      refute rendered =~ "file-change-card"
     end
 
     test "close_diff clears diff state and re-opening works", %{conn: conn} do
@@ -2481,21 +2489,18 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
            )}
         )
 
-        # Open diff
-        view |> element("#tool-tu_close_1 button", "Show diff") |> render_click()
+        view |> element("#chat-file-change-tool-tu_close_1-toggle") |> render_click()
         rendered = render(view)
-        assert rendered =~ "id=\"diff-view\""
+        assert rendered =~ "id=\"chat-file-change-tool-tu_close_1-diff\""
         assert rendered =~ "new"
 
-        # Close diff
-        view |> element("#diff-view button", "× Close") |> render_click()
+        view |> element("#chat-file-change-tool-tu_close_1-toggle") |> render_click()
         rendered = render(view)
-        refute rendered =~ "id=\"diff-view\""
+        refute rendered =~ "id=\"chat-file-change-tool-tu_close_1-diff\""
 
-        # Open again — should not show old content
-        view |> element("#tool-tu_close_1 button", "Show diff") |> render_click()
+        view |> element("#chat-file-change-tool-tu_close_1-toggle") |> render_click()
         rendered = render(view)
-        assert rendered =~ "id=\"diff-view\""
+        assert rendered =~ "id=\"chat-file-change-tool-tu_close_1-diff\""
         assert rendered =~ "new"
       after
         File.rm(file_path)
@@ -2542,7 +2547,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
            )}
         )
 
-        view |> element("#tool-tu_skip_1 button", "Show diff") |> render_click()
+        view |> element("#chat-file-change-tool-tu_skip_1-toggle") |> render_click()
         rendered = render(view)
 
         # Skip line renders
@@ -2597,13 +2602,16 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
            )}
         )
 
-        view |> element("#tool-tu_revert_1 button", "Show diff") |> render_click()
+        view |> element("#chat-file-change-tool-tu_revert_1-toggle") |> render_click()
         assert render(view) =~ "Revert"
 
-        view |> element("#diff-view button", "Revert") |> render_click()
+        view |> element("#chat-file-change-tool-tu_revert_1-revert") |> render_click()
         assert render(view) =~ "Confirm revert"
 
-        view |> element("#diff-view button", "Confirm revert") |> render_click()
+        view
+        |> element("#chat-file-change-tool-tu_revert_1-confirm button", "Confirm revert")
+        |> render_click()
+
         rendered = render(view)
 
         assert File.read!(file_path) == before
@@ -2655,10 +2663,13 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
            )}
         )
 
-        view |> element("#tool-tu_conflict_1 button", "Show diff") |> render_click()
+        view |> element("#chat-file-change-tool-tu_conflict_1-toggle") |> render_click()
         File.write!(file_path, "user changed\n")
-        view |> element("#diff-view button", "Revert") |> render_click()
-        view |> element("#diff-view button", "Confirm revert") |> render_click()
+        view |> element("#chat-file-change-tool-tu_conflict_1-revert") |> render_click()
+
+        view
+        |> element("#chat-file-change-tool-tu_conflict_1-confirm button", "Confirm revert")
+        |> render_click()
 
         rendered = render(view)
         assert File.read!(file_path) == "user changed\n"

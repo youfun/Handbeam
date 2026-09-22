@@ -18,7 +18,10 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   require Logger
 
+  alias HandbeamWeb.FileChangeCard
   alias HandbeamWeb.WorkspaceLive.Approval
+
+  import HandbeamWeb.FileChangeCard
   alias HandbeamWeb.WorkspaceLive.Composer
   alias HandbeamWeb.WorkspaceLive.ConversationState
   alias HandbeamWeb.WorkspaceLive.ConversationSwitching
@@ -134,9 +137,7 @@ defmodule HandbeamWeb.WorkspaceLive do
         auto_upload: true
       )
       |> reload_workspace_counts()
-      |> assign(:show_diff, false)
-      |> assign(:diff_lines, nil)
-      |> assign(:active_change, nil)
+      |> assign(:expanded_file_changes, MapSet.new())
       |> assign(:revert_confirm_change_id, nil)
       |> assign(:revert_message, nil)
       |> assign(:current_assistant_entry_id, nil)
@@ -520,9 +521,6 @@ defmodule HandbeamWeb.WorkspaceLive do
             current_workspace_path(socket),
             conversation_state_opts()
           )
-          |> assign(:show_diff, false)
-          |> assign(:diff_lines, nil)
-          |> assign(:active_change, nil)
 
         {:noreply, socket}
 
@@ -546,10 +544,11 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   @impl true
-  def handle_event("select_right_panel_view", %{"view" => "files"}, socket) do
+  def handle_event("select_right_panel_view", %{"view" => view}, socket)
+      when view in ["changes", "files"] do
     {:noreply,
      socket
-     |> assign(:right_panel_view, :files)
+     |> assign(:right_panel_view, String.to_existing_atom(view))
      |> assign(:right_panel_collapsed, false)
      |> assign(:show_terminal, false)}
   end
@@ -575,11 +574,21 @@ defmodule HandbeamWeb.WorkspaceLive do
     {:noreply, assign(socket, :mobile_right_panel_open, false)}
   end
 
-  @impl true
-  def handle_event("view_diff", %{"id" => id}, socket) do
-    case find_timeline_entry(socket.assigns.timeline, id) do
-      %{} = entry ->
-        {:noreply, EditorProjection.open_diff(socket, entry)}
+  def handle_event("toggle_file_change", params, socket) do
+    case params do
+      %{"id" => id} when is_binary(id) ->
+        expanded = Map.get(socket.assigns, :expanded_file_changes, MapSet.new())
+
+        expanded =
+          if MapSet.member?(expanded, id),
+            do: MapSet.delete(expanded, id),
+            else: MapSet.put(expanded, id)
+
+        {:noreply,
+         socket
+         |> assign(:expanded_file_changes, expanded)
+         |> assign(:right_panel_collapsed, false)
+         |> RuntimeProjection.refresh_file_change(id)}
 
       _ ->
         {:noreply, socket}
@@ -588,12 +597,12 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   @impl true
   def handle_event("confirm_revert_change", %{"change_id" => change_id}, socket) do
-    {:noreply, assign(socket, :revert_confirm_change_id, change_id)}
+    {:noreply, mark_revert_confirm(socket, change_id)}
   end
 
   @impl true
   def handle_event("cancel_revert_change", _params, socket) do
-    {:noreply, assign(socket, :revert_confirm_change_id, nil)}
+    {:noreply, mark_revert_confirm(socket, nil)}
   end
 
   @impl true
@@ -612,21 +621,18 @@ defmodule HandbeamWeb.WorkspaceLive do
     else
       {:not_running, true} ->
         {:noreply,
-         socket
-         |> assign(:revert_confirm_change_id, nil)
-         |> assign(:revert_message, %{
-           "status" => "error",
-           "message" => "Cannot revert while an agent run is active."
-         })}
+         mark_revert_confirm(
+           assign(socket, :revert_message, %{
+             "change_id" => change_id,
+             "status" => "error",
+             "message" => "Cannot revert while an agent run is active."
+           }),
+           nil
+         )}
 
       _ ->
         {:noreply, socket}
     end
-  end
-
-  @impl true
-  def handle_event("close_diff", _params, socket) do
-    {:noreply, EditorProjection.close_diff(socket)}
   end
 
   @impl true
@@ -2227,6 +2233,9 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   defp refresh_tool_work_projection(socket, group_id),
     do: RuntimeProjection.refresh_tool_work(socket, group_id)
+
+  defp mark_revert_confirm(socket, change_id),
+    do: RuntimeProjection.mark_revert_confirm(socket, change_id)
 
   defp find_timeline_entry(timeline, id), do: RuntimeProjection.find_entry(timeline, id)
 

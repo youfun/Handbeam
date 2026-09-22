@@ -21,6 +21,48 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
     |> stream_related_tool_work(timeline, projected)
   end
 
+  def mark_revert_confirm(socket, change_id) do
+    socket = assign(socket, :revert_confirm_change_id, change_id)
+
+    timeline =
+      Enum.map(socket.assigns.timeline, fn entry ->
+        id = change_id_of(entry)
+
+        cond do
+          id == change_id and is_binary(id) ->
+            Map.put(entry, "revert_confirming", true)
+
+          Map.get(entry, "revert_confirming") == true ->
+            Map.delete(entry, "revert_confirming")
+
+          true ->
+            entry
+        end
+      end)
+
+    reinsert_changed(socket, timeline)
+  end
+
+  def refresh_file_change(socket, id) when is_binary(id) do
+    expanded = Map.get(socket.assigns, :expanded_file_changes, MapSet.new())
+    open? = MapSet.member?(expanded, id)
+
+    timeline =
+      Enum.map(socket.assigns.timeline, fn entry ->
+        if Map.get(entry, "id") == id, do: Map.put(entry, "file_change_open", open?), else: entry
+      end)
+
+    case Enum.find(timeline, &(Map.get(&1, "id") == id)) do
+      %{} = entry ->
+        socket
+        |> assign(:timeline, timeline)
+        |> stream_insert(:timeline, entry)
+
+      _ ->
+        assign(socket, :timeline, timeline)
+    end
+  end
+
   def refresh_tool_work(socket, group_id) do
     expanded = Map.get(socket.assigns, :expanded_tool_groups, MapSet.new())
 
@@ -35,6 +77,25 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
   end
 
   def find_entry(timeline, id), do: Enum.find(timeline, &(Map.get(&1, "id") == id))
+
+  defp change_id_of(entry) do
+    change = HandbeamWeb.ChangeHelper.change_from_entry(entry)
+    Map.get(change, "change_id")
+  end
+
+  defp reinsert_changed(socket, timeline) do
+    changed =
+      timeline
+      |> Enum.zip(socket.assigns.timeline)
+      |> Enum.flat_map(fn
+        {entry, entry} -> []
+        {entry, _old} -> [entry]
+      end)
+
+    Enum.reduce(changed, assign(socket, :timeline, timeline), fn entry, acc ->
+      stream_insert(acc, :timeline, entry)
+    end)
+  end
 
   def finalize_assistant(%{assigns: %{current_assistant_entry_id: nil}} = socket), do: socket
 

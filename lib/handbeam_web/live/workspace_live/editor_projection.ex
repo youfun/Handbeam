@@ -6,33 +6,6 @@ defmodule HandbeamWeb.WorkspaceLive.EditorProjection do
 
   alias HandbeamWeb.ChangeHelper
 
-  def open_diff(socket, entry) do
-    change = ChangeHelper.change_from_entry(entry)
-    diff_lines = Map.get(change, "diff_lines")
-    path = Map.get(change, "file_path")
-
-    if is_binary(path) and is_list(diff_lines) and diff_lines != [] do
-      socket
-      |> assign(:active_file, path)
-      |> assign(:show_diff, true)
-      |> assign(:diff_lines, diff_lines)
-      |> assign(:active_change, change)
-      |> assign(:revert_confirm_change_id, nil)
-      |> assign(:revert_message, nil)
-    else
-      socket
-    end
-  end
-
-  def close_diff(socket) do
-    socket
-    |> assign(:show_diff, false)
-    |> assign(:diff_lines, nil)
-    |> assign(:active_change, nil)
-    |> assign(:revert_confirm_change_id, nil)
-    |> assign(:revert_message, nil)
-  end
-
   def apply_revert_result(socket, change, result, workspace_root) do
     {status, result} = normalize_revert_result(result)
     message = Map.get(result, "message") || "Revert #{status}"
@@ -53,9 +26,12 @@ defmodule HandbeamWeb.WorkspaceLive.EditorProjection do
 
     socket
     |> update_timeline_change_status(change_id, status)
-    |> update_active_change_status(change_id, status)
     |> assign(:revert_confirm_change_id, nil)
-    |> assign(:revert_message, %{"status" => status, "message" => message})
+    |> assign(:revert_message, %{
+      "change_id" => change_id,
+      "status" => status,
+      "message" => message
+    })
     |> append_revert_transcript(revert_entry)
     |> append_timeline(revert_entry)
     |> refresh_active_file_preview(file_path, workspace_root)
@@ -129,16 +105,6 @@ defmodule HandbeamWeb.WorkspaceLive.EditorProjection do
       end)
 
     socket |> assign(:timeline, timeline) |> stream(:timeline, timeline, reset: true)
-  end
-
-  defp update_active_change_status(socket, change_id, status) do
-    case socket.assigns.active_change do
-      %{"change_id" => ^change_id} = change ->
-        assign(socket, :active_change, Map.put(change, "revert_status", status))
-
-      _ ->
-        socket
-    end
   end
 
   defp append_timeline(socket, entry) do

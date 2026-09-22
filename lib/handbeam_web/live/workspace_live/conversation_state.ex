@@ -75,9 +75,6 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
       ),
       opts
     )
-    |> assign(:show_diff, false)
-    |> assign(:diff_lines, nil)
-    |> assign(:active_change, nil)
     |> assign(:revert_confirm_change_id, nil)
     |> assign(:revert_message, nil)
     |> load_effective_settings(opts)

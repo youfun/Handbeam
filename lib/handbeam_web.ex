@@ -83,6 +83,7 @@ defmodule HandbeamWeb do
       import Phoenix.HTML
       # Core UI components
       import HandbeamWeb.CoreComponents
+      import HandbeamWeb.FileChangeCard
 
       # Common modules used in templates
       alias Phoenix.LiveView.JS

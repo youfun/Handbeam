@@ -1138,6 +1138,148 @@ button.workspace-file-row:hover,
   background: color-mix(in srgb, var(--surface-hover) 80%, transparent);
 }
 
+/* ── Shared file-change card (chat + Changes list) ── */
+.file-change-card {
+  margin-top: 8px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  overflow: hidden;
+  background: var(--color-surface);
+}
+
+.file-change-card-toggle {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: 12px;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+
+.file-change-card-toggle:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text-primary);
+}
+
+.file-change-chevron {
+  width: 12px;
+  flex: 0 0 12px;
+  text-align: center;
+  color: var(--color-text-tertiary);
+}
+
+.file-change-label {
+  flex: 0 0 auto;
+  color: var(--color-text-primary);
+  font-weight: 600;
+}
+
+.file-change-path {
+  min-width: 0;
+  flex: 1 1 auto;
+  color: var(--color-text-tertiary);
+  font-family: var(--font-mono, ui-monospace, monospace);
+}
+
+.file-change-count {
+  flex: 0 0 auto;
+  font-variant-numeric: tabular-nums;
+  font-size: 11px;
+}
+
+.file-change-count.added {
+  color: var(--color-diff-add);
+}
+
+.file-change-count.removed {
+  color: var(--color-diff-rem);
+}
+
+.file-change-diff {
+  border-top: 1px solid var(--color-border);
+  overflow: auto;
+  max-height: 28rem;
+  padding: 4px 0;
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.file-change-actions,
+.file-change-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px 6px;
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 12px;
+}
+
+.file-change-status,
+.file-change-note {
+  color: var(--color-text-tertiary);
+}
+
+.file-change-note {
+  margin: 0;
+  padding: 0 8px 6px;
+  font-family: var(--font-sans, system-ui, sans-serif);
+  font-size: 12px;
+}
+
+.file-change-note.error,
+.file-change-note.conflict {
+  color: var(--color-error);
+}
+
+.file-change-revert,
+.file-change-confirm button {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--color-text-secondary);
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.file-change-revert:hover,
+.file-change-confirm button:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface-hover);
+}
+
+.file-change-diff .diff-lineno {
+  width: 2.5rem;
+  flex: 0 0 2.5rem;
+  text-align: right;
+  padding-right: 0.5rem;
+  color: var(--color-text-tertiary);
+  user-select: none;
+}
+
+.workspace-changes-view {
+  padding: 8px;
+}
+
+.workspace-changes-view .file-change-card {
+  margin-top: 0;
+  margin-bottom: 8px;
+}
+
+.workspace-changes-empty {
+  padding: 16px 8px;
+  color: var(--color-text-tertiary);
+  font-size: 12px;
+}
+
 /* ── Diff view ── */
 .diff-add,
 .diff-ins {
@@ -1821,6 +1963,10 @@ button.workspace-file-row:hover,
 
 #ai-messages .tool-event.tool-work-collapsed .tool-work-body {
   display: none;
+}
+
+#ai-messages .tool-event.tool-work-collapsed .file-change-card {
+  display: block;
 }
 
 .tool-work-summary {

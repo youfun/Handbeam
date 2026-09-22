@@ -710,19 +710,15 @@
                   >
                     {inspect(tool_entry_error(entry))}
                   </div>
-                  <button
-                    :if={
-                      tool_entry_name(entry) in ["edit", "write"] and
-                        is_list(entry["diff_lines"]) and
-                        entry["diff_lines"] != []
-                    }
-                    phx-click="view_diff"
-                    phx-value-id={entry["id"]}
-                    class="tool-diff-link"
-                  >
-                    Show diff →
-                  </button>
                 </div>
+                <.card
+                  :if={FileChangeCard.change_entry?(entry)}
+                  entry={entry}
+                  open?={entry["file_change_open"] == true}
+                  id={"chat-file-change-#{entry["id"]}"}
+                  confirm_change_id={@revert_confirm_change_id}
+                  message={@revert_message}
+                />
               </div>
             </div>
           </div>
@@ -1144,6 +1140,17 @@
         <button
           type="button"
           phx-click="select_right_panel_view"
+          phx-value-view="changes"
+          class={[
+            "workspace-panel-tab",
+            if(@right_panel_view == :changes, do: "active", else: "")
+          ]}
+        >
+          {gettext("Changes")}
+        </button>
+        <button
+          type="button"
+          phx-click="select_right_panel_view"
           phx-value-view="files"
           class={["workspace-panel-tab", if(@right_panel_view == :files, do: "active", else: "")]}
         >
@@ -1208,6 +1215,25 @@
       </div>
 
       <div
+        :if={@right_panel_view == :changes}
+        id="workspace-changes"
+        class="workspace-changes-view flex-1 min-h-0 overflow-auto"
+      >
+        <% changes = FileChangeCard.changes(@timeline) %>
+        <p :if={changes == []} class="workspace-changes-empty">
+          {gettext("No file changes yet")}
+        </p>
+        <.card
+          :for={entry <- changes}
+          entry={entry}
+          open?={entry["file_change_open"] == true}
+          id={"changes-file-#{entry["id"]}"}
+          confirm_change_id={@revert_confirm_change_id}
+          message={@revert_message}
+        />
+      </div>
+
+      <div
         :if={@right_panel_view == :files}
         class="workspace-files-view flex-1 min-h-0 flex flex-col"
       >
@@ -1224,102 +1250,12 @@
           />
         </div>
 
-        <!-- Editor / Diff area -->
         <div
-          :if={@active_file || @show_diff}
+          :if={@active_file}
           id="editor-content"
           class="workspace-file-preview flex-1 min-h-0 overflow-auto p-4 font-mono text-sm border-t"
         >
-          <!-- Diff view -->
-          <div :if={@show_diff} id="diff-view" class="space-y-2">
-            <div class="flex items-center justify-between mb-2">
-              <div class="flex items-center gap-2 min-w-0">
-                <span class="text-xs text-tertiary truncate">
-                  Diff: {Path.basename(@active_file || "")}
-                </span>
-                <span
-                  :if={@active_change}
-                  class={[
-                    "text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded border",
-                    if(@active_change["revert_status"] == "reverted",
-                      do: "text-success border-success/40",
-                      else: "text-tertiary border-default"
-                    )
-                  ]}
-                >
-                  {@active_change["revert_status"] || "review-only"}
-                </span>
-              </div>
-              <div class="flex items-center gap-2">
-                <button
-                  :if={
-                    @active_change &&
-                      @active_change["reversible"] == true &&
-                      @active_change["revert_status"] not in ["reverted", "conflict"]
-                  }
-                  phx-click="confirm_revert_change"
-                  phx-value-change_id={@active_change["change_id"]}
-                  class="text-xs text-error hover:text-primary transition-colors"
-                >
-                  {gettext("Revert")}
-                </button>
-                <button
-                  phx-click="close_diff"
-                  class="text-xs text-secondary hover:text-primary transition-colors"
-                >
-                  &times; {gettext("Close")}
-                </button>
-              </div>
-            </div>
-            <div
-              :if={@active_change && @active_change["reversible"] != true}
-              class="text-xs text-tertiary bg-main rounded px-3 py-2"
-            >
-              {gettext("This change is review-only and cannot be reverted from Handbeam.")}
-            </div>
-            <div
-              :if={@revert_message}
-              class={[
-                "text-xs rounded px-3 py-2",
-                if(@revert_message["status"] == "reverted",
-                  do: "text-success bg-main",
-                  else: "text-error bg-main"
-                )
-              ]}
-            >
-              {@revert_message["message"]}
-            </div>
-            <div
-              :if={@active_change && @revert_confirm_change_id == @active_change["change_id"]}
-              class="text-xs bg-main rounded px-3 py-2 flex items-center justify-between gap-3"
-            >
-              <span>{gettext("Revert this recorded change?")}</span>
-              <div class="flex items-center gap-2">
-                <button
-                  phx-click="revert_change"
-                  phx-value-change_id={@active_change["change_id"]}
-                  class="text-error hover:text-primary"
-                >
-                  {gettext("Confirm revert")}
-                </button>
-                <button phx-click="cancel_revert_change" class="text-secondary hover:text-primary">
-                  {gettext("Cancel")}
-                </button>
-              </div>
-            </div>
-            <div
-              :if={is_list(@diff_lines)}
-              class="diff-lines bg-main rounded p-4 overflow-auto text-xs leading-relaxed"
-            >
-              <div :for={line <- @diff_lines} class={["diff-line", "diff-#{line["type"]}"]}>
-                <span class="diff-op">{diff_prefix(line["type"])}</span>
-                <span class="diff-text">{line["text"]}</span>
-              </div>
-            </div>
-          </div>
-
-          <!-- File preview -->
-          <div :if={!@show_diff} id="file-preview">
+          <div id="file-preview">
             <div :if={@active_file}>
               <div class="text-xs text-tertiary mb-2 truncate">{@active_file}</div>
               <div
