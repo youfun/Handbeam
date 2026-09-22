@@ -187,6 +187,7 @@ defmodule Handbeam.ThreadsTest do
     refute Collaboration.tool_allowed?("bash", child_context)
     refute Collaboration.tool_allowed?("write", child_context)
     assert Collaboration.tool_allowed?("read", child_context)
+    assert Collaboration.tool_allowed?("send_thread_message", child_context)
 
     ConversationStore.upsert(%{
       "id" => receipt.thread,
