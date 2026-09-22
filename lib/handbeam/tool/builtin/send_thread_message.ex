@@ -4,7 +4,7 @@ defmodule Handbeam.Tool.Builtin.SendThreadMessage do
     module: Handbeam.Threads.Collaboration,
     action: :send_message,
     description:
-      "Send an asynchronous report to an authorized thread. Omit handoff_id for a new task; pass an existing receipt/read_thread handoff_id to continue that exchange with the same peer. Defaults to follow_up; steer must be explicit. Idle wakeups require permission and bounded budget. Reuse request_id on retry; do not retry delivery_unknown with a new ID. No automatic acknowledgment loops.",
+      "Send an asynchronous report to an authorized thread. Omit handoff_id for a new task; pass an existing receipt/read_thread handoff_id to continue that exchange with the same peer. Defaults to follow_up; steer must be explicit. Idle wakeups are allowed unless thread wakeup was explicitly disabled, and stay inside the bounded budget. Reuse request_id on retry; do not retry delivery_unknown with a new ID. No automatic acknowledgment loops.",
     schema: %{
       type: "object",
       additionalProperties: false,
