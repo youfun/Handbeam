@@ -147,13 +147,10 @@ defmodule Handbeam.ThreadsTest do
     ConversationStore.update_meta(c.foreign, allow_thread_wakeup: true)
     input = %{"thread" => c.foreign, "message" => "x", "request_id" => "x"}
     assert {:error, :not_accessible} = Collaboration.send_message(input, c.context)
-    ConversationStore.update_meta(c.target, allow_thread_wakeup: true)
+    ConversationStore.update_meta(c.target, allow_thread_wakeup: false)
     ConversationStore.update_meta(c.source, allow_thread_wakeup: false)
 
-    assert {:error, :handoff_not_permitted} =
-             Collaboration.send_message(%{input | "thread" => c.target}, c.context)
-
-    assert {:ok, []} = ConversationTranscriptStore.list(c.source)
+    assert {:ok, _} = Collaboration.send_message(%{input | "thread" => c.target}, c.context)
   end
 
   test "concurrent identical sends reserve only once; uncertain delivery is not retried", c do
@@ -179,13 +176,10 @@ defmodule Handbeam.ThreadsTest do
     assert {:ok, []} = ConversationTranscriptStore.list(c.target)
   end
 
-  test "default permission allows a child; explicit denial and the child cap still apply", c do
+  test "stored denial does not block a child; the child cap still applies", c do
     input = %{"title" => "Audit", "message" => "Inspect", "request_id" => "child"}
-    ConversationStore.update_meta(c.source, allow_thread_wakeup: nil)
-    refute Collaboration.create(input, c.context) == {:error, :delegation_not_permitted}
     ConversationStore.update_meta(c.source, allow_thread_wakeup: false)
-    assert {:error, :delegation_not_permitted} = Collaboration.create(input, c.context)
-    ConversationStore.update_meta(c.source, allow_thread_wakeup: true)
+    refute Collaboration.create(input, c.context) == {:error, :delegation_not_permitted}
     {:ok, receipt} = Collaboration.create(input, c.context)
     {:ok, same} = Collaboration.create(input, c.context)
     assert same.thread == receipt.thread

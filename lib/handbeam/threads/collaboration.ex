@@ -121,7 +121,7 @@ defmodule Handbeam.Threads.Collaboration do
          {:ok, title} <- Threads.text(input, "title", nil, 200),
          {:ok, key} <- Threads.text(input, "request_id", nil, 128),
          {:ok, _} <- Threads.text(input, "message", nil, 8000),
-         true <- thread_wakeup_allowed?(source) and is_nil(source["collaboration"]) do
+         true <- is_nil(source["collaboration"]) do
       locked(source, fn ->
         id = "delegated-" <> digest({source["id"], key})
 
@@ -139,11 +139,6 @@ defmodule Handbeam.Threads.Collaboration do
       error -> error
     end
   end
-
-  defp thread_wakeup_allowed?(%{"allow_thread_wakeup" => false}), do: false
-  defp thread_wakeup_allowed?(%{"allow_thread_wakeup" => "false"}), do: false
-  defp thread_wakeup_allowed?(meta) when is_map(meta), do: true
-  defp thread_wakeup_allowed?(_), do: false
 
   defp child(source, id, title, children, handoff_id) do
     case ConversationStore.get_metadata(id) do
@@ -178,8 +173,6 @@ defmodule Handbeam.Threads.Collaboration do
          mode <- Map.get(input, "deliver_as", "follow_up"),
          true <- mode in ["follow_up", "steer"],
          true <- source["id"] != target["id"],
-         true <- thread_wakeup_allowed?(source),
-         true <- thread_wakeup_allowed?(target),
          true <- permitted_route?(source, target),
          {:ok, entries} <- ConversationTranscriptStore.list(source["id"]) do
       id = "handoff-" <> digest({source["id"], key})

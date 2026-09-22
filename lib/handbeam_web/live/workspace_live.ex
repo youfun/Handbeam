@@ -227,20 +227,6 @@ defmodule HandbeamWeb.WorkspaceLive do
     {:noreply, Composer.remove_attachment(socket, id)}
   end
 
-  def handle_event("toggle_thread_collaboration", _params, socket) do
-    id = socket.assigns.current_conversation_id
-    context = %{conversation_id: id, workspace_id: socket.assigns.current_workspace_id}
-
-    with {:ok, _} <- Handbeam.Threads.authorize(context, id) do
-      Handbeam.ConversationStore.update_meta(id,
-        allow_thread_wakeup: not HandbeamWeb.ThreadHandoff.enabled?(id)
-      )
-    end
-
-    {:noreply,
-     assign(socket, :thread_collaboration_enabled, HandbeamWeb.ThreadHandoff.enabled?(id))}
-  end
-
   @impl true
   def handle_event("clear_composer_error", _params, socket) do
     {:noreply, assign(socket, :composer_error, nil)}
