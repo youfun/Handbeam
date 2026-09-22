@@ -71,7 +71,7 @@ defmodule Handbeam.ThreadCollaborationTest do
     %{source: source["id"], target: target["id"], context: context, opts: opts}
   end
 
-  test "Coordinator sends once, preserves trusted origin, defaults follow_up and allows explicit steer",
+  test "Coordinator sends once, preserves trusted origin, defaults steer and allows explicit follow_up",
        c do
     {:ok, ack} = Handbeam.Agent.Coordinator.add_message(c.target, "Human task", c.opts)
     assert_receive {:held, _, _}, 2000
@@ -94,14 +94,14 @@ defmodule Handbeam.ThreadCollaborationTest do
 
     assert {:ok, %{delivery: "enqueued"}} =
              Collaboration.send_message(
-               %{input | "request_id" => "steer"} |> Map.put("deliver_as", "steer"),
+               %{input | "request_id" => "later"} |> Map.put("deliver_as", "follow_up"),
                c.context
              )
 
     {:ok, entries} = ConversationTranscriptStore.list(c.target)
     inbound = Enum.filter(entries, &(get_in(&1, ["origin", "kind"]) == "thread"))
     assert length(inbound) == 2
-    assert Enum.map(inbound, & &1["delivery"]) == ["follow_up", "steer"]
+    assert Enum.map(inbound, & &1["delivery"]) == ["steer", "follow_up"]
     assert hd(inbound)["origin"]["conversation_id"] == c.source
     assert hd(inbound)["origin"]["run_id"] == "source-run"
     assert hd(inbound)["id"] == first.message_id

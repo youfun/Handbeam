@@ -170,7 +170,7 @@ defmodule Handbeam.Threads.Collaboration do
          {:ok, target} <- Threads.authorize(context, target["id"]),
          {:ok, message} <- Threads.text(input, "message", nil, 8000),
          {:ok, key} <- Threads.text(input, "request_id", nil, 128),
-         mode <- Map.get(input, "deliver_as", "follow_up"),
+         mode <- Map.get(input, "deliver_as", "steer"),
          true <- mode in ["follow_up", "steer"],
          true <- source["id"] != target["id"],
          true <- permitted_route?(source, target),
@@ -320,7 +320,7 @@ defmodule Handbeam.Threads.Collaboration do
           message_id: id,
           transcript_id: id,
           inbound_id: id,
-          deliver_as: if(mode == "steer", do: :steer, else: :follow_up),
+          deliver_as: if(mode == "follow_up", do: :follow_up, else: :steer),
           tools: Handbeam.Agent.default_tools()
         )
         |> bound_opts()
