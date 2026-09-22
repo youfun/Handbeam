@@ -4,11 +4,16 @@ defmodule Handbeam.Git.Credentials do
 
   Hosts configure `:handbeam, :git_credentials` as a map of names to keyword
   lists containing `:endpoint`, `:password` and optional `:username`.
-  Fresh authentication challenges must match the HTTPS endpoint. libgit2
-  blocks cross-host redirects and HTTPS downgrades, but may reuse credentials
-  on other HTTPS ports or paths of the same hostname. Configuration therefore
-  trusts every HTTPS service on that hostname, not just one port or repository.
-  Never load this map from agent-controlled workspace settings.
+  Fresh authentication challenges must match the HTTPS endpoint. The CLI
+  backend refuses a credential unless every actual destination is HTTPS
+  on that host, including `url.*.insteadOf` / `pushInsteadOf` rewrites and
+  every push URL. HTTP, including an HTTPS-to-HTTP downgrade, is rejected.
+  Askpass replies only to Username/Password prompts for that host.
+  The ExGit/libgit2 backend blocks cross-host redirects and HTTPS
+  downgrades, but may reuse credentials on other HTTPS ports or paths of
+  the same hostname. Configuration therefore trusts every HTTPS service on
+  that hostname, not just one port or repository. Never load this map from
+  agent-controlled workspace settings.
   """
 
   @spec resolve(String.t() | nil) :: {:ok, keyword()} | {:error, String.t()}

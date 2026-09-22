@@ -104,6 +104,9 @@ defmodule Handbeam.ConfigInspectionTest do
     assert report.model_visibility.status == :unknown
     assert report.execution.shell.executable_found == :not_checked
     assert report.execution.webview.operational == :unknown
+    assert report.execution.git.backend == :host_git_cli
+    assert report.execution.git.operational == :unknown
+    assert report.execution.git.reason == :not_probed
   end
 
   test "missing executables have a reason without being executed", %{root: root} do

@@ -1,3 +1,6 @@
+defmodule Handbeam.HostTest.CLI do
+end
+
 defmodule Handbeam.HostTest do
   use ExUnit.Case, async: false
 
@@ -23,6 +26,9 @@ defmodule Handbeam.HostTest do
     refute Host.webview_browser?()
     refute Host.beam_eval?()
     refute Host.configured?()
+    assert Host.get(:git_backend) == nil
+    assert Handbeam.Git.backend() == Handbeam.Git.CLI
+    assert Handbeam.Git.backend_kind() == :host_git_cli
   end
 
   test "phone host disables shell and desktop browser" do
@@ -48,6 +54,26 @@ defmodule Handbeam.HostTest do
     assert Host.dist?()
     assert Host.data_dir() == "/tmp/mob-data"
     assert Host.priv_dir() == "/tmp/mob-beams/priv"
+    assert Host.get(:git_backend) == nil
+  end
+
+  test "backend_kind uses module identity rather than a .CLI name suffix" do
+    Host.put!(%{git_backend: Handbeam.HostTest.CLI})
+    assert Handbeam.Git.backend() == Handbeam.HostTest.CLI
+    assert Handbeam.Git.backend_kind() == :injected
+
+    Host.put!(%{git_backend: Handbeam.Git.CLI})
+    assert Handbeam.Git.backend_kind() == :host_git_cli
+  end
+
+  test "explicit git_backend is returned as-is and is not inferred from shell" do
+    Host.put!(%{shell: false, git_backend: Handbeam.Git.CLI})
+    assert Host.get(:git_backend) == Handbeam.Git.CLI
+    assert Handbeam.Git.backend() == Handbeam.Git.CLI
+
+    Host.put!(%{shell: false, webview_browser: true, desktop_browser: false})
+    assert Host.get(:git_backend) == nil
+    assert Handbeam.Git.backend() == Handbeam.Git.CLI
   end
 
   test "webview_browser is ignored when desktop_browser is true" do

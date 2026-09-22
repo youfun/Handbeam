@@ -23,6 +23,12 @@ defmodule Handbeam.Host do
   `dns_resolver` optionally supplies a native `fun/1` returning `{:ok, [ip]}`
   or `{:error, reason}` for direct connections. Consumers still validate and
   pin the returned addresses; the callback does not grant network access.
+
+  `git_backend` is an optional module the host installs for Git storage.
+  Desktop Mix and Phoenix WebUI leave it unset, so `Handbeam.Git` uses the
+  host Git CLI. Phone hosts set it to `Handbeam.Git.ExGit` at boot. Handbeam
+  does not infer the backend from the UI, MOB environment variables, or
+  missing Git binaries.
   """
 
   @keys [
@@ -38,7 +44,8 @@ defmodule Handbeam.Host do
     :dns_resolver,
     :beam_eval,
     :mcp,
-    :dist
+    :dist,
+    :git_backend
   ]
 
   @spec get(atom(), term()) :: term()

@@ -2,7 +2,8 @@ defmodule Handbeam.Tool.Builtin.Git do
   @moduledoc """
   Agent entry for Git history in the current workspace.
 
-  Backed by `ExGit` (libgit2). Does not spawn the Git CLI. HTTPS
+  Workspace Git history. Desktop App and Phoenix WebUI use the host Git
+  CLI. Android/iOS hosts inject the ExGit/libgit2 backend at boot. HTTPS
   clone/fetch/push and fast-forward pull are allowed. After `init`,
   add an origin with `remote_add` then push. SSH is not.
   """
@@ -20,7 +21,7 @@ defmodule Handbeam.Tool.Builtin.Git do
     Local Git history for the current workspace. Use after editing files so the user can review and roll back agent changes.
 
     Actions: init, status, diff, add, reset, commit, log, branches, create_branch, checkout, clone, fetch, pull, push, remotes, remote_add, remote_set_url.
-    HTTP(S) remotes only. After init, remote_add an https GitHub URL then push. For private repositories, pass a configured credential name, never a password or PAT. Credentials require HTTPS and trust the configured hostname across all ports and repository paths. Paths stay inside the workspace. pull fast-forwards only and will not create a merge commit. A successful push sets upstream so the next pull can fast-forward. SSH is not supported.
+    HTTP(S) remotes only. After init, remote_add an https GitHub URL then push. For private repositories, pass a configured credential name, never a password or PAT. Credentials require HTTPS at the actual destination after Git URL rewrites, including every push URL, and trust the configured hostname across all ports and repository paths. Paths stay inside the workspace. pull fast-forwards only and will not create a merge commit. A successful push sets upstream so the next pull can fast-forward. SSH is not supported. Desktop and server WebUI use the host Git CLI as argv, not a shell string. Phone hosts use libgit2.
 
     #{Handbeam.Git.Settings.summarize()}
     """

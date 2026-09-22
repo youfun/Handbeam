@@ -23,6 +23,9 @@ defmodule HandbeamProbe.MixProject do
       {:mob, "== 0.7.39"},
       {:mob_dev, "~> 0.6", only: :dev, runtime: false},
       {:handbeam, path: ".."},
+      # Phone Git backend (libgit2 NIF). Root Mix uses the host Git CLI and
+      # must not depend on this package.
+      {:ex_git, github: "youfun/ex-git", tag: "v0.0.4"},
       # Handbeam pins these; Mob pulled newer ones into this Mix lock.
       {:phoenix_live_view, "~> 1.2.0", override: true},
       {:req, "~> 0.6.1", override: true},

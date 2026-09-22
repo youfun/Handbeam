@@ -83,9 +83,6 @@ defmodule Handbeam.MixProject do
       # ETS-based fuzzy file search engine
       {:ex_fff, path: "ex_fff"},
 
-      # Local Git via libgit2 NIF.
-      {:ex_git, github: "youfun/ex-git", tag: "v0.0.4"},
-
       # i18n / 多语言支持
       {:gettext, "~> 1.0"},
 

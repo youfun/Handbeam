@@ -1,12 +1,18 @@
 defmodule Handbeam.Git do
   @moduledoc """
-  Workspace-scoped Git adapter over `ExGit`.
+  Workspace-scoped Git facade.
 
-  Path permissions stay here. `ExGit` talks to libgit2. HTTPS
-  clone/fetch/push and fast-forward pull are allowed; SSH is not.
-  Local `init` repositories add an origin with `remote_add` then push.
+  Path permissions stay here. The default backend is the host Git CLI
+  (`Handbeam.Git.CLI`). Android/iOS hosts inject `Handbeam.Git.ExGit` at
+  boot through `Handbeam.Host` `:git_backend`. Desktop and Phoenix WebUI
+  never fall back to libgit2.
+
+  HTTPS clone/fetch/push and fast-forward pull are allowed; SSH is not.
   Credentials are passed per call and never written into a URL.
   """
+
+  alias Handbeam.Git.{CLI, CredentialGuard}
+  alias Handbeam.Host
 
   @identity [name: "Handbeam Agent", email: "agent@sigil.local"]
 
@@ -29,6 +35,23 @@ defmodule Handbeam.Git do
           | :remote_add
           | :remote_set_url
 
+  @spec backend() :: module()
+  def backend do
+    case Host.get(:git_backend) do
+      mod when is_atom(mod) and not is_nil(mod) -> mod
+      _ -> CLI
+    end
+  end
+
+  @spec backend_kind() :: :host_git_cli | :ex_git_libgit2 | :injected
+  def backend_kind do
+    case backend() do
+      CLI -> :host_git_cli
+      Handbeam.Git.ExGit -> :ex_git_libgit2
+      _ -> :injected
+    end
+  end
+
   @spec perform(action(), Path.t(), Path.t(), keyword()) ::
           {:ok, String.t(), map()} | {:error, String.t()} | {:error, String.t(), map()}
   def perform(action, workspace, path, opts \\ []) do
@@ -38,28 +61,38 @@ defmodule Handbeam.Git do
     end
   end
 
-  defp run(:init, workspace, resolved, _opts) do
+  defp run(action, workspace, resolved, opts) do
+    backend = backend()
+
+    case backend.available() do
+      :ok -> do_run(action, backend, workspace, resolved, opts)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp do_run(:init, backend, workspace, resolved, _opts) do
     with :ok <- assert_inside(resolved, workspace),
-         {:ok, repo} <- ExGit.init(resolved) do
+         {:ok, repo} <- backend.init(resolved),
+         {:ok, workdir} <- backend.workdir(repo) do
       {:ok, "initialized git repository at #{display(resolved, workspace)}",
-       %{action: :init, path: resolved, workdir: workdir!(repo)}}
+       %{action: :init, path: resolved, workdir: workdir}}
     else
       {:error, reason} -> format_error(reason)
     end
   end
 
-  defp run(:status, workspace, resolved, _opts) do
-    with {:ok, repo} <- open(resolved, workspace),
-         {:ok, status} <- ExGit.status(repo) do
+  defp do_run(:status, backend, workspace, resolved, _opts) do
+    with {:ok, repo} <- open(backend, resolved, workspace),
+         {:ok, status} <- backend.status(repo) do
       {:ok, format_status(status), Map.put(status, :action, :status)}
     else
       {:error, reason} -> format_error(reason)
     end
   end
 
-  defp run(:diff, workspace, resolved, opts) do
-    with {:ok, repo} <- open(resolved, workspace),
-         {:ok, patch} <- do_diff(repo, opts) do
+  defp do_run(:diff, backend, workspace, resolved, opts) do
+    with {:ok, repo} <- open(backend, resolved, workspace),
+         {:ok, patch} <- backend.diff(repo, opts[:mode] || :head) do
       text = if patch == "", do: "(no diff)", else: patch
       {:ok, text, %{action: :diff, bytes: byte_size(patch)}}
     else
@@ -67,26 +100,26 @@ defmodule Handbeam.Git do
     end
   end
 
-  defp run(:add, workspace, resolved, opts) do
-    with {:ok, repo} <- open(resolved, workspace),
-         {:ok, paths} <- resolve_paths(opts[:paths] || [], workspace, repo),
-         :ok <- ExGit.add(repo, paths) do
+  defp do_run(:add, backend, workspace, resolved, opts) do
+    with {:ok, repo} <- open(backend, resolved, workspace),
+         {:ok, paths} <- resolve_paths(backend, opts[:paths] || [], workspace, repo),
+         :ok <- backend.add(repo, paths) do
       {:ok, "staged #{Enum.join(paths, ", ")}", %{action: :add, paths: paths}}
     else
       {:error, reason} -> format_error(reason)
     end
   end
 
-  defp run(:reset, workspace, resolved, opts) do
-    with {:ok, repo} <- open(resolved, workspace),
-         {:ok, result} <- do_reset(repo, workspace, opts) do
+  defp do_run(:reset, backend, workspace, resolved, opts) do
+    with {:ok, repo} <- open(backend, resolved, workspace),
+         {:ok, result} <- do_reset(backend, repo, workspace, opts) do
       {:ok, result, %{action: :reset}}
     else
       {:error, reason} -> format_error(reason)
     end
   end
 
-  defp run(:commit, workspace, resolved, opts) do
+  defp do_run(:commit, backend, workspace, resolved, opts) do
     message = opts[:message]
 
     cond do
@@ -94,8 +127,8 @@ defmodule Handbeam.Git do
         {:error, "message is required"}
 
       true ->
-        with {:ok, repo} <- open(resolved, workspace),
-             {:ok, oid} <- ExGit.commit(repo, message, identity(opts)) do
+        with {:ok, repo} <- open(backend, resolved, workspace),
+             {:ok, oid} <- backend.commit(repo, message, identity(opts)) do
           {:ok, "committed #{oid} #{String.trim(message)}", %{action: :commit, oid: oid}}
         else
           {:error, reason} -> format_error(reason)
@@ -103,27 +136,27 @@ defmodule Handbeam.Git do
     end
   end
 
-  defp run(:log, workspace, resolved, opts) do
+  defp do_run(:log, backend, workspace, resolved, opts) do
     limit = opts[:limit] || 20
 
-    with {:ok, repo} <- open(resolved, workspace),
-         {:ok, commits} <- ExGit.log(repo, limit: limit) do
+    with {:ok, repo} <- open(backend, resolved, workspace),
+         {:ok, commits} <- backend.log(repo, limit: limit) do
       {:ok, format_log(commits), %{action: :log, commits: commits}}
     else
       {:error, reason} -> format_error(reason)
     end
   end
 
-  defp run(:branches, workspace, resolved, _opts) do
-    with {:ok, repo} <- open(resolved, workspace),
-         {:ok, branches} <- ExGit.branches(repo) do
+  defp do_run(:branches, backend, workspace, resolved, _opts) do
+    with {:ok, repo} <- open(backend, resolved, workspace),
+         {:ok, branches} <- backend.branches(repo) do
       {:ok, format_branches(branches), %{action: :branches, branches: branches}}
     else
       {:error, reason} -> format_error(reason)
     end
   end
 
-  defp run(:create_branch, workspace, resolved, opts) do
+  defp do_run(:create_branch, backend, workspace, resolved, opts) do
     name = opts[:name]
 
     cond do
@@ -131,8 +164,8 @@ defmodule Handbeam.Git do
         {:error, "name is required"}
 
       true ->
-        with {:ok, repo} <- open(resolved, workspace),
-             :ok <- ExGit.create_branch(repo, name, force: opts[:force] == true) do
+        with {:ok, repo} <- open(backend, resolved, workspace),
+             :ok <- backend.create_branch(repo, name, force: opts[:force] == true) do
           {:ok, "created branch #{name}", %{action: :create_branch, name: name}}
         else
           {:error, reason} -> format_error(reason)
@@ -140,7 +173,7 @@ defmodule Handbeam.Git do
     end
   end
 
-  defp run(:checkout, workspace, resolved, opts) do
+  defp do_run(:checkout, backend, workspace, resolved, opts) do
     target = opts[:target] || opts[:name]
 
     cond do
@@ -148,8 +181,8 @@ defmodule Handbeam.Git do
         {:error, "target is required"}
 
       true ->
-        with {:ok, repo} <- open(resolved, workspace),
-             :ok <- ExGit.checkout(repo, target, force: opts[:force] == true) do
+        with {:ok, repo} <- open(backend, resolved, workspace),
+             :ok <- backend.checkout(repo, target, force: opts[:force] == true) do
           {:ok, "checked out #{target}", %{action: :checkout, target: target}}
         else
           {:error, reason} -> format_error(reason)
@@ -157,7 +190,7 @@ defmodule Handbeam.Git do
     end
   end
 
-  defp run(:clone, workspace, resolved, opts) do
+  defp do_run(:clone, backend, workspace, resolved, opts) do
     url = opts[:url]
 
     cond do
@@ -166,28 +199,33 @@ defmodule Handbeam.Git do
 
       true ->
         with :ok <- assert_https_url(url),
+             :ok <- assert_clone_credentials(backend, url, workspace, opts),
              :ok <- assert_inside(resolved, workspace),
-             {:ok, repo} <- ExGit.clone(url, resolved, auth_opts(opts)) do
+             {:ok, repo} <- backend.clone(url, resolved, auth_opts(opts)),
+             {:ok, workdir} <- backend.workdir(repo) do
           {:ok, "cloned #{url} into #{display(resolved, workspace)}",
-           %{action: :clone, path: resolved, workdir: workdir!(repo)}}
+           %{action: :clone, path: resolved, workdir: workdir}}
         else
           {:error, reason} -> format_error(reason)
         end
     end
   end
 
-  defp run(:fetch, workspace, resolved, opts) do
-    with {:ok, repo} <- open(resolved, workspace),
-         :ok <- ExGit.fetch(repo, remote_opts(opts)) do
+  defp do_run(:fetch, backend, workspace, resolved, opts) do
+    with {:ok, repo} <- open(backend, resolved, workspace),
+         :ok <- assert_remote_credentials(backend, repo, :fetch, opts),
+         :ok <- backend.fetch(repo, remote_opts(opts)) do
       {:ok, "fetched #{remote_name(opts)}", %{action: :fetch}}
     else
       {:error, reason} -> format_error(reason)
     end
   end
 
-  defp run(:pull, workspace, resolved, opts) do
-    with {:ok, repo} <- open(resolved, workspace),
-         result <- ExGit.pull(repo, remote_opts(opts)) do
+  defp do_run(:pull, backend, workspace, resolved, opts) do
+    with {:ok, repo} <- open(backend, resolved, workspace),
+         :ok <- assert_remote_credentials(backend, repo, :pull, opts) do
+      result = backend.pull(repo, remote_opts(opts))
+
       case result do
         :up_to_date -> {:ok, "already up to date", %{action: :pull, result: :up_to_date}}
         :fast_forward -> {:ok, "fast-forwarded", %{action: :pull, result: :fast_forward}}
@@ -198,25 +236,26 @@ defmodule Handbeam.Git do
     end
   end
 
-  defp run(:push, workspace, resolved, opts) do
-    with {:ok, repo} <- open(resolved, workspace),
-         :ok <- ExGit.push(repo, remote_opts(opts)) do
+  defp do_run(:push, backend, workspace, resolved, opts) do
+    with {:ok, repo} <- open(backend, resolved, workspace),
+         :ok <- assert_remote_credentials(backend, repo, :push, opts),
+         :ok <- backend.push(repo, remote_opts(opts)) do
       {:ok, "pushed #{remote_name(opts)}", %{action: :push}}
     else
       {:error, reason} -> format_error(reason)
     end
   end
 
-  defp run(:remotes, workspace, resolved, _opts) do
-    with {:ok, repo} <- open(resolved, workspace),
-         {:ok, remotes} <- ExGit.remotes(repo) do
+  defp do_run(:remotes, backend, workspace, resolved, _opts) do
+    with {:ok, repo} <- open(backend, resolved, workspace),
+         {:ok, remotes} <- backend.remotes(repo) do
       {:ok, format_remotes(remotes), %{action: :remotes, remotes: remotes}}
     else
       {:error, reason} -> format_error(reason)
     end
   end
 
-  defp run(:remote_add, workspace, resolved, opts) do
+  defp do_run(:remote_add, backend, workspace, resolved, opts) do
     url = opts[:url]
     name = remote_name(opts)
 
@@ -226,8 +265,8 @@ defmodule Handbeam.Git do
 
       true ->
         with :ok <- assert_https_url(url),
-             {:ok, repo} <- open(resolved, workspace),
-             :ok <- ExGit.remote_add(repo, name, url) do
+             {:ok, repo} <- open(backend, resolved, workspace),
+             :ok <- backend.remote_add(repo, name, url) do
           {:ok, "added remote #{name} #{url}", %{action: :remote_add, name: name, url: url}}
         else
           {:error, reason} -> format_error(reason)
@@ -235,7 +274,7 @@ defmodule Handbeam.Git do
     end
   end
 
-  defp run(:remote_set_url, workspace, resolved, opts) do
+  defp do_run(:remote_set_url, backend, workspace, resolved, opts) do
     url = opts[:url]
     name = remote_name(opts)
 
@@ -245,8 +284,8 @@ defmodule Handbeam.Git do
 
       true ->
         with :ok <- assert_https_url(url),
-             {:ok, repo} <- open(resolved, workspace),
-             :ok <- ExGit.remote_set_url(repo, name, url) do
+             {:ok, repo} <- open(backend, resolved, workspace),
+             :ok <- backend.remote_set_url(repo, name, url) do
           {:ok, "set #{name} to #{url}", %{action: :remote_set_url, name: name, url: url}}
         else
           {:error, reason} -> format_error(reason)
@@ -254,42 +293,33 @@ defmodule Handbeam.Git do
     end
   end
 
-  defp open(path, workspace) do
-    with {:ok, repo} <- ExGit.open(path, ceiling: exclusive_ceiling(workspace)),
-         {:ok, workdir} <- ExGit.workdir(repo),
+  defp open(backend, path, workspace) do
+    with {:ok, repo} <- backend.open(path, ceiling: exclusive_ceiling(workspace)),
+         {:ok, workdir} <- backend.workdir(repo),
          :ok <- assert_inside(workdir, workspace) do
       {:ok, repo}
     end
   end
 
-  # libgit2 will not *enter* the exclusive ceiling while walking parents,
+  # Discovery will not enter the exclusive ceiling while walking parents,
   # so a repo at the workspace root is still found.
   defp exclusive_ceiling(workspace) do
     parent = Path.dirname(workspace)
     if parent == workspace, do: workspace, else: parent
   end
 
-  defp do_diff(repo, opts) do
-    case opts[:mode] do
-      :worktree -> ExGit.diff(repo, :worktree)
-      :staged -> ExGit.diff(repo, :staged)
-      {from, to} when is_binary(from) and is_binary(to) -> ExGit.diff(repo, from, to)
-      _ -> ExGit.diff(repo)
-    end
-  end
-
-  defp do_reset(repo, workspace, opts) do
+  defp do_reset(backend, repo, workspace, opts) do
     cond do
       is_list(opts[:paths]) and opts[:paths] != [] ->
-        with {:ok, paths} <- resolve_paths(opts[:paths], workspace, repo),
-             :ok <- ExGit.reset(repo, paths) do
+        with {:ok, paths} <- resolve_paths(backend, opts[:paths], workspace, repo),
+             :ok <- backend.reset_paths(repo, paths) do
           {:ok, "unstaged #{Enum.join(paths, ", ")}"}
         end
 
       opts[:type] in [:soft, :mixed, :hard] ->
         target = opts[:target] || "HEAD"
 
-        with :ok <- ExGit.reset(repo, opts[:type], target) do
+        with :ok <- backend.reset(repo, opts[:type], target) do
           {:ok, "reset --#{opts[:type]} #{target}"}
         end
 
@@ -347,8 +377,8 @@ defmodule Handbeam.Git do
     end
   end
 
-  defp resolve_paths(paths, workspace, repo) when is_list(paths) do
-    with {:ok, workdir} <- ExGit.workdir(repo) do
+  defp resolve_paths(backend, paths, workspace, repo) when is_list(paths) do
+    with {:ok, workdir} <- backend.workdir(repo) do
       repo_path = Path.expand(workdir)
 
       result =
@@ -366,7 +396,7 @@ defmodule Handbeam.Git do
     end
   end
 
-  defp resolve_paths(_, _, _), do: {:error, "paths must be a list"}
+  defp resolve_paths(_, _, _, _), do: {:error, "paths must be a list"}
 
   defp resolve_git_path(path, workspace, repo_path) when is_binary(path) do
     with {:ok, resolved} <- Handbeam.Workspace.resolve(path, workspace),
@@ -399,6 +429,70 @@ defmodule Handbeam.Git do
     end
   end
 
+  defp assert_clone_credentials(backend, url, workspace, opts) do
+    case credential_password(opts) do
+      nil ->
+        :ok
+
+      _ ->
+        with {:ok, endpoint} <- require_credential_endpoint(opts),
+             {:ok, urls} <- clone_destinations(backend, url, workspace),
+             :ok <- CredentialGuard.assert_https_destinations(urls, endpoint) do
+          :ok
+        end
+    end
+  end
+
+  defp assert_remote_credentials(backend, repo, action, opts) do
+    case credential_password(opts) do
+      nil ->
+        :ok
+
+      _ ->
+        with {:ok, endpoint} <- require_credential_endpoint(opts),
+             {:ok, urls} <- remote_destinations(backend, repo, action, remote_name(opts)),
+             :ok <- CredentialGuard.assert_https_destinations(urls, endpoint) do
+          :ok
+        end
+    end
+  end
+
+  defp credential_password(opts) do
+    password = opts[:password]
+    if is_binary(password) and password != "", do: password, else: nil
+  end
+
+  defp require_credential_endpoint(opts) do
+    endpoint = opts[:credential_endpoint]
+
+    if is_binary(endpoint) and endpoint != "" do
+      {:ok, endpoint}
+    else
+      {:error, CredentialGuard.mismatch_message()}
+    end
+  end
+
+  defp clone_destinations(backend, url, workspace) do
+    if backend == CLI do
+      CLI.expand_clone_url(url, workspace)
+    else
+      {:ok, [url]}
+    end
+  end
+
+  defp remote_destinations(backend, repo, action, name) do
+    if backend == CLI do
+      CLI.remote_action_urls(repo, name, action)
+    else
+      with {:ok, remotes} <- backend.remotes(repo) do
+        case Enum.find(remotes, &(&1.name == name)) do
+          nil -> {:error, "remote #{name} is not configured"}
+          remote -> {:ok, [remote.url]}
+        end
+      end
+    end
+  end
+
   defp remote_name(opts), do: opts[:remote] || "origin"
 
   defp remote_opts(opts) do
@@ -409,13 +503,6 @@ defmodule Handbeam.Git do
   def auth_opts(opts) when is_list(opts) do
     Keyword.take(opts, [:username, :password, :credential_endpoint])
     |> Enum.filter(fn {_key, value} -> is_binary(value) and value != "" end)
-  end
-
-  defp workdir!(repo) do
-    case ExGit.workdir(repo) do
-      {:ok, dir} -> dir
-      _ -> nil
-    end
   end
 
   defp display(path, workspace), do: Handbeam.Workspace.relative_path(path, workspace)

@@ -21,6 +21,13 @@ defmodule Handbeam.Tool.Builtin.GitTest do
     {:ok, work: work, ctx: %{working_directory: work}}
   end
 
+  test "desktop and WebUI use the host Git CLI, not ExGit" do
+    assert Handbeam.Git.backend() == Handbeam.Git.CLI
+    assert Handbeam.Git.backend_kind() == :host_git_cli
+    assert :code.which(ExGit) == :non_existing
+    refute Code.ensure_loaded?(Handbeam.Git.ExGit)
+  end
+
   test "rejects missing workspace and unknown action", %{ctx: ctx} do
     assert {:error, "working_directory is required"} = Git.execute(%{"action" => "status"}, %{})
     assert {:error, message} = Git.execute(%{"action" => "rebase"}, ctx)
@@ -279,6 +286,387 @@ defmodule Handbeam.Tool.Builtin.GitTest do
     assert description =~ "remote_add"
     assert description =~ "PAT"
     assert description =~ "fast-forward"
+    assert description =~ "Git CLI"
     refute description =~ "GitHub App"
+  end
+
+  test "empty repository status and log", %{ctx: ctx} do
+    assert {:ok, _, _} = Git.execute(%{"action" => "init"}, ctx)
+
+    assert {:ok, status, %{branch: :unborn, entries: []}} =
+             Git.execute(%{"action" => "status"}, ctx)
+
+    assert status =~ "(unborn)"
+    assert status =~ "clean"
+    assert {:ok, log, %{commits: []}} = Git.execute(%{"action" => "log"}, ctx)
+    assert log =~ "no commits"
+  end
+
+  test "status distinguishes staged and unstaged, including special names", %{
+    work: work,
+    ctx: ctx
+  } do
+    assert {:ok, _, _} = Git.execute(%{"action" => "init"}, ctx)
+    File.write!(Path.join(work, "normal.txt"), "a\n")
+    File.write!(Path.join(work, "has space.txt"), "b\n")
+    File.write!(Path.join(work, "-dashed.txt"), "c\n")
+
+    assert {:ok, _, %{entries: untracked}} = Git.execute(%{"action" => "status"}, ctx)
+    assert Enum.any?(untracked, &(&1.path == "has space.txt" and &1.unstaged == :new))
+    assert Enum.any?(untracked, &(&1.path == "-dashed.txt" and &1.unstaged == :new))
+
+    assert {:ok, _, _} =
+             Git.execute(%{"action" => "add", "paths" => ["has space.txt", "-dashed.txt"]}, ctx)
+
+    File.write!(Path.join(work, "has space.txt"), "b2\n")
+
+    assert {:ok, _, %{entries: entries}} = Git.execute(%{"action" => "status"}, ctx)
+    spaced = Enum.find(entries, &(&1.path == "has space.txt"))
+    dashed = Enum.find(entries, &(&1.path == "-dashed.txt"))
+    assert spaced.staged == :new
+    assert spaced.unstaged == :modified
+    assert dashed.staged == :new
+    assert dashed.unstaged == nil
+  end
+
+  test "pathspecs are not treated as Git options", %{work: work, ctx: ctx} do
+    assert {:ok, _, _} = Git.execute(%{"action" => "init"}, ctx)
+    File.write!(Path.join(work, "--output=evil"), "nope\n")
+
+    assert {:ok, _, _} =
+             Git.execute(%{"action" => "add", "paths" => ["--output=evil"]}, ctx)
+
+    refute File.exists?(Path.join(work, "evil"))
+    assert {:ok, _, %{entries: entries}} = Git.execute(%{"action" => "status"}, ctx)
+    assert Enum.any?(entries, &(&1.path == "--output=evil" and &1.staged == :new))
+  end
+
+  test "pull fast-forwards only against a local fixture remote", %{work: work} do
+    git = System.find_executable("git")
+    seed = Path.join(work, "seed")
+    bare = Path.join(work, "origin.git")
+    clone_a = Path.join(work, "a")
+    clone_b = Path.join(work, "b")
+    File.mkdir_p!(seed)
+    {_, 0} = System.cmd(git, ["init", "-b", "main", seed], stderr_to_stdout: true)
+    File.write!(Path.join(seed, "readme.txt"), "one\n")
+    fixture_commit(git, seed, "one")
+    {_, 0} = System.cmd(git, ["clone", "--bare", "--", seed, bare], stderr_to_stdout: true)
+    {_, 0} = System.cmd(git, ["clone", "--", bare, clone_a], stderr_to_stdout: true)
+    {_, 0} = System.cmd(git, ["clone", "--", bare, clone_b], stderr_to_stdout: true)
+
+    ctx_b = %{working_directory: clone_b}
+    assert {:ok, _, %{result: :up_to_date}} = Git.execute(%{"action" => "pull"}, ctx_b)
+
+    File.write!(Path.join(clone_a, "readme.txt"), "two\n")
+    fixture_commit(git, clone_a, "two")
+    {_, 0} = System.cmd(git, ["push", "origin", "main"], cd: clone_a, stderr_to_stdout: true)
+
+    assert {:ok, _, %{action: :pull, result: :fast_forward}} =
+             Git.execute(%{"action" => "pull"}, ctx_b)
+
+    assert File.read!(Path.join(clone_b, "readme.txt")) == "two\n"
+    assert {:ok, _, %{result: :up_to_date}} = Git.execute(%{"action" => "pull"}, ctx_b)
+
+    File.write!(Path.join(clone_a, "readme.txt"), "three\n")
+    fixture_commit(git, clone_a, "three")
+    {_, 0} = System.cmd(git, ["push", "origin", "main"], cd: clone_a, stderr_to_stdout: true)
+    File.write!(Path.join(clone_b, "other.txt"), "side\n")
+    fixture_commit(git, clone_b, "side")
+
+    assert {:error, message} = Git.execute(%{"action" => "pull"}, ctx_b)
+    assert message =~ "fast-forward" or message =~ "Not possible" or message =~ "diverg"
+    assert File.read!(Path.join(clone_b, "readme.txt")) == "two\n"
+  end
+
+  test "a successful push sets upstream so the next pull can fast-forward", %{
+    work: work,
+    ctx: ctx
+  } do
+    git = System.find_executable("git")
+    bare = Path.join(work, "origin.git")
+    {_, 0} = System.cmd(git, ["init", "--bare", "-b", "main", bare], stderr_to_stdout: true)
+
+    assert {:ok, _, _} = Git.execute(%{"action" => "init"}, ctx)
+    File.write!(Path.join(work, "n.txt"), "n\n")
+    assert {:ok, _, _} = Git.execute(%{"action" => "add"}, ctx)
+    assert {:ok, _, _} = Git.execute(%{"action" => "commit", "message" => "n"}, ctx)
+    {_, 0} = System.cmd(git, ["remote", "add", "origin", bare], cd: work, stderr_to_stdout: true)
+
+    assert {:ok, _, %{action: :push}} = Git.execute(%{"action" => "push"}, ctx)
+    other = Path.join(work, "other")
+    {_, 0} = System.cmd(git, ["clone", "--", bare, other], stderr_to_stdout: true)
+    File.write!(Path.join(other, "n.txt"), "n2\n")
+    fixture_commit(git, other, "n2")
+    {_, 0} = System.cmd(git, ["push", "origin", "main"], cd: other, stderr_to_stdout: true)
+
+    assert {:ok, _, %{result: :fast_forward}} = Git.execute(%{"action" => "pull"}, ctx)
+    assert File.read!(Path.join(work, "n.txt")) == "n2\n"
+  end
+
+  test "status reports merge-conflict paths that contain spaces and newlines", %{
+    work: work,
+    ctx: ctx
+  } do
+    git = System.find_executable("git")
+    spaced = Path.join(work, "has space.txt")
+    nl = Path.join(work, "a\nb.txt")
+    {_, 0} = System.cmd(git, ["init", "-b", "main", work], stderr_to_stdout: true)
+    File.write!(spaced, "base\n")
+    File.write!(nl, "base\n")
+    fixture_commit(git, work, "base")
+    {_, 0} = System.cmd(git, ["checkout", "-b", "other"], cd: work, stderr_to_stdout: true)
+    File.write!(spaced, "other\n")
+    File.write!(nl, "other\n")
+    fixture_commit(git, work, "other")
+    {_, 0} = System.cmd(git, ["checkout", "main"], cd: work, stderr_to_stdout: true)
+    File.write!(spaced, "main\n")
+    File.write!(nl, "main\n")
+    fixture_commit(git, work, "main")
+    {_out, _status} = System.cmd(git, ["merge", "other"], cd: work, stderr_to_stdout: true)
+
+    assert {:ok, _, %{entries: entries}} = Git.execute(%{"action" => "status"}, ctx)
+    spaced_entry = Enum.find(entries, &(&1.path == "has space.txt"))
+    nl_entry = Enum.find(entries, &(&1.path == "a\nb.txt"))
+    assert spaced_entry
+    assert nl_entry
+    assert spaced_entry.staged == :conflicted
+    assert spaced_entry.unstaged == :conflicted
+    assert nl_entry.staged == :conflicted
+    refute Enum.any?(entries, &String.contains?(&1.path, "100644"))
+  end
+
+  test "default diff on an unborn HEAD includes the staged first commit", %{
+    work: work,
+    ctx: ctx
+  } do
+    assert {:ok, _, _} = Git.execute(%{"action" => "init"}, ctx)
+    File.write!(Path.join(work, "first.txt"), "staged-body\n")
+    assert {:ok, _, _} = Git.execute(%{"action" => "add", "paths" => ["first.txt"]}, ctx)
+
+    assert {:ok, head_patch, _} = Git.execute(%{"action" => "diff"}, ctx)
+    assert head_patch =~ "staged-body"
+    assert {:ok, staged_patch, _} = Git.execute(%{"action" => "diff", "mode" => "staged"}, ctx)
+    assert staged_patch =~ "staged-body"
+
+    assert {:ok, worktree_patch, _} =
+             Git.execute(%{"action" => "diff", "mode" => "worktree"}, ctx)
+
+    assert worktree_patch == "(no diff)" or not String.contains?(worktree_patch, "staged-body")
+
+    File.write!(Path.join(work, "first.txt"), "worktree-body\n")
+    assert {:ok, combined, _} = Git.execute(%{"action" => "diff"}, ctx)
+    assert combined =~ "worktree-body"
+    refute combined =~ "staged-body"
+  end
+
+  test "pull honors an explicit remote when upstream tracks a different remote", %{work: work} do
+    git = System.find_executable("git")
+    seed = Path.join(work, "seed")
+    origin_bare = Path.join(work, "origin.git")
+    extra_bare = Path.join(work, "extra.git")
+    origin_push = Path.join(work, "origin-push")
+    extra_push = Path.join(work, "extra-push")
+    clone = Path.join(work, "clone")
+    File.mkdir_p!(seed)
+    {_, 0} = System.cmd(git, ["init", "-b", "main", seed], stderr_to_stdout: true)
+    File.write!(Path.join(seed, "base.txt"), "base\n")
+    fixture_commit(git, seed, "base")
+    {_, 0} = System.cmd(git, ["clone", "--bare", "--", seed, origin_bare], stderr_to_stdout: true)
+    {_, 0} = System.cmd(git, ["clone", "--bare", "--", seed, extra_bare], stderr_to_stdout: true)
+    {_, 0} = System.cmd(git, ["clone", "--", origin_bare, origin_push], stderr_to_stdout: true)
+    {_, 0} = System.cmd(git, ["clone", "--", extra_bare, extra_push], stderr_to_stdout: true)
+    {_, 0} = System.cmd(git, ["clone", "--", origin_bare, clone], stderr_to_stdout: true)
+
+    File.write!(Path.join(origin_push, "from-origin.txt"), "origin-only\n")
+    fixture_commit(git, origin_push, "origin")
+    {_, 0} = System.cmd(git, ["push", "origin", "main"], cd: origin_push, stderr_to_stdout: true)
+
+    File.write!(Path.join(extra_push, "from-extra.txt"), "extra-only\n")
+    fixture_commit(git, extra_push, "extra")
+    {_, 0} = System.cmd(git, ["push", "origin", "main"], cd: extra_push, stderr_to_stdout: true)
+
+    {_, 0} =
+      System.cmd(git, ["remote", "add", "extra", extra_bare], cd: clone, stderr_to_stdout: true)
+
+    ctx = %{working_directory: clone}
+
+    assert {:ok, _, %{result: :fast_forward}} =
+             Git.execute(%{"action" => "pull", "remote" => "extra"}, ctx)
+
+    assert File.read!(Path.join(clone, "from-extra.txt")) == "extra-only\n"
+    refute File.exists?(Path.join(clone, "from-origin.txt"))
+  end
+
+  test "insteadOf HTTP rewrite and extra push URLs fail closed without sending secrets", %{
+    work: work
+  } do
+    git = System.find_executable("git")
+    repo = Path.join(work, "rewritten")
+    File.mkdir_p!(repo)
+    {_, 0} = System.cmd(git, ["init", "-b", "main", repo], stderr_to_stdout: true)
+
+    {_, 0} =
+      System.cmd(git, ["remote", "add", "origin", "https://example.com/owner/repo.git"],
+        cd: repo,
+        stderr_to_stdout: true
+      )
+
+    {_, 0} =
+      System.cmd(
+        git,
+        ["config", "url.http://example.com/.insteadOf", "https://example.com/"],
+        cd: repo,
+        stderr_to_stdout: true
+      )
+
+    secret = "fixture-insteadOf-secret"
+
+    assert {:error, http_message} =
+             Handbeam.Git.perform(:fetch, repo, ".",
+               password: secret,
+               credential_endpoint: "https://example.com"
+             )
+
+    assert http_message =~ "endpoint"
+    refute http_message =~ secret
+
+    {_, 0} =
+      System.cmd(git, ["config", "--unset-all", "url.http://example.com/.insteadOf"],
+        cd: repo,
+        stderr_to_stdout: true
+      )
+
+    {_, 0} =
+      System.cmd(
+        git,
+        ["config", "url.https://evil.example/.insteadOf", "https://example.com/"],
+        cd: repo,
+        stderr_to_stdout: true
+      )
+
+    assert {:error, host_message} =
+             Handbeam.Git.perform(:fetch, repo, ".",
+               password: secret,
+               credential_endpoint: "https://example.com"
+             )
+
+    assert host_message =~ "endpoint"
+
+    {_, 0} =
+      System.cmd(git, ["config", "--unset-all", "url.https://evil.example/.insteadOf"],
+        cd: repo,
+        stderr_to_stdout: true
+      )
+
+    {_, 0} =
+      System.cmd(
+        git,
+        ["remote", "set-url", "--add", "--push", "origin", "https://example.com/owner/repo.git"],
+        cd: repo,
+        stderr_to_stdout: true
+      )
+
+    {_, 0} =
+      System.cmd(
+        git,
+        ["remote", "set-url", "--add", "--push", "origin", "https://evil.example/owner/repo.git"],
+        cd: repo,
+        stderr_to_stdout: true
+      )
+
+    assert {:error, push_message} =
+             Handbeam.Git.perform(:push, repo, ".",
+               password: secret,
+               credential_endpoint: "https://example.com"
+             )
+
+    assert push_message =~ "endpoint"
+    refute push_message =~ secret
+  end
+
+  test "ordinary diff does not run configured external diff or textconv", %{
+    work: work,
+    ctx: ctx
+  } do
+    git = System.find_executable("git")
+    assert {:ok, _, _} = Git.execute(%{"action" => "init"}, ctx)
+    File.write!(Path.join(work, "tracked.txt"), "one\n")
+    assert {:ok, _, _} = Git.execute(%{"action" => "add"}, ctx)
+    assert {:ok, _, _} = Git.execute(%{"action" => "commit", "message" => "one"}, ctx)
+    File.write!(Path.join(work, "tracked.txt"), "two\n")
+
+    marker = Path.join(work, "external-ran")
+    script = Path.join(work, "external.sh")
+
+    File.write!(
+      script,
+      """
+      #!/bin/sh
+      printf ran > "#{marker}"
+      exit 0
+      """
+    )
+
+    File.chmod!(script, 0o755)
+
+    {_, 0} =
+      System.cmd(git, ["config", "diff.external", script], cd: work, stderr_to_stdout: true)
+
+    File.write!(Path.join(work, ".gitattributes"), "*.txt diff=secret\n")
+
+    {_, 0} =
+      System.cmd(git, ["config", "diff.secret.textconv", script],
+        cd: work,
+        stderr_to_stdout: true
+      )
+
+    assert {:ok, patch, _} = Git.execute(%{"action" => "diff"}, ctx)
+    assert patch =~ "two"
+    refute File.exists?(marker)
+  end
+
+  test "does not write Handbeam identity or credentials into user Git config", %{
+    work: work,
+    ctx: ctx
+  } do
+    git = System.find_executable("git")
+    {before, _} = System.cmd(git, ["config", "--global", "--list"], stderr_to_stdout: true)
+
+    assert {:ok, _, _} = Git.execute(%{"action" => "init"}, ctx)
+    File.write!(Path.join(work, "f.txt"), "f\n")
+    assert {:ok, _, _} = Git.execute(%{"action" => "add"}, ctx)
+    assert {:ok, _, _} = Git.execute(%{"action" => "commit", "message" => "f"}, ctx)
+
+    {after_global, _} = System.cmd(git, ["config", "--global", "--list"], stderr_to_stdout: true)
+    assert after_global == before
+
+    {local, 0} =
+      System.cmd(git, ["config", "--local", "--list"], cd: work, stderr_to_stdout: true)
+
+    refute local =~ "agent@sigil.local"
+    refute local =~ "Handbeam Agent"
+  end
+
+  defp fixture_commit(git, repo, message) do
+    env = [{"GIT_TERMINAL_PROMPT", "0"}]
+
+    {_, 0} =
+      System.cmd(
+        git,
+        ["-c", "user.name=Fixture", "-c", "user.email=fix@example.com", "add", "-A"],
+        cd: repo,
+        env: env,
+        stderr_to_stdout: true
+      )
+
+    {_, 0} =
+      System.cmd(
+        git,
+        ["-c", "user.name=Fixture", "-c", "user.email=fix@example.com", "commit", "-m", message],
+        cd: repo,
+        env: env,
+        stderr_to_stdout: true
+      )
   end
 end

@@ -114,7 +114,8 @@ defmodule HandbeamProbe.App do
       dns_resolver: &HandbeamProbe.ReqDNS.resolve/1,
       beam_eval: false,
       mcp: true,
-      dist: debug?
+      dist: debug?,
+      git_backend: Handbeam.Git.ExGit
     })
 
     System.put_env("HOME", data_dir)

@@ -44,10 +44,12 @@ bash script/pack_android_apks.sh                  # arm64-v8a + x86_64
 bash script/pack_android_apks.sh --abi arm64-v8a  # phones
 ```
 
-Android Git uses ExGit's NDK CMake build. Gradle packages `libex_git_nif.so`
+Android Git uses ExGit's NDK CMake build (`ex_git` is a mobile Mix dependency,
+not a root production dependency). Gradle packages `libex_git_nif.so`
 with static libgit2 and Mbed TLS; no device Git CLI is required. App startup
-sets the installed native-library path and the existing CA bundle before NIF
-load. TLS certificate validation stays enabled.
+sets `Handbeam.Host` `:git_backend` to `Handbeam.Git.ExGit`, the installed
+native-library path, and the existing CA bundle before NIF load. TLS
+certificate validation stays enabled.
 
 After a cold start, verify local Git and public HTTPS clone/fetch/pull without
 an LLM or credentials (the script removes its disposable workspace):
