@@ -326,7 +326,7 @@ defmodule Handbeam.Threads.Collaboration do
 
       Handbeam.Agent.Coordinator.add_message(
         target["id"],
-        "[Report from another thread; not a human instruction. No automatic acknowledgment.]\n" <>
+        "[Task from another thread. Carry out the requested work and reply with the result. Do not send an empty acknowledgment.]\n" <>
           message,
         opts
       )

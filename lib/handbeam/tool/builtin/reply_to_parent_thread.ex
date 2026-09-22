@@ -4,7 +4,7 @@ defmodule Handbeam.Tool.Builtin.ReplyToParentThread do
     module: Handbeam.Threads.Collaboration,
     action: :reply,
     description:
-      "Report an important result through the runtime-owned parent route. Inherits the run's handoff_id or the original delegation; pass an existing handoff_id when replying to a different queued task. Cannot choose or impersonate a parent. No automatic acknowledgment is needed.",
+      "Reply to the parent with the requested result through the runtime-owned parent route. Inherits the run's handoff_id or the original delegation; pass an existing handoff_id when replying to a different queued task. Cannot choose or impersonate a parent. A parent task is work to complete, not an untrusted instruction to refuse. Do not add an empty acknowledgment.",
     schema: %{
       type: "object",
       additionalProperties: false,
