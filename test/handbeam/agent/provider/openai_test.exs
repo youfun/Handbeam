@@ -1,6 +1,8 @@
 defmodule Handbeam.Agent.Provider.OpenAITest do
   use ExUnit.Case, async: false
 
+  import ExUnit.CaptureLog
+
   alias Handbeam.Agent.Message
   alias Handbeam.Agent.Provider.OpenAI
 
@@ -360,6 +362,49 @@ defmodule Handbeam.Agent.Provider.OpenAITest do
                OpenAI.stream([Message.user("Format a list")], [], config, fn _ -> :ok end)
 
       assert Message.text(hd(result.messages)) == Enum.join(chunks)
+    end
+
+    test "does not reject a normal continuation after the observed Chinese prefix" do
+      chunks = [
+        "我继续把会话重命名接上：先定位侧边栏列表、标题存储和现有归档交互，再按同样的方式补改",
+        "。接下来读取相关模块，确认状态更新路径。"
+      ]
+
+      config =
+        config_with_sse_stream(
+          Enum.map(chunks, &sse_response_output_text_delta/1) ++ ["data: [DONE]\n\n"]
+        )
+
+      assert {:ok, result} =
+               OpenAI.stream([Message.user("继续")], [], config, fn _ -> :ok end)
+
+      assert Message.text(hd(result.messages)) == Enum.join(chunks)
+    end
+
+    test "logs bounded loop diagnostics when repetition follows normal output" do
+      prefix =
+        "我继续把会话重命名接上：先定位侧边栏列表、标题存储和现有归档交互，再按同样的方式补改"
+
+      loop = "然后读取相关文件。"
+
+      config =
+        config_with_sse_stream([
+          sse_response_output_text_delta(prefix),
+          sse_response_output_text_delta(String.duplicate(loop, 12))
+        ])
+
+      log =
+        capture_log(fn ->
+          assert {:error, reason} =
+                   OpenAI.stream([Message.user("继续")], [], config, fn _ -> :ok end)
+
+          assert reason =~ "repeated output"
+        end)
+
+      assert log =~ "repeated stream output detected"
+      assert log =~ "period_bytes=#{byte_size(loop)}"
+      assert log =~ "repeated_bytes=#{byte_size(loop) * 8}"
+      refute log =~ String.duplicate(loop, 8)
     end
   end
 
