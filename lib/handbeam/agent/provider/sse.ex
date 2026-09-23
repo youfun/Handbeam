@@ -51,35 +51,40 @@ defmodule Handbeam.Agent.Provider.SSE do
   Build a Req `into:` stream handler that accumulates SSE events.
 
   The `handle_event` function receives `(accumulator, sse_event)` and
-  returns the updated accumulator. The accumulator must contain a
-  `:buffer` key (string) for SSE framing state.
+  returns the updated accumulator, or `{:halt, accumulator}` to cancel
+  the HTTP stream. The accumulator must contain a `:buffer` key (string)
+  for SSE framing state.
 
   The accumulator is stored in `resp.private.sse_acc`.
   """
-  @spec req_stream_handler(map(), (map(), sse_event() -> map())) ::
-          ({:data, String.t()}, {term(), term()} -> {:cont, {term(), term()}})
+  @spec req_stream_handler(map(), (map(), sse_event() -> map() | {:halt, map()})) ::
+          ({:data, String.t()}, {term(), term()} ->
+             {:cont | :halt, {term(), term()}})
   def req_stream_handler(initial_acc, handle_event) do
     fn {:data, chunk}, {req, resp} ->
       acc = Map.get(resp.private, :sse_acc, initial_acc)
       {events, remaining} = process_chunk(acc.buffer, chunk)
       acc = %{acc | buffer: remaining}
 
-      acc =
-        Enum.reduce(events, acc, fn event, acc ->
+      {status, acc} =
+        Enum.reduce_while(events, {:cont, acc}, fn event, {:cont, acc} ->
           try do
-            handle_event.(acc, event)
+            case handle_event.(acc, event) do
+              {:halt, acc} -> {:halt, {:halt, acc}}
+              acc -> {:cont, {:cont, acc}}
+            end
           rescue
             e ->
               Logger.warning(fn ->
                 "SSE event handler crashed: #{Exception.message(e)}\n#{Exception.format_stacktrace(__STACKTRACE__)}"
               end)
 
-              acc
+              {:cont, {:cont, acc}}
           end
         end)
 
       new_resp = put_in(resp.private[:sse_acc], acc)
-      {:cont, {req, new_resp}}
+      {status, {req, new_resp}}
     end
   end
 
