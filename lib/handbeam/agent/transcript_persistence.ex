@@ -164,9 +164,17 @@ defmodule Handbeam.Agent.TranscriptPersistence do
     :ok
   end
 
+  def handle_event(conversation_id, {:stall_check_requested, payload}, opts)
+      when is_binary(conversation_id) do
+    evidence = payload_value(payload, :evidence) || "检测到没有进展"
+    write_notice(conversation_id, "msg-stall-#{opts[:run_id] || "legacy"}", evidence, opts)
+    :ok
+  end
+
   def handle_event(conversation_id, {:run_end, payload}, opts) when is_binary(conversation_id) do
     flush!(conversation_id, opts)
     record_terminal_usage(conversation_id, payload, opts)
+    record_stop_notice(conversation_id, payload, opts)
 
     run_error = payload_value(payload, :error)
 
@@ -349,6 +357,65 @@ defmodule Handbeam.Agent.TranscriptPersistence do
   # the same terminal total whether or not a LiveView is connected.
   # `:interrupted` is approval wait, not a finished run; the resumed run_end
   # carries the cumulative usage for the same run_id.
+  defp record_stop_notice(conversation_id, payload, opts) do
+    status = payload_value(payload, :status)
+    error = payload_value(payload, :error)
+
+    text =
+      cond do
+        status in [:max_turns, "max_turns"] ->
+          "已达到 #{payload_value(payload, :turns, 0)} 轮上限，发送消息可继续。"
+
+        status in [:stalled, "stalled"] ->
+          "检测到没有进展：#{payload_value(payload, :evidence) || error}。运行已停止。"
+
+        status in [:budget_exceeded, "budget_exceeded"] ->
+          "已达到预算上限。运行已停止。"
+
+        status in [:halted, "halted"] ->
+          "运行已停止。#{error}"
+
+        is_binary(error) and String.contains?(error, "尚未通过验收") ->
+          error
+
+        true ->
+          nil
+      end
+
+    if is_binary(text) and text != "" do
+      write_notice(conversation_id, "msg-run-stop-#{opts[:run_id] || "legacy"}", text, opts)
+    else
+      :ok
+    end
+  end
+
+  defp write_notice(conversation_id, id, text, opts) do
+    entry =
+      base_entry(conversation_id, opts)
+      |> Map.merge(%{
+        "id" => id,
+        "content_type" => "system_msg",
+        "message_type" => "system",
+        "role" => "system",
+        "direction" => "outbound",
+        "content" => text,
+        "status" => "final"
+      })
+
+    case append_or_update(conversation_id, entry, opts) do
+      {:ok, saved} ->
+        deliver(saved, opts)
+        :ok
+
+      {:error, reason} ->
+        Logger.error(
+          "[TranscriptPersistence] stop notice failed conversation=#{conversation_id} reason=#{inspect(reason)}"
+        )
+
+        :ok
+    end
+  end
+
   defp record_terminal_usage(conversation_id, payload, opts) do
     status = payload_value(payload, :status)
     run_id = opts[:run_id]

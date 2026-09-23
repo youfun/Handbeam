@@ -27,23 +27,28 @@ defmodule Handbeam.Agent.Coordinator do
     with :ok <- validate_conversation_access(conversation_id, opts),
          :ok <- validate_required_opts(opts),
          :ok <- validate_model_policy(opts),
+         :ok <- validate_advisor_policy(opts),
          opts <- ensure_run_id(opts),
          {:ok, _pid} <- Session.start_or_get(session_id: conversation_id, model: opts[:model]) do
       case status(conversation_id) do
         {:ok, %{running?: true}} ->
-          if present_task_instructions?(opts) do
-            {:error, :run_in_progress}
-          else
-            opts = Keyword.put_new(opts, :deliver_as, :steer)
+          cond do
+            present_task_instructions?(opts) ->
+              {:error, :run_in_progress}
 
-            with {:ok, _entry} <-
-                   Handbeam.Agent.TranscriptPersistence.append_inbound(
-                     conversation_id,
-                     content,
-                     opts
-                   ) do
-              enqueue_candidate(conversation_id, content, opts)
-            end
+            true ->
+              opts = Keyword.put_new(opts, :deliver_as, :steer)
+
+              with {:ok, _entry} <-
+                     Handbeam.Agent.TranscriptPersistence.append_inbound(
+                       conversation_id,
+                       content,
+                       opts
+                     ),
+                   {:ok, ack} <- enqueue_candidate(conversation_id, content, opts) do
+                maybe_resume_stall(conversation_id)
+                {:ok, ack}
+              end
           end
 
         {:ok, %{running?: false}} ->
@@ -68,6 +73,7 @@ defmodule Handbeam.Agent.Coordinator do
     with :ok <- validate_conversation_access(conversation_id, opts),
          :ok <- validate_required_opts(opts),
          :ok <- validate_model_policy(opts),
+         :ok <- validate_advisor_policy(opts),
          opts <- ensure_run_id(opts),
          {:ok, _pid} <- Session.start_or_get(session_id: conversation_id, model: opts[:model]),
          {:ok, %{running?: false}} <- status(conversation_id),
@@ -239,6 +245,21 @@ defmodule Handbeam.Agent.Coordinator do
     end
   end
 
+  defp validate_advisor_policy(opts) do
+    {:ok, _pin} = Handbeam.Agent.Advisor.validate_start(Keyword.fetch!(opts, :workspace_path), opts)
+    :ok
+  end
+
+  defp maybe_resume_stall(conversation_id) do
+    case status(conversation_id) do
+      {:ok, %{running?: true, interrupt_type: :stall_check}} ->
+        Handbeam.Agent.Runner.resume(conversation_id, %{"action" => "continue"})
+
+      _ ->
+        :ok
+    end
+  end
+
   defp agent_run_opts(conversation_id, opts) do
     opts =
       case Handbeam.ConversationStore.get_metadata(conversation_id) do
@@ -258,6 +279,12 @@ defmodule Handbeam.Agent.Coordinator do
     |> put_transcript_history(conversation_id)
     |> Keyword.put(:working_directory, Keyword.fetch!(opts, :workspace_path))
     |> Keyword.put(:skills, true)
+    |> put_advisor_pin()
+  end
+
+  defp put_advisor_pin(opts) do
+    {:ok, pin} = Handbeam.Agent.Advisor.validate_start(Keyword.fetch!(opts, :workspace_path), opts)
+    Keyword.put(opts, :advisor, pin)
   end
 
   defp present_task_instructions?(opts) do

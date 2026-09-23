@@ -13,9 +13,11 @@ defmodule Handbeam.Agent.Delegation do
 
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
-  def run(input, context) do
-    with {:ok, budget} <- Policy.validate(context) do
-      GenServer.call(__MODULE__, {:run, input, context, budget}, :infinity)
+  def run(input, context), do: run(input, context, :task)
+
+  def run(input, context, profile) when profile in [:task, :advisor] do
+    with {:ok, budget} <- Policy.validate(context, profile) do
+      GenServer.call(__MODULE__, {:run, input, context, budget, profile}, :infinity)
     end
   catch
     :exit, _ -> {:error, "Delegation owner unavailable; completion cannot be confirmed"}
@@ -31,7 +33,10 @@ defmodule Handbeam.Agent.Delegation do
   end
 
   @impl true
-  def handle_call({:run, input, context, budget}, from, jobs) do
+  def handle_call({:run, input, context, budget}, from, jobs),
+    do: handle_call({:run, input, context, budget, :task}, from, jobs)
+
+  def handle_call({:run, input, context, budget, profile}, from, jobs) do
     cond do
       map_size(jobs) >= 16 ->
         {:reply, {:error, "Delegation capacity reached"}, jobs}
@@ -65,12 +70,14 @@ defmodule Handbeam.Agent.Delegation do
           runner: nil,
           runner_ref: nil,
           task: nil,
-          status: :running,
+          profile: profile,
+          input: input,
           text: "",
           truncated?: false,
           usage: %{},
           started?: false,
           cleaned?: false,
+          status: :running,
           starter: nil,
           starter_ref: nil,
           cleanup_ref: nil
@@ -78,7 +85,7 @@ defmodule Handbeam.Agent.Delegation do
 
         {:ok, starter} =
           Task.Supervisor.start_child(Handbeam.AgentRunTaskSupervisor, fn ->
-            result = start_child(id, run_id, input, context, budget, owner)
+            result = start_child(id, run_id, input, context, budget, owner, profile)
             send(owner, {:started, id, result})
           end)
 
@@ -316,31 +323,36 @@ defmodule Handbeam.Agent.Delegation do
     if status in [:completed, "completed"], do: {:ok, text, data}, else: {:error, text, data}
   end
 
-  defp start_child(id, run_id, input, context, budget, owner) do
+  defp start_child(id, run_id, input, context, budget, owner, profile) do
+    title = if(profile == :advisor, do: "Internal advisor", else: "Internal read-only task")
+
     with {:ok, _} <-
            ConversationStore.create(context[:workspace_id],
              id: id,
              visibility: "internal",
              parent_conversation_id: context.conversation_id,
              parent_run_id: context.run_id,
-             parent_tool_call_id: context.tool_call_id,
-             title: "Internal read-only task"
-           ) do
-      opts = Policy.child_opts(context, budget)
-
+             parent_tool_call_id: context[:tool_call_id],
+             title: title
+           ),
+         {:ok, child_opts} <- child_opts(context, budget, profile) do
       opts =
-        opts ++
+        child_opts ++
           [
             run_id: run_id,
             delegation_owner: owner,
             on_event: fn event -> send(owner, {:child_event, id, event}) end
           ]
 
-      Coordinator.add_message(
-        id,
-        input["task"] <> "\n\nCompletion criteria:\n" <> input["criteria"],
-        opts
-      )
+      Coordinator.add_message(id, child_prompt(input, profile), opts)
     end
   end
+
+  defp child_opts(context, budget, :task), do: {:ok, Policy.child_opts(context, budget, :task)}
+  defp child_opts(context, budget, :advisor), do: Policy.child_opts(context, budget, :advisor)
+
+  defp child_prompt(input, :task),
+    do: input["task"] <> "\n\nCompletion criteria:\n" <> input["criteria"]
+
+  defp child_prompt(input, :advisor), do: input["prompt"]
 end

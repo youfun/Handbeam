@@ -27,7 +27,11 @@ defmodule Handbeam.Settings.ModelAISettings do
     om_max_recent_context: 5,
     om_message_tokens: 30_000,
     om_buffer_tokens: 10_000,
-    om_observation_tokens: 40_000
+    om_observation_tokens: 40_000,
+    # Advisor is not part of @fields. Generic diff/merge would turn a custom
+    # model equal to the global value back into inherit, and has no disabled carrier.
+    advisor_mode: :inherit,
+    advisor_model: nil
   ]
 
   @type t :: %__MODULE__{
@@ -41,7 +45,9 @@ defmodule Handbeam.Settings.ModelAISettings do
           om_max_recent_context: non_neg_integer(),
           om_message_tokens: pos_integer(),
           om_buffer_tokens: pos_integer(),
-          om_observation_tokens: pos_integer()
+          om_observation_tokens: pos_integer(),
+          advisor_mode: :inherit | :custom | :disabled,
+          advisor_model: String.t() | nil
         }
 
   @doc "Return the default settings struct."
@@ -61,12 +67,18 @@ defmodule Handbeam.Settings.ModelAISettings do
         {field, Map.get(override, field, Map.get(base, field))}
       end
 
-    struct!(__MODULE__, merge_map)
+    struct!(__MODULE__, Map.merge(merge_map, advisor_fields(override)))
   end
 
   @doc "Normalize a partial settings map without filling defaults."
   @spec normalize_override(map()) :: map()
   def normalize_override(%{} = map) do
+    map
+    |> normalize_generic_override()
+    |> Map.merge(normalize_advisor_override(map))
+  end
+
+  defp normalize_generic_override(%{} = map) do
     om_map = get_key(map, "observational_memory") || %{}
 
     %{}
@@ -132,7 +144,39 @@ defmodule Handbeam.Settings.ModelAISettings do
       observation_tokens: settings.om_observation_tokens
     }
 
-    Keyword.put(opts, :om, om_map)
+    opts = Keyword.put(opts, :om, om_map)
+    Keyword.put(opts, :advisor, resolve_advisor(settings))
+  end
+
+  @doc """
+  Resolve the advisor object carried by one settings layer.
+
+  This does not apply workspace policy. Callers that need a runnable model
+  re-check `ModelConfig.resolve_model_for_workspace/2`.
+  """
+  @spec resolve_advisor(t()) ::
+          {:ok, %{model: String.t(), source: :settings}} | :none | :disabled | {:error, term()}
+  def resolve_advisor(%__MODULE__{advisor_mode: :disabled}), do: :disabled
+  def resolve_advisor(%__MODULE__{advisor_mode: :inherit, advisor_model: nil}), do: :none
+
+  def resolve_advisor(%__MODULE__{advisor_mode: :inherit, advisor_model: model})
+      when is_binary(model) and model != "" do
+    {:ok, %{model: model, source: :settings}}
+  end
+
+  def resolve_advisor(%__MODULE__{advisor_mode: :custom, advisor_model: model})
+      when is_binary(model) and model != "" do
+    if composite?(model),
+      do: {:ok, %{model: model, source: :settings}},
+      else: {:error, :bare_model_id}
+  end
+
+  def resolve_advisor(%__MODULE__{}), do: {:error, :invalid_advisor}
+
+  @doc "Drop a workspace advisor override so the workspace inherits the global advisor."
+  @spec clear_advisor(t()) :: t()
+  def clear_advisor(%__MODULE__{} = settings) do
+    %{settings | advisor_mode: :inherit, advisor_model: nil}
   end
 
   @doc "Serialise to a JSON-safe map (string keys, canonical nested OM structure)."
@@ -140,7 +184,41 @@ defmodule Handbeam.Settings.ModelAISettings do
   def to_json_map(%__MODULE__{} = settings) do
     defaults()
     |> diff(settings)
+    |> Map.put(:advisor_model, settings.advisor_model)
     |> override_to_json_map()
+  end
+
+  @doc """
+  Settings snapshot for one scope.
+
+  Advisor is included even though it stays out of generic field diff.
+  Global stores a model only. Workspace stores inherit by omitting the key,
+  or custom / disabled explicitly.
+  """
+  def snapshot_model_ai(%__MODULE__{} = base, %__MODULE__{} = form, scope)
+      when scope in [:global, :workspace] do
+    base
+    |> diff(form)
+    |> override_to_json_map()
+    |> put_saved_advisor(form, scope)
+  end
+
+  def put_saved_advisor(model_ai, %__MODULE__{} = form, scope) when is_map(model_ai) do
+    model_ai = Map.delete(model_ai, "advisor")
+
+    case {scope, form.advisor_mode, form.advisor_model} do
+      {:global, :custom, model} when is_binary(model) and model != "" ->
+        Map.put(model_ai, "advisor", %{"model" => model})
+
+      {:workspace, :custom, model} when is_binary(model) and model != "" ->
+        Map.put(model_ai, "advisor", %{"mode" => "custom", "model" => model})
+
+      {:workspace, :disabled, _} ->
+        Map.put(model_ai, "advisor", %{"mode" => "disabled"})
+
+      _ ->
+        model_ai
+    end
   end
 
   @doc "Convert a partial override map with atom keys to JSON-safe storage shape."
@@ -162,7 +240,8 @@ defmodule Handbeam.Settings.ModelAISettings do
     om_map = put_if_present(om_map, override, :om_buffer_tokens, "buffer_tokens")
     om_map = put_if_present(om_map, override, :om_observation_tokens, "observation_tokens")
 
-    if map_size(om_map) > 0, do: Map.put(map, "observational_memory", om_map), else: map
+    map = if map_size(om_map) > 0, do: Map.put(map, "observational_memory", om_map), else: map
+    put_advisor_json(map, override)
   end
 
   @doc "Return atom-keyed fields in `override` that differ from `base`."
@@ -188,10 +267,136 @@ defmodule Handbeam.Settings.ModelAISettings do
         {field, Map.get(override, field, Map.get(base, field))}
       end
 
-    struct!(__MODULE__, merge_map)
+    struct!(__MODULE__, Map.merge(merge_map, advisor_merge(base, override)))
   end
 
   @doc "Validate a map of settings changes (partial form input)."
+  @spec validate(map()) :: :ok | {:error, String.t()}
+  def validate(%{} = map) do
+    with :ok <- validate_privacy_mode(map),
+         :ok <- validate_memory_scope(map),
+         :ok <- validate_max_recent_context(map),
+         :ok <- validate_token_thresholds(map),
+         :ok <- validate_advisor(map) do
+      :ok
+    end
+  end
+
+  def fields, do: @fields
+
+  @doc "Advisor fields stay out of generic diff so custom-equal-to-global is not dropped."
+  @spec advisor_fields(map() | t()) :: map()
+  def advisor_fields(%__MODULE__{} = settings) do
+    %{advisor_mode: settings.advisor_mode, advisor_model: settings.advisor_model}
+  end
+
+  def advisor_fields(%{} = map) do
+    Map.take(map, [:advisor_mode, :advisor_model])
+  end
+
+  defp advisor_merge(base, override) do
+    mode = Map.get(override, :advisor_mode, base.advisor_mode)
+    model = Map.get(override, :advisor_model, base.advisor_model)
+    %{advisor_mode: mode, advisor_model: if(mode == :custom, do: model, else: nil)}
+  end
+
+  defp normalize_advisor_override(map) do
+    case get_key(map, "advisor") do
+      nil ->
+        %{}
+
+      %{} = advisor ->
+        mode = advisor_mode(advisor)
+        model = raw_string(advisor, "model")
+
+        case mode do
+          :custom -> %{advisor_mode: :custom, advisor_model: model}
+          :disabled -> %{advisor_mode: :disabled, advisor_model: nil}
+          :inherit -> %{advisor_mode: :inherit, advisor_model: nil}
+          _ -> %{advisor_mode: mode, advisor_model: model}
+        end
+
+      _ ->
+        %{advisor_mode: :invalid, advisor_model: nil}
+    end
+  end
+
+  defp advisor_mode(advisor) do
+    case raw_string(advisor, "mode") do
+      nil ->
+        if(Map.has_key?(advisor, "model") or Map.has_key?(advisor, :model),
+          do: :custom,
+          else: :inherit
+        )
+
+      "inherit" ->
+        :inherit
+
+      "custom" ->
+        :custom
+
+      "disabled" ->
+        :disabled
+
+      _ ->
+        :invalid
+    end
+  end
+
+  defp put_advisor_json(json, override) do
+    cond do
+      Map.get(override, :advisor_mode) == :disabled ->
+        Map.put(json, "advisor", %{"mode" => "disabled"})
+
+      Map.get(override, :advisor_mode) == :custom ->
+        Map.put(json, "advisor", %{
+          "mode" => "custom",
+          "model" => Map.get(override, :advisor_model)
+        })
+
+      is_binary(Map.get(override, :advisor_model)) and Map.get(override, :advisor_model) != "" ->
+        Map.put(json, "advisor", %{"model" => Map.get(override, :advisor_model)})
+
+      true ->
+        json
+    end
+  end
+
+  defp composite?(model) do
+    case String.split(model, "/", parts: 2) do
+      [provider, id] when provider != "" and id != "" -> true
+      _ -> false
+    end
+  end
+
+  defp validate_advisor(map) do
+    case get_key(map, "advisor") || get_key(map, "advisor_mode") do
+      nil ->
+        :ok
+
+      mode when mode in [:inherit, :custom, :disabled, "inherit", "custom", "disabled"] ->
+        :ok
+
+      %{} = advisor ->
+        case advisor_mode(advisor) do
+          :invalid ->
+            {:error, "advisor mode must be inherit, custom, or disabled"}
+
+          :custom ->
+            if(composite?(raw_string(advisor, "model") || ""),
+              do: :ok,
+              else: {:error, "advisor custom model must be a composite provider/model id"}
+            )
+
+          _ ->
+            :ok
+        end
+
+      _ ->
+        {:error, "advisor mode must be inherit, custom, or disabled"}
+    end
+  end
+
   @spec validate(map()) :: :ok | {:error, String.t()}
   def validate(%{} = map) do
     with :ok <- validate_privacy_mode(map),

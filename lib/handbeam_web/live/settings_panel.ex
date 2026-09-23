@@ -253,14 +253,14 @@ defmodule HandbeamWeb.Live.SettingsPanel do
   # with an empty {"model_ai": {}} write.
   defp save_current_scope(%{assigns: %{scope: :global}} = _socket, form) do
     defaults = ModelAISettings.defaults()
-    diff = ModelAISettings.diff(defaults, form)
+    json = ModelAISettings.snapshot_model_ai(defaults, form, :global)
+    {:ok, existing} = Settings.load_global()
+    current = Map.get(existing, "model_ai", %{})
 
-    if diff == %{} do
-      :ok
+    if json != %{} or Map.has_key?(current, "advisor") do
+      Settings.save_global(json)
     else
-      diff
-      |> ModelAISettings.override_to_json_map()
-      |> Settings.save_global()
+      :ok
     end
   end
 
@@ -268,17 +268,13 @@ defmodule HandbeamWeb.Live.SettingsPanel do
          %{assigns: %{scope: {:workspace, _}, workspace_path: workspace_path}} = _socket,
          form
        ) do
-    base = Settings.global_model_ai()
-    diff = ModelAISettings.diff(base, form)
+    json = ModelAISettings.snapshot_model_ai(Settings.global_model_ai(), form, :workspace)
+    {:ok, current} = Settings.load_workspace_model_ai(workspace_path)
 
-    if diff == %{} do
-      :ok
+    if json != current do
+      Settings.save_workspace_model_ai(workspace_path, json)
     else
-      map =
-        diff
-        |> ModelAISettings.override_to_json_map()
-
-      Settings.save_workspace_model_ai(workspace_path, map)
+      :ok
     end
   end
 
@@ -296,7 +292,7 @@ defmodule HandbeamWeb.Live.SettingsPanel do
 
     form =
       case Settings.fetch_effective_model_ai(workspace_path) do
-        {:ok, effective} -> effective
+        {:ok, effective} -> overlay_workspace_advisor(effective, workspace_path)
         {:error, _reason} -> Settings.global_model_ai()
       end
 
@@ -305,10 +301,50 @@ defmodule HandbeamWeb.Live.SettingsPanel do
     |> assign(:form, form)
   end
 
+  defp overlay_workspace_advisor(form, workspace_path) do
+    case Settings.load_workspace_model_ai(workspace_path) do
+      {:ok, model_ai} ->
+        fields =
+          model_ai
+          |> ModelAISettings.normalize_override()
+          |> ModelAISettings.advisor_fields()
+
+        if fields == %{} do
+          struct!(form, advisor_mode: :inherit, advisor_model: nil)
+        else
+          struct!(form, Map.to_list(fields))
+        end
+
+      _ ->
+        form
+    end
+  end
+
+  defp put_advisor_model(form, value) do
+    case blank_to_nil(value) do
+      nil ->
+        mode = if form.advisor_mode == :disabled, do: :disabled, else: :inherit
+        struct!(form, advisor_mode: mode, advisor_model: nil)
+
+      model ->
+        struct!(form, advisor_mode: :custom, advisor_model: model)
+    end
+  end
+
+  defp put_advisor_setting(form, "disabled"),
+    do: struct!(form, advisor_mode: :disabled, advisor_model: nil)
+
+  defp put_advisor_setting(form, "custom"), do: struct!(form, advisor_mode: :custom)
+
+  defp put_advisor_setting(form, _),
+    do: struct!(form, advisor_mode: :inherit, advisor_model: nil)
+
   defp update_form_field(form, field, value) do
     case field do
       "om_enabled" -> struct!(form, om_enabled: value in [true, "true"])
       "default_model" -> struct!(form, default_model: blank_to_nil(value))
+      "advisor_model" -> put_advisor_model(form, value)
+      "advisor_setting" -> put_advisor_setting(form, value)
       "reasoning" -> struct!(form, reasoning: value)
       "om_observer_model" -> struct!(form, om_observer_model: blank_to_nil(value))
       "om_reflector_model" -> struct!(form, om_reflector_model: blank_to_nil(value))

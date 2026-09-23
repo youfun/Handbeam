@@ -17,6 +17,9 @@ defmodule HandbeamWeb.WorkspaceHelper do
   def status_dot_class(:running), do: "running"
   def status_dot_class(:error), do: "error"
   def status_dot_class(:max_turns), do: "error"
+  def status_dot_class(:stalled), do: "error"
+  def status_dot_class(:budget_exceeded), do: "error"
+  def status_dot_class(:halted), do: "error"
   def status_dot_class(:completed), do: "completed"
   def status_dot_class(_), do: "idle"
 

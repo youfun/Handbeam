@@ -34,6 +34,7 @@ defmodule Handbeam.Settings.ModelAIOverride do
     Map.new(ModelAISettings.fields(), fn field ->
       {field, if(Map.has_key?(override, field), do: :workspace, else: :global)}
     end)
+    |> Map.put(:advisor, Settings.advisor_resolution(workspace_root))
   end
 
   @doc """
@@ -47,12 +48,26 @@ defmodule Handbeam.Settings.ModelAIOverride do
   def save(:global, %ModelAISettings{} = form) do
     form
     |> ModelAISettings.to_json_map()
+    |> Map.update("advisor", nil, fn advisor ->
+      case advisor do
+        %{"model" => model} when is_binary(model) and model != "" -> %{"model" => model}
+        _ -> nil
+      end
+    end)
+    |> drop_nil_advisor()
     |> Settings.save_global()
   end
 
+  defp drop_nil_advisor(map) do
+    if Map.get(map, "advisor") == nil, do: Map.delete(map, "advisor"), else: map
+  end
+
   def save({:workspace, path}, %ModelAISettings{} = form) do
-    Settings.global_model_ai()
+    global = Settings.global_model_ai()
+
+    global
     |> ModelAISettings.diff(form)
+    |> Map.merge(advisor_workspace_override(form))
     |> ModelAISettings.override_to_json_map()
     |> then(&Settings.save_workspace_model_ai(path, &1))
   end
@@ -69,10 +84,27 @@ defmodule Handbeam.Settings.ModelAIOverride do
 
     updated =
       Enum.reduce(fields, effective, fn field, acc ->
-        Map.put(acc, field, Map.get(global, field))
+        if field == :advisor do
+          ModelAISettings.clear_advisor(acc)
+        else
+          Map.put(acc, field, Map.get(global, field))
+        end
       end)
 
     save({:workspace, path}, updated)
+  end
+
+  defp advisor_workspace_override(form) do
+    case form.advisor_mode do
+      :inherit ->
+        %{}
+
+      :disabled ->
+        %{advisor_mode: :disabled, advisor_model: nil}
+
+      :custom ->
+        %{advisor_mode: :custom, advisor_model: form.advisor_model}
+    end
   end
 
   @doc "Remove every workspace Model/AI override."

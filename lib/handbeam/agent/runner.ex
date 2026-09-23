@@ -185,7 +185,8 @@ defmodule Handbeam.Agent.Runner do
         run_pid: self(),
         run_id: state.opts[:run_id],
         queue_pid: state.queue_pid,
-        error: state.error
+        error: state.error,
+        interrupt_type: interrupt_type(state)
       }}, state}
   end
 
@@ -213,9 +214,11 @@ defmodule Handbeam.Agent.Runner do
       |> Keyword.put(:candidate_queue, state.queue_pid)
       |> put_persistence_callback(state.conversation_id)
 
+    resume = resume_fun(state)
+
     task =
       Task.Supervisor.async_nolink(Handbeam.AgentRunTaskSupervisor, fn ->
-        Handbeam.Agent.resume_after_tool_approval(state.interrupted_state, decisions, run_opts)
+        resume.(state.interrupted_state, decisions, run_opts)
       end)
 
     {:reply, :ok, %{state | status: :running, task: task, interrupted_state: nil}}
@@ -274,6 +277,21 @@ defmodule Handbeam.Agent.Runner do
   end
 
   def handle_info(_message, state), do: {:noreply, state}
+
+  defp interrupt_type(%{status: :awaiting_approval, interrupted_state: %{interrupt_data: data}})
+       when is_map(data) do
+    data[:type] || data["type"]
+  end
+
+  defp interrupt_type(_state), do: nil
+
+  defp resume_fun(state) do
+    if interrupt_type(state) == :stall_check do
+      &Handbeam.Agent.resume_after_stall_check/3
+    else
+      &Handbeam.Agent.resume_after_tool_approval/3
+    end
+  end
 
   defp shutdown_run_task(nil), do: :ok
 

@@ -123,12 +123,12 @@ defmodule HandbeamWeb.SettingsLive do
 
       # Save global Model/AI settings
       defaults = ModelAISettings.defaults()
-      diff = ModelAISettings.diff(defaults, form)
+      json = ModelAISettings.snapshot_model_ai(defaults, form, :global)
+      {:ok, existing} = Settings.load_global()
+      current = Map.get(existing, "model_ai", %{})
 
-      if diff != %{} do
-        diff
-        |> ModelAISettings.override_to_json_map()
-        |> Settings.save_global()
+      if json != %{} or Map.has_key?(current, "advisor") do
+        Settings.save_global(json)
       end
 
       send(self(), {:settings_saved, form})
@@ -339,6 +339,13 @@ defmodule HandbeamWeb.SettingsLive do
 
   defp update_form_field(form, "default_model", value) do
     struct!(form, default_model: blank_to_nil(value))
+  end
+
+  defp update_form_field(form, "advisor_model", value) do
+    case blank_to_nil(value) do
+      nil -> struct!(form, advisor_mode: :inherit, advisor_model: nil)
+      model -> struct!(form, advisor_mode: :custom, advisor_model: model)
+    end
   end
 
   defp update_form_field(form, "reasoning", value) do

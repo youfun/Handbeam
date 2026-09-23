@@ -145,6 +145,7 @@ defmodule Handbeam.Tool.Registry do
       Handbeam.Tool.Builtin.MixProject,
       Handbeam.Tool.Builtin.Read,
       Handbeam.Tool.Builtin.Skill,
+      Handbeam.Tool.Builtin.Advisor,
       Handbeam.Tool.Builtin.Task,
       Handbeam.Tool.Builtin.WebFetch,
       Handbeam.Tool.Builtin.Write,
@@ -426,6 +427,7 @@ defmodule Handbeam.Tool.Registry do
         ),
       concurrent?:
         if(function_exported?(mod, :concurrent?, 0), do: mod.concurrent?(), else: true),
+      timeout_ms: if(function_exported?(mod, :timeout_ms, 0), do: mod.timeout_ms(), else: nil),
       meta: if(is_nil(owner), do: %{}, else: %{owner: owner})
     }
   end

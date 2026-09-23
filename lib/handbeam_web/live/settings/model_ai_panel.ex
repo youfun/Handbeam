@@ -91,6 +91,59 @@ defmodule HandbeamWeb.Live.Settings.ModelAIPanel do
       </section>
 
       <section class="settings-model-section">
+        <h4 class="settings-model-section-title">{gettext("Advisor")}</h4>
+        <div class="settings-card">
+          <div class="settings-field-row">
+            <div class="settings-field-copy">
+              <div class="settings-field-title">{gettext("Advisor model")}</div>
+              <div class="settings-field-desc">
+                {gettext(
+                  "Optional second model. When set, the agent can ask it for advice and decides for itself when to call."
+                )}
+              </div>
+            </div>
+            <div class="settings-field-control">
+              <select name="advisor_model" phx-change="update_field" class="settings-input">
+                <option value="" selected={is_nil(@form.advisor_model)}>
+                  {if @scope == :global,
+                    do: gettext("Not configured"),
+                    else: gettext("No workspace model")}
+                </option>
+                <option
+                  :for={m <- @available_models}
+                  value={model_value(m)}
+                  selected={@form.advisor_model == model_value(m)}
+                >
+                  {model_display(m)}
+                </option>
+              </select>
+            </div>
+          </div>
+          <div :if={@scope != :global} class="settings-field-row">
+            <div class="settings-field-copy">
+              <div class="settings-field-title">{gettext("Workspace advisor")}</div>
+              <div class="settings-field-desc">
+                {gettext("Inherit the global advisor, choose another model, or turn it off here.")}
+              </div>
+            </div>
+            <div class="settings-field-control">
+              <select name="advisor_setting" phx-change="update_field" class="settings-input">
+                <option value="inherit" selected={@form.advisor_mode == :inherit}>
+                  {gettext("Use global")}
+                </option>
+                <option value="custom" selected={@form.advisor_mode == :custom}>
+                  {gettext("Use the model selected above")}
+                </option>
+                <option value="disabled" selected={@form.advisor_mode == :disabled}>
+                  {gettext("Disabled")}
+                </option>
+              </select>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="settings-model-section">
         <h4 class="settings-model-section-title">
           {gettext("Observational Memory")}
         </h4>

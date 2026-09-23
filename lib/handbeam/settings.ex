@@ -175,6 +175,7 @@ defmodule Handbeam.Settings do
 
           {key, source}
         end)
+        |> Map.put(:advisor, advisor_resolution(global_model_ai, workspace_model_ai, settings))
 
       {:ok, %{settings: settings, sources: sources}}
     end
@@ -187,5 +188,55 @@ defmodule Handbeam.Settings do
 
     ModelAISettings.defaults()
     |> ModelAISettings.merge(ModelAISettings.normalize_override(Map.get(global, "model_ai", %{})))
+  end
+
+  @doc """
+  Advisor resolution for a workspace.
+
+  Returns `{:ok, %{model, source}}`, `:none`, `:disabled`, or `{:error, reason}`.
+  Web and native settings read this result instead of deriving the tri-state themselves.
+  """
+  def advisor_resolution(workspace_root) when is_binary(workspace_root) do
+    case inspect_model_ai(workspace_root) do
+      {:ok, %{sources: sources}} -> Map.get(sources, :advisor, :none)
+      {:error, _reason} -> :none
+    end
+  end
+
+  defp advisor_resolution(global_override, workspace_override, settings) do
+    cond do
+      Map.get(workspace_override, :advisor_mode) == :disabled ->
+        :disabled
+
+      Map.get(workspace_override, :advisor_mode) == :invalid ->
+        {:error, :invalid_advisor}
+
+      Map.get(workspace_override, :advisor_mode) == :custom ->
+        case ModelAISettings.resolve_advisor(%{
+               settings
+               | advisor_mode: :custom,
+                 advisor_model: workspace_override[:advisor_model]
+             }) do
+          {:ok, info} -> {:ok, %{info | source: :workspace}}
+          other -> other
+        end
+
+      Map.get(global_override, :advisor_mode) in [:custom, :inherit] and
+          is_binary(global_override[:advisor_model]) ->
+        case ModelAISettings.resolve_advisor(%{
+               settings
+               | advisor_mode: :custom,
+                 advisor_model: global_override[:advisor_model]
+             }) do
+          {:ok, info} -> {:ok, %{info | source: :global}}
+          other -> other
+        end
+
+      Map.get(global_override, :advisor_mode) == :invalid ->
+        {:error, :invalid_advisor}
+
+      true ->
+        :none
+    end
   end
 end
