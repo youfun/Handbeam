@@ -134,8 +134,25 @@
             <div class="settings-detail-row">
               <span class="settings-detail-label">API Key</span>
               <span class="settings-detail-value font-mono">
-                {obscured_api_key(@selected_provider.api_key)}
+                {if(@selected_provider.auth_type == "oauth",
+                  do: gettext("OAuth（凭证不在此显示）"),
+                  else: obscured_api_key(@selected_provider.api_key)
+                )}
               </span>
+            </div>
+            <p
+              :if={@selected_provider.id == "cursor"}
+              class="text-[11px] text-tertiary mt-2"
+            >
+              {gettext("非官方 Cursor 协议接入。费用未知，不会显示为 0 或免费。原生手机 OAuth 入口尚未验证。")}
+            </p>
+            <div :if={@selected_provider.id == "cursor"} class="settings-detail-actions">
+              <button
+                phx-click="refresh_cursor_models"
+                class="settings-btn"
+              >
+                {gettext("刷新 Cursor 模型")}
+              </button>
             </div>
             <div class="settings-detail-row">
               <span class="settings-detail-label">{gettext("默认供应商")}</span>
@@ -238,7 +255,7 @@
       <div
         :if={
           @form_error && !@show_add_provider && !@show_edit_provider && !@show_add_model &&
-            !@show_subscription_login && !@xai_oauth
+            !@show_subscription_login && !@xai_oauth && !@subscription_oauth
         }
         class="mx-4 mt-3 p-2.5 rounded-lg text-xs text-error bg-error-subtle flex items-start gap-2"
       >
@@ -752,37 +769,48 @@
   </div>
 </div>
 
-<!-- ── xAI OAuth Overlay ── -->
-<div :if={@xai_oauth} class="settings-overlay">
+<!-- ── Subscription OAuth Overlay ── -->
+<div :if={oauth_overlay(@subscription_oauth, @xai_oauth)} class="settings-overlay">
   <div class="settings-dialog settings-dialog-sm">
     <h2 class="settings-dialog-title">
-      {Map.get(@xai_oauth, :login_label, "Sign in with SuperGrok or X Premium")}
+      {Map.get(
+        oauth_overlay(@subscription_oauth, @xai_oauth),
+        :login_label,
+        "Sign in with SuperGrok or X Premium"
+      )}
     </h2>
     <p class="text-xs text-secondary mb-3">
-      {gettext("打开下面的链接，输入用户码完成 xAI 订阅授权。")}
+      {Map.get(
+        oauth_overlay(@subscription_oauth, @xai_oauth),
+        :hint,
+        gettext("打开下面的链接，输入用户码完成 xAI 订阅授权。")
+      )}
     </p>
     <div class="settings-detail-grid mb-4">
-      <div class="settings-detail-row">
+      <div
+        :if={Map.get(oauth_overlay(@subscription_oauth, @xai_oauth).device, :user_code)}
+        class="settings-detail-row"
+      >
         <span class="settings-detail-label">{gettext("用户码")}</span>
         <span class="settings-detail-value font-mono text-lg tracking-widest">
-          {@xai_oauth.device.user_code}
+          {oauth_overlay(@subscription_oauth, @xai_oauth).device.user_code}
         </span>
       </div>
-      <div class="settings-detail-row">
+      <div class="settings-detail-row settings-detail-row-stack">
         <span class="settings-detail-label">{gettext("验证地址")}</span>
         <a
-          href={@xai_oauth.verification_uri}
+          href={oauth_overlay(@subscription_oauth, @xai_oauth).verification_uri}
           target="_blank"
           rel="noopener noreferrer"
-          class="settings-detail-value font-mono text-accent truncate"
+          class="settings-detail-value font-mono text-accent whitespace-normal break-all"
         >
-          {@xai_oauth.verification_uri}
+          {oauth_overlay(@subscription_oauth, @xai_oauth).verification_uri}
         </a>
       </div>
     </div>
     <p class="text-[11px] text-tertiary mb-4">{gettext("Waiting for authentication...")}</p>
     <div class="settings-dialog-actions">
-      <button phx-click="cancel_xai_oauth" class="settings-btn">{gettext("取消")}</button>
+      <button phx-click="cancel_subscription_oauth" class="settings-btn">{gettext("取消")}</button>
     </div>
   </div>
 </div>

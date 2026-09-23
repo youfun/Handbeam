@@ -42,7 +42,7 @@ defmodule Handbeam.Agent.ModelConfig do
       and never fall back to an unrelated environment API key
   """
 
-  alias Handbeam.Agent.Auth.XaiCredential
+  alias Handbeam.Agent.Auth.{CursorCredential, XaiCredential}
 
   require Logger
 
@@ -313,6 +313,7 @@ defmodule Handbeam.Agent.ModelConfig do
   defp default_base_url_for_provider("openrouter"), do: "https://openrouter.ai/api/v1"
   defp default_base_url_for_provider("deepseek"), do: "https://api.deepseek.com"
   defp default_base_url_for_provider("xai"), do: "https://api.x.ai/v1"
+  defp default_base_url_for_provider("cursor"), do: "https://api2.cursor.sh"
   defp default_base_url_for_provider(_provider), do: nil
 
   defp assemble_provider_config(
@@ -350,9 +351,11 @@ defmodule Handbeam.Agent.ModelConfig do
 
   defp maybe_resolve_oauth_api_key(%{auth_type: :oauth} = config, provider_id)
        when is_binary(provider_id) do
-    case XaiCredential.resolve_transport_key(provider_id) do
-      {:ok, %{api_key: api_key}} ->
-        Map.put(config, :api_key, api_key)
+    case resolve_oauth_credential(provider_id) do
+      {:ok, %{api_key: api_key} = auth} ->
+        config
+        |> Map.put(:api_key, api_key)
+        |> maybe_put_auth_generation(provider_id, auth)
 
       {:error, message} ->
         Map.put(config, :oauth_error, message)
@@ -360,6 +363,16 @@ defmodule Handbeam.Agent.ModelConfig do
   end
 
   defp maybe_resolve_oauth_api_key(config, _provider_id), do: config
+
+  defp resolve_oauth_credential("cursor"), do: CursorCredential.resolve_transport_key("cursor")
+  defp resolve_oauth_credential(provider_id), do: XaiCredential.resolve_transport_key(provider_id)
+
+  defp maybe_put_auth_generation(config, "cursor", %{auth_generation: generation})
+       when is_integer(generation) do
+    Map.put(config, :auth_generation, generation)
+  end
+
+  defp maybe_put_auth_generation(config, _provider_id, _auth), do: config
 
   # ──────────────────────────────────────────────────────────────
   # Env override layer
@@ -457,6 +470,7 @@ defmodule Handbeam.Agent.ModelConfig do
   def api_to_atom("stepfun"), do: :stepfun
   def api_to_atom("stepfun-step-plan"), do: :stepfun
   def api_to_atom("openai-responses"), do: :openai_responses
+  def api_to_atom("cursor-agent"), do: :cursor_agent
   def api_to_atom(_), do: :openai
 
   @doc """

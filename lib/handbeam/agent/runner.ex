@@ -249,6 +249,7 @@ defmodule Handbeam.Agent.Runner do
          %{state | status: :awaiting_approval, interrupted_state: interrupted, task: nil}}
 
       _ ->
+        Handbeam.Agent.Provider.Cursor.Session.stop_for_conversation(state.conversation_id)
         Handbeam.Agent.CandidateQueue.seal(state.queue_pid)
         Session.mark_run_finished(state.conversation_id)
 
@@ -263,10 +264,12 @@ defmodule Handbeam.Agent.Runner do
 
   def handle_info({ref, {:error, reason}}, %{task: %{ref: ref}} = state) do
     Process.demonitor(ref, [:flush])
+    Handbeam.Agent.Provider.Cursor.Session.stop_for_conversation(state.conversation_id)
     finish_error(state, reason)
   end
 
   def handle_info({:DOWN, ref, :process, _pid, reason}, %{task: %{ref: ref}} = state) do
+    Handbeam.Agent.Provider.Cursor.Session.stop_for_conversation(state.conversation_id)
     finish_error(state, reason)
   end
 
@@ -343,6 +346,7 @@ defmodule Handbeam.Agent.Runner do
     end)
 
     Handbeam.Jobs.close_run(job_context(state), :completed)
+    Handbeam.Agent.Provider.Cursor.Session.stop_for_conversation(state.conversation_id)
   end
 
   defp job_context(state) do

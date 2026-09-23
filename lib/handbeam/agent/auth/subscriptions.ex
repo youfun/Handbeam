@@ -3,12 +3,12 @@ defmodule Handbeam.Agent.Auth.Subscriptions do
   Catalog of subscription / OAuth login methods that Settings can list.
 
   The menu is generic like pi's `/login` selector: each entry has a
-  provider id, display name, and login label. Only xAI is implemented
-  in this slice; later subscriptions register here without changing
+  provider id, display name, and login label. xAI and Cursor are
+  implemented; later subscriptions register here without changing
   the LiveView entry point.
   """
 
-  alias Handbeam.Agent.Auth.XaiCredential
+  alias Handbeam.Agent.Auth.{CursorCredential, XaiCredential}
 
   @type method :: %{
           id: String.t(),
@@ -28,6 +28,14 @@ defmodule Handbeam.Agent.Auth.Subscriptions do
         auth_type: :oauth,
         subscription?: true,
         preset: XaiCredential.provider_preset()
+      },
+      %{
+        id: "cursor",
+        name: "Cursor",
+        login_label: "Cursor (account subscription)",
+        auth_type: :oauth,
+        subscription?: true,
+        preset: CursorCredential.provider_preset()
       }
     ]
   end

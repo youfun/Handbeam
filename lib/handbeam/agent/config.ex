@@ -145,6 +145,7 @@ defmodule Handbeam.Agent.Config do
     - `provider_config[:provider] == "openai"` → `Handbeam.Agent.Provider.OpenAI`
     - `provider_config[:api] == :openai_responses` → `Handbeam.Agent.Provider.OpenAI`
     - `provider_config[:api] == :anthropic` → `Handbeam.Agent.Provider.Anthropic`
+    - `provider_config[:provider] == "cursor"` / `api == :cursor_agent` → `Handbeam.Agent.Provider.Cursor`
     - `provider_config[:provider] == "openai-compat"` → `Handbeam.Agent.Provider.OpenAICompat`
     - default → `Handbeam.Agent.Provider.OpenAICompat`
   """
@@ -158,6 +159,11 @@ defmodule Handbeam.Agent.Config do
     do: Handbeam.Agent.Provider.OpenRouter
 
   def resolve_provider_from_api(_api, _model, "deepseek"), do: Handbeam.Agent.Provider.DeepSeek
+  def resolve_provider_from_api(_api, _model, "cursor"), do: Handbeam.Agent.Provider.Cursor
+
+  def resolve_provider_from_api(:cursor_agent, _model, _provider),
+    do: Handbeam.Agent.Provider.Cursor
+
   def resolve_provider_from_api(_api, _model, "stepfun"), do: Handbeam.Agent.Provider.StepFun
 
   def resolve_provider_from_api(_api, _model, "openai-compat"),

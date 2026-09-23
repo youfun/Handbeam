@@ -1,7 +1,8 @@
 defmodule HandbeamWeb.AvailableModelsLive do
   use HandbeamWeb, :live_view
 
-  alias Handbeam.Agent.Auth.{Storage, Subscriptions, XaiOAuth}
+  alias Handbeam.Agent.Auth.{CursorOAuth, Storage, Subscriptions, XaiOAuth}
+  alias Handbeam.Agent.Provider.Cursor.Models, as: CursorModels
   alias Handbeam.Agent.ModelConfig
   alias Handbeam.LlmDbDefaults
 
@@ -36,6 +37,8 @@ defmodule HandbeamWeb.AvailableModelsLive do
       |> assign(:form_error, nil)
       |> assign(:toast, nil)
       |> assign(:xai_oauth, nil)
+      |> assign(:subscription_oauth, nil)
+      |> assign(:cursor_discover_attempt, nil)
       |> assign(:show_subscription_login, false)
       |> assign(:subscription_methods, Subscriptions.methods())
 
@@ -62,7 +65,23 @@ defmodule HandbeamWeb.AvailableModelsLive do
   end
 
   def handle_info(:poll_xai_oauth, socket) do
-    {:noreply, poll_xai_oauth(socket)}
+    {:noreply, poll_subscription_oauth(socket)}
+  end
+
+  def handle_info(:poll_subscription_oauth, socket) do
+    {:noreply, poll_subscription_oauth(socket)}
+  end
+
+  def handle_info({:poll_subscription_oauth, attempt_id}, socket) do
+    {:noreply, poll_subscription_oauth(socket, attempt_id)}
+  end
+
+  def handle_info({:cursor_models_discovered, attempt_id, result}, socket) do
+    {:noreply, apply_cursor_models(socket, attempt_id, result)}
+  end
+
+  def handle_info({:subscription_oauth_polled, attempt_id, result}, socket) do
+    {:noreply, handle_async_poll(socket, attempt_id, result)}
   end
 
   # ── xAI subscription OAuth ─────────────────────────────────────────────
@@ -83,7 +102,16 @@ defmodule HandbeamWeb.AvailableModelsLive do
   end
 
   def handle_event("cancel_xai_oauth", _params, socket) do
-    {:noreply, assign(socket, :xai_oauth, nil)}
+    {:noreply, clear_subscription_oauth(socket)}
+  end
+
+  def handle_event("cancel_subscription_oauth", _params, socket) do
+    {:noreply, clear_subscription_oauth(socket)}
+  end
+
+  def handle_event("refresh_cursor_models", _params, socket) do
+    attempt_id = System.unique_integer([:positive])
+    {:noreply, maybe_discover_cursor_models(socket, "cursor", attempt_id)}
   end
 
   # ── Provider selection ─────────────────────────────────────────────────
@@ -451,6 +479,8 @@ defmodule HandbeamWeb.AvailableModelsLive do
 
   # ── Helpers ────────────────────────────────────────────────────────────
 
+  def oauth_overlay(subscription_oauth, xai_oauth), do: subscription_oauth || xai_oauth
+
   def obscured_api_key(key) when is_binary(key) do
     cond do
       key == "" -> "—"
@@ -513,8 +543,20 @@ defmodule HandbeamWeb.AvailableModelsLive do
     with {:ok, method} <- Subscriptions.get(provider_id),
          :ok <- ensure_subscription_provider(method),
          {:ok, device} <- start_device_flow(method) do
+      attempt_id = System.unique_integer([:positive])
       interval_ms = poll_interval_ms(device)
-      Process.send_after(self(), :poll_xai_oauth, interval_ms)
+      Process.send_after(self(), {:poll_subscription_oauth, attempt_id}, interval_ms)
+
+      oauth = %{
+        provider_id: method.id,
+        login_label: method.login_label,
+        device: device,
+        verification_uri: verification_uri(method.id, device),
+        status: :waiting,
+        hint: oauth_hint(method.id),
+        unofficial?: method.id == "cursor",
+        attempt_id: attempt_id
+      }
 
       socket
       |> assign(:show_subscription_login, false)
@@ -525,13 +567,8 @@ defmodule HandbeamWeb.AvailableModelsLive do
         find_provider(method.id, parse_providers(load_raw_config()))
       )
       |> assign(:form_error, nil)
-      |> assign(:xai_oauth, %{
-        provider_id: method.id,
-        login_label: method.login_label,
-        device: device,
-        verification_uri: XaiOAuth.browser_verification_uri(device),
-        status: :waiting
-      })
+      |> assign(:subscription_oauth, oauth)
+      |> assign(:xai_oauth, oauth)
     else
       {:error, message} ->
         socket
@@ -541,70 +578,201 @@ defmodule HandbeamWeb.AvailableModelsLive do
   end
 
   defp start_device_flow(%{id: "xai"}), do: XaiOAuth.start()
+  defp start_device_flow(%{id: "cursor"}), do: CursorOAuth.start()
 
   defp start_device_flow(%{id: id}),
     do: {:error, "Subscription login for #{id} is not implemented yet"}
 
-  defp poll_xai_oauth(%{assigns: %{xai_oauth: %{device: device} = oauth}} = socket) do
-    case XaiOAuth.poll_once(device) do
-      {:pending, updated} ->
-        schedule_xai_poll(updated)
+  defp verification_uri("xai", device), do: XaiOAuth.browser_verification_uri(device)
+  defp verification_uri("cursor", device), do: CursorOAuth.browser_verification_uri(device)
+  defp verification_uri(_id, device), do: Map.get(device, :verification_uri)
 
-        assign(socket, :xai_oauth, %{
-          oauth
-          | device: updated,
-            status: :waiting
-        })
+  defp oauth_hint("cursor") do
+    gettext("打开下面的链接，用 Cursor 账号完成浏览器授权。这是非官方协议接入，费用未知，不会显示为免费。")
+  end
 
-      {:slow_down, updated} ->
-        schedule_xai_poll(updated)
+  defp oauth_hint(_id) do
+    gettext("打开下面的链接，输入用户码完成 xAI 订阅授权。")
+  end
 
-        assign(socket, :xai_oauth, %{
-          oauth
-          | device: updated,
-            status: :waiting
-        })
+  defp poll_subscription_oauth(socket, attempt_id \\ nil)
 
-      {:authorized, credential} ->
-        provider_id = oauth[:provider_id] || "xai"
+  defp poll_subscription_oauth(
+         %{assigns: %{subscription_oauth: %{device: device} = oauth}} = socket,
+         attempt_id
+       ) do
+    if attempt_id && oauth[:attempt_id] && attempt_id != oauth.attempt_id do
+      socket
+    else
+      lv = self()
+      provider_id = oauth.provider_id
 
-        case Storage.put(provider_id, credential) do
-          :ok ->
-            toast = %{
-              type: :success,
-              message: "已连接 xAI / Grok 订阅",
-              id: System.unique_integer([:positive])
-            }
+      Task.start(fn ->
+        result = poll_once(provider_id, device)
+        send(lv, {:subscription_oauth_polled, attempt_id || oauth[:attempt_id], result})
+      end)
 
-            Process.send_after(self(), :clear_toast, 3000)
+      socket
+    end
+  end
 
-            socket
-            |> assign(:xai_oauth, nil)
-            |> assign(:toast, toast)
-            |> reload_providers()
+  defp poll_subscription_oauth(
+         %{assigns: %{xai_oauth: %{device: _device} = oauth}} = socket,
+         attempt_id
+       ) do
+    poll_subscription_oauth(assign(socket, :subscription_oauth, oauth), attempt_id)
+  end
+
+  defp poll_subscription_oauth(socket, _attempt_id), do: socket
+
+  defp poll_once("xai", device), do: XaiOAuth.poll_once(device)
+  defp poll_once("cursor", device), do: CursorOAuth.poll_once(device)
+  defp poll_once(id, _device), do: {:error, "Subscription login for #{id} is not implemented yet"}
+
+  defp handle_async_poll(socket, attempt_id, result) do
+    oauth = socket.assigns[:subscription_oauth] || socket.assigns[:xai_oauth]
+
+    cond do
+      is_nil(oauth) ->
+        socket
+
+      oauth[:attempt_id] != attempt_id ->
+        socket
+
+      true ->
+        case result do
+          {:pending, updated} ->
+            schedule_subscription_poll(updated, attempt_id)
+            put_oauth(socket, %{oauth | device: updated, status: :waiting})
+
+          {:slow_down, updated} ->
+            schedule_subscription_poll(updated, attempt_id)
+            put_oauth(socket, %{oauth | device: updated, status: :waiting})
+
+          {:authorized, credential} ->
+            persist_authorized(socket, oauth, credential)
 
           {:error, message} ->
             socket
-            |> assign(:xai_oauth, nil)
+            |> clear_subscription_oauth()
             |> assign(:form_error, message)
         end
+    end
+  end
+
+  defp persist_authorized(socket, oauth, credential) do
+    provider_id = oauth[:provider_id] || "xai"
+
+    store =
+      if provider_id == "cursor" do
+        Handbeam.Agent.Auth.CursorCredential.store_login(provider_id, credential)
+      else
+        Storage.put(provider_id, credential)
+      end
+
+    case store do
+      :ok ->
+        socket
+        |> maybe_discover_cursor_models(provider_id, oauth[:attempt_id])
+        |> put_connected_toast(provider_id)
+        |> then(fn socket ->
+          if provider_id == "cursor" do
+            socket
+          else
+            clear_subscription_oauth(socket)
+          end
+        end)
+        |> reload_providers()
 
       {:error, message} ->
         socket
-        |> assign(:xai_oauth, nil)
+        |> clear_subscription_oauth()
         |> assign(:form_error, message)
     end
   end
 
-  defp poll_xai_oauth(socket), do: socket
+  defp maybe_discover_cursor_models(socket, "cursor", attempt_id) do
+    lv = self()
 
-  defp schedule_xai_poll(device) do
-    Process.send_after(self(), :poll_xai_oauth, poll_interval_ms(device))
+    Task.start(fn ->
+      result = CursorModels.discover()
+      send(lv, {:cursor_models_discovered, attempt_id, result})
+    end)
+
+    assign(socket, :cursor_discover_attempt, attempt_id)
+  end
+
+  defp maybe_discover_cursor_models(socket, _provider_id, _attempt_id), do: socket
+
+  defp apply_cursor_models(socket, attempt_id, result) do
+    current = socket.assigns[:cursor_discover_attempt]
+
+    if is_nil(current) or current != attempt_id do
+      socket
+    else
+      socket = assign(socket, :cursor_discover_attempt, nil)
+
+      case result do
+        {:ok, models} ->
+          _ = ModelConfig.update_provider("cursor", %{"models" => models})
+
+          socket
+          |> clear_subscription_oauth()
+          |> reload_providers()
+
+        {:error, message} ->
+          socket
+          |> clear_subscription_oauth()
+          |> assign(:form_error, message)
+      end
+    end
+  end
+
+  defp put_connected_toast(socket, "cursor") do
+    toast = %{
+      type: :success,
+      message: "已连接 Cursor 订阅（非官方协议，费用未知）",
+      id: System.unique_integer([:positive])
+    }
+
+    Process.send_after(self(), :clear_toast, 3000)
+    assign(socket, :toast, toast)
+  end
+
+  defp put_connected_toast(socket, _provider_id) do
+    toast = %{
+      type: :success,
+      message: "已连接 xAI / Grok 订阅",
+      id: System.unique_integer([:positive])
+    }
+
+    Process.send_after(self(), :clear_toast, 3000)
+    assign(socket, :toast, toast)
+  end
+
+  defp put_oauth(socket, oauth) do
+    socket
+    |> assign(:subscription_oauth, oauth)
+    |> assign(:xai_oauth, oauth)
+  end
+
+  defp clear_subscription_oauth(socket) do
+    socket
+    |> assign(:subscription_oauth, nil)
+    |> assign(:xai_oauth, nil)
+    |> assign(:cursor_discover_attempt, nil)
+  end
+
+  defp schedule_subscription_poll(device, attempt_id) do
+    Process.send_after(self(), {:poll_subscription_oauth, attempt_id}, poll_interval_ms(device))
   end
 
   defp poll_interval_ms(device) do
-    seconds = device[:interval_seconds] || XaiOAuth.default_poll_interval_seconds()
-    max(1, seconds) * 1000
+    cond do
+      is_integer(device[:interval_ms]) -> max(1, device.interval_ms)
+      is_integer(device[:interval_seconds]) -> max(1, device.interval_seconds) * 1000
+      true -> XaiOAuth.default_poll_interval_seconds() * 1000
+    end
   end
 
   defp ensure_subscription_provider(%{id: provider_id, preset: preset}) do
