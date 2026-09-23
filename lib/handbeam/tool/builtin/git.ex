@@ -89,6 +89,14 @@ defmodule Handbeam.Tool.Builtin.Git do
           description:
             "For diff: HEAD-to-worktree (default), index-to-worktree, or HEAD-to-index."
         },
+        from: %{
+          type: "string",
+          description: "For diff, the starting revision. Must be used together with to."
+        },
+        to: %{
+          type: "string",
+          description: "For diff, the ending revision. Must be used together with from."
+        },
         limit: %{
           type: "integer",
           description: "For log, maximum commits to return. Default 20."
@@ -177,14 +185,30 @@ defmodule Handbeam.Tool.Builtin.Git do
   defp action_opts(:commit, input), do: {:ok, [message: input["message"]]}
 
   defp action_opts(:diff, input) do
-    mode =
-      case input["mode"] do
-        "worktree" -> :worktree
-        "staged" -> :staged
-        _ -> :head
-      end
+    from = input["from"]
+    to = input["to"]
+    range? = Map.has_key?(input, "from") or Map.has_key?(input, "to")
 
-    {:ok, [mode: mode]}
+    cond do
+      Map.has_key?(input, "target") ->
+        {:error, "diff does not accept target; use from and to for a revision range"}
+
+      valid_revision?(from) and valid_revision?(to) ->
+        {:ok, [mode: {from, to}]}
+
+      range? ->
+        {:error, "diff requires non-empty from and to revisions"}
+
+      true ->
+        mode =
+          case input["mode"] do
+            "worktree" -> :worktree
+            "staged" -> :staged
+            _ -> :head
+          end
+
+        {:ok, [mode: mode]}
+    end
   end
 
   defp action_opts(:log, input), do: {:ok, [limit: input["limit"] || 20]}
@@ -225,4 +249,6 @@ defmodule Handbeam.Tool.Builtin.Git do
 
   defp truthy?(value) when value in [true, "true", "1", 1], do: true
   defp truthy?(_), do: false
+
+  defp valid_revision?(revision), do: is_binary(revision) and String.trim(revision) != ""
 end
