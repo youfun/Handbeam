@@ -32,6 +32,15 @@ defmodule Handbeam.Agent.Tool.ExecutorTest do
     def execute(_input, _context), do: {:ok, "hello", %{exit_code: 0}}
   end
 
+  defmodule ExitingFixtureTool do
+    @behaviour Handbeam.Agent.Tool
+
+    def name, do: "exiting_fixture"
+    def description, do: "Concurrent tool that exits"
+    def input_schema, do: %{type: "object", properties: %{}}
+    def execute(_input, _context), do: exit(:fixture_timeout)
+  end
+
   @fixtures_dir Path.join(File.cwd!(), "test/fixtures")
 
   # Avoid re-registration warnings by only registering if not already present
@@ -46,6 +55,7 @@ defmodule Handbeam.Agent.Tool.ExecutorTest do
     ensure_registered(Handbeam.Tool.Builtin.Read)
     ensure_registered(Handbeam.Tool.Builtin.Bash)
     ensure_registered(ResultFixtureTool)
+    ensure_registered(ExitingFixtureTool)
     :ok
   end
 
@@ -127,6 +137,21 @@ defmodule Handbeam.Agent.Tool.ExecutorTest do
 
       assert a_block[:is_error] == false
       assert b_block[:is_error] == false
+    end
+
+    test "turns a concurrent tool exit into a tool error without exiting the caller" do
+      state = State.init(%Config{}, "Run concurrent tool")
+
+      assert {:ok, result_msg} =
+               Executor.execute_all(
+                 [%{id: "tool_exit", name: "exiting_fixture", input: %{}}],
+                 state
+               )
+
+      assert [block] = result_msg.content
+      assert block[:tool_use_id] == "tool_exit"
+      assert block[:is_error] == true
+      assert block[:content] =~ "timed out"
     end
   end
 
