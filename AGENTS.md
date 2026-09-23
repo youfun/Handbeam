@@ -393,6 +393,26 @@ mix precommit         # 提交前检查
 
 参考 [ElixirStyleGuide.md](./ElixirStyleGuide.md)
 
+### 测试
+
+仓库里已有的 ExUnit 继续留着，改坏了就修。默认 `mix test` 排除 `:e2e`、`:slow`、`:external_api`（见 `test/test_helper.exs`）。新功能不要再在实现之后补一层模块级单元测试。
+
+计划是增加端到端测试，而不是把现有单元测试整批改写成 e2e。新覆盖先写 e2e：一条用户或宿主走得完的路径一个测试文件，放进下面的目录，打上对应标签。改到一条现在只有单元测试的路径时，补这条路径的 e2e，不要再给它加单元测试。
+
+复杂行为用端到端测试当唯一验收，不要用“旁边再加一个 `*_test.exs`”代替：
+
+- Agent 管道（Coordinator → Runner → Turn → 工具 → transcript）放 `test/handbeam/e2e/`，打 `@moduletag :e2e`，用 `Handbeam.TestSupport.FakeProvider`，不打真网。跑：`mix test --include e2e test/handbeam/e2e`。
+- 用户在 Web 上点得着的流程用 `HandbeamWeb.FeatureCase`（PhoenixTest）。LiveView 测试只覆盖现有 `test/handbeam_web/live/` 里已经在守的投影，不为一个新按钮再开一组孤立 `render_click`。
+- 手机宿主行为不能用桌面 LiveView 冒充。要验就按 `docs/mobile-device-verification.md` 在真机或模拟器上走完，并记下可重跑的命令和期望结果。
+
+每条端到端测试结束时留下可再跑、可核对的结果，而不是聊天里的一句“过了”：
+
+- Agent：断言持久结果，例如 `ConversationTranscriptStore` 里的 entry、`run_end` 的 `status`、工具写进工作区的文件。
+- Web：断言点击之后的 DOM 和同一份持久状态。
+- 手机：文档里写清设备、命令、以及看得到的结果。
+
+只有端到端到不了的失败方式才隔离测，而且先写失败清单再写实现。典型是解析器、`Handbeam.Security.PathValidator` / Redactor 这类边界，以及不经过 Run 循环的纯函数。清单写在测试文件顶部：输入、拒绝原因、不变量。然后写实现，让这些断言钉住清单。禁止先写完实现，再回头补单元测试。
+
 - 不可变数据、显式管道、信任 BEAM
 - SnAkE_cAsE 文件名 / PascalCase 模块名
 - 谓词函数以 `?` 结尾，危险函数以 `!` 结尾
