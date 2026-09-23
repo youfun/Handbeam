@@ -406,11 +406,22 @@ defmodule Handbeam.Agent.Provider.OpenAI do
        when is_binary(delta) and delta != "" do
     content = acc.content <> delta
 
-    if repeated_suffix?(content) do
-      {:halt, %{acc | content: content, stream_error: @repeated_output_error}}
-    else
-      acc.on_chunk.(delta)
-      %{acc | content: content}
+    case repeated_suffix(content) do
+      {:repeated, period} ->
+        repeated_bytes = period * @loop_repetitions
+        pattern = binary_part(content, byte_size(content) - repeated_bytes, period)
+
+        Logger.warning(
+          "[OpenAI] repeated stream output detected " <>
+            "period_bytes=#{period} repeated_bytes=#{repeated_bytes} " <>
+            "accumulated_bytes=#{byte_size(content)} #{log_chunk(pattern)}"
+        )
+
+        {:halt, %{acc | content: content, stream_error: @repeated_output_error}}
+
+      :none ->
+        acc.on_chunk.(delta)
+        %{acc | content: content}
     end
   end
 
@@ -459,15 +470,15 @@ defmodule Handbeam.Agent.Provider.OpenAI do
 
   defp process_stream_event(acc, _event_type, _payload), do: acc
 
-  defp repeated_suffix?(content) do
+  defp repeated_suffix(content) do
     max_period = min(@max_loop_bytes, div(byte_size(content), @loop_repetitions))
 
     if max_period < @min_loop_bytes do
-      false
+      :none
     else
-      case Enum.find(1..max_period, &repeated_period?(content, &1)) do
-        period when period >= @min_loop_bytes -> true
-        _period -> false
+      case Enum.find(@min_loop_bytes..max_period, &repeated_period?(content, &1)) do
+        nil -> :none
+        period -> {:repeated, period}
       end
     end
   end
