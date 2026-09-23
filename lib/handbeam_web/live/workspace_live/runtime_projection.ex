@@ -142,10 +142,16 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
         Map.get(usage, "cache_creation_input_tokens", 0)
       ) || 0
 
+    unknown? = Map.get(usage, :unknown?, Map.get(usage, "unknown?", false))
+
     %{
-      input_tokens: input,
-      total_input_tokens: payload_value(usage, :total_input_tokens, input + read + write),
-      output_tokens: output,
+      input_tokens: if(unknown?, do: :unknown, else: input),
+      total_input_tokens:
+        if(unknown?,
+          do: :unknown,
+          else: payload_value(usage, :total_input_tokens, input + read + write)
+        ),
+      output_tokens: if(unknown?, do: :unknown, else: output),
       cache_read_tokens: read,
       cache_write_tokens: write
     }

@@ -134,9 +134,18 @@
             <div class="settings-detail-row">
               <span class="settings-detail-label">API Key</span>
               <span class="settings-detail-value font-mono">
-                {obscured_api_key(@selected_provider.api_key)}
+                {if(@selected_provider.auth_type == "oauth",
+                  do: gettext("OAuth（凭证不在此显示）"),
+                  else: obscured_api_key(@selected_provider.api_key)
+                )}
               </span>
             </div>
+            <p
+              :if={@selected_provider.id == "cursor"}
+              class="text-[11px] text-tertiary mt-2"
+            >
+              {gettext("非官方 Cursor 协议接入。费用未知，不会显示为 0 或免费。原生手机 OAuth 入口尚未验证。")}
+            </p>
             <div class="settings-detail-row">
               <span class="settings-detail-label">{gettext("默认供应商")}</span>
               <label class="settings-toggle">
@@ -160,6 +169,14 @@
               class="settings-btn"
             >
               {gettext("刷新订阅模型")}
+            </button>
+            <button
+              :if={@selected_provider.id == "cursor"}
+              phx-click="refresh_cursor_models"
+              disabled={not is_nil(@cursor_discover_attempt)}
+              class="settings-btn"
+            >
+              {gettext("刷新 Cursor 模型")}
             </button>
             <button
               phx-click="open_edit_provider"

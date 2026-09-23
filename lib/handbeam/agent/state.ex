@@ -96,6 +96,11 @@ defmodule Handbeam.Agent.State do
   @doc "Merge usage stats into cumulative totals."
   @spec merge_usage(t(), map()) :: t()
   def merge_usage(%__MODULE__{} = state, usage) when is_map(usage) do
+    unknown? =
+      Map.get(state.usage, :unknown?, false) or
+        Map.get(usage, :unknown?, false) or
+        Map.get(usage, "unknown?", false)
+
     merged = %{
       input_tokens: (state.usage[:input_tokens] || 0) + (usage[:input_tokens] || 0),
       total_input_tokens:
@@ -112,7 +117,8 @@ defmodule Handbeam.Agent.State do
           (usage[:cache_read_input_tokens] || 0),
       cache_creation_input_tokens:
         (state.usage[:cache_creation_input_tokens] || 0) +
-          (usage[:cache_creation_input_tokens] || 0)
+          (usage[:cache_creation_input_tokens] || 0),
+      unknown?: unknown?
     }
 
     %{state | usage: Map.merge(state.usage, merged)}

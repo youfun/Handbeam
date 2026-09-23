@@ -816,19 +816,23 @@ defmodule Handbeam.Agent.Turn do
         case {Retry.should_retry_error?(reason, attempt, retry_config),
               chunks_emitted?(chunk_tracker)} do
           {{:retry, delay_ms}, false} ->
-            retry_provider_call(
-              provider,
-              state,
-              outbound_messages,
-              tool_defs,
-              provider_config,
-              streaming?,
-              on_chunk,
-              chunk_tracker,
-              attempt,
-              delay_ms,
-              reason
-            )
+            if uncertain_cursor_error?(reason) do
+              result
+            else
+              retry_provider_call(
+                provider,
+                state,
+                outbound_messages,
+                tool_defs,
+                provider_config,
+                streaming?,
+                on_chunk,
+                chunk_tracker,
+                attempt,
+                delay_ms,
+                reason
+              )
+            end
 
           {_retry_result, _chunks_emitted?} ->
             result
@@ -1213,7 +1217,20 @@ defmodule Handbeam.Agent.Turn do
     |> Map.put(:model, config.model)
     |> Map.put(:system_prompt, config.system_prompt)
     |> Map.put(:provider_state, provider_state)
+    |> Map.put(:working_directory, config.working_directory)
+    |> maybe_put_context(config)
   end
+
+  defp maybe_put_context(provider_config, config) do
+    context = config.context || %{}
+
+    provider_config
+    |> maybe_put(:conversation_id, context[:conversation_id])
+    |> maybe_put(:run_id, context[:run_id])
+  end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp extract_tool_calls(messages) do
     Enum.flat_map(messages, &Message.tool_calls/1)
@@ -1225,6 +1242,12 @@ defmodule Handbeam.Agent.Turn do
   defp bounded_tool_output(output), do: Handbeam.JsonSafe.normalize(output)
 
   # ── Error formatting ──
+
+  defp uncertain_cursor_error?(reason) when is_binary(reason) do
+    String.contains?(reason, "not retrying because execution may have started")
+  end
+
+  defp uncertain_cursor_error?(_), do: false
 
   defp prompt_too_long?(reason) when is_binary(reason) do
     String.contains?(reason, "context_length_exceeded") or

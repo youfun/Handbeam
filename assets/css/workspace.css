@@ -2809,6 +2809,19 @@ input:checked + .settings-toggle-track .settings-toggle-thumb {
   text-overflow: ellipsis;
 }
 
+.settings-detail-row-stack {
+  align-items: flex-start;
+}
+
+.settings-detail-row-stack .settings-detail-value {
+  max-width: 100%;
+  overflow: visible;
+  text-overflow: unset;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
 .settings-detail-value.settings-oauth-link {
   min-width: 0;
   white-space: normal;

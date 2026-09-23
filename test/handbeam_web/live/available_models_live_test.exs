@@ -158,6 +158,7 @@ defmodule HandbeamWeb.AvailableModelsLiveTest do
     assert overlay =~ "ABCD-1234"
     assert overlay =~ "https://accounts.x.ai/oauth2/device?user_code=ABCD-1234"
     assert overlay =~ "xAI (Grok/X subscription)"
+    assert overlay =~ "Waiting for authentication..."
 
     {:ok, config} =
       ModelConfig.config_file_path()
@@ -168,6 +169,77 @@ defmodule HandbeamWeb.AvailableModelsLiveTest do
     assert provider["authType"] == "oauth"
     assert provider["api"] == "openai-responses"
     assert Enum.any?(provider["models"], &(&1["id"] == "grok-4.6"))
+  end
+
+  test "Cursor subscription login shows the browser authorization URL", %{conn: conn} do
+    {:ok, view, html} =
+      live_isolated(conn, HandbeamWeb.AvailableModelsLive, session: %{"embedded" => "true"})
+
+    assert html =~ "Subscription Sign-in" or html =~ "订阅登录"
+
+    html =
+      view
+      |> element(~s|button[phx-click="open_subscription_login"]|)
+      |> render_click()
+
+    assert html =~ "Cursor (account subscription)"
+
+    view
+    |> element(~s|button[phx-click="start_subscription_oauth"][phx-value-id="cursor"]|)
+    |> render_click()
+
+    overlay = view |> element(".settings-overlay") |> render()
+    assert overlay =~ "https://cursor.com/loginDeepControl"
+    assert overlay =~ "Waiting for authentication..."
+    assert overlay =~ "非官方协议"
+    refute overlay =~ "user_code"
+
+    {:ok, config} =
+      ModelConfig.config_file_path()
+      |> File.read!()
+      |> Jason.decode()
+
+    provider = get_in(config, ["providers", "cursor"])
+    assert provider["authType"] == "oauth"
+    assert provider["api"] == "cursor-agent"
+    assert provider["models"] == []
+  end
+
+  test "cancelled Cursor discovery does not apply a late result", %{conn: conn} do
+    {:ok, view, _html} =
+      live_isolated(conn, HandbeamWeb.AvailableModelsLive, session: %{"embedded" => "true"})
+
+    view
+    |> element(~s|button[phx-click="open_subscription_login"]|)
+    |> render_click()
+
+    view
+    |> element(~s|button[phx-click="start_subscription_oauth"][phx-value-id="cursor"]|)
+    |> render_click()
+
+    send(view.pid, {:cursor_models_discovered, 999, {:ok, [%{"id" => "late", "name" => "Late"}]}})
+    html = render(view)
+    refute html =~ "Late"
+  end
+
+  test "cancelling Cursor login hides the overlay", %{conn: conn} do
+    {:ok, view, _html} =
+      live_isolated(conn, HandbeamWeb.AvailableModelsLive, session: %{"embedded" => "true"})
+
+    view
+    |> element(~s|button[phx-click="open_subscription_login"]|)
+    |> render_click()
+
+    view
+    |> element(~s|button[phx-click="start_subscription_oauth"][phx-value-id="cursor"]|)
+    |> render_click()
+
+    html =
+      view
+      |> element(~s|button[phx-click="cancel_subscription_oauth"]|)
+      |> render_click()
+
+    refute html =~ "https://cursor.com/loginDeepControl"
   end
 
   test "editing provider preserves api type when submit params are partial", %{conn: conn} do

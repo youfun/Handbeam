@@ -1,8 +1,19 @@
 defmodule HandbeamWeb.AvailableModelsLive do
   use HandbeamWeb, :live_view
 
-  alias Handbeam.Agent.Auth.{CodexCredential, CodexOAuth, Epoch, Storage, Subscriptions, XaiOAuth}
+  alias Handbeam.Agent.Auth.{
+    CodexCredential,
+    CodexOAuth,
+    CursorCredential,
+    CursorOAuth,
+    Epoch,
+    Storage,
+    Subscriptions,
+    XaiOAuth
+  }
+
   alias Handbeam.Agent.Provider.Codex.Models, as: CodexModels
+  alias Handbeam.Agent.Provider.Cursor.Models, as: CursorModels
   alias Handbeam.Agent.ModelConfig
   alias Handbeam.LlmDbDefaults
 
@@ -39,6 +50,7 @@ defmodule HandbeamWeb.AvailableModelsLive do
       |> assign(:xai_oauth, nil)
       |> assign(:subscription_oauth, nil)
       |> assign(:codex_discover_attempt, nil)
+      |> assign(:cursor_discover_attempt, nil)
       |> assign(:show_subscription_login, false)
       |> assign(:subscription_methods, Subscriptions.methods())
 
@@ -80,6 +92,10 @@ defmodule HandbeamWeb.AvailableModelsLive do
     {:noreply, apply_codex_models(socket, attempt_id, generation, result)}
   end
 
+  def handle_info({:cursor_models_discovered, attempt_id, result}, socket) do
+    {:noreply, apply_cursor_models(socket, attempt_id, result)}
+  end
+
   # ── Subscription OAuth ─────────────────────────────────────────────────
 
   def handle_event("open_subscription_login", _params, socket) do
@@ -107,6 +123,11 @@ defmodule HandbeamWeb.AvailableModelsLive do
 
   def handle_event("refresh_codex_models", _params, socket) do
     {:noreply, maybe_discover_codex_models(socket, "openai_codex")}
+  end
+
+  def handle_event("refresh_cursor_models", _params, socket) do
+    attempt_id = System.unique_integer([:positive])
+    {:noreply, maybe_discover_cursor_models(socket, "cursor", attempt_id)}
   end
 
   # ── Provider selection ─────────────────────────────────────────────────
@@ -570,15 +591,20 @@ defmodule HandbeamWeb.AvailableModelsLive do
 
   defp start_device_flow(%{id: "xai"}), do: XaiOAuth.start()
   defp start_device_flow(%{id: "openai_codex"}), do: CodexOAuth.start()
+  defp start_device_flow(%{id: "cursor"}), do: CursorOAuth.start()
 
   defp start_device_flow(%{id: id}),
     do: {:error, "Subscription login for #{id} is not implemented yet"}
 
   defp verification_uri("xai", device), do: XaiOAuth.browser_verification_uri(device)
   defp verification_uri("openai_codex", device), do: CodexOAuth.browser_verification_uri(device)
+  defp verification_uri("cursor", device), do: CursorOAuth.browser_verification_uri(device)
 
   defp oauth_hint("openai_codex"),
     do: gettext("打开下面的链接，输入用户码完成 ChatGPT 授权。使用 Codex 订阅额度，不是 OpenAI API 余额；可用模型与限额由账号决定。")
+
+  defp oauth_hint("cursor"),
+    do: gettext("打开下面的链接，用 Cursor 账号完成浏览器授权。这是非官方协议接入，费用未知，不会显示为免费。")
 
   defp oauth_hint(_), do: gettext("打开下面的链接，输入用户码完成 xAI 订阅授权。")
 
@@ -606,6 +632,7 @@ defmodule HandbeamWeb.AvailableModelsLive do
 
   defp poll_once("xai", device), do: XaiOAuth.poll_once(device)
   defp poll_once("openai_codex", device), do: CodexOAuth.poll_once(device)
+  defp poll_once("cursor", device), do: CursorOAuth.poll_once(device)
 
   defp handle_async_poll(
          %{assigns: %{subscription_oauth: %{attempt_id: attempt_id} = oauth}} = socket,
@@ -631,6 +658,7 @@ defmodule HandbeamWeb.AvailableModelsLive do
     result =
       case oauth.provider_id do
         "openai_codex" -> CodexCredential.store_login(oauth.provider_id, credential)
+        "cursor" -> CursorCredential.store_login(oauth.provider_id, credential)
         provider_id -> Storage.put(provider_id, credential)
       end
 
@@ -639,9 +667,11 @@ defmodule HandbeamWeb.AvailableModelsLive do
         Process.send_after(self(), :clear_toast, 3000)
 
         message =
-          if oauth.provider_id == "openai_codex",
-            do: "已连接 ChatGPT / Codex 订阅",
-            else: "已连接 xAI / Grok 订阅"
+          case oauth.provider_id do
+            "openai_codex" -> "已连接 ChatGPT / Codex 订阅"
+            "cursor" -> "已连接 Cursor 订阅（非官方协议，费用未知）"
+            _ -> "已连接 xAI / Grok 订阅"
+          end
 
         socket
         |> clear_subscription_oauth()
@@ -652,6 +682,7 @@ defmodule HandbeamWeb.AvailableModelsLive do
         })
         |> reload_providers()
         |> maybe_discover_codex_models(oauth.provider_id)
+        |> maybe_discover_cursor_models(oauth.provider_id, oauth.attempt_id)
 
       {:error, message} ->
         socket |> clear_subscription_oauth() |> assign(:form_error, message)
@@ -672,6 +703,38 @@ defmodule HandbeamWeb.AvailableModelsLive do
   end
 
   defp maybe_discover_codex_models(socket, _), do: socket
+
+  defp maybe_discover_cursor_models(socket, "cursor", attempt_id) do
+    lv = self()
+
+    Task.start(fn ->
+      result = CursorModels.discover()
+      send(lv, {:cursor_models_discovered, attempt_id, result})
+    end)
+
+    assign(socket, :cursor_discover_attempt, attempt_id)
+  end
+
+  defp maybe_discover_cursor_models(socket, _provider_id, _attempt_id), do: socket
+
+  defp apply_cursor_models(socket, attempt_id, result) do
+    current = socket.assigns[:cursor_discover_attempt]
+
+    if is_nil(current) or current != attempt_id do
+      socket
+    else
+      socket = assign(socket, :cursor_discover_attempt, nil)
+
+      case result do
+        {:ok, models} ->
+          _ = ModelConfig.update_provider("cursor", %{"models" => models})
+          reload_providers(socket)
+
+        {:error, message} ->
+          assign(socket, :form_error, message)
+      end
+    end
+  end
 
   defp apply_codex_models(socket, attempt_id, generation, result) do
     if socket.assigns.codex_discover_attempt == attempt_id and
@@ -698,7 +761,10 @@ defmodule HandbeamWeb.AvailableModelsLive do
   end
 
   defp clear_subscription_oauth(socket) do
-    socket |> put_oauth(nil) |> assign(:codex_discover_attempt, nil)
+    socket
+    |> put_oauth(nil)
+    |> assign(:codex_discover_attempt, nil)
+    |> assign(:cursor_discover_attempt, nil)
   end
 
   defp schedule_subscription_poll(device, attempt_id) do
@@ -706,8 +772,11 @@ defmodule HandbeamWeb.AvailableModelsLive do
   end
 
   defp poll_interval_ms(device) do
-    seconds = device[:interval_seconds] || XaiOAuth.default_poll_interval_seconds()
-    max(1, seconds) * 1000
+    cond do
+      is_integer(device[:interval_ms]) -> max(1, device.interval_ms)
+      is_integer(device[:interval_seconds]) -> max(1, device.interval_seconds) * 1000
+      true -> XaiOAuth.default_poll_interval_seconds() * 1000
+    end
   end
 
   defp ensure_subscription_provider(%{id: provider_id, preset: preset}) do

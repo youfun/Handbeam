@@ -415,6 +415,7 @@ defmodule HandbeamWeb.WorkspaceHelper do
       iex> HandbeamWeb.WorkspaceHelper.format_tokens(999_950)
       "1M"
   """
+  def format_tokens(:unknown), do: "unknown"
   def format_tokens(tokens) when tokens < 1000, do: Integer.to_string(tokens)
   def format_tokens(tokens) when tokens < 999_950, do: compact_tokens(tokens, 1000, "K")
   def format_tokens(tokens), do: compact_tokens(tokens, 1_000_000, "M")
