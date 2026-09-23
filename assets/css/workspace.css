@@ -2809,6 +2809,12 @@ input:checked + .settings-toggle-track .settings-toggle-thumb {
   text-overflow: ellipsis;
 }
 
+.settings-detail-value.settings-oauth-link {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .settings-detail-actions {
   display: flex;
   gap: 8px;

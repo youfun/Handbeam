@@ -27,6 +27,7 @@ defmodule Handbeam.Application do
         {Registry, keys: :unique, name: Handbeam.AgentRunSupervisorRegistry},
         {Registry, keys: :unique, name: Handbeam.AgentRunQueueRegistry},
         Handbeam.ConversationTranscriptStore.Journal,
+        Handbeam.Agent.Auth.Epoch,
         Handbeam.Preview.Store,
         Handbeam.ExportSnapshot.Binding,
         Handbeam.Preview.Listener,

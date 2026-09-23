@@ -149,6 +149,11 @@ defmodule Handbeam.Agent.Config do
     - default → `Handbeam.Agent.Provider.OpenAICompat`
   """
   @spec resolve_provider_from_api(atom() | nil, String.t() | nil, String.t() | nil) :: module()
+  def resolve_provider_from_api(:openai_codex_responses, _model, _provider),
+    do: Handbeam.Agent.Provider.Codex
+
+  def resolve_provider_from_api(_api, _model, "openai_codex"), do: Handbeam.Agent.Provider.Codex
+
   def resolve_provider_from_api(:anthropic, _model, _provider),
     do: Handbeam.Agent.Provider.Anthropic
 
