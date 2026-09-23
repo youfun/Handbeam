@@ -1,0 +1,152 @@
+# Manual (and tag) pack of the Linux web OTP release and both Android APKs.
+name: Pack
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+concurrency:
+  group: pack-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    name: Web (linux-x86_64)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "29.0"
+          elixir-version: "1.20"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+            ~/.mix
+            ~/.hex
+          key: pack-web-${{ runner.os }}-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            pack-web-${{ runner.os }}-
+
+      - name: OTP release
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+          mix deps.get
+          npm ci
+          MIX_ENV=prod mix compile
+          MIX_ENV=prod mix assets.deploy
+          MIX_ENV=prod mix release --overwrite
+
+      - name: Archive
+        run: |
+          release_dir=_build/prod/rel/handbeam
+          cp scripts/start.sh "$release_dir/start.sh"
+          chmod +x "$release_dir/start.sh"
+          tar -C "$release_dir" -czf handbeam-linux-x86_64.tar.gz .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: handbeam-web-linux-x86_64
+          path: handbeam-linux-x86_64.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  android:
+    name: Android APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "29.0"
+          elixir-version: "1.20"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Frontend assets
+        working-directory: .
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+          mix deps.get
+          npm ci
+
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: jdx/mise-action@v2
+        with:
+          install: true
+          cache: true
+          mise_toml: |
+            [tools]
+            zig = "0.17.0-dev.269+ebff43698"
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: ""
+
+      - name: Android SDK and NDK
+        run: |
+          export ANDROID_HOME="${ANDROID_HOME:-$ANDROID_SDK_ROOT}"
+          export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+          yes | sdkmanager --licenses >/dev/null
+          sdkmanager \
+            "platform-tools" \
+            "platforms;android-35" \
+            "build-tools;35.0.0" \
+            "ndk;27.2.12479018" \
+            "cmake;3.22.1"
+
+      - name: Host packages
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends zip
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.mob/cache
+            mobile/deps
+            mobile/_build
+            _build
+            ~/.mix
+            ~/.hex
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: pack-apk-${{ runner.os }}-${{ hashFiles('mobile/mix.lock', 'mix.lock') }}
+          restore-keys: |
+            pack-apk-${{ runner.os }}-
+
+      - name: Pack APKs
+        run: bash script/pack_android_apks.sh --artifacts artifacts --skip-test
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: handbeam-android-apk
+          path: mobile/artifacts/*.apk
+          if-no-files-found: error
+          retention-days: 14

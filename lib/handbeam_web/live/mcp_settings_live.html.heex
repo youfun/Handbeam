@@ -1,0 +1,224 @@
+<div id="mcp-settings" class="settings-content-wrap">
+  <style>
+    #mcp-settings { font: 14px/1.5 system-ui, sans-serif; color: var(--sig-text-primary, #202124); padding: 16px; max-width: 960px; margin: auto; }
+    #mcp-settings * { box-sizing: border-box; }
+    #mcp-settings .settings-section-title { font-size: 20px; font-weight: 600; }
+    #mcp-settings .settings-help-text, #mcp-settings .settings-field-desc { color: var(--sig-text-secondary, #62666b); }
+    #mcp-settings .settings-card { border: 1px solid var(--sig-border-subtle, #d9dce0); border-radius: 8px; padding: 16px; margin-top: 12px; }
+    #mcp-settings .flex { display: flex; gap: 12px; align-items: center; }
+    #mcp-settings .justify-between { justify-content: space-between; }
+    #mcp-settings .flex-wrap { flex-wrap: wrap; }
+    #mcp-settings button { cursor: pointer; font: inherit; padding: 8px 12px; border: 1px solid var(--sig-border-subtle, #d9dce0); border-radius: 6px; background: var(--sig-bg-elevated, #fff); color: inherit; }
+    #mcp-settings button:disabled { opacity: .5; cursor: wait; }
+    #mcp-settings .settings-save-btn { background: var(--sig-text-primary, #202124); color: var(--sig-bg-elevated, #fff); }
+    #mcp-settings .text-left { text-align: left; overflow-wrap: anywhere; }
+    #mcp-settings label { display: block; margin: 12px 0; }
+    #mcp-settings .settings-input { display: block; width: 100%; padding: 10px; margin-top: 4px; font: inherit; color: inherit; background: var(--sig-bg-elevated, #fff); border: 1px solid var(--sig-border-subtle, #b7bbc1); border-radius: 6px; }
+    #mcp-settings fieldset { padding: 0; border: 0; margin: 20px 0; }
+    #mcp-settings legend { font-weight: 600; }
+    #mcp-settings input[type="checkbox"], #mcp-settings input[type="radio"] { margin-right: 8px; }
+    #mcp-settings .text-red-600 { color: #b42318; }
+    #mcp-settings .text-green-600 { color: #247044; }
+    @media (min-width: 800px) { #mcp-settings .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; } }
+  </style>
+  <div class="settings-content-card">
+    <div class="flex items-center justify-between gap-3 mb-4">
+      <div>
+        <div class="settings-section-title">{gettext("MCP Servers")}</div>
+        <div class="settings-help-text">
+          {gettext("Connect HTTP MCP servers and control workspace access.")}
+        </div>
+      </div>
+      <button id="mcp-add" type="button" phx-click="new" class="settings-save-btn">{gettext(
+        "Add server"
+      )}</button>
+    </div>
+
+    <div :if={@load_error} id="mcp-load-error" class="settings-help-text text-red-600">
+      {@load_error}
+    </div>
+    <div
+      :if={!@load_error && @servers == []}
+      id="mcp-empty"
+      class="settings-card p-4 text-secondary text-sm"
+    >
+      {gettext("No MCP servers configured.")}
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div id="mcp-server-list" class="space-y-2">
+        <div :for={server <- @servers} id={"mcp-server-#{server.id}"} class="settings-card p-3">
+          <div class="flex items-start justify-between gap-3">
+            <button
+              type="button"
+              phx-click="edit"
+              phx-value-id={server.id}
+              class="text-left min-w-0 flex-1"
+            >
+              <div class="settings-field-title">{server.name}</div>
+              <div class="settings-field-desc">
+                {server.transport} · {if server.disabled,
+                  do: gettext("Disabled"),
+                  else: gettext("Enabled")} · {server.tool_count} {gettext("tools")}
+              </div>
+              <div class="settings-field-desc">
+                {if server.status == :connected,
+                  do: gettext("Connected"),
+                  else: gettext("Not connected")}
+              </div>
+            </button>
+            <button
+              type="button"
+              phx-click="confirm_delete"
+              phx-value-id={server.id}
+              class="text-xs text-red-600"
+            >{gettext("Delete")}</button>
+          </div>
+          <div :if={server.transport == :stdio} class="settings-help-text mt-2">
+            {gettext(
+              "This stdio server comes from %{source}. Edit its source configuration to change how it launches.",
+              source: server.source
+            )}
+          </div>
+          <div
+            :if={@delete_target == server.id}
+            id={"mcp-delete-confirm-#{server.id}"}
+            class="mt-3 flex items-center gap-2 text-xs"
+          >
+            <span>{gettext("Delete this server?")}</span>
+            <button
+              type="button"
+              phx-click="delete"
+              phx-value-id={server.id}
+              class="text-red-600 font-semibold"
+            >{gettext("Delete")}</button>
+            <button type="button" phx-click="cancel_delete">{gettext("Cancel")}</button>
+          </div>
+        </div>
+      </div>
+
+      <form
+        :if={@form}
+        id="mcp-server-form"
+        phx-change="change"
+        phx-submit="save"
+        class="settings-card p-4 space-y-4"
+      >
+        <input type="hidden" name="server[id]" value={@form["id"] || ""} />
+        <%= if @editing_transport == :stdio do %>
+          <div class="settings-help-text">
+            {gettext(
+              "stdio servers are read-only here. Edit the source configuration to change the launcher."
+            )}
+          </div>
+        <% else %>
+          <label class="block settings-field-title">{gettext("Name")}<input
+            class="settings-input mt-1 w-full"
+            name="server[name]"
+            value={@form["name"]}
+            required
+          /></label>
+          <label class="block settings-field-title">{gettext("URL")}<input
+            class="settings-input mt-1 w-full"
+            name="server[url]"
+            value={@form["url"]}
+            type="url"
+            required
+          /></label>
+          <label class="block settings-field-title">
+            {gettext("Authentication")}
+            <select class="settings-input mt-1 w-full" name="server[auth]">
+              <option value="none" selected={@form["auth"] == "none"}>{gettext("None")}</option>
+              <option value="bearer" selected={@form["auth"] == "bearer"}>
+                {gettext("Bearer token")}
+              </option>
+              <option value="headers" selected={@form["auth"] == "headers"}>
+                {gettext("Custom headers")}
+              </option>
+            </select>
+          </label>
+          <label :if={@form["auth"] == "bearer"} class="block settings-field-title">
+            {gettext("Token")}
+            <input
+              class="settings-input mt-1 w-full"
+              name="server[token]"
+              value={@form["token"]}
+              type="password"
+              placeholder={
+                if @form["has_credentials"],
+                  do: gettext("Leave blank to keep saved token"),
+                  else: ""
+              }
+            />
+          </label>
+          <label :if={@form["auth"] == "headers"} class="block settings-field-title">
+            {gettext("Headers (JSON)")}
+            <textarea
+              class="settings-input mt-1 w-full"
+              name="server[headers_json]"
+              placeholder={
+                if @form["has_credentials"],
+                  do: gettext("Leave blank to keep saved headers"),
+                  else: ""
+              }
+            >{@form["headers_json"]}</textarea>
+          </label>
+          <label class="flex items-center gap-2 text-sm"><input
+            type="checkbox"
+            name="server[disabled]"
+            value="true"
+            checked={@form["disabled"]}
+          />{gettext("Disabled")}</label>
+          <fieldset>
+            <legend class="settings-field-title">{gettext("Workspace access")}</legend>
+            <label class="block text-sm mt-2"><input
+              type="radio"
+              name="server[access_mode]"
+              value="all"
+              checked={@form["access_mode"] == "all"}
+            /> {gettext("All workspaces, including future workspaces")}</label>
+            <label class="block text-sm mt-2"><input
+              type="radio"
+              name="server[access_mode]"
+              value="selected"
+              checked={@form["access_mode"] != "all"}
+            /> {gettext("Selected workspaces")}</label>
+            <div :if={@form["access_mode"] != "all"} class="mt-2 space-y-1">
+              <label :for={workspace <- @workspaces} class="block text-sm">
+                <input
+                  type="checkbox"
+                  name="server[workspace_ids][]"
+                  value={workspace["id"]}
+                  checked={workspace["id"] in @form["workspace_ids"]}
+                /> {workspace["name"]}
+              </label>
+            </div>
+          </fieldset>
+          <div :if={@form_error} id="mcp-form-error" class="text-sm text-red-600">
+            {@form_error}
+          </div>
+          <div :if={@test_result} id="mcp-test-result" class="text-sm">
+            <%= case @test_result do %>
+              <% {:ok, %{tool_count: count}} -> %>
+                <span class="text-green-600">{gettext("Connected. %{count} tools found.",
+                  count: count
+                )}</span>
+              <% {:error, reason} -> %>
+                <span class="text-red-600">{reason}</span>
+            <% end %>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button
+              type="button"
+              phx-click="test_connection"
+              disabled={@testing}
+              class="settings-chip"
+            >{if @testing, do: gettext("Testing..."), else: gettext("Test connection")}</button>
+            <button type="submit" class="settings-save-btn">{gettext("Save")}</button>
+            <button type="button" phx-click="cancel" class="settings-chip">{gettext("Cancel")}</button>
+          </div>
+        <% end %>
+      </form>
+    </div>
+  </div>
+</div>
