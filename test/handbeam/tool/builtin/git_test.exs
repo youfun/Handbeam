@@ -99,6 +99,46 @@ defmodule Handbeam.Tool.Builtin.GitTest do
     assert File.read!(Path.join(work, "lib/demo.ex")) == "defmodule Demo do\nend\n"
   end
 
+  test "diff compares explicit revisions instead of the current worktree", %{
+    work: work,
+    ctx: ctx
+  } do
+    assert {:ok, _, _} = Git.execute(%{"action" => "init"}, ctx)
+    path = Path.join(work, "version.txt")
+    File.write!(path, "base\n")
+    assert {:ok, _, _} = Git.execute(%{"action" => "add"}, ctx)
+
+    assert {:ok, _, %{oid: base}} =
+             Git.execute(%{"action" => "commit", "message" => "base"}, ctx)
+
+    File.write!(path, "committed target\n")
+    assert {:ok, _, _} = Git.execute(%{"action" => "add"}, ctx)
+
+    assert {:ok, _, %{oid: target}} =
+             Git.execute(%{"action" => "commit", "message" => "target"}, ctx)
+
+    File.write!(path, "uncommitted worktree\n")
+
+    assert {:ok, patch, %{action: :diff}} =
+             Git.execute(%{"action" => "diff", "from" => base, "to" => target}, ctx)
+
+    assert patch =~ "+committed target"
+    refute patch =~ "uncommitted worktree"
+  end
+
+  test "diff rejects unsupported target instead of silently returning the HEAD diff", %{ctx: ctx} do
+    assert {:error, message} =
+             Git.execute(%{"action" => "diff", "target" => "main..feature"}, ctx)
+
+    assert message =~ "from"
+    assert message =~ "to"
+
+    assert {:error, blank_range} =
+             Git.execute(%{"action" => "diff", "from" => "", "to" => ""}, ctx)
+
+    assert blank_range =~ "non-empty"
+  end
+
   test "add and path reset use the discovered worktree, not the discovery directory", %{
     work: work,
     ctx: ctx
@@ -275,6 +315,8 @@ defmodule Handbeam.Tool.Builtin.GitTest do
   test "schema advertises remote actions and credential references, not raw credentials" do
     schema = Git.input_schema()
     assert Map.has_key?(schema.properties, :credential)
+    assert Map.has_key?(schema.properties, :from)
+    assert Map.has_key?(schema.properties, :to)
     refute Map.has_key?(schema.properties, :password)
     refute Map.has_key?(schema.properties, :username)
     enum = schema.properties.action.enum
