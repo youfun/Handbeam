@@ -1488,50 +1488,52 @@
               <div class="text-xs text-secondary font-mono bg-main-darker rounded p-2 max-h-32 overflow-y-auto">
                 <pre class="whitespace-pre-wrap break-all">{format_arguments(request["arguments"] || request[:arguments] || %{})}</pre>
               </div>
-              <div
-                :if={request[:suggested_pattern] || request["suggested_pattern"]}
-                class="mt-2 text-[11px] text-tertiary font-mono"
-              >
-                {gettext("Remember as")} {request[:suggested_pattern] ||
-                  request["suggested_pattern"]}
-              </div>
             </div>
           <% end %>
         </div>
+
+        <details id="approval-more-options" class="mb-4 text-xs text-secondary">
+          <summary class="cursor-pointer py-2">{gettext("More approval options")}</summary>
+          <div class="space-y-3 border rounded-lg p-3 mt-2">
+            <p>{gettext("Session approval allows these tools for the rest of this run.")}</p>
+            <button
+              phx-click="approve_all_tools"
+              phx-value-remember="session"
+              class="text-xs bg-surface text-primary border rounded px-3 py-2 transition-colors hover:bg-surface-hover"
+            >
+              {gettext("This session")}
+            </button>
+            <p>{gettext("Always allow saves these rules in this workspace:")}</p>
+            <ul class="space-y-1 font-mono break-all">
+              <%= for request <- approval_action_requests(@pending_approval) do %>
+                <li>
+                  {request[:suggested_pattern] || request["suggested_pattern"] ||
+                    request[:tool_name] || request["tool_name"]}
+                </li>
+              <% end %>
+            </ul>
+            <button
+              phx-click="approve_all_tools"
+              phx-value-remember="always"
+              class="text-xs bg-surface text-primary border rounded px-3 py-2 transition-colors hover:bg-surface-hover"
+            >
+              {gettext("Always allow")}
+            </button>
+          </div>
+        </details>
 
         <div class="flex flex-wrap gap-2 justify-end">
           <button
             phx-click="deny_all_tools"
             class="text-xs bg-error-subtle text-error border border-error/30 rounded px-3 py-2 transition-colors hover:bg-error/10"
           >
-            ✕ {gettext("Deny")}
-          </button>
-          <button
-            phx-click="deny_all_tools"
-            phx-value-remember="always"
-            class="text-xs bg-error-subtle text-error border border-error/30 rounded px-3 py-2 transition-colors hover:bg-error/10"
-          >
-            {gettext("Always deny")}
+            {gettext("Deny")}
           </button>
           <button
             phx-click="approve_all_tools"
-            class="text-xs bg-surface text-primary border rounded px-3 py-2 transition-colors hover:bg-surface-hover"
+            class="text-xs bg-primary text-user rounded px-3 py-2 transition-colors"
           >
-            {gettext("Once")}
-          </button>
-          <button
-            phx-click="approve_all_tools"
-            phx-value-remember="session"
-            class="text-xs bg-surface text-primary border rounded px-3 py-2 transition-colors hover:bg-surface-hover"
-          >
-            {gettext("This session")}
-          </button>
-          <button
-            phx-click="approve_all_tools"
-            phx-value-remember="always"
-            class="text-xs bg-accent text-white rounded px-3 py-2 transition-colors hover:bg-accent-hover"
-          >
-            ✓ {gettext("Always allow")}
+            {gettext("Allow once")}
           </button>
         </div>
       </div>

@@ -4412,6 +4412,40 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert get_in(settings, ["tools", "default_mode"]) == "auto"
     end
 
+    for action <- ["approve_all_tools", "deny_all_tools"] do
+      @approval_action action
+      test "#{action} defaults to once without saving workspace rules", %{conn: conn} do
+        {:ok, workspace} = Handbeam.WorkspaceStore.ensure_default!()
+        :ok = Handbeam.WorkspaceSettings.update_default_mode(workspace["path"], :prompt)
+        {:ok, before_settings} = Handbeam.WorkspaceSettings.load(workspace["path"])
+        {:ok, view, _html} = live(conn, "/")
+        create_default_conversation(view)
+
+        pending = %{
+          type: :tool_approval,
+          action_requests: [
+            %{
+              tool_call_id: "once-1",
+              tool_name: "bash",
+              arguments: %{"command" => "git status --short"},
+              suggested_pattern: "bash(git status*)"
+            }
+          ]
+        }
+
+        send(view.pid, {:agent_event, agent_event(:tool_approval_requested, pending, 1)})
+
+        view
+        |> element(
+          "#tool-approval-overlay button[phx-click='#{@approval_action}']:not([phx-value-remember])"
+        )
+        |> render_click()
+
+        refute has_element?(view, "#tool-approval-overlay")
+        assert {:ok, ^before_settings} = Handbeam.WorkspaceSettings.load(workspace["path"])
+      end
+    end
+
     test "always-allow persists a matcher pattern and skips the next HITL", %{conn: conn} do
       {:ok, default_ws} = Handbeam.WorkspaceStore.ensure_default!()
       workspace_root = default_ws["path"]
@@ -4439,6 +4473,33 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert html =~ "tool-approval-overlay"
       assert html =~ "Always allow"
       assert html =~ "bash(git status*)"
+
+      assert has_element?(
+               view,
+               "#approval-more-options:not([open]) summary",
+               "More approval options"
+             )
+
+      assert has_element?(view, "#approval-more-options button[phx-value-remember='session']")
+      assert has_element?(view, "#approval-more-options button[phx-value-remember='always']")
+      assert has_element?(view, "#approval-more-options li", "bash(git status*)")
+
+      assert has_element?(
+               view,
+               "#tool-approval-overlay button[phx-click='approve_all_tools']:not([phx-value-remember])",
+               "Allow once"
+             )
+
+      assert has_element?(
+               view,
+               "#tool-approval-overlay button[phx-click='deny_all_tools']",
+               "Deny"
+             )
+
+      refute has_element?(
+               view,
+               "#tool-approval-overlay button[phx-click='deny_all_tools'][phx-value-remember]"
+             )
 
       view
       |> element("button[phx-click='approve_all_tools'][phx-value-remember='always']")

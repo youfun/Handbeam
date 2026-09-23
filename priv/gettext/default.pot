@@ -1008,3 +1008,15 @@ msgstr ""
 
 msgid "This run: cached input / total input (including cache reads and writes). Not a cost saving rate. — means no cache activity reported."
 msgstr ""
+
+msgid "Allow once"
+msgstr ""
+
+msgid "More approval options"
+msgstr ""
+
+msgid "Session approval allows these tools for the rest of this run."
+msgstr ""
+
+msgid "Always allow saves these rules in this workspace:"
+msgstr ""

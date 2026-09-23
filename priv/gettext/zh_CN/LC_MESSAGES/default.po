@@ -308,6 +308,18 @@ msgstr "全部拒绝"
 msgid "Deny"
 msgstr "拒绝"
 
+msgid "Allow once"
+msgstr "允许本次"
+
+msgid "More approval options"
+msgstr "更多授权选项"
+
+msgid "Session approval allows these tools for the rest of this run."
+msgstr "本会话授权将在本次运行剩余期间允许这些工具的所有调用。"
+
+msgid "Always allow saves these rules in this workspace:"
+msgstr "始终允许将在当前工作区保存以下规则："
+
 msgid "Always deny"
 msgstr "以后都拒绝"
 
