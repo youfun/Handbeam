@@ -71,6 +71,9 @@ defmodule Handbeam.Agent.State do
     new(config, prompts)
   end
 
+  defp advisor_mode(%{mode: mode}), do: mode
+  defp advisor_mode(_advisor), do: nil
+
   defp new(%Config{} = config, messages) do
     %__MODULE__{
       config: config,
@@ -88,7 +91,7 @@ defmodule Handbeam.Agent.State do
       interrupt_data: nil,
       tool_guard_denied_calls: [],
       tool_guard_result_blocks: [],
-      advisor: Handbeam.Agent.Advisor.initial_state(config.advisor && config.advisor.mode),
+      advisor: Handbeam.Agent.Advisor.initial_state(advisor_mode(config.advisor)),
       progress: Handbeam.Agent.ProgressGuard.initial()
     }
   end

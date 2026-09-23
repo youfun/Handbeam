@@ -246,7 +246,9 @@ defmodule Handbeam.Agent.Coordinator do
   end
 
   defp validate_advisor_policy(opts) do
-    {:ok, _pin} = Handbeam.Agent.Advisor.validate_start(Keyword.fetch!(opts, :workspace_path), opts)
+    {:ok, _pin} =
+      Handbeam.Agent.Advisor.validate_start(Keyword.fetch!(opts, :workspace_path), opts)
+
     :ok
   end
 
@@ -283,7 +285,9 @@ defmodule Handbeam.Agent.Coordinator do
   end
 
   defp put_advisor_pin(opts) do
-    {:ok, pin} = Handbeam.Agent.Advisor.validate_start(Keyword.fetch!(opts, :workspace_path), opts)
+    {:ok, pin} =
+      Handbeam.Agent.Advisor.validate_start(Keyword.fetch!(opts, :workspace_path), opts)
+
     Keyword.put(opts, :advisor, pin)
   end
 
