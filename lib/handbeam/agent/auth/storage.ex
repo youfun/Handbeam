@@ -48,9 +48,8 @@ defmodule Handbeam.Agent.Auth.Storage do
       when is_binary(provider_id) and is_map(credential) do
     path = file_path(opts)
 
-    with {:ok, normalized} <- normalize_credential(provider_id, credential),
-         {:ok, data} <- read_file_or_empty(path) do
-      write_file(path, Map.put(data, provider_id, normalized))
+    with {:ok, normalized} <- normalize_credential(provider_id, credential) do
+      update_file(path, &Map.put(&1, provider_id, normalized))
     end
   end
 
@@ -58,9 +57,26 @@ defmodule Handbeam.Agent.Auth.Storage do
   def delete(provider_id, opts \\ []) when is_binary(provider_id) do
     path = file_path(opts)
 
-    case read_file_or_empty(path) do
-      {:ok, data} -> write_file(path, Map.delete(data, provider_id))
-      {:error, _} = error -> error
+    update_file(path, &Map.delete(&1, provider_id))
+  end
+
+  # Different providers share one file, so provider-specific refresh locks alone
+  # cannot protect the read-modify-write from dropping another provider's login.
+  defp update_file(path, update) do
+    result =
+      :global.trans(
+        {{__MODULE__, path}, self()},
+        fn ->
+          with {:ok, data} <- read_file_or_empty(path) do
+            write_file(path, update.(data))
+          end
+        end,
+        [Node.self()]
+      )
+
+    case result do
+      :aborted -> {:error, "Credential storage is busy. Try again."}
+      other -> other
     end
   end
 

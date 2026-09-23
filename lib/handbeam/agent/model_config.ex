@@ -42,7 +42,7 @@ defmodule Handbeam.Agent.ModelConfig do
       and never fall back to an unrelated environment API key
   """
 
-  alias Handbeam.Agent.Auth.{CursorCredential, XaiCredential}
+  alias Handbeam.Agent.Auth.{CodexCredential, CursorCredential, XaiCredential}
 
   require Logger
 
@@ -354,17 +354,22 @@ defmodule Handbeam.Agent.ModelConfig do
     case resolve_oauth_credential(provider_id) do
       {:ok, %{api_key: api_key} = auth} ->
         config
+        |> Map.merge(Map.take(auth, [:api_key, :auth_generation, :account_id]))
         |> Map.put(:api_key, api_key)
         |> maybe_put_auth_generation(provider_id, auth)
 
       {:error, message} ->
-        Map.put(config, :oauth_error, message)
+        config |> Map.delete(:api_key) |> Map.put(:oauth_error, message)
     end
   end
 
   defp maybe_resolve_oauth_api_key(config, _provider_id), do: config
 
   defp resolve_oauth_credential("cursor"), do: CursorCredential.resolve_transport_key("cursor")
+
+  defp resolve_oauth_credential("openai_codex"),
+    do: CodexCredential.resolve_transport_key("openai_codex")
+
   defp resolve_oauth_credential(provider_id), do: XaiCredential.resolve_transport_key(provider_id)
 
   defp maybe_put_auth_generation(config, "cursor", %{auth_generation: generation})
@@ -471,6 +476,7 @@ defmodule Handbeam.Agent.ModelConfig do
   def api_to_atom("stepfun-step-plan"), do: :stepfun
   def api_to_atom("openai-responses"), do: :openai_responses
   def api_to_atom("cursor-agent"), do: :cursor_agent
+  def api_to_atom("openai-codex-responses"), do: :openai_codex_responses
   def api_to_atom(_), do: :openai
 
   @doc """

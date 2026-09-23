@@ -1,7 +1,18 @@
 defmodule HandbeamWeb.AvailableModelsLive do
   use HandbeamWeb, :live_view
 
-  alias Handbeam.Agent.Auth.{CursorOAuth, Storage, Subscriptions, XaiOAuth}
+  alias Handbeam.Agent.Auth.{
+    CodexCredential,
+    CodexOAuth,
+    CursorCredential,
+    CursorOAuth,
+    Epoch,
+    Storage,
+    Subscriptions,
+    XaiOAuth
+  }
+
+  alias Handbeam.Agent.Provider.Codex.Models, as: CodexModels
   alias Handbeam.Agent.Provider.Cursor.Models, as: CursorModels
   alias Handbeam.Agent.ModelConfig
   alias Handbeam.LlmDbDefaults
@@ -38,6 +49,7 @@ defmodule HandbeamWeb.AvailableModelsLive do
       |> assign(:toast, nil)
       |> assign(:xai_oauth, nil)
       |> assign(:subscription_oauth, nil)
+      |> assign(:codex_discover_attempt, nil)
       |> assign(:cursor_discover_attempt, nil)
       |> assign(:show_subscription_login, false)
       |> assign(:subscription_methods, Subscriptions.methods())
@@ -68,23 +80,23 @@ defmodule HandbeamWeb.AvailableModelsLive do
     {:noreply, poll_subscription_oauth(socket)}
   end
 
-  def handle_info(:poll_subscription_oauth, socket) do
-    {:noreply, poll_subscription_oauth(socket)}
-  end
-
   def handle_info({:poll_subscription_oauth, attempt_id}, socket) do
     {:noreply, poll_subscription_oauth(socket, attempt_id)}
-  end
-
-  def handle_info({:cursor_models_discovered, attempt_id, result}, socket) do
-    {:noreply, apply_cursor_models(socket, attempt_id, result)}
   end
 
   def handle_info({:subscription_oauth_polled, attempt_id, result}, socket) do
     {:noreply, handle_async_poll(socket, attempt_id, result)}
   end
 
-  # ── xAI subscription OAuth ─────────────────────────────────────────────
+  def handle_info({:codex_models_discovered, attempt_id, generation, result}, socket) do
+    {:noreply, apply_codex_models(socket, attempt_id, generation, result)}
+  end
+
+  def handle_info({:cursor_models_discovered, attempt_id, result}, socket) do
+    {:noreply, apply_cursor_models(socket, attempt_id, result)}
+  end
+
+  # ── Subscription OAuth ─────────────────────────────────────────────────
 
   def handle_event("open_subscription_login", _params, socket) do
     {:noreply,
@@ -107,6 +119,10 @@ defmodule HandbeamWeb.AvailableModelsLive do
 
   def handle_event("cancel_subscription_oauth", _params, socket) do
     {:noreply, clear_subscription_oauth(socket)}
+  end
+
+  def handle_event("refresh_codex_models", _params, socket) do
+    {:noreply, maybe_discover_codex_models(socket, "openai_codex")}
   end
 
   def handle_event("refresh_cursor_models", _params, socket) do
@@ -479,8 +495,6 @@ defmodule HandbeamWeb.AvailableModelsLive do
 
   # ── Helpers ────────────────────────────────────────────────────────────
 
-  def oauth_overlay(subscription_oauth, xai_oauth), do: subscription_oauth || xai_oauth
-
   def obscured_api_key(key) when is_binary(key) do
     cond do
       key == "" -> "—"
@@ -540,23 +554,13 @@ defmodule HandbeamWeb.AvailableModelsLive do
   def delete_confirm_message(_, _), do: gettext("确认删除？")
 
   defp start_subscription_oauth(socket, provider_id) do
+    socket = clear_subscription_oauth(socket)
+
     with {:ok, method} <- Subscriptions.get(provider_id),
          :ok <- ensure_subscription_provider(method),
          {:ok, device} <- start_device_flow(method) do
       attempt_id = System.unique_integer([:positive])
-      interval_ms = poll_interval_ms(device)
-      Process.send_after(self(), {:poll_subscription_oauth, attempt_id}, interval_ms)
-
-      oauth = %{
-        provider_id: method.id,
-        login_label: method.login_label,
-        device: device,
-        verification_uri: verification_uri(method.id, device),
-        status: :waiting,
-        hint: oauth_hint(method.id),
-        unofficial?: method.id == "cursor",
-        attempt_id: attempt_id
-      }
+      schedule_subscription_poll(device, attempt_id)
 
       socket
       |> assign(:show_subscription_login, false)
@@ -567,8 +571,16 @@ defmodule HandbeamWeb.AvailableModelsLive do
         find_provider(method.id, parse_providers(load_raw_config()))
       )
       |> assign(:form_error, nil)
-      |> assign(:subscription_oauth, oauth)
-      |> assign(:xai_oauth, oauth)
+      |> put_oauth(%{
+        provider_id: method.id,
+        login_label: method.login_label,
+        device: device,
+        verification_uri: verification_uri(method.id, device),
+        status: :waiting,
+        hint: oauth_hint(method.id),
+        attempt_id: attempt_id,
+        polling?: false
+      })
     else
       {:error, message} ->
         socket
@@ -578,22 +590,23 @@ defmodule HandbeamWeb.AvailableModelsLive do
   end
 
   defp start_device_flow(%{id: "xai"}), do: XaiOAuth.start()
+  defp start_device_flow(%{id: "openai_codex"}), do: CodexOAuth.start()
   defp start_device_flow(%{id: "cursor"}), do: CursorOAuth.start()
 
   defp start_device_flow(%{id: id}),
     do: {:error, "Subscription login for #{id} is not implemented yet"}
 
   defp verification_uri("xai", device), do: XaiOAuth.browser_verification_uri(device)
+  defp verification_uri("openai_codex", device), do: CodexOAuth.browser_verification_uri(device)
   defp verification_uri("cursor", device), do: CursorOAuth.browser_verification_uri(device)
-  defp verification_uri(_id, device), do: Map.get(device, :verification_uri)
 
-  defp oauth_hint("cursor") do
-    gettext("打开下面的链接，用 Cursor 账号完成浏览器授权。这是非官方协议接入，费用未知，不会显示为免费。")
-  end
+  defp oauth_hint("openai_codex"),
+    do: gettext("打开下面的链接，输入用户码完成 ChatGPT 授权。使用 Codex 订阅额度，不是 OpenAI API 余额；可用模型与限额由账号决定。")
 
-  defp oauth_hint(_id) do
-    gettext("打开下面的链接，输入用户码完成 xAI 订阅授权。")
-  end
+  defp oauth_hint("cursor"),
+    do: gettext("打开下面的链接，用 Cursor 账号完成浏览器授权。这是非官方协议接入，费用未知，不会显示为免费。")
+
+  defp oauth_hint(_), do: gettext("打开下面的链接，输入用户码完成 xAI 订阅授权。")
 
   defp poll_subscription_oauth(socket, attempt_id \\ nil)
 
@@ -601,95 +614,95 @@ defmodule HandbeamWeb.AvailableModelsLive do
          %{assigns: %{subscription_oauth: %{device: device} = oauth}} = socket,
          attempt_id
        ) do
-    if attempt_id && oauth[:attempt_id] && attempt_id != oauth.attempt_id do
+    if oauth.polling? or (attempt_id && attempt_id != oauth.attempt_id) do
       socket
     else
       lv = self()
-      provider_id = oauth.provider_id
 
       Task.start(fn ->
-        result = poll_once(provider_id, device)
-        send(lv, {:subscription_oauth_polled, attempt_id || oauth[:attempt_id], result})
+        result = poll_once(oauth.provider_id, device)
+        send(lv, {:subscription_oauth_polled, oauth.attempt_id, result})
       end)
 
-      socket
+      put_oauth(socket, %{oauth | polling?: true})
     end
-  end
-
-  defp poll_subscription_oauth(
-         %{assigns: %{xai_oauth: %{device: _device} = oauth}} = socket,
-         attempt_id
-       ) do
-    poll_subscription_oauth(assign(socket, :subscription_oauth, oauth), attempt_id)
   end
 
   defp poll_subscription_oauth(socket, _attempt_id), do: socket
 
   defp poll_once("xai", device), do: XaiOAuth.poll_once(device)
+  defp poll_once("openai_codex", device), do: CodexOAuth.poll_once(device)
   defp poll_once("cursor", device), do: CursorOAuth.poll_once(device)
-  defp poll_once(id, _device), do: {:error, "Subscription login for #{id} is not implemented yet"}
 
-  defp handle_async_poll(socket, attempt_id, result) do
-    oauth = socket.assigns[:subscription_oauth] || socket.assigns[:xai_oauth]
+  defp handle_async_poll(
+         %{assigns: %{subscription_oauth: %{attempt_id: attempt_id} = oauth}} = socket,
+         attempt_id,
+         result
+       ) do
+    case result do
+      {status, updated} when status in [:pending, :slow_down] ->
+        schedule_subscription_poll(updated, attempt_id)
+        put_oauth(socket, %{oauth | device: updated, polling?: false})
 
-    cond do
-      is_nil(oauth) ->
-        socket
-
-      oauth[:attempt_id] != attempt_id ->
-        socket
-
-      true ->
-        case result do
-          {:pending, updated} ->
-            schedule_subscription_poll(updated, attempt_id)
-            put_oauth(socket, %{oauth | device: updated, status: :waiting})
-
-          {:slow_down, updated} ->
-            schedule_subscription_poll(updated, attempt_id)
-            put_oauth(socket, %{oauth | device: updated, status: :waiting})
-
-          {:authorized, credential} ->
-            persist_authorized(socket, oauth, credential)
-
-          {:error, message} ->
-            socket
-            |> clear_subscription_oauth()
-            |> assign(:form_error, message)
-        end
-    end
-  end
-
-  defp persist_authorized(socket, oauth, credential) do
-    provider_id = oauth[:provider_id] || "xai"
-
-    store =
-      if provider_id == "cursor" do
-        Handbeam.Agent.Auth.CursorCredential.store_login(provider_id, credential)
-      else
-        Storage.put(provider_id, credential)
-      end
-
-    case store do
-      :ok ->
-        socket
-        |> maybe_discover_cursor_models(provider_id, oauth[:attempt_id])
-        |> put_connected_toast(provider_id)
-        |> then(fn socket ->
-          if provider_id == "cursor" do
-            socket
-          else
-            clear_subscription_oauth(socket)
-          end
-        end)
-        |> reload_providers()
+      {:authorized, credential} ->
+        persist_authorized(socket, oauth, credential)
 
       {:error, message} ->
-        socket
-        |> clear_subscription_oauth()
-        |> assign(:form_error, message)
+        socket |> clear_subscription_oauth() |> assign(:form_error, message)
     end
   end
+
+  defp handle_async_poll(socket, _attempt_id, _result), do: socket
+
+  defp persist_authorized(socket, oauth, credential) do
+    result =
+      case oauth.provider_id do
+        "openai_codex" -> CodexCredential.store_login(oauth.provider_id, credential)
+        "cursor" -> CursorCredential.store_login(oauth.provider_id, credential)
+        provider_id -> Storage.put(provider_id, credential)
+      end
+
+    case result do
+      :ok ->
+        Process.send_after(self(), :clear_toast, 3000)
+
+        message =
+          case oauth.provider_id do
+            "openai_codex" -> "已连接 ChatGPT / Codex 订阅"
+            "cursor" -> "已连接 Cursor 订阅（非官方协议，费用未知）"
+            _ -> "已连接 xAI / Grok 订阅"
+          end
+
+        socket
+        |> clear_subscription_oauth()
+        |> assign(:toast, %{
+          type: :success,
+          message: message,
+          id: System.unique_integer([:positive])
+        })
+        |> reload_providers()
+        |> maybe_discover_codex_models(oauth.provider_id)
+        |> maybe_discover_cursor_models(oauth.provider_id, oauth.attempt_id)
+
+      {:error, message} ->
+        socket |> clear_subscription_oauth() |> assign(:form_error, message)
+    end
+  end
+
+  defp maybe_discover_codex_models(socket, "openai_codex") do
+    attempt_id = System.unique_integer([:positive])
+    generation = Epoch.current("openai_codex")
+    lv = self()
+
+    Task.start(fn ->
+      result = CodexModels.discover()
+      send(lv, {:codex_models_discovered, attempt_id, generation, result})
+    end)
+
+    assign(socket, :codex_discover_attempt, attempt_id)
+  end
+
+  defp maybe_discover_codex_models(socket, _), do: socket
 
   defp maybe_discover_cursor_models(socket, "cursor", attempt_id) do
     lv = self()
@@ -715,51 +728,42 @@ defmodule HandbeamWeb.AvailableModelsLive do
       case result do
         {:ok, models} ->
           _ = ModelConfig.update_provider("cursor", %{"models" => models})
-
-          socket
-          |> clear_subscription_oauth()
-          |> reload_providers()
+          reload_providers(socket)
 
         {:error, message} ->
-          socket
-          |> clear_subscription_oauth()
-          |> assign(:form_error, message)
+          assign(socket, :form_error, message)
       end
     end
   end
 
-  defp put_connected_toast(socket, "cursor") do
-    toast = %{
-      type: :success,
-      message: "已连接 Cursor 订阅（非官方协议，费用未知）",
-      id: System.unique_integer([:positive])
-    }
+  defp apply_codex_models(socket, attempt_id, generation, result) do
+    if socket.assigns.codex_discover_attempt == attempt_id and
+         Epoch.current("openai_codex") == generation do
+      socket = assign(socket, :codex_discover_attempt, nil)
 
-    Process.send_after(self(), :clear_toast, 3000)
-    assign(socket, :toast, toast)
-  end
+      case result do
+        {:ok, models} ->
+          case ModelConfig.update_provider("openai_codex", %{"models" => models}) do
+            :ok -> reload_providers(socket)
+            {:error, message} -> assign(socket, :form_error, message)
+          end
 
-  defp put_connected_toast(socket, _provider_id) do
-    toast = %{
-      type: :success,
-      message: "已连接 xAI / Grok 订阅",
-      id: System.unique_integer([:positive])
-    }
-
-    Process.send_after(self(), :clear_toast, 3000)
-    assign(socket, :toast, toast)
+        {:error, message} ->
+          assign(socket, :form_error, message)
+      end
+    else
+      socket
+    end
   end
 
   defp put_oauth(socket, oauth) do
-    socket
-    |> assign(:subscription_oauth, oauth)
-    |> assign(:xai_oauth, oauth)
+    socket |> assign(:subscription_oauth, oauth) |> assign(:xai_oauth, oauth)
   end
 
   defp clear_subscription_oauth(socket) do
     socket
-    |> assign(:subscription_oauth, nil)
-    |> assign(:xai_oauth, nil)
+    |> put_oauth(nil)
+    |> assign(:codex_discover_attempt, nil)
     |> assign(:cursor_discover_attempt, nil)
   end
 

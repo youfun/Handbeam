@@ -1174,3 +1174,12 @@ msgstr ""
 
 msgid "This run: cached input / total input (including cache reads and writes). Not a cost saving rate. — means no cache activity reported."
 msgstr ""
+
+msgid "选择一个订阅登录方式。订阅额度与 API 余额分开使用。"
+msgstr "Choose a subscription sign-in method. Subscription usage is separate from API credits."
+
+msgid "打开下面的链接，输入用户码完成 ChatGPT 授权。使用 Codex 订阅额度，不是 OpenAI API 余额；可用模型与限额由账号决定。"
+msgstr "Open the link below and enter the code to sign in with ChatGPT. This uses Codex subscription allowances, not OpenAI API credits. Models and limits depend on your account."
+
+msgid "刷新订阅模型"
+msgstr "Refresh subscription models"

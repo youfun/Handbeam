@@ -146,14 +146,6 @@
             >
               {gettext("非官方 Cursor 协议接入。费用未知，不会显示为 0 或免费。原生手机 OAuth 入口尚未验证。")}
             </p>
-            <div :if={@selected_provider.id == "cursor"} class="settings-detail-actions">
-              <button
-                phx-click="refresh_cursor_models"
-                class="settings-btn"
-              >
-                {gettext("刷新 Cursor 模型")}
-              </button>
-            </div>
             <div class="settings-detail-row">
               <span class="settings-detail-label">{gettext("默认供应商")}</span>
               <label class="settings-toggle">
@@ -170,6 +162,22 @@
             </div>
           </div>
           <div class="settings-detail-actions">
+            <button
+              :if={@selected_provider.id == "openai_codex"}
+              phx-click="refresh_codex_models"
+              disabled={not is_nil(@codex_discover_attempt)}
+              class="settings-btn"
+            >
+              {gettext("刷新订阅模型")}
+            </button>
+            <button
+              :if={@selected_provider.id == "cursor"}
+              phx-click="refresh_cursor_models"
+              disabled={not is_nil(@cursor_discover_attempt)}
+              class="settings-btn"
+            >
+              {gettext("刷新 Cursor 模型")}
+            </button>
             <button
               phx-click="open_edit_provider"
               phx-value-id={@selected_provider.id}
@@ -255,7 +263,7 @@
       <div
         :if={
           @form_error && !@show_add_provider && !@show_edit_provider && !@show_add_model &&
-            !@show_subscription_login && !@xai_oauth && !@subscription_oauth
+            !@show_subscription_login && !@subscription_oauth
         }
         class="mx-4 mt-3 p-2.5 rounded-lg text-xs text-error bg-error-subtle flex items-start gap-2"
       >
@@ -749,7 +757,7 @@
   <div class="settings-dialog settings-dialog-sm">
     <h2 class="settings-dialog-title">{gettext("Select provider to configure")}</h2>
     <p class="text-xs text-secondary mb-3">
-      {gettext("选择一个订阅登录方式。后续 Anthropic / Codex / Copilot 也会出现在这里。")}
+      {gettext("选择一个订阅登录方式。订阅额度与 API 余额分开使用。")}
     </p>
     <div class="flex flex-col gap-2 mb-4">
       <button
@@ -770,41 +778,30 @@
 </div>
 
 <!-- ── Subscription OAuth Overlay ── -->
-<div :if={oauth_overlay(@subscription_oauth, @xai_oauth)} class="settings-overlay">
+<div :if={@subscription_oauth} class="settings-overlay">
   <div class="settings-dialog settings-dialog-sm">
     <h2 class="settings-dialog-title">
-      {Map.get(
-        oauth_overlay(@subscription_oauth, @xai_oauth),
-        :login_label,
-        "Sign in with SuperGrok or X Premium"
-      )}
+      {@subscription_oauth.login_label}
     </h2>
     <p class="text-xs text-secondary mb-3">
-      {Map.get(
-        oauth_overlay(@subscription_oauth, @xai_oauth),
-        :hint,
-        gettext("打开下面的链接，输入用户码完成 xAI 订阅授权。")
-      )}
+      {@subscription_oauth.hint}
     </p>
     <div class="settings-detail-grid mb-4">
-      <div
-        :if={Map.get(oauth_overlay(@subscription_oauth, @xai_oauth).device, :user_code)}
-        class="settings-detail-row"
-      >
+      <div :if={@subscription_oauth.device[:user_code]} class="settings-detail-row">
         <span class="settings-detail-label">{gettext("用户码")}</span>
         <span class="settings-detail-value font-mono text-lg tracking-widest">
-          {oauth_overlay(@subscription_oauth, @xai_oauth).device.user_code}
+          {@subscription_oauth.device.user_code}
         </span>
       </div>
-      <div class="settings-detail-row settings-detail-row-stack">
+      <div class="settings-detail-row">
         <span class="settings-detail-label">{gettext("验证地址")}</span>
         <a
-          href={oauth_overlay(@subscription_oauth, @xai_oauth).verification_uri}
+          href={@subscription_oauth.verification_uri}
           target="_blank"
           rel="noopener noreferrer"
-          class="settings-detail-value font-mono text-accent whitespace-normal break-all"
+          class="settings-detail-value settings-oauth-link font-mono text-accent"
         >
-          {oauth_overlay(@subscription_oauth, @xai_oauth).verification_uri}
+          {@subscription_oauth.verification_uri}
         </a>
       </div>
     </div>
