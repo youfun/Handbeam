@@ -42,7 +42,7 @@ defmodule Handbeam.Agent.ModelConfig do
       and never fall back to an unrelated environment API key
   """
 
-  alias Handbeam.Agent.Auth.XaiCredential
+  alias Handbeam.Agent.Auth.{CodexCredential, XaiCredential}
 
   require Logger
 
@@ -350,16 +350,21 @@ defmodule Handbeam.Agent.ModelConfig do
 
   defp maybe_resolve_oauth_api_key(%{auth_type: :oauth} = config, provider_id)
        when is_binary(provider_id) do
-    case XaiCredential.resolve_transport_key(provider_id) do
-      {:ok, %{api_key: api_key}} ->
-        Map.put(config, :api_key, api_key)
+    case resolve_oauth_credential(provider_id) do
+      {:ok, auth} ->
+        Map.merge(config, auth)
 
       {:error, message} ->
-        Map.put(config, :oauth_error, message)
+        config |> Map.delete(:api_key) |> Map.put(:oauth_error, message)
     end
   end
 
   defp maybe_resolve_oauth_api_key(config, _provider_id), do: config
+
+  defp resolve_oauth_credential("openai_codex"),
+    do: CodexCredential.resolve_transport_key("openai_codex")
+
+  defp resolve_oauth_credential(provider_id), do: XaiCredential.resolve_transport_key(provider_id)
 
   # ──────────────────────────────────────────────────────────────
   # Env override layer
@@ -457,6 +462,7 @@ defmodule Handbeam.Agent.ModelConfig do
   def api_to_atom("stepfun"), do: :stepfun
   def api_to_atom("stepfun-step-plan"), do: :stepfun
   def api_to_atom("openai-responses"), do: :openai_responses
+  def api_to_atom("openai-codex-responses"), do: :openai_codex_responses
   def api_to_atom(_), do: :openai
 
   @doc """

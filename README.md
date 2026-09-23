@@ -48,6 +48,19 @@ to minify assets and generate Phoenix digests. `mix compile` only compiles Elixi
 mix test --exclude slow --exclude e2e
 ```
 
+## ChatGPT / Codex subscription
+
+In Web Settings → Available models → Subscription login, select **ChatGPT (Codex subscription)**.
+Enter the device code on OpenAI's verification page, then select a model from this provider.
+Use the refresh-subscription-models button to update the catalog. If device login is unavailable,
+check whether your account permits it. The native mobile settings UI does not yet offer this login.
+
+No Codex CLI is required. Inference uses the Codex Responses backend; Handbeam still owns tools
+and approvals. This uses ChatGPT Codex entitlements, not Platform API credits. Model availability,
+limits and additional usage depend on your account. There is no automatic API-key billing fallback,
+and unknown cost is not displayed as free. Backend compatibility may change with official clients.
+Credentials are stored in `~/.handbeam/auth.json` (0600); never share or commit that file.
+
 ## Private Git repositories
 
 The `git` tool accepts a credential name (`credential`), never a password or PAT.

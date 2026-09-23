@@ -47,6 +47,17 @@ mix phx.server                       # http://localhost:5002
 mix test --exclude slow --exclude e2e
 ```
 
+## ChatGPT / Codex 订阅
+
+Web 设置 → 可用模型 → 订阅登录 → **ChatGPT (Codex subscription)**。
+在 OpenAI 验证页输入用户码，完成后选择该供应商的模型；可以点击“刷新订阅模型”。
+设备码不可用时，检查账号是否允许设备码登录。原生手机设置页暂未提供对应登录 UI。
+
+无需安装 Codex CLI；推理直连 Codex Responses 后端，工具与审批仍由 Handbeam 执行。
+这是 ChatGPT 的 Codex 权益，不是 Platform API 余额；可用模型、限额和额外用量受账号方案约束。
+不会自动回退到 API Key 付费，也不把未知费用显示成免费。后端协议可能随官方客户端变化。
+凭证保存在 `~/.handbeam/auth.json`（0600），不要分享或提交该文件。
+
 ## Git 私有仓库认证
 
 `git` 工具只接受凭据名称（`credential`），不接受密码或 PAT。

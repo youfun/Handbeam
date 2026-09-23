@@ -251,7 +251,8 @@ defmodule Handbeam.Agent.Provider.OpenAI do
     |> Map.put("type", "web_search")
   end
 
-  defp build_input_items(messages, config) do
+  @doc false
+  def build_input_items(messages, config) do
     system_items =
       case Map.get(config, :system_prompt) do
         nil -> []
@@ -352,7 +353,8 @@ defmodule Handbeam.Agent.Provider.OpenAI do
     }
   end
 
-  defp format_tool_def(%{name: name, description: desc, input_schema: schema}) do
+  @doc false
+  def format_tool_def(%{name: name, description: desc, input_schema: schema}) do
     %{
       "type" => "function",
       "name" => name,
@@ -555,14 +557,15 @@ defmodule Handbeam.Agent.Provider.OpenAI do
 
   # --- Response Parsing ---
 
-  defp parse_response(body) when is_binary(body) do
+  @doc false
+  def parse_response(body) when is_binary(body) do
     case Handbeam.Agent.Provider.decode_body(body) do
       {:ok, decoded} -> parse_response(decoded)
       {:error, _} = err -> err
     end
   end
 
-  defp parse_response(%{"output" => output} = resp) when is_list(output) do
+  def parse_response(%{"output" => output} = resp) when is_list(output) do
     usage = resp["usage"] || %{}
     provider_state = provider_state_from_response(resp)
 
@@ -598,7 +601,7 @@ defmodule Handbeam.Agent.Provider.OpenAI do
     end
   end
 
-  defp parse_response(%{"output_text" => text} = resp) when is_binary(text) do
+  def parse_response(%{"output_text" => text} = resp) when is_binary(text) do
     usage = resp["usage"] || %{}
     provider_state = provider_state_from_response(resp)
 
@@ -621,11 +624,11 @@ defmodule Handbeam.Agent.Provider.OpenAI do
      }}
   end
 
-  defp parse_response(%{"error" => error}) do
+  def parse_response(%{"error" => error}) do
     {:error, format_error_payload(error)}
   end
 
-  defp parse_response(resp) do
+  def parse_response(resp) do
     {:error, "Unexpected OpenAI response payload: #{inspect(resp)}"}
   end
 

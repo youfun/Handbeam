@@ -99,7 +99,11 @@ defmodule Handbeam.Agent.Config do
       tool_timeout: Keyword.get(opts, :tool_timeout, @default_tool_timeout),
       until_tool: Keyword.get(opts, :until_tool),
       reasoning_level:
-        Keyword.get(opts, :reasoning_level, Handbeam.Settings.ModelAISettings.defaults().reasoning),
+        Keyword.get(
+          opts,
+          :reasoning_level,
+          Handbeam.Settings.ModelAISettings.defaults().reasoning
+        ),
       memory: Keyword.get(opts, :memory),
       context: build_context(opts),
       middleware: Keyword.get(opts, :middleware, default_middleware()),
@@ -130,10 +134,19 @@ defmodule Handbeam.Agent.Config do
     - default → `Handbeam.Agent.Provider.OpenAICompat`
   """
   @spec resolve_provider_from_api(atom() | nil, String.t() | nil, String.t() | nil) :: module()
-  def resolve_provider_from_api(:anthropic, _model, _provider), do: Handbeam.Agent.Provider.Anthropic
+  def resolve_provider_from_api(:openai_codex_responses, _model, _provider),
+    do: Handbeam.Agent.Provider.Codex
+
+  def resolve_provider_from_api(_api, _model, "openai_codex"), do: Handbeam.Agent.Provider.Codex
+
+  def resolve_provider_from_api(:anthropic, _model, _provider),
+    do: Handbeam.Agent.Provider.Anthropic
 
   def resolve_provider_from_api(_api, _model, "zenmux"), do: Handbeam.Agent.Provider.ZenMux
-  def resolve_provider_from_api(_api, _model, "openrouter"), do: Handbeam.Agent.Provider.OpenRouter
+
+  def resolve_provider_from_api(_api, _model, "openrouter"),
+    do: Handbeam.Agent.Provider.OpenRouter
+
   def resolve_provider_from_api(_api, _model, "deepseek"), do: Handbeam.Agent.Provider.DeepSeek
   def resolve_provider_from_api(_api, _model, "stepfun"), do: Handbeam.Agent.Provider.StepFun
 

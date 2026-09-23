@@ -113,7 +113,8 @@ defmodule Handbeam.Agent.Reasoning do
     |> Map.put(:reasoning_effort, effort)
   end
 
-  defp put_provider_effort(%{api: :openai_responses} = config, effort) do
+  defp put_provider_effort(%{api: api} = config, effort)
+       when api in [:openai_responses, :openai_codex_responses] do
     Map.put(config, :reasoning, %{effort: effort})
   end
 
