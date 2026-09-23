@@ -78,11 +78,12 @@ defmodule Handbeam.Tool.Builtin.Advisor do
       })
 
     case Handbeam.Agent.Delegation.run(%{"prompt" => prompt}, delegation_context, :advisor) do
-      {:ok, text, data} ->
-        {:ok, text, Map.put(data, :profile, :advisor)}
+      {:ok, _wrapper, data} = result ->
+        {:ok, Runtime.child_text(result) || "", Map.put(data, :profile, :advisor)}
 
-      {:error, reason, data} ->
-        {:error, inspect(reason), Map.put(data || %{}, :profile, :advisor)}
+      {:error, reason, data} = result ->
+        {:error, Runtime.child_text(result) || inspect(reason),
+         Map.put(data || %{}, :profile, :advisor)}
 
       {:error, reason} ->
         {:error, inspect(reason)}

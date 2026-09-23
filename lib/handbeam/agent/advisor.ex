@@ -217,20 +217,63 @@ defmodule Handbeam.Agent.Advisor do
     }
   end
 
+  @doc """
+  The advisor's own text inside a Delegation result.
+
+  `Delegation.run/3` wraps that text in an outer JSON report. Callers must
+  not parse the wrapper.
+  """
+  def child_text({_status, _wrapper, data}) when is_map(data) do
+    case data[:report] || data["report"] do
+      text when is_binary(text) and text != "" -> text
+      _ -> nil
+    end
+  end
+
+  def child_text(_), do: nil
+
   defp review_prompt(state, digest) do
-    criteria = inspect(state.advisor.criteria)
+    criteria =
+      case state.advisor.criteria do
+        [] -> "No separate checklist. Judge whether the latest user request is done."
+        list -> inspect(list)
+      end
+
+    files =
+      state.progress.digest.files
+      |> Enum.map(fn {path, hashes} -> "- #{path} (#{length(hashes)} versions)" end)
+      |> Enum.join("\n")
 
     """
-    Review the current work against these criteria:
+    Latest user request:
+    #{latest_user_text(state)}
+
+    Criteria:
     #{criteria}
+
+    Files touched:
+    #{if files == "", do: "(none recorded)", else: files}
 
     Artifact digest: #{digest}
     Return only JSON: {"verdict":"pass"|"revise"|"blocked","findings":[],"notes":[]}
     """
   end
 
-  defp interpret(advisor, {:ok, text, _data}, digest, request_id) do
-    case text |> extract_json() |> validate_verdict() do
+  defp latest_user_text(state) do
+    state.messages
+    |> Enum.reverse()
+    |> Enum.find_value("(no user request)", fn message ->
+      if message.role == :user do
+        text = Handbeam.Agent.Message.text(message)
+        if text == "", do: nil, else: text
+      end
+    end)
+  end
+
+  defp interpret(advisor, {:ok, _text, _data} = result, digest, request_id) do
+    body = child_text(result) || ""
+
+    case body |> extract_json() |> validate_verdict() do
       {:ok, verdict} ->
         case gate(
                %{advisor | artifact_digest: digest, request_id: request_id},
@@ -273,8 +316,6 @@ defmodule Handbeam.Agent.Advisor do
         %{}
     end
   end
-
-  defp extract_json(_), do: %{}
 
   defp format_findings(%{findings: findings}) when is_list(findings) do
     text =

@@ -397,18 +397,6 @@ defmodule Handbeam.Settings.ModelAISettings do
     end
   end
 
-  @spec validate(map()) :: :ok | {:error, String.t()}
-  def validate(%{} = map) do
-    with :ok <- validate_privacy_mode(map),
-         :ok <- validate_memory_scope(map),
-         :ok <- validate_max_recent_context(map),
-         :ok <- validate_token_thresholds(map) do
-      :ok
-    end
-  end
-
-  def fields, do: @fields
-
   # ── Private helpers ──
 
   defp get_key(map, key) do

@@ -58,10 +58,6 @@ defmodule Handbeam.Settings.ModelAIOverride do
     |> Settings.save_global()
   end
 
-  defp drop_nil_advisor(map) do
-    if Map.get(map, "advisor") == nil, do: Map.delete(map, "advisor"), else: map
-  end
-
   def save({:workspace, path}, %ModelAISettings{} = form) do
     global = Settings.global_model_ai()
 
@@ -70,6 +66,10 @@ defmodule Handbeam.Settings.ModelAIOverride do
     |> Map.merge(advisor_workspace_override(form))
     |> ModelAISettings.override_to_json_map()
     |> then(&Settings.save_workspace_model_ai(path, &1))
+  end
+
+  defp drop_nil_advisor(map) do
+    if Map.get(map, "advisor") == nil, do: Map.delete(map, "advisor"), else: map
   end
 
   @doc """
