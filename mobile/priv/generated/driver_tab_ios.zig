@@ -37,7 +37,9 @@ extern fn prim_net_nif_init() callconv(.c) ?*anyopaque;
 extern fn asn1rt_nif_nif_init() callconv(.c) ?*anyopaque;
 extern fn crypto_nif_init() callconv(.c) ?*anyopaque;
 extern fn mob_nif_nif_init() callconv(.c) ?*anyopaque;
+extern fn handbeam_storage_nif_init() callconv(.c) ?*anyopaque;
 extern fn handbeam_ios_nif_init() callconv(.c) ?*anyopaque;
+extern fn bcrypt_nif_nif_init() callconv(.c) ?*anyopaque;
 
 // Comptime flags threaded from build.zig via b.addOptions().
 // Each per-feature flag defaults to false; the build sets it to true
@@ -49,7 +51,6 @@ const nx_eigen_static = build_options.nx_eigen_static;
 const tflite_static = build_options.tflite_static;
 
 extern fn sqlite3_nif_nif_init() callconv(.c) ?*anyopaque;
-extern fn bcrypt_nif_nif_init() callconv(.c) ?*anyopaque;
 extern fn emlx_nif_nif_init() callconv(.c) ?*anyopaque;
 extern fn nx_eigen_nif_init() callconv(.c) ?*anyopaque;
 extern fn tflite_nif_nif_init() callconv(.c) ?*anyopaque;
@@ -74,6 +75,7 @@ const base_nifs = [_]ErtsStaticNif{
     .{ .nif_init = asn1rt_nif_nif_init, .is_builtin = 1, .nif_mod = THE_NON_VALUE, .entry = null },
     .{ .nif_init = crypto_nif_init, .is_builtin = 1, .nif_mod = THE_NON_VALUE, .entry = null },
     .{ .nif_init = mob_nif_nif_init, .is_builtin = 0, .nif_mod = THE_NON_VALUE, .entry = null },
+    .{ .nif_init = handbeam_storage_nif_init, .is_builtin = 0, .nif_mod = THE_NON_VALUE, .entry = null },
     .{ .nif_init = handbeam_ios_nif_init, .is_builtin = 0, .nif_mod = THE_NON_VALUE, .entry = null },
     .{ .nif_init = bcrypt_nif_nif_init, .is_builtin = 0, .nif_mod = THE_NON_VALUE, .entry = null },
 };
