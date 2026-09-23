@@ -328,6 +328,39 @@ defmodule Handbeam.Agent.Provider.OpenAITest do
       assert {:error, reason} = OpenAI.stream([Message.user("Hi")], [], config, fn _ -> :ok end)
       assert reason =~ "invalid_request_error"
     end
+
+    test "cancels a degenerate stream that repeats the same phrase" do
+      phrase = "Hex 的版本号在页面源码里，我直接抓那一段。\n"
+
+      config =
+        config_with_sse_stream(List.duplicate(sse_response_output_text_delta(phrase), 20))
+
+      test_pid = self()
+      on_chunk = fn chunk -> send(test_pid, {:chunk, chunk}) end
+
+      assert {:error, reason} =
+               OpenAI.stream([Message.user("Check dependencies")], [], config, on_chunk)
+
+      assert reason =~ "repeated output"
+
+      chunks = collect_chunks([])
+      assert length(chunks) < 20
+      assert Enum.join(chunks) == String.duplicate(phrase, length(chunks))
+    end
+
+    test "does not reject repeated short formatting tokens" do
+      chunks = List.duplicate("- ", 20) ++ ["done"]
+
+      config =
+        config_with_sse_stream(
+          Enum.map(chunks, &sse_response_output_text_delta/1) ++ ["data: [DONE]\n\n"]
+        )
+
+      assert {:ok, result} =
+               OpenAI.stream([Message.user("Format a list")], [], config, fn _ -> :ok end)
+
+      assert Message.text(hd(result.messages)) == Enum.join(chunks)
+    end
   end
 
   describe "HTTP timeouts" do
@@ -512,6 +545,14 @@ defmodule Handbeam.Agent.Provider.OpenAITest do
       conn = Plug.Conn.send_chunked(conn, status)
       {:ok, conn} = Plug.Conn.chunk(conn, body)
       conn
+    end
+  end
+
+  defp collect_chunks(chunks) do
+    receive do
+      {:chunk, chunk} -> collect_chunks([chunk | chunks])
+    after
+      0 -> Enum.reverse(chunks)
     end
   end
 end

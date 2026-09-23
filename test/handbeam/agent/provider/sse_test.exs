@@ -178,5 +178,22 @@ defmodule Handbeam.Agent.Provider.SSETest do
 
       assert length(resp.private.sse_acc.events) == 2
     end
+
+    test "halts the HTTP stream when the event handler requests it" do
+      initial_acc = %{events: [], buffer: ""}
+
+      handle_event = fn acc, event ->
+        {:halt, %{acc | events: [event | acc.events]}}
+      end
+
+      handler = SSE.req_stream_handler(initial_acc, handle_event)
+      req = %{}
+      resp = %{private: %{}}
+
+      assert {:halt, {_req, resp}} =
+               handler.({:data, "event: test\ndata: stop\n\n"}, {req, resp})
+
+      assert [%{event: "test", data: "stop"}] = resp.private.sse_acc.events
+    end
   end
 end

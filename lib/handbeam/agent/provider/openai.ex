@@ -47,6 +47,10 @@ defmodule Handbeam.Agent.Provider.OpenAI do
   # Req/Finch default idle timeout is ~15–30s and surfaces as TransportError :timeout.
   @default_receive_timeout 180_000
   @default_connect_timeout 30_000
+  @loop_repetitions 8
+  @min_loop_bytes 16
+  @max_loop_bytes 512
+  @repeated_output_error "Model stream stopped after detecting repeated output"
 
   @typedoc "Configuration for the OpenAI Responses provider."
   @type config :: %{
@@ -400,9 +404,14 @@ defmodule Handbeam.Agent.Provider.OpenAI do
 
   defp process_stream_event(acc, "response.output_text.delta", %{"delta" => delta})
        when is_binary(delta) and delta != "" do
-    # Logger.debug("[OpenAI] stream delta #{log_chunk(delta)}")
-    acc.on_chunk.(delta)
-    %{acc | content: acc.content <> delta}
+    content = acc.content <> delta
+
+    if repeated_suffix?(content) do
+      {:halt, %{acc | content: content, stream_error: @repeated_output_error}}
+    else
+      acc.on_chunk.(delta)
+      %{acc | content: content}
+    end
   end
 
   defp process_stream_event(acc, "response.output_text.done", %{"text" => text})
@@ -449,6 +458,27 @@ defmodule Handbeam.Agent.Provider.OpenAI do
   end
 
   defp process_stream_event(acc, _event_type, _payload), do: acc
+
+  defp repeated_suffix?(content) do
+    max_period = min(@max_loop_bytes, div(byte_size(content), @loop_repetitions))
+
+    if max_period < @min_loop_bytes do
+      false
+    else
+      case Enum.find(1..max_period, &repeated_period?(content, &1)) do
+        period when period >= @min_loop_bytes -> true
+        _period -> false
+      end
+    end
+  end
+
+  defp repeated_period?(content, period) do
+    repeated_bytes = period * @loop_repetitions
+    offset = byte_size(content) - repeated_bytes
+    suffix = binary_part(content, offset, repeated_bytes)
+    pattern = binary_part(suffix, 0, period)
+    suffix == :binary.copy(pattern, @loop_repetitions)
+  end
 
   defp build_stream_response(%{stream_error: error}) when is_binary(error) do
     {:error, error}
