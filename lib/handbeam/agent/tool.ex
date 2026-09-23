@@ -42,7 +42,9 @@ defmodule Handbeam.Agent.Tool do
   @callback max_result_chars() :: pos_integer() | :unlimited
   @callback concurrent?() :: boolean()
 
-  @optional_callbacks [max_result_chars: 0, concurrent?: 0]
+  @callback timeout_ms() :: pos_integer()
+
+  @optional_callbacks [max_result_chars: 0, concurrent?: 0, timeout_ms: 0]
 
   @doc """
   Resolve a file path against the working directory from context.

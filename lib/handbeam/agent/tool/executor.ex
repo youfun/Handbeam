@@ -54,19 +54,14 @@ defmodule Handbeam.Agent.Tool.Executor do
       |> Map.take(authorized_tools(state.config))
 
     {sequential, concurrent} = partition_by_concurrency(tool_calls, tool_fns)
-    tool_timeout = state.config.tool_timeout
 
     Logger.debug(
-      "[Executor] dispatch sequential=#{length(sequential)} concurrent=#{length(concurrent)} " <>
-        "timeout_ms=#{tool_timeout}"
+      "[Executor] dispatch sequential=#{length(sequential)} concurrent=#{length(concurrent)}"
     )
 
-    # Phase 1: Sequential tools — each wrapped in a supervised task so a hung
-    # tool cannot deadlock the entire Turn. Mirrors the concurrent path's
-    # timeout protection but preserves strict sequential ordering.
     seq_results =
       Enum.map(sequential, fn call ->
-        execute_one_with_timeout(call, tool_fns, context, tool_timeout)
+        execute_one_with_timeout(call, tool_fns, context, timeout_for(call, tool_fns, state))
       end)
 
     # Phase 2: Concurrent tools
@@ -77,7 +72,7 @@ defmodule Handbeam.Agent.Tool.Executor do
         concurrent
         |> Task.async_stream(
           &execute_one(&1, tool_fns, context),
-          timeout: tool_timeout,
+          timeout: timeout_for(hd(concurrent), tool_fns, state),
           ordered: true,
           on_timeout: :kill_task
         )
@@ -297,9 +292,26 @@ defmodule Handbeam.Agent.Tool.Executor do
     end
   end
 
+  defp advisor_tool_allowed?("advisor", config) do
+    Handbeam.Agent.Advisor.tool_visible?(config.advisor)
+  end
+
+  defp advisor_tool_allowed?(_name, _config), do: true
+
+  defp timeout_for(call, tool_fns, state) do
+    name = call[:name] || call["name"]
+
+    case Map.get(tool_fns, name) do
+      %{timeout_ms: timeout} when is_integer(timeout) and timeout > 0 -> timeout
+      _ -> state.config.tool_timeout
+    end
+  end
+
   defp partition_by_concurrency(tool_calls, tool_fns) do
     Enum.split_with(tool_calls, fn call ->
-      case Map.fetch(tool_fns, call[:name]) do
+      name = call[:name] || call["name"]
+
+      case Map.fetch(tool_fns, name) do
         {:ok, entry} -> entry.concurrent? == false
         :error -> false
       end
@@ -324,6 +336,7 @@ defmodule Handbeam.Agent.Tool.Executor do
 
     registered
     |> Enum.filter(&(is_nil(config.allowed_tools) or &1 in config.allowed_tools))
+    |> Enum.filter(&advisor_tool_allowed?(&1, config))
     |> Enum.filter(&(is_nil(active) or &1 in active))
     |> Enum.filter(&(is_nil(parent_active) or &1 in parent_active))
     |> Enum.filter(fn _ ->

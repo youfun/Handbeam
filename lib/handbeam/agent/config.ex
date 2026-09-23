@@ -35,6 +35,8 @@ defmodule Handbeam.Agent.Config do
     :allowed_tools,
     :runner_pid,
     :run_id,
+    :advisor,
+    :source,
     skill_paths: [],
     delegated?: false,
     context: @default_context,
@@ -53,6 +55,7 @@ defmodule Handbeam.Agent.Config do
           allowed_tools: [String.t()] | nil,
           runner_pid: pid() | nil,
           run_id: String.t() | nil,
+          advisor: map() | nil,
           skill_paths: [String.t()],
           delegated?: boolean(),
           until_tool: String.t() | nil,
@@ -103,12 +106,14 @@ defmodule Handbeam.Agent.Config do
       allowed_tools: Keyword.get(opts, :allowed_tools),
       runner_pid: Keyword.get(opts, :runner_pid),
       run_id: Keyword.get(opts, :run_id),
+      advisor: Keyword.get(opts, :advisor),
+      source: Keyword.get(opts, :source),
       skill_paths: List.wrap(Keyword.get(opts, :skill_paths, [])),
       delegated?: Keyword.get(opts, :delegated?, false),
       system_prompt: build_system_prompt(opts),
       working_directory: Keyword.get(opts, :working_directory, File.cwd!()),
       model: Keyword.get(opts, :model, @default_model),
-      max_turns: Keyword.get(opts, :max_turns, @default_max_turns),
+      max_turns: Keyword.get(opts, :max_turns, channel_max_turns(opts)),
       max_budget_cents: Keyword.get(opts, :max_budget_cents),
       timeout_ms: Keyword.get(opts, :timeout_ms, @default_timeout_ms),
       tool_timeout: Keyword.get(opts, :tool_timeout, @default_tool_timeout),
@@ -205,11 +210,23 @@ defmodule Handbeam.Agent.Config do
       end)
 
     base
+    |> maybe_inject_advisor(opts)
     |> maybe_inject_workspace_contract(opts)
     |> maybe_inject_project_context(opts)
     |> maybe_inject_skills(opts)
     |> maybe_append_task_instructions(opts)
     |> append_prompt_section(Handbeam.Agent.HostEnvironment.describe())
+  end
+
+  defp maybe_inject_advisor(system_prompt, opts) do
+    if Handbeam.Agent.Advisor.tool_visible?(Keyword.get(opts, :advisor)) do
+      append_prompt_section(
+        system_prompt,
+        "\n\n## Advisor\n\nAn advisor tool is available. Call it only when a second judgment would help. Its answer is advice, not permission to act.\n"
+      )
+    else
+      system_prompt
+    end
   end
 
   defp maybe_append_task_instructions(system_prompt, opts) do
@@ -386,11 +403,20 @@ defmodule Handbeam.Agent.Config do
     """ <> "\n\n" <> String.trim_trailing(memory_section) <> "\n"
   end
 
+  defp channel_max_turns(opts) do
+    cond do
+      Keyword.get(opts, :source) in [:sns, :webhook, :cli] -> 200
+      Keyword.get(opts, :source) in [:live_view, :native] -> 1_000
+      true -> @default_max_turns
+    end
+  end
+
   defp default_middleware do
     base = [
       Handbeam.Agent.Middleware.Logger,
       Handbeam.Agent.Middleware.Security,
-      Handbeam.Agent.Middleware.ToolGuard
+      Handbeam.Agent.Middleware.ToolGuard,
+      Handbeam.Agent.Middleware.ProgressGuard
     ]
 
     # Prepend OM middleware when enabled (so they run before other hooks)

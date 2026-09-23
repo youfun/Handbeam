@@ -180,6 +180,9 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
   def safe_status("max_turns"), do: :max_turns
   def safe_status("interrupted"), do: :interrupted
   def safe_status("awaiting_approval"), do: :awaiting_approval
+  def safe_status("stalled"), do: :stalled
+  def safe_status("budget_exceeded"), do: :budget_exceeded
+  def safe_status("halted"), do: :halted
   def safe_status(_), do: :idle
 
   def unique_id(prefix), do: "#{prefix}-#{System.unique_integer([:positive, :monotonic])}"

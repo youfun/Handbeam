@@ -674,7 +674,7 @@ defmodule Handbeam.PubSub.Session do
   defp safe_seal_queue(_queue_pid), do: :ok
 
   defp maybe_broadcast_run_lifecycle(session_id, %{kind: kind, payload: payload})
-       when kind in [:run_start, :run_end, :tool_approval_requested] do
+       when kind in [:run_start, :run_end, :tool_approval_requested, :stall_check_requested] do
     Phoenix.PubSub.broadcast(
       Handbeam.PubSub,
       "runtime:runs",

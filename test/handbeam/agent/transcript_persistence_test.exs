@@ -762,4 +762,34 @@ defmodule Handbeam.Agent.TranscriptPersistenceTest do
               usage_incomplete: false
             }} = Handbeam.ConversationStore.get_token_usage(conversation_id)
   end
+
+  test "terminal stop notices are written once" do
+    {:ok, conversation} = Handbeam.ConversationStore.create("default", timeline: [])
+    conversation_id = conversation["id"]
+    opts = [run_id: "run-stop"]
+
+    for status <- [:max_turns, :stalled, :budget_exceeded, :halted] do
+      assert :ok =
+               TranscriptPersistence.handle_event(
+                 conversation_id,
+                 {:run_end, %{status: status, turns: 4, evidence: "same grep"}},
+                 opts
+               )
+    end
+
+    assert :ok =
+             TranscriptPersistence.handle_event(
+               conversation_id,
+               {:run_end, %{status: :max_turns, turns: 4}},
+               opts
+             )
+
+    stops =
+      conversation_id
+      |> Handbeam.ConversationStore.load_messages()
+      |> Enum.filter(&(&1["id"] == "msg-run-stop-run-stop"))
+
+    assert [%{"content" => content}] = stops
+    assert content =~ "轮上限"
+  end
 end

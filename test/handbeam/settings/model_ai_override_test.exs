@@ -65,7 +65,14 @@ defmodule Handbeam.Settings.ModelAIOverrideTest do
     File.write!(path, "{ broken")
 
     sources = ModelAIOverride.sources(ws)
-    assert Enum.all?(sources, fn {_field, source} -> source == :global end)
-    assert Map.keys(sources) |> Enum.sort() == Enum.sort(ModelAISettings.fields())
+
+    assert sources
+           |> Map.delete(:advisor)
+           |> Enum.all?(fn {_field, source} -> source == :global end)
+
+    assert sources.advisor == :none
+
+    assert Map.keys(sources) |> Enum.sort() ==
+             Enum.sort([:advisor | ModelAISettings.fields()])
   end
 end

@@ -320,6 +320,15 @@ defmodule Handbeam.Agent.Turn do
     payload = %{status: result.status, turns: result.turn, usage: result.usage}
     payload = if result.error, do: Map.put(payload, :error, result.error), else: payload
 
+    payload =
+      case result.interrupt_data do
+        %{signal: signal, evidence: evidence} ->
+          payload |> Map.put(:signal, signal) |> Map.put(:evidence, evidence)
+
+        _ ->
+          payload
+      end
+
     emit(opts, :run_end, payload)
     emit(opts, :agent_end, payload)
     mw_run(result, :session_end)
@@ -470,6 +479,19 @@ defmodule Handbeam.Agent.Turn do
   end
 
   # ── Turn loop ──
+
+  defp do_turn(%State{status: :interrupted} = state, opts) do
+    if stall_check?(state) do
+      emit(opts, :stall_check_requested, state.interrupt_data)
+    end
+
+    state
+  end
+
+  defp do_turn(%State{status: status} = state, _opts)
+       when status in [:stalled, :max_turns, :error, :halted, :budget_exceeded] do
+    state
+  end
 
   defp do_turn(%State{turn: turn, config: config} = state, _opts)
        when turn >= config.max_turns do
@@ -777,22 +799,118 @@ defmodule Handbeam.Agent.Turn do
   defp continue_with_pending_or_complete(state, opts) do
     case Keyword.get(opts, :candidate_queue) do
       nil ->
-        %{state | status: :completed}
+        maybe_review_or_complete(state, opts, nil)
 
       queue ->
-        case Handbeam.Agent.CandidateQueue.take_pending_or_seal(queue) do
-          :sealed ->
-            %{state | status: :completed}
-
-          {:pending, %{steer: steer, follow_up: follow_ups}} ->
-            emit_candidate_injected(opts, :steer, steer)
-            emit_candidate_injected(opts, :follow_up, follow_ups)
-
-            state
-            |> State.append_messages(steer ++ follow_ups)
-            |> do_turn(opts)
+        if Handbeam.Agent.CandidateQueue.has_pending?(queue) do
+          inject_pending(state, opts, queue)
+        else
+          maybe_review_or_complete(state, opts, queue)
         end
     end
+  end
+
+  defp maybe_review_or_complete(state, opts, queue) do
+    if Handbeam.Agent.Advisor.review?(state.advisor) do
+      review_before_seal(state, opts, queue)
+    else
+      seal_or_complete(state, opts, queue)
+    end
+  end
+
+  defp review_before_seal(state, opts, queue) do
+    digest = artifact_digest(state)
+    request_id = "advisor-review-" <> Ecto.UUID.generate()
+
+    state = %{
+      state
+      | advisor: %{
+          state.advisor
+          | phase: :reviewing,
+            request_id: request_id,
+            artifact_digest: digest
+        }
+    }
+
+    case Handbeam.Agent.Advisor.review(state, opts, request_id, digest) do
+      {:pass, advisor} ->
+        state = %{state | advisor: advisor}
+        seal_or_complete(state, opts, queue)
+
+      {:revise, advisor, feedback} ->
+        state
+        |> Map.put(:advisor, advisor)
+        |> State.append_messages([Handbeam.Agent.Message.user(feedback)])
+        |> do_turn(opts)
+
+      {:blocked, advisor, reason} ->
+        %{state | advisor: advisor, status: :error, error: "尚未通过验收: #{reason}"}
+
+      {:stale, advisor} ->
+        %{state | advisor: advisor}
+        |> do_turn(opts)
+    end
+  end
+
+  defp seal_or_complete(state, _opts, nil), do: %{state | status: :completed}
+
+  defp seal_or_complete(state, opts, queue) do
+    case Handbeam.Agent.CandidateQueue.take_pending_or_seal(queue) do
+      :sealed ->
+        %{state | status: :completed}
+
+      {:pending, %{steer: steer, follow_up: follow_ups}} ->
+        emit_candidate_injected(opts, :steer, steer)
+        emit_candidate_injected(opts, :follow_up, follow_ups)
+
+        state
+        |> State.append_messages(steer ++ follow_ups)
+        |> do_turn(opts)
+    end
+  end
+
+  defp inject_pending(state, opts, queue) do
+    case Handbeam.Agent.CandidateQueue.take_pending_or_seal(queue) do
+      {:pending, %{steer: steer, follow_up: follow_ups}} ->
+        emit_candidate_injected(opts, :steer, steer)
+        emit_candidate_injected(opts, :follow_up, follow_ups)
+
+        state
+        |> State.append_messages(steer ++ follow_ups)
+        |> do_turn(opts)
+
+      :sealed ->
+        %{state | status: :completed}
+    end
+  end
+
+  defp stall_check?(%State{interrupt_data: %{type: :stall_check}}), do: true
+  defp stall_check?(_state), do: false
+
+  def resume_after_stall_check(%State{status: :interrupted} = state, _decisions, opts) do
+    state = %{
+      state
+      | status: :running,
+        interrupt_data: nil,
+        progress:
+          Handbeam.Agent.ProgressGuard.grant(
+            state.progress || Handbeam.Agent.ProgressGuard.initial()
+          )
+    }
+
+    state
+    |> do_turn(opts)
+    |> finish_run(opts)
+  end
+
+  def resume_after_stall_check(%State{} = state, _decisions, _opts), do: state
+
+  defp artifact_digest(state) do
+    state.messages
+    |> Enum.map(&Handbeam.Agent.Message.text/1)
+    |> Enum.join("\n")
+    |> then(&:crypto.hash(:sha256, &1))
+    |> Base.encode16(case: :lower)
   end
 
   defp call_provider_with_retry(

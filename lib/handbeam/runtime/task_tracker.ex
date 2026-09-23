@@ -100,9 +100,10 @@ defmodule Handbeam.Runtime.TaskTracker do
   end
 
   defp handle_lifecycle(
-         {:run_lifecycle, conversation_id, :tool_approval_requested, payload},
+         {:run_lifecycle, conversation_id, kind, payload},
          state
-       ) do
+       )
+       when kind in [:tool_approval_requested, :stall_check_requested] do
     {:noreply, put_waiting(state, conversation_id, payload)}
   end
 
@@ -209,6 +210,7 @@ defmodule Handbeam.Runtime.TaskTracker do
     case to_string(payload_value(payload, :status) || "completed") do
       "cancelled" -> :cancelled
       "error" -> :failed
+      "stalled" -> :failed
       _ -> :completed
     end
   end

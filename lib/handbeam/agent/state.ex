@@ -23,11 +23,20 @@ defmodule Handbeam.Agent.State do
     :tool_guard_overrides,
     :interrupt_data,
     :tool_guard_denied_calls,
-    :tool_guard_result_blocks
+    :tool_guard_result_blocks,
+    :advisor,
+    :progress
   ]
 
   @type status ::
-          :running | :completed | :error | :max_turns | :budget_exceeded | :halted | :interrupted
+          :running
+          | :completed
+          | :error
+          | :max_turns
+          | :budget_exceeded
+          | :halted
+          | :interrupted
+          | :stalled
 
   @type t :: %__MODULE__{
           config: Config.t(),
@@ -44,7 +53,8 @@ defmodule Handbeam.Agent.State do
           tool_guard_overrides: map(),
           interrupt_data: map() | nil,
           tool_guard_denied_calls: [map()],
-          tool_guard_result_blocks: [map()]
+          tool_guard_result_blocks: [map()],
+          advisor: map()
         }
 
   @doc "Create initial state from config and user prompt."
@@ -77,7 +87,9 @@ defmodule Handbeam.Agent.State do
       tool_guard_overrides: %{},
       interrupt_data: nil,
       tool_guard_denied_calls: [],
-      tool_guard_result_blocks: []
+      tool_guard_result_blocks: [],
+      advisor: Handbeam.Agent.Advisor.initial_state(config.advisor && config.advisor.mode),
+      progress: Handbeam.Agent.ProgressGuard.initial()
     }
   end
 

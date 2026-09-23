@@ -63,6 +63,26 @@ defmodule Handbeam.Agent do
     {:ok, result}
   end
 
+  @doc "Continue a run paused by the progress guard."
+  def resume_after_stall_check(interrupted_state, decisions, opts) do
+    opts = maybe_bootstrap_mcp(opts)
+
+    wrapped_opts =
+      case Keyword.get(opts, :session_id) do
+        nil ->
+          opts
+
+        session_id ->
+          Keyword.put(
+            opts,
+            :on_event,
+            session_event_callback(session_id, Keyword.get(opts, :on_event))
+          )
+      end
+
+    {:ok, Turn.resume_after_stall_check(interrupted_state, decisions, wrapped_opts)}
+  end
+
   @doc """
   Run the agent with the given prompt and options.
 
