@@ -1881,8 +1881,8 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
          agent_event(:run_end, %{status: "completed", turns: 2, usage: payload["usage"]}, 5)}
       )
 
-      assert has_element?(view, "#status-input-tokens", "25")
-      assert has_element?(view, "#status-output-tokens", "35")
+      assert has_element?(view, "#status-input-tokens", "0")
+      assert has_element?(view, "#status-output-tokens", "0")
 
       send(view.pid, {:agent_event, agent_event(:run_start, %{model: "fake"}, 6)})
       assert has_element?(view, "#status-input-tokens", "0")
@@ -1926,8 +1926,8 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
          agent_event(:run_end, %{"status" => "completed", "usage" => cumulative}, 5)}
       )
 
-      assert has_element?(view, "#status-cache-hit-rate[title*='This run:']", "18.0%")
-      assert has_element?(view, "#status-input-tokens[title='150']", "150")
+      assert has_element?(view, "#status-cache-hit-rate", "—")
+      assert has_element?(view, "#status-input-tokens[title='0']", "0")
       refute has_element?(view, "button[phx-click='stop_run']")
 
       send(view.pid, {:agent_event, agent_event(:run_start, %{model: "fake"}, 6)})
@@ -1954,21 +1954,26 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert has_element?(view, "#status-cache-read[title='999950']", "1M")
       assert has_element?(view, "#status-cache-write[title='1000']", "1K")
 
-      final_usage = %{
-        usage
-        | input_tokens: 33_261,
+      conv_id = session_id_from_html(render(view))
+
+      :ok =
+        Handbeam.ConversationStore.record_run_usage(conv_id, "run-final", %{
+          input_tokens: 33_261,
           output_tokens: 1250,
           cache_read_input_tokens: 1_200_000,
           cache_creation_input_tokens: 999
-      }
+        })
+
+      meta_before = File.read!(Handbeam.ConversationStore.meta_path(conv_id))
 
       send(
         view.pid,
         {:agent_event,
-         agent_event(:run_end, %{status: :completed, turns: 2, usage: final_usage}, 3)}
+         agent_event(:run_end, %{status: :completed, turns: 2, usage: %{input_tokens: 1}}, 3)}
       )
 
       refute has_element?(view, "button[phx-click='stop_run']")
+      assert File.read!(Handbeam.ConversationStore.meta_path(conv_id)) == meta_before
       assert has_element?(view, "#status-input-tokens[title='33261']", "33.3K")
       assert has_element?(view, "#status-output-tokens[title='1250']", "1.3K")
       assert has_element?(view, "#status-cache-read[title='1200000']", "1.2M")
@@ -1990,8 +1995,8 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
          )}
       )
 
-      assert has_element?(view, "#status-input-tokens", "12")
-      assert has_element?(view, "#status-output-tokens", "8")
+      assert has_element?(view, "#status-input-tokens", "0")
+      assert has_element?(view, "#status-output-tokens", "0")
     end
 
     test "run_end accepts string-keyed provider usage", %{conn: conn} do
@@ -2006,8 +2011,8 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
          )}
       )
 
-      assert has_element?(view, "#status-input-tokens", "9")
-      assert has_element?(view, "#status-output-tokens", "6")
+      assert has_element?(view, "#status-input-tokens", "0")
+      assert has_element?(view, "#status-output-tokens", "0")
     end
 
     test "run_end accepts string-keyed payload from persisted session events", %{conn: conn} do
@@ -2026,9 +2031,67 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
          )}
       )
 
-      assert has_element?(view, "#status-input-tokens", "21")
-      assert has_element?(view, "#status-output-tokens", "13")
+      assert has_element?(view, "#status-input-tokens", "0")
+      assert has_element?(view, "#status-output-tokens", "0")
       assert has_element?(view, "#status-turns", "2")
+    end
+
+    test "switching conversations loads that conversation's totals and clears turns", %{
+      conn: conn
+    } do
+      {:ok, first} =
+        Handbeam.ConversationStore.create("default", id: "conv-usage-a", title: "Usage A")
+
+      :ok =
+        Handbeam.ConversationStore.record_run_usage(first["id"], "run-a", %{
+          input_tokens: 100,
+          output_tokens: 5,
+          cache_read_input_tokens: 50,
+          total_input_tokens: 200
+        })
+
+      {:ok, second} =
+        Handbeam.ConversationStore.create("default", id: "conv-usage-b", title: "Usage B")
+
+      :ok =
+        Handbeam.ConversationStore.record_run_usage(second["id"], "run-b", %{
+          input_tokens: 7,
+          output_tokens: 1
+        })
+
+      {:ok, view, _html} = live(conn, "/")
+
+      view
+      |> element(
+        ".conversation-item[phx-click='select_conversation'][phx-value-id='#{first["id"]}']"
+      )
+      |> render_click()
+
+      send(view.pid, {:agent_event, agent_event(:run_end, %{status: "completed", turns: 10}, 2)})
+
+      assert has_element?(view, "#status-cache-hit-rate", "25.0%")
+      assert has_element?(view, "#status-input-tokens", "100")
+      assert has_element?(view, "#status-turns", "10")
+
+      view
+      |> element(
+        ".conversation-item[phx-click='select_conversation'][phx-value-id='#{second["id"]}']"
+      )
+      |> render_click()
+
+      assert has_element?(view, "#status-input-tokens", "7")
+      assert has_element?(view, "#status-cache-hit-rate", "—")
+      refute has_element?(view, "#status-turns")
+
+      view
+      |> element(
+        ".conversation-item[phx-click='select_conversation'][phx-value-id='#{first["id"]}']"
+      )
+      |> render_click()
+
+      assert has_element?(view, "#status-cache-hit-rate", "25.0%")
+      assert has_element?(view, "#status-input-tokens", "100")
+      refute has_element?(view, "#status-turns")
     end
 
     test "run_end with error status shows error in status bar", %{conn: conn} do

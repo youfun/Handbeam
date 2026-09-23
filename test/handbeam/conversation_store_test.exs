@@ -665,6 +665,139 @@ defmodule Handbeam.ConversationStoreTest do
     end
   end
 
+  describe "token usage" do
+    test "records a run once and keeps an older meta total" do
+      {:ok, conv} = ConversationStore.create("ws_usage")
+      id = conv["id"]
+
+      meta =
+        File.read!(ConversationStore.meta_path(id))
+        |> Jason.decode!()
+        |> Map.put("token_usage", %{
+          "input_tokens" => 10,
+          "output_tokens" => 2,
+          "cache_read_tokens" => 3,
+          "cache_write_tokens" => 1
+        })
+
+      File.write!(ConversationStore.meta_path(id), Jason.encode!(meta))
+
+      {:ok, legacy} = ConversationStore.get_token_usage(id)
+      assert legacy.input_tokens == 10
+      assert legacy.total_input_tokens == 14
+      refute legacy.usage_incomplete
+
+      :ok =
+        ConversationStore.record_run_usage(id, "run-1", %{
+          input_tokens: 5,
+          output_tokens: 1,
+          cache_read_input_tokens: 4,
+          total_input_tokens: 9
+        })
+
+      :ok =
+        ConversationStore.record_run_usage(id, "run-1", %{
+          input_tokens: 100,
+          output_tokens: 100
+        })
+
+      {:ok, usage} = ConversationStore.get_token_usage(id)
+      assert usage.input_tokens == 15
+      assert usage.output_tokens == 3
+      assert usage.cache_read_tokens == 7
+      assert usage.total_input_tokens == 23
+
+      {:ok, full} = ConversationStore.get(id)
+      assert {:ok, _} = ConversationStore.upsert(Map.put(full, "title", "kept"))
+      assert {:ok, ^usage} = ConversationStore.get_token_usage(id)
+      assert ConversationStore.get_meta(id) |> elem(1) |> Map.get("title") == "kept"
+    end
+
+    test "unknown usage stays marked incomplete" do
+      {:ok, conv} = ConversationStore.create("ws_unknown")
+
+      :ok = ConversationStore.record_run_usage(conv["id"], "run-1", %{unknown?: true})
+
+      assert {:ok, %{input_tokens: 0, usage_incomplete: true}} =
+               ConversationStore.get_token_usage(conv["id"])
+    end
+
+    test "concurrent meta updates do not drop run usage" do
+      for _ <- 1..20 do
+        {:ok, conv} = ConversationStore.create("ws_race")
+        id = conv["id"]
+
+        tasks = [
+          Task.async(fn ->
+            ConversationStore.update_meta(id, last_run_result: "max_turns")
+          end),
+          Task.async(fn ->
+            ConversationStore.record_run_usage(id, "run-2", %{
+              input_tokens: 11,
+              output_tokens: 3,
+              cache_read_input_tokens: 4,
+              total_input_tokens: 15
+            })
+          end)
+        ]
+
+        results = Task.await_many(tasks)
+
+        assert Enum.all?(results, fn
+                 :ok -> true
+                 {:ok, _} -> true
+                 _ -> false
+               end)
+
+        {:ok, meta} = ConversationStore.get_meta(id)
+        assert meta["last_run_result"] == "max_turns"
+        assert meta["run_usage"]["run-2"]["input_tokens"] == 11
+
+        assert {:ok, %{input_tokens: 11, total_input_tokens: 15}} =
+                 ConversationStore.get_token_usage(id)
+      end
+    end
+
+    test "rebuild_token_usage_from_events replaces totals without reading the home directory" do
+      {:ok, conv} = ConversationStore.create("ws_rebuild")
+      id = conv["id"]
+      :ok = ConversationStore.add_token_usage(id, %{input_tokens: 999, output_tokens: 999})
+
+      events = [
+        %{
+          "kind" => "run_end",
+          "payload" => %{
+            "status" => "interrupted",
+            "run_id" => "run-1",
+            "usage" => %{"input_tokens" => 50, "output_tokens" => 5}
+          }
+        },
+        %{
+          "kind" => "run_end",
+          "payload" => %{
+            "status" => "completed",
+            "run_id" => "run-1",
+            "usage" => %{"input_tokens" => 8, "output_tokens" => 1, "total_input_tokens" => 8}
+          }
+        },
+        %{
+          "kind" => "run_end",
+          "payload" => %{
+            "status" => "max_turns",
+            "run_id" => "run-2",
+            "usage" => %{"input_tokens" => 2, "output_tokens" => 2}
+          }
+        }
+      ]
+
+      assert :ok = ConversationStore.rebuild_token_usage_from_events(id, events)
+      assert :ok = ConversationStore.rebuild_token_usage_from_events(id, events)
+
+      assert {:ok, %{input_tokens: 10, output_tokens: 3, total_input_tokens: 10}} =
+               ConversationStore.get_token_usage(id)
+    end
+  end
+
   describe "update_meta/2" do
     test "updates meta.json and index.json without touching messages.jsonl" do
       {:ok, conv} =

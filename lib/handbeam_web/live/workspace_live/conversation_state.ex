@@ -51,6 +51,14 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
     token_usage = load_conversation_token_usage(conv_id)
     running_for_conversation? = running_for_conversation?(socket, conv_id)
 
+    status_overrides =
+      %{model: model_display_name(selected_model, available_models, opts)}
+      |> then(fn base ->
+        if running_for_conversation?,
+          do: base,
+          else: Map.merge(Map.put(base, :turns, 0), token_usage)
+      end)
+
     socket =
       socket
       |> assign(:timeline, timeline)
@@ -68,13 +76,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
     |> assign(:file_preview_error, conv_value(conv, "file_preview_error", nil))
     |> assign(:selected_model, selected_model)
     |> sync_reasoning_for_conversation(conv, selected_model, opts)
-    |> maybe_update_status(
-      Map.merge(
-        %{model: model_display_name(selected_model, available_models, opts)},
-        token_usage
-      ),
-      opts
-    )
+    |> maybe_update_status(status_overrides, opts)
     |> assign(:revert_confirm_change_id, nil)
     |> assign(:revert_message, nil)
     |> load_effective_settings(opts)
@@ -320,10 +322,21 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
         tokens
 
       {:error, _} ->
-        %{input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0}
+        empty_token_usage()
     end
   rescue
-    _ -> %{input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0}
+    _ -> empty_token_usage()
+  end
+
+  defp empty_token_usage do
+    %{
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      total_input_tokens: 0,
+      usage_incomplete: false
+    }
   end
 
   def running_for_current_conversation?(socket) do

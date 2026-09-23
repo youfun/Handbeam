@@ -713,5 +713,53 @@ defmodule Handbeam.Agent.TranscriptPersistenceTest do
       )
 
     assert tool["tool_status"] == "running"
+
+    assert {:ok, %{input_tokens: 0, output_tokens: 0}} =
+             Handbeam.ConversationStore.get_token_usage(conversation_id)
+  end
+
+  test "terminal run_end records usage once and interrupted does not" do
+    {:ok, conversation} = Handbeam.ConversationStore.create("default", timeline: [])
+    conversation_id = conversation["id"]
+    opts = [run_id: "run-usage"]
+
+    usage = %{
+      input_tokens: 9,
+      output_tokens: 2,
+      cache_read_input_tokens: 5,
+      total_input_tokens: 14
+    }
+
+    assert :ok =
+             TranscriptPersistence.handle_event(
+               conversation_id,
+               {:run_end, %{status: :interrupted, usage: %{input_tokens: 4, output_tokens: 1}}},
+               opts
+             )
+
+    assert {:ok, %{input_tokens: 0}} = Handbeam.ConversationStore.get_token_usage(conversation_id)
+
+    assert :ok =
+             TranscriptPersistence.handle_event(
+               conversation_id,
+               {:run_end, %{status: :completed, usage: usage}},
+               opts
+             )
+
+    assert :ok =
+             TranscriptPersistence.handle_event(
+               conversation_id,
+               {:run_end, %{status: :completed, usage: usage}},
+               opts
+             )
+
+    assert {:ok,
+            %{
+              input_tokens: 9,
+              output_tokens: 2,
+              cache_read_tokens: 5,
+              total_input_tokens: 14,
+              usage_incomplete: false
+            }} = Handbeam.ConversationStore.get_token_usage(conversation_id)
   end
 end
