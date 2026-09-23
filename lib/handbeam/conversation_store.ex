@@ -448,80 +448,111 @@ defmodule Handbeam.ConversationStore do
   only (id, title, workspace_id, etc.), **not** the full conversation.
   Use `get/1` to obtain the full conversation after updating meta.
   """
+  @usage_meta_keys ~w(token_usage run_usage usage_legacy run_usage_replace)
+
   @spec update_meta(String.t(), keyword()) :: {:ok, map()} | {:error, :not_found | term()}
   def update_meta(id, updates) when is_binary(id) and is_list(updates) do
-    with {:ok, meta} <- read_meta(id) do
-      merged =
-        Enum.reduce(updates, meta, fn {key, value}, acc ->
-          Map.put(acc, to_string(key), value)
-        end)
-        |> Map.put("updated_at", now_iso8601())
+    ensure_conversation_dir(id)
 
-      ensure_conversation_dir(id)
-
-      with :ok <- write_meta_file(id, merged),
-           :ok <- sync_index_entry(merged) do
-        {:ok, merged}
-      end
+    with {:ok, merged} <-
+           transact_meta(id, fn existing ->
+             updates
+             |> Enum.reject(fn {key, _} -> to_string(key) in @usage_meta_keys end)
+             |> Enum.reduce(existing, fn {key, value}, acc ->
+               Map.put(acc, to_string(key), value)
+             end)
+             |> Map.put("updated_at", now_iso8601())
+           end),
+         :ok <- sync_index_entry(merged) do
+      {:ok, merged}
     end
   end
 
   @doc """
-  Read the conversation-level token_usage from meta.json.
-  Returns a map with atom keys and zero defaults when no usage has
-  been recorded yet.
+  Read the conversation-level token totals from meta.json.
+
+  Totals are derived from `run_usage` plus any pre-`run_usage` baseline.
+  A meta file that only has `token_usage` still returns that original total.
+  `usage_incomplete` is true when a recorded run did not report usage; the
+  numbers are not a silent zero measurement in that case.
   """
   @spec get_token_usage(String.t()) :: {:ok, map()} | {:error, :not_found | term()}
   def get_token_usage(conversation_id)
       when is_binary(conversation_id) and conversation_id != "" do
     case read_meta(conversation_id) do
-      {:ok, meta} ->
-        usage = Map.get(meta, "token_usage", %{})
-
-        {:ok,
-         %{
-           input_tokens: Map.get(usage, "input_tokens", 0) || 0,
-           output_tokens: Map.get(usage, "output_tokens", 0) || 0,
-           cache_read_tokens: Map.get(usage, "cache_read_tokens", 0) || 0,
-           cache_write_tokens: Map.get(usage, "cache_write_tokens", 0) || 0
-         }}
-
-      {:error, reason} ->
-        {:error, reason}
+      {:ok, meta} -> {:ok, usage_view(combined_usage(meta))}
+      {:error, reason} -> {:error, reason}
     end
   end
 
-  def get_token_usage(_),
-    do: {:ok, %{input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0}}
+  def get_token_usage(_), do: {:ok, empty_token_usage()}
 
   @doc """
-  Add a run's token usage to the conversation-level accumulator.
-  Reads existing `token_usage` from `meta.json`, adds the given
-  `usage` (atom keys), and writes the updated meta back.
+  Add usage that is not keyed by run id.
+
+  The read-modify-write happens inside the meta lock. Prefer
+  `record_run_usage/3` for run totals so a repeated `run_id` counts once.
   """
   @spec add_token_usage(String.t(), map()) :: :ok | {:error, :not_found | term()}
   def add_token_usage(conversation_id, usage)
       when is_binary(conversation_id) and conversation_id != "" and is_map(usage) do
-    with {:ok, meta} <- read_meta(conversation_id) do
-      existing = Map.get(meta, "token_usage", %{})
+    delta = normalize_usage(usage)
 
-      updated = %{
-        "input_tokens" =>
-          (Map.get(existing, "input_tokens", 0) || 0) +
-            (Map.get(usage, :input_tokens, 0) || 0),
-        "output_tokens" =>
-          (Map.get(existing, "output_tokens", 0) || 0) +
-            (Map.get(usage, :output_tokens, 0) || 0),
-        "cache_read_tokens" =>
-          (Map.get(existing, "cache_read_tokens", 0) || 0) +
-            (Map.get(usage, :cache_read_tokens, 0) || 0),
-        "cache_write_tokens" =>
-          (Map.get(existing, "cache_write_tokens", 0) || 0) +
-            (Map.get(usage, :cache_write_tokens, 0) || 0)
-      }
+    with {:ok, _meta} <-
+           transact_meta(conversation_id, fn existing ->
+             Map.put(existing, "usage_legacy", sum_stored(explicit_legacy(existing), delta))
+           end) do
+      :ok
+    end
+  end
 
-      new_meta = Map.put(meta, "token_usage", updated)
-      write_meta_file(conversation_id, new_meta)
+  @doc """
+  Store one run's usage under `run_id`. A second write of the same id does not
+  add again. `token_usage` is recomputed from the per-run map.
+  """
+  @spec record_run_usage(String.t(), String.t(), map()) :: :ok | {:error, :not_found | term()}
+  def record_run_usage(conversation_id, run_id, usage)
+      when is_binary(conversation_id) and conversation_id != "" and is_binary(run_id) and
+             run_id != "" and is_map(usage) do
+    normalized = normalize_usage(usage)
+
+    with {:ok, _meta} <-
+           transact_meta(conversation_id, fn existing ->
+             runs = Map.get(existing, "run_usage", %{})
+             Map.put(existing, "run_usage", Map.put_new(runs, run_id, normalized))
+           end) do
+      :ok
+    end
+  end
+
+  @doc """
+  Replace conversation totals with terminal `run_end` events the caller already
+  loaded. Does not read `~/.handbeam/`. Interrupted events are ignored. The same
+  `run_id` counts once; events without one are keyed by their position.
+  """
+  @spec rebuild_token_usage_from_events(String.t(), [map()]) ::
+          :ok | {:error, :not_found | term()}
+  def rebuild_token_usage_from_events(conversation_id, events)
+      when is_binary(conversation_id) and conversation_id != "" and is_list(events) do
+    runs =
+      events
+      |> Enum.with_index()
+      |> Enum.reduce(%{}, fn {event, index}, acc ->
+        if terminal_usage_event?(event) do
+          Map.put(acc, event_run_key(event, index), normalize_usage(event_usage(event)))
+        else
+          acc
+        end
+      end)
+
+    with {:ok, _meta} <-
+           transact_meta(conversation_id, fn existing ->
+             existing
+             |> Map.put("run_usage_replace", true)
+             |> Map.put("run_usage", runs)
+             |> Map.put("usage_legacy", blank_usage())
+           end) do
+      :ok
     end
   end
 
@@ -730,17 +761,255 @@ defmodule Handbeam.ConversationStore do
   end
 
   defp write_meta_file(id, meta) do
+    # Usage keys are owned by the locked usage writers. A stale full-meta write
+    # must not replace them with a copy it read earlier.
+    meta = Map.drop(meta, @usage_meta_keys)
+
     :global.trans({{__MODULE__, :meta, id}, self()}, fn ->
-      children =
+      existing =
         case read_meta(id) do
-          {:ok, existing} -> Map.get(existing, "delegated_usage", %{})
+          {:ok, data} -> data
           _ -> %{}
         end
 
-      # Preserve immutable child facts even when another writer read older meta.
-      children = Map.merge(Map.get(meta, "delegated_usage", %{}), children)
-      atomic_write_json(meta_path(id), Map.put(meta, "delegated_usage", children))
+      atomic_write_json(meta_path(id), finalize_meta(existing, Map.merge(existing, meta)))
     end)
+  end
+
+  defp transact_meta(id, proposer) when is_function(proposer, 1) do
+    :global.trans({{__MODULE__, :meta, id}, self()}, fn ->
+      with {:ok, existing} <- read_meta(id) do
+        finalized = finalize_meta(existing, proposer.(existing))
+
+        case atomic_write_json(meta_path(id), finalized) do
+          :ok -> {:ok, finalized}
+          {:error, reason} -> {:error, reason}
+        end
+      end
+    end)
+  end
+
+  defp finalize_meta(existing, proposed) do
+    delegated =
+      Map.merge(
+        Map.get(proposed, "delegated_usage", %{}),
+        Map.get(existing, "delegated_usage", %{})
+      )
+
+    {run_usage, legacy} =
+      if proposed["run_usage_replace"] == true do
+        {Map.get(proposed, "run_usage") || %{}, normalize_usage(proposed["usage_legacy"] || %{})}
+      else
+        run_usage =
+          Map.merge(
+            Map.get(proposed, "run_usage", Map.get(existing, "run_usage", %{})),
+            Map.get(existing, "run_usage", %{})
+          )
+
+        {run_usage, pick_legacy(existing, proposed, run_usage)}
+      end
+
+    proposed
+    |> Map.delete("run_usage_replace")
+    |> Map.put("delegated_usage", delegated)
+    |> put_usage_fields(run_usage, legacy)
+  end
+
+  defp pick_legacy(existing, proposed, run_usage) do
+    cond do
+      is_map(proposed["usage_legacy"]) ->
+        normalize_usage(proposed["usage_legacy"])
+
+      is_map(existing["usage_legacy"]) ->
+        normalize_usage(existing["usage_legacy"])
+
+      run_usage != %{} and is_map(existing["token_usage"]) and not is_map(existing["run_usage"]) ->
+        normalize_usage(existing["token_usage"])
+
+      run_usage == %{} ->
+        :unchanged
+
+      true ->
+        blank_usage()
+    end
+  end
+
+  defp put_usage_fields(meta, _run_usage, :unchanged), do: meta
+
+  defp put_usage_fields(meta, run_usage, legacy) do
+    legacy = if is_map(legacy), do: legacy, else: blank_usage()
+
+    meta
+    |> Map.put("usage_legacy", legacy)
+    |> Map.put("run_usage", run_usage)
+    |> Map.put("token_usage", derive_token_usage(legacy, run_usage))
+  end
+
+  defp explicit_legacy(existing) do
+    cond do
+      is_map(existing["usage_legacy"]) ->
+        normalize_usage(existing["usage_legacy"])
+
+      is_map(existing["token_usage"]) and not is_map(existing["run_usage"]) ->
+        normalize_usage(existing["token_usage"])
+
+      true ->
+        blank_usage()
+    end
+  end
+
+  defp combined_usage(meta) do
+    cond do
+      is_map(meta["run_usage"]) or is_map(meta["usage_legacy"]) ->
+        derive_token_usage(
+          normalize_usage(meta["usage_legacy"] || %{}),
+          if(is_map(meta["run_usage"]), do: meta["run_usage"], else: %{})
+        )
+
+      is_map(meta["token_usage"]) ->
+        normalize_usage(meta["token_usage"])
+
+      true ->
+        blank_usage()
+    end
+  end
+
+  defp derive_token_usage(legacy, run_usage) do
+    Enum.reduce(Map.values(run_usage), legacy, fn usage, acc ->
+      sum_stored(acc, normalize_usage(usage))
+    end)
+  end
+
+  defp sum_stored(left, right) do
+    %{
+      "input_tokens" => left["input_tokens"] + right["input_tokens"],
+      "output_tokens" => left["output_tokens"] + right["output_tokens"],
+      "cache_read_tokens" => left["cache_read_tokens"] + right["cache_read_tokens"],
+      "cache_write_tokens" => left["cache_write_tokens"] + right["cache_write_tokens"],
+      "total_input_tokens" => left["total_input_tokens"] + right["total_input_tokens"],
+      "unknown" => left["unknown"] or right["unknown"]
+    }
+  end
+
+  defp normalize_usage(usage) when is_map(usage) do
+    input = usage_number(usage, [:input_tokens, "input_tokens"])
+    output = usage_number(usage, [:output_tokens, "output_tokens"])
+
+    read =
+      usage_number(usage, [
+        :cache_read_input_tokens,
+        "cache_read_input_tokens",
+        :cache_read_tokens,
+        "cache_read_tokens"
+      ])
+
+    write =
+      usage_number(usage, [
+        :cache_creation_input_tokens,
+        "cache_creation_input_tokens",
+        :cache_write_tokens,
+        "cache_write_tokens"
+      ])
+
+    total =
+      case usage_fetch(usage, [:total_input_tokens, "total_input_tokens"]) do
+        number when is_number(number) -> round_usage(number)
+        _ -> input + read + write
+      end
+
+    %{
+      "input_tokens" => input,
+      "output_tokens" => output,
+      "cache_read_tokens" => read,
+      "cache_write_tokens" => write,
+      "total_input_tokens" => total,
+      "unknown" => usage_unknown?(usage)
+    }
+  end
+
+  defp normalize_usage(_), do: blank_usage()
+
+  defp blank_usage do
+    %{
+      "input_tokens" => 0,
+      "output_tokens" => 0,
+      "cache_read_tokens" => 0,
+      "cache_write_tokens" => 0,
+      "total_input_tokens" => 0,
+      "unknown" => false
+    }
+  end
+
+  defp usage_view(stored) do
+    %{
+      input_tokens: stored["input_tokens"],
+      output_tokens: stored["output_tokens"],
+      cache_read_tokens: stored["cache_read_tokens"],
+      cache_write_tokens: stored["cache_write_tokens"],
+      total_input_tokens: stored["total_input_tokens"],
+      usage_incomplete: stored["unknown"] == true
+    }
+  end
+
+  defp empty_token_usage do
+    %{
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      total_input_tokens: 0,
+      usage_incomplete: false
+    }
+  end
+
+  defp usage_number(usage, keys) do
+    case usage_fetch(usage, keys) do
+      number when is_number(number) -> round_usage(number)
+      _ -> 0
+    end
+  end
+
+  defp usage_fetch(usage, keys) do
+    Enum.find_value(keys, fn key ->
+      case Map.fetch(usage, key) do
+        {:ok, value} -> value
+        :error -> nil
+      end
+    end)
+  end
+
+  defp usage_unknown?(usage) do
+    usage_fetch(usage, [:unknown?, "unknown?", :unknown, "unknown"]) in [true, "true"]
+  end
+
+  defp round_usage(number) when is_integer(number), do: number
+  defp round_usage(number) when is_float(number), do: round(number)
+
+  defp terminal_usage_event?(event) when is_map(event) do
+    kind = usage_fetch(event, [:kind, "kind"])
+    status = event_status(event)
+    kind in [:run_end, "run_end"] and status not in [:interrupted, "interrupted", nil]
+  end
+
+  defp terminal_usage_event?(_), do: false
+
+  defp event_status(event) do
+    payload = usage_fetch(event, [:payload, "payload"]) || %{}
+    usage_fetch(payload, [:status, "status"])
+  end
+
+  defp event_usage(event) do
+    payload = usage_fetch(event, [:payload, "payload"]) || %{}
+    usage_fetch(payload, [:usage, "usage"]) || %{}
+  end
+
+  defp event_run_key(event, index) do
+    payload = usage_fetch(event, [:payload, "payload"]) || %{}
+
+    case usage_fetch(payload, [:run_id, "run_id"]) || usage_fetch(event, [:run_id, "run_id"]) do
+      id when is_binary(id) and id != "" -> id
+      _ -> "event-#{index}"
+    end
   end
 
   defp extract_meta(conversation) do

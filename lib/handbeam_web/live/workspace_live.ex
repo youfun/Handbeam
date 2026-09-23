@@ -1499,29 +1499,18 @@ defmodule HandbeamWeb.WorkspaceLive do
   defp do_handle_run_end(payload, status, socket) do
     turns = payload_value(payload, :turns, 0)
     run_error = payload_value(payload, :error)
-    usage = payload |> payload_value(:usage, %{}) |> usage_tokens()
-
-    # Accumulate run-level tokens into conversation-level totals.
-    # Always load from storage first so that conversation switches are
-    # handled correctly (push_patch does not remount).
-    conv_id = socket.assigns.current_conversation_id
-    prev_conv = load_conversation_token_usage(conv_id)
-
-    conv_tokens = %{
-      input_tokens: prev_conv.input_tokens + usage.input_tokens,
-      output_tokens: prev_conv.output_tokens + usage.output_tokens,
-      cache_read_tokens: prev_conv.cache_read_tokens + usage.cache_read_tokens,
-      cache_write_tokens: prev_conv.cache_write_tokens + usage.cache_write_tokens
-    }
-
-    # Persist asynchronously so the UI never blocks on file I/O.
-    Task.start(fn ->
-      Handbeam.ConversationStore.add_token_usage(conv_id, usage)
-    end)
+    # Runtime already recorded a terminal run. Reload that conversation's
+    # totals. Interrupted is not terminal, so keep the in-flight figures.
+    usage =
+      if status == :interrupted do
+        payload |> payload_value(:usage, %{}) |> usage_tokens()
+      else
+        load_conversation_token_usage(socket.assigns.current_conversation_id)
+      end
 
     socket =
       socket
-      |> assign(:conv_tokens, conv_tokens)
+      |> assign(:conv_tokens, usage)
       |> finalize_current_assistant()
       |> assign(:running, false)
       |> assign(:running_conversation_id, nil)

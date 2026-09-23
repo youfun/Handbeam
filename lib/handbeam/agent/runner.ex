@@ -283,7 +283,18 @@ defmodule Handbeam.Agent.Runner do
   end
 
   defp persist_cancelled_run(state) do
-    persist_terminal_event(state, %{status: "cancelled", turns: 0})
+    payload = %{status: "cancelled", turns: 0}
+
+    payload =
+      case state.interrupted_state do
+        %{usage: usage, turn: turn} when is_map(usage) ->
+          payload |> Map.put(:usage, usage) |> Map.put(:turns, turn)
+
+        _ ->
+          payload
+      end
+
+    persist_terminal_event(state, payload)
   end
 
   defp persist_terminal_event(state, payload) do

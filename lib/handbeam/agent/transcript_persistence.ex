@@ -166,6 +166,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
 
   def handle_event(conversation_id, {:run_end, payload}, opts) when is_binary(conversation_id) do
     flush!(conversation_id, opts)
+    record_terminal_usage(conversation_id, payload, opts)
 
     run_error = payload_value(payload, :error)
 
@@ -342,6 +343,40 @@ defmodule Handbeam.Agent.TranscriptPersistence do
 
   defp cancelled_run?(payload) do
     payload_value(payload, :status) in [:cancelled, "cancelled"]
+  end
+
+  # Runner persists this before Session broadcasts, so every channel records
+  # the same terminal total whether or not a LiveView is connected.
+  # `:interrupted` is approval wait, not a finished run; the resumed run_end
+  # carries the cumulative usage for the same run_id.
+  defp record_terminal_usage(conversation_id, payload, opts) do
+    status = payload_value(payload, :status)
+    run_id = opts[:run_id]
+
+    cond do
+      status in [:interrupted, "interrupted", nil] ->
+        :ok
+
+      not is_binary(run_id) or run_id == "" ->
+        :ok
+
+      true ->
+        usage = payload_value(payload, :usage)
+        usage = if is_map(usage), do: usage, else: %{}
+
+        case Handbeam.ConversationStore.record_run_usage(conversation_id, run_id, usage) do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            Logger.error(
+              "[TranscriptPersistence] run usage not recorded conversation=#{conversation_id} " <>
+                "run_id=#{run_id} reason=#{inspect(reason)}"
+            )
+
+            :ok
+        end
+    end
   end
 
   defp blank?(value) when value in [nil, ""], do: true
