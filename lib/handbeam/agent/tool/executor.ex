@@ -69,8 +69,9 @@ defmodule Handbeam.Agent.Tool.Executor do
       if concurrent == [] do
         []
       else
-        concurrent
-        |> Task.async_stream(
+        Task.Supervisor.async_stream_nolink(
+          Handbeam.AgentRunTaskSupervisor,
+          concurrent,
           &execute_one(&1, tool_fns, context),
           timeout: timeout_for(hd(concurrent), tool_fns, state),
           ordered: true,
