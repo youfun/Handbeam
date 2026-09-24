@@ -52,7 +52,10 @@ defmodule Handbeam.E2E.FakeProviderEndToEndTest do
     test "prepends next_turn messages and composes caller on_event callback" do
       sid = "agent-run-candidate-#{System.unique_integer([:positive])}"
       {:ok, _session} = Handbeam.PubSub.Session.start_or_get(session_id: sid, model: "fake")
-      :ok = Handbeam.PubSub.Session.enqueue_candidate(sid, "remember this", deliver_as: :next_turn)
+
+      :ok =
+        Handbeam.PubSub.Session.enqueue_candidate(sid, "remember this", deliver_as: :next_turn)
+
       events = Agent.start_link(fn -> [] end) |> elem(1)
 
       {:ok, state} =

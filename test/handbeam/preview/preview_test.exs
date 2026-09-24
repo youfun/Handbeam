@@ -17,7 +17,10 @@ defmodule Handbeam.PreviewTest do
     File.write!(Path.join(root, "sub/ok.txt"), "ok")
 
     outside =
-      Path.join(System.tmp_dir!(), "handbeam-preview-outside-#{System.unique_integer([:positive])}")
+      Path.join(
+        System.tmp_dir!(),
+        "handbeam-preview-outside-#{System.unique_integer([:positive])}"
+      )
 
     File.mkdir_p!(outside)
     File.write!(Path.join(outside, "secret.txt"), "nope")

@@ -120,9 +120,7 @@ defmodule Handbeam.Memory.PolicyTest do
 
     test "rejects pure file path noise" do
       {:error, reason} =
-        Policy.validate_candidate_memory(
-          "/Users/example/project/lib/handbeam/memory/engram.ex"
-        )
+        Policy.validate_candidate_memory("/Users/example/project/lib/handbeam/memory/engram.ex")
 
       assert reason =~ "noise"
     end

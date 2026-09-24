@@ -23,7 +23,11 @@ defmodule Handbeam.Workspace.MixToolchainTest do
     assert File.dir?(Path.join([dest, "mix", "ebin"]))
     assert File.dir?(Path.join([dest, "ex_unit", "ebin"]))
     assert File.dir?(Path.join([dest, "hex", "ebin"]))
-    assert File.exists?(Path.join([dest, "mix", "ebin", "Elixir.Handbeam.Workspace.MixShell.beam"]))
+
+    assert File.exists?(
+             Path.join([dest, "mix", "ebin", "Elixir.Handbeam.Workspace.MixShell.beam"])
+           )
+
     refute File.exists?(Path.join([dest, "hex", "ebin", "Elixir.Hex.HTTP.beam"]))
     assert File.exists?(Path.join([dest, "hex", "ebin", "hex.app"]))
 

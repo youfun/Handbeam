@@ -348,8 +348,11 @@ defmodule BlockReadOnlyHook do
   @behaviour Handbeam.Extension.Hook
 
   @impl true
-  def handle_event(%Handbeam.Extension.Event{name: :tool_call, payload: %{tool_name: "read"}}, _ctx),
-    do: {:halt, "read blocked by extension policy"}
+  def handle_event(
+        %Handbeam.Extension.Event{name: :tool_call, payload: %{tool_name: "read"}},
+        _ctx
+      ),
+      do: {:halt, "read blocked by extension policy"}
 
   def handle_event(_event, _ctx), do: :ok
 end

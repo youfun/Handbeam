@@ -67,7 +67,8 @@ defmodule Handbeam.Tool.Builtin.FileSearchTest do
     end
 
     test "requires an explicit workspace directory" do
-      assert {:error, "working_directory is required"} = FileSearch.execute(%{"query" => "user"}, %{})
+      assert {:error, "working_directory is required"} =
+               FileSearch.execute(%{"query" => "user"}, %{})
     end
 
     test "returns results for valid query", %{tmp_dir: tmp_dir} do

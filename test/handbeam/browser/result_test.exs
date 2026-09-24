@@ -13,7 +13,10 @@ defmodule Handbeam.Browser.ResultTest do
 
   setup do
     dir =
-      Path.join(System.tmp_dir!(), "handbeam_browser_result_#{System.unique_integer([:positive])}")
+      Path.join(
+        System.tmp_dir!(),
+        "handbeam_browser_result_#{System.unique_integer([:positive])}"
+      )
 
     File.mkdir_p!(dir)
     on_exit(fn -> File.rm_rf(dir) end)

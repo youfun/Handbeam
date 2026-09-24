@@ -173,7 +173,10 @@ defmodule Handbeam.Agent.Provider.StepFunTest do
         Handbeam.Agent.Provider.StepFunTest.openai_delta(%{
           "reasoning_content" => "hidden reasoning"
         }),
-        Handbeam.Agent.Provider.StepFunTest.openai_delta(%{"content" => "Visible answer"}, "stop"),
+        Handbeam.Agent.Provider.StepFunTest.openai_delta(
+          %{"content" => "Visible answer"},
+          "stop"
+        ),
         Handbeam.Agent.Provider.StepFunTest.openai_usage(8, 8),
         "data: [DONE]\n\n"
       ])
