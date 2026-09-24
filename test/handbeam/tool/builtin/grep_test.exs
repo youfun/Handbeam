@@ -106,6 +106,58 @@ defmodule Handbeam.Tool.Builtin.GrepTest do
     end
   end
 
+  test "elixir fallback expands brace globs" do
+    File.write!(Path.join(@work_dir, "one.ex"), "shared_marker\n")
+    File.write!(Path.join(@work_dir, "two.heex"), "shared_marker\n")
+    File.write!(Path.join(@work_dir, "three.css"), "shared_marker\n")
+
+    without_rg(fn ->
+      assert {:ok, output} =
+               Grep.execute(
+                 %{"pattern" => "shared_marker", "path" => ".", "glob" => "*.{ex,heex}"},
+                 %{working_directory: @work_dir}
+               )
+
+      assert output =~ "one.ex"
+      assert output =~ "two.heex"
+      refute output =~ "three.css"
+    end)
+  end
+
+  test "elixir fallback skips dependency and build directories" do
+    for dir <- ["deps", "node_modules", "_build", ".git", "build", "tmp"] do
+      File.mkdir_p!(Path.join(@work_dir, dir))
+      File.write!(Path.join([@work_dir, dir, "ignored.ex"]), "ignored_vendor_marker\n")
+    end
+
+    without_rg(fn ->
+      assert {:ok, "No matches found"} =
+               Grep.execute(%{"pattern" => "ignored_vendor_marker", "path" => "."}, %{
+                 working_directory: @work_dir
+               })
+    end)
+  end
+
+  test "elixir fallback does not follow workspace symlinks" do
+    outside_dir =
+      Path.join(System.tmp_dir!(), "sigil_grep_symlink_#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(outside_dir)
+    File.write!(Path.join(outside_dir, "secret.txt"), "symlink_secret_marker\n")
+    File.ln_s!(outside_dir, Path.join(@work_dir, "linked"))
+
+    try do
+      without_rg(fn ->
+        assert {:ok, "No matches found"} =
+                 Grep.execute(%{"pattern" => "symlink_secret_marker", "path" => "."}, %{
+                   working_directory: @work_dir
+                 })
+      end)
+    after
+      File.rm_rf!(outside_dir)
+    end
+  end
+
   test "elixir fallback glob cannot escape the workspace" do
     outside_dir =
       Path.join(System.tmp_dir!(), "sigil_grep_outside_#{System.unique_integer([:positive])}")
@@ -130,6 +182,17 @@ defmodule Handbeam.Tool.Builtin.GrepTest do
     after
       if original_path, do: System.put_env("PATH", original_path)
       File.rm_rf(outside_dir)
+    end
+  end
+
+  defp without_rg(fun) do
+    original_path = System.get_env("PATH")
+
+    try do
+      System.put_env("PATH", "/nonexistent")
+      fun.()
+    after
+      if original_path, do: System.put_env("PATH", original_path)
     end
   end
 end

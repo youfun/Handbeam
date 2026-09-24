@@ -13,6 +13,10 @@ defmodule Handbeam.Tool.Builtin.Grep do
 
   @default_limit 100
   @max_result_chars 20_000
+  @max_fallback_file_bytes 5_000_000
+  @fallback_ignored_dirs MapSet.new(
+                           ~w(.cxx .git .gradle .handbeam .local-archive .zig-cache _build artifacts build cover deps doc mix_toolchain node_modules tmp zig-out)
+                         )
 
   @impl true
   def name, do: "grep"
@@ -128,16 +132,12 @@ defmodule Handbeam.Tool.Builtin.Grep do
   defp grep_files(root, glob) do
     cond do
       File.regular?(root) ->
-        if glob_match?(root, root, glob), do: {:ok, [root]}, else: {:ok, []}
+        if safe_regular_file?(root, root) and glob_match?(root, root, glob),
+          do: {:ok, [root]},
+          else: {:ok, []}
 
       File.dir?(root) ->
-        files =
-          root
-          |> Path.join("**/*")
-          |> Path.wildcard(match_dot: true)
-          |> Enum.filter(&File.regular?/1)
-          |> Enum.filter(&inside_workspace?(&1, root))
-          |> Enum.filter(&glob_match?(&1, root, glob))
+        files = walk_files(root, root, glob)
 
         {:ok, files}
 
@@ -151,10 +151,12 @@ defmodule Handbeam.Tool.Builtin.Grep do
   defp glob_match?(path, root, glob) when is_binary(glob) do
     relative = Path.relative_to(path, root) |> String.replace("\\", "/")
     basename = Path.basename(path)
-    pattern = glob |> String.replace("\\", "/") |> String.trim_leading("/")
+    patterns = expand_braces(glob |> String.replace("\\", "/") |> String.trim_leading("/"))
 
-    match_glob?(relative, pattern) or match_glob?(basename, pattern) or
-      match_glob?(relative, "**/" <> pattern)
+    Enum.any?(patterns, fn pattern ->
+      match_glob?(relative, pattern) or match_glob?(basename, pattern) or
+        match_glob?(relative, "**/" <> pattern)
+    end)
   end
 
   defp glob_match?(_path, _root, _glob), do: true
@@ -186,6 +188,55 @@ defmodule Handbeam.Tool.Builtin.Grep do
     |> IO.iodata_to_binary()
   end
 
+  defp expand_braces(pattern) do
+    case Regex.run(~r/\{([^{}]+)\}/, pattern, return: :index) do
+      [{start, length}, {content_start, content_length}] ->
+        prefix = binary_part(pattern, 0, start)
+        suffix_start = start + length
+        suffix = binary_part(pattern, suffix_start, byte_size(pattern) - suffix_start)
+
+        pattern
+        |> binary_part(content_start, content_length)
+        |> String.split(",", trim: true)
+        |> Enum.flat_map(&expand_braces(prefix <> &1 <> suffix))
+
+      nil ->
+        [pattern]
+    end
+  end
+
+  defp walk_files(dir, root, glob) do
+    case File.ls(dir) do
+      {:ok, names} ->
+        Enum.flat_map(names, fn name ->
+          path = Path.join(dir, name)
+
+          case File.lstat(path) do
+            {:ok, %{type: :directory}} ->
+              if MapSet.member?(@fallback_ignored_dirs, name),
+                do: [],
+                else: walk_files(path, root, glob)
+
+            {:ok, %{type: :regular}} ->
+              if safe_regular_file?(path, root) and glob_match?(path, root, glob),
+                do: [path],
+                else: []
+
+            _ ->
+              []
+          end
+        end)
+
+      _ ->
+        []
+    end
+  end
+
+  defp safe_regular_file?(path, root) do
+    inside_workspace?(path, root) and
+      match?({:ok, %{type: :regular}}, File.lstat(path))
+  end
+
   defp search_file(path, root, regex, before_n, after_n, remaining) do
     if not inside_workspace?(path, root) do
       {[], 0}
@@ -195,25 +246,24 @@ defmodule Handbeam.Tool.Builtin.Grep do
   end
 
   defp read_and_search(path, root, regex, before_n, after_n, remaining) do
-    case File.read(path) do
-      {:ok, content} ->
-        if String.valid?(content) do
-          lines = String.split(content, "\n")
-          rel = Path.relative_to(path, root)
-          hits = matching_indexes(lines, regex)
+    with {:ok, %{size: size}} when size <= @max_fallback_file_bytes <- File.stat(path),
+         {:ok, content} <- File.read(path) do
+      if String.valid?(content) do
+        lines = String.split(content, "\n")
+        rel = Path.relative_to(path, root)
+        hits = matching_indexes(lines, regex)
 
-          formatted =
-            hits
-            |> Enum.take(remaining)
-            |> Enum.flat_map(&format_hit(rel, lines, &1, before_n, after_n))
+        formatted =
+          hits
+          |> Enum.take(remaining)
+          |> Enum.flat_map(&format_hit(rel, lines, &1, before_n, after_n))
 
-          {formatted, min(length(hits), remaining)}
-        else
-          {[], 0}
-        end
-
-      {:error, _} ->
+        {formatted, min(length(hits), remaining)}
+      else
         {[], 0}
+      end
+    else
+      _ -> {[], 0}
     end
   end
 
@@ -223,6 +273,14 @@ defmodule Handbeam.Tool.Builtin.Grep do
 
     expanded_path == expanded_root or
       String.starts_with?(expanded_path, expanded_root <> "/")
+  end
+
+  defp inside_workspace_resolved?(path, root) do
+    resolved_root = root |> Path.expand() |> Handbeam.Security.PathValidator.resolve_symlink()
+    resolved_path = path |> Path.expand() |> Handbeam.Security.PathValidator.resolve_symlink()
+
+    resolved_path == resolved_root or
+      String.starts_with?(resolved_path, resolved_root <> "/")
   end
 
   defp matching_indexes(lines, regex) do
@@ -288,7 +346,7 @@ defmodule Handbeam.Tool.Builtin.Grep do
   end
 
   defp ensure_inside_workspace(path, working_directory) do
-    if inside_workspace?(path, working_directory) do
+    if inside_workspace_resolved?(path, working_directory) do
       :ok
     else
       {:error, "Path outside workspace: #{path}"}
