@@ -70,6 +70,8 @@
    ═══════════════════════════════════════════════════════════════════ */
 
 .composer-dock {
+  position: relative;
+  z-index: 40;
   padding: 8px 16px 14px;
   background: transparent;
 }
@@ -429,14 +431,23 @@
   position: absolute;
   bottom: calc(100% + 6px);
   left: 0;
-  z-index: 30;
+  z-index: 2;
   background: var(--sig-bg-elevated);
   border: 1px solid var(--sig-border-default);
   border-radius: var(--sig-radius-lg);
   box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
   padding: 4px;
   min-width: 160px;
-  animation: dropdown-in 120ms var(--sig-motion-ease);
+  /* Clear the conversation-nav buttons that sit over the composer corner.
+     Keep the offset on the element; the entrance animation must not own transform,
+     or the menu snaps back under those buttons when the animation ends. */
+  transform: translateX(-90px);
+  animation: permission-dropdown-in 120ms var(--sig-motion-ease);
+}
+
+@keyframes permission-dropdown-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
 @keyframes dropdown-in {
