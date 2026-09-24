@@ -3,8 +3,8 @@ defmodule Handbeam.Agent.Subagent.Worktree do
   Git worktrees that isolate write-mode subagents from the parent workspace.
 
   A worktree is detached at the parent's `HEAD`; uncommitted parent changes
-  are not visible to the child. `apply/2` either applies the whole diff to the
-  parent workspace or nothing.
+  are not visible to the child. `apply/2` checks the whole patch before
+  applying it and rolls it back if worktree cleanup fails.
   """
 
   @dir ".handbeam/worktrees"
@@ -43,12 +43,12 @@ defmodule Handbeam.Agent.Subagent.Worktree do
     end
   end
 
-  @doc "Apply the whole diff to the parent workspace, then remove the worktree."
+  @doc "Apply the whole diff, removing the worktree or rolling the parent patch back."
   @spec apply(String.t(), String.t()) :: {:ok, String.t()} | {:error, String.t()}
   def apply(workspace, child_id) do
     with {:ok, %{patch: patch, stat: stat}} <- diff(workspace, child_id),
          :ok <- apply_patch(workspace, patch),
-         :ok <- discard(workspace, child_id) do
+         :ok <- discard_after_apply(workspace, child_id, patch) do
       {:ok, stat}
     end
   end
@@ -96,6 +96,33 @@ defmodule Handbeam.Agent.Subagent.Worktree do
   defp apply_patch(_workspace, ""), do: :ok
 
   defp apply_patch(workspace, patch) do
+    run_patch(workspace, patch, [])
+  end
+
+  defp discard_after_apply(workspace, child_id, patch) do
+    case discard(workspace, child_id) do
+      :ok ->
+        :ok
+
+      {:error, discard_reason} ->
+        case rollback_patch(workspace, patch) do
+          :ok ->
+            {:error, "#{discard_reason}; workspace patch was rolled back"}
+
+          {:error, rollback_reason} ->
+            {:error,
+             "#{discard_reason}; rollback failed (#{rollback_reason}); workspace may contain the applied patch"}
+        end
+    end
+  end
+
+  defp rollback_patch(_workspace, ""), do: :ok
+
+  defp rollback_patch(workspace, patch) do
+    run_patch(workspace, patch, ["--reverse"])
+  end
+
+  defp run_patch(workspace, patch, mode) do
     file =
       Path.join(
         System.tmp_dir!(),
@@ -105,8 +132,8 @@ defmodule Handbeam.Agent.Subagent.Worktree do
     File.write!(file, patch)
 
     try do
-      with {:ok, _} <- git(workspace, ["apply", "--check", "--binary", file]),
-           {:ok, _} <- git(workspace, ["apply", "--binary", file]) do
+      with {:ok, _} <- git(workspace, ["apply", "--check", "--binary"] ++ mode ++ [file]),
+           {:ok, _} <- git(workspace, ["apply", "--binary"] ++ mode ++ [file]) do
         :ok
       end
     after
