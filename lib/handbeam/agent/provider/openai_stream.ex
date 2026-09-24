@@ -225,9 +225,6 @@ defmodule Handbeam.Agent.Provider.OpenAIStream do
 
           {{:error, reason}, _} ->
             {:halt, {:error, "Invalid tool call JSON for #{tc.name}: #{inspect(reason)}"}}
-
-          {:error, reason} ->
-            {:halt, {:error, "Invalid tool call JSON for #{tc.name}: #{inspect(reason)}"}}
         end
       end)
 
