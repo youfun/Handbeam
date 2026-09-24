@@ -185,6 +185,25 @@ defmodule Handbeam.ConversationTitleGeneratorTest do
       {:ok, conv: conv}
     end
 
+    test "does not overwrite a manual title set after generation started", %{conv: conv} do
+      assert {:ok, _} = Handbeam.ConversationStore.rename(conv["id"], "用户改过的名字")
+
+      config = %{
+        api_key: "mock-key",
+        model: "test-model",
+        base_url: "http://localhost",
+        api: :openai,
+        mock_title: "Phoenix API Builder",
+        provider_module: MockProvider
+      }
+
+      ConversationTitleGenerator.do_generate(conv["id"], "Build a REST API", config)
+
+      {:ok, updated} = Handbeam.ConversationStore.get(conv["id"])
+      assert updated["title"] == "用户改过的名字"
+      assert updated["title_source"] == "manual"
+    end
+
     test "updates conversation title after successful generation", %{conv: conv} do
       config = %{
         api_key: "mock-key",

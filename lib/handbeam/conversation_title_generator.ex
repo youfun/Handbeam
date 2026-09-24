@@ -131,11 +131,7 @@ defmodule Handbeam.ConversationTitleGenerator do
   # ── Private ──
 
   defp broadcast_title_updated(conversation_id) do
-    Phoenix.PubSub.broadcast(
-      Handbeam.PubSub,
-      "conversation:updated",
-      {:conversation_updated, conversation_id}
-    )
+    Handbeam.ConversationStore.broadcast_title_updated(conversation_id)
   end
 
   defp start_async_generate(conversation_id, first_user_message, provider_config) do
@@ -233,6 +229,23 @@ defmodule Handbeam.ConversationTitleGenerator do
   end
 
   defp save_title(conversation_id, title) do
+    case Handbeam.ConversationStore.get_meta(conversation_id) do
+      {:ok, %{"title_source" => "manual", "title" => current}}
+      when is_binary(current) and not is_nil(current) ->
+        if String.starts_with?(current, "New chat") do
+          write_auto_title(conversation_id, title)
+        else
+          Logger.debug(
+            "[TitleGenerator] Skipping save — manual title for #{conversation_id}: #{current}"
+          )
+        end
+
+      _ ->
+        write_auto_title(conversation_id, title)
+    end
+  end
+
+  defp write_auto_title(conversation_id, title) do
     case Handbeam.ConversationStore.update_meta(conversation_id,
            title: title,
            title_source: "auto"

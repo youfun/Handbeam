@@ -1183,3 +1183,28 @@ msgstr "Open the link below and enter the code to sign in with ChatGPT. This use
 
 msgid "刷新订阅模型"
 msgstr "Refresh subscription models"
+
+msgid "更多操作"
+msgstr "More actions"
+
+msgid "重命名"
+msgstr "Rename"
+
+msgid "归档"
+msgstr "Archive"
+
+msgid "重命名会话"
+msgstr "Rename conversation"
+
+msgid "会话名称"
+msgstr "Conversation name"
+
+msgid "名称不能为空"
+msgstr "Name cannot be empty"
+
+msgid "名称不能超过 80 个字符"
+msgstr "Name cannot be longer than 80 characters"
+
+msgid "重命名失败"
+msgstr "Could not rename conversation"
+

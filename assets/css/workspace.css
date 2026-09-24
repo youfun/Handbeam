@@ -1603,6 +1603,23 @@ button.workspace-file-row:hover,
 }
 
 /* ── Conversation action (archive/restore icon) ── */
+.conversation-menu {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .conversation-action {
   display: flex;
   align-items: center;
@@ -1620,18 +1637,59 @@ button.workspace-file-row:hover,
   transition: opacity 0.15s ease, color 0.15s ease, background-color 0.15s ease;
 }
 
-.conversation-row:hover .conversation-action {
+.conversation-row:hover .conversation-action,
+.conversation-action.is-open {
   opacity: 1;
 }
 
-.conversation-action:hover {
-  color: var(--color-error);
-  background-color: var(--color-error-bg);
+.conversation-action:hover,
+.conversation-action.is-open {
+  color: var(--color-text-primary);
+  background-color: var(--color-surface-active);
 }
 
 .conversation-action.restore:hover {
   color: var(--color-success);
   background-color: var(--color-success-bg);
+}
+
+.conversation-menu-panel {
+  position: absolute;
+  top: calc(100% + 2px);
+  right: 0;
+  z-index: 40;
+  min-width: 8.5rem;
+  padding: 0.25rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow);
+}
+
+.conversation-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  width: 100%;
+  min-height: 1.75rem;
+  padding: 0.3rem 0.45rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  text-align: left;
+  cursor: pointer;
+}
+
+.conversation-menu-item:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text-primary);
+}
+
+.conversation-menu-item.danger:hover {
+  color: var(--color-error);
+  background: var(--color-error-bg);
 }
 
 /* ── Conversation badge (workspace label in trash) ── */
@@ -2400,12 +2458,14 @@ button.workspace-file-row:hover,
   }
 
   #add-project-overlay,
+  #rename-conversation-overlay,
   #file-browser-overlay {
     position: fixed;
     inset: 0;
   }
 
   .add-project-dialog,
+  #rename-conversation-dialog,
   #file-browser-dialog {
     width: calc(100vw - 24px) !important;
     max-width: calc(100vw - 24px) !important;

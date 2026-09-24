@@ -12,6 +12,8 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
     socket
     |> assign(:current_workspace_id, ws["id"])
     |> assign(:current_conversation_id, conversation_id)
+    |> assign(:conversation_menu_id, nil)
+    |> assign(:rename_conversation, nil)
     |> assign(:thread_collaboration_enabled, HandbeamWeb.ThreadHandoff.enabled?(conversation_id))
     |> assign(:workspace_root, ws["path"])
     |> assign(:workspace_label, ws["name"])

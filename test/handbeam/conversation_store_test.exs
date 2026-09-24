@@ -846,6 +846,39 @@ defmodule Handbeam.ConversationStoreTest do
     end
   end
 
+  describe "rename/2" do
+    test "stores a manual title and syncs the index" do
+      {:ok, conv} = ConversationStore.create("ws_rename", title: "New chat")
+
+      assert {:ok, meta} = ConversationStore.rename(conv["id"], "  会话重命名  ")
+      assert meta["title"] == "会话重命名"
+      assert meta["title_source"] == "manual"
+
+      {:ok, stored} = ConversationStore.get_meta(conv["id"])
+      assert stored["title"] == "会话重命名"
+      assert stored["title_source"] == "manual"
+
+      index = File.read!(ConversationStore.index_path()) |> Jason.decode!()
+      entry = Enum.find(index["conversations"], &(&1["id"] == conv["id"]))
+      assert entry["title"] == "会话重命名"
+    end
+
+    test "rejects blank and oversized titles without writing" do
+      {:ok, conv} = ConversationStore.create("ws_rename", title: "Keep me")
+
+      assert {:error, :empty} = ConversationStore.rename(conv["id"], "   \n\t  ")
+      assert {:error, :too_long} = ConversationStore.rename(conv["id"], String.duplicate("名", 81))
+
+      {:ok, stored} = ConversationStore.get_meta(conv["id"])
+      assert stored["title"] == "Keep me"
+      assert stored["title_source"] == "manual"
+    end
+
+    test "returns not_found for a missing conversation" do
+      assert {:error, :not_found} = ConversationStore.rename("missing-conv", "Title")
+    end
+  end
+
   # ── ensure_for_workspaces ───────────────────────────────────────────────
 
   describe "ensure_for_workspaces/1" do

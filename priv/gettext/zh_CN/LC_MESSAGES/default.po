@@ -1276,3 +1276,28 @@ msgstr "此处 stdio 服务器为只读。请编辑源配置以修改启动方�
 msgid "This stdio server comes from %{source}. Edit its source configuration to change how it launches."
 msgstr "此 stdio 服务器来自 %{source}。请编辑源配置以修改启动方式。"
 
+msgid "更多操作"
+msgstr "更多操作"
+
+msgid "重命名"
+msgstr "重命名"
+
+msgid "归档"
+msgstr "归档"
+
+msgid "重命名会话"
+msgstr "重命名会话"
+
+msgid "会话名称"
+msgstr "会话名称"
+
+msgid "名称不能为空"
+msgstr "名称不能为空"
+
+msgid "名称不能超过 80 个字符"
+msgstr "名称不能超过 80 个字符"
+
+msgid "重命名失败"
+msgstr "重命名失败"
+
+
