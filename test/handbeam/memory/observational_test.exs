@@ -228,6 +228,53 @@ defmodule Handbeam.Memory.ObservationalTest do
     end
   end
 
+  describe "runtime settings" do
+    test "an enabled run loads observation middleware when application env is unset" do
+      previous = Application.get_env(:handbeam, :observational_memory)
+      Application.delete_env(:handbeam, :observational_memory)
+
+      on_exit(fn ->
+        if previous,
+          do: Application.put_env(:handbeam, :observational_memory, previous),
+          else: Application.delete_env(:handbeam, :observational_memory)
+      end)
+
+      config =
+        AgentConfig.from_opts(
+          om: %{
+            enabled: true,
+            max_recent_context: 2,
+            memory_scope: "both",
+            privacy_mode: "standard"
+          }
+        )
+
+      assert Handbeam.Agent.Middleware.ObservationalSessionStart in config.middleware
+      assert Handbeam.Agent.Middleware.ObservationalAfterCompletion in config.middleware
+      assert Handbeam.Agent.Middleware.ObservationalAfterToolExec in config.middleware
+      assert config.context.observational.enabled
+      assert config.context.observational.max_recent_context == 2
+      assert config.context.memory_scope == "both"
+      assert config.context.privacy_mode == "standard"
+
+      disabled = AgentConfig.from_opts(om: %{enabled: false})
+      refute Handbeam.Agent.Middleware.ObservationalSessionStart in disabled.middleware
+
+      sid = "test-om-runtime-#{System.unique_integer([:positive])}"
+      path = ObservationStore.file_path(sid)
+      on_exit(fn -> if File.exists?(path), do: File.rm!(path) end)
+
+      state =
+        build_test_state()
+        |> put_in([Access.key!(:config)], config)
+        |> Map.put(:run_metadata, %{session_id: sid})
+        |> Map.put(:messages, [Message.assistant("done")])
+
+      Handbeam.Agent.Middleware.ObservationalAfterCompletion.call(:after_completion, state)
+      assert [_] = ObservationStore.load_recent(sid, 1)
+    end
+  end
+
   describe "ObservationalSessionStart middleware" do
     alias Handbeam.Agent.Middleware.ObservationalSessionStart
 

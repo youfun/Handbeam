@@ -22,7 +22,7 @@ defmodule Handbeam.Agent.Middleware.ObservationalAfterCompletion do
   @impl true
   def call(:after_completion, %State{} = state) do
     cond do
-      not Config.enabled?() ->
+      not Config.for_state(state).enabled ->
         state
 
       is_nil(session_id(state)) ->
