@@ -25,7 +25,7 @@ defmodule Handbeam.Agent.Middleware.ObservationalAfterToolExec do
   @impl true
   def call(:after_tool_execution, %State{} = state) do
     cond do
-      not Config.enabled?() ->
+      not Config.for_state(state).enabled ->
         state
 
       is_nil(session_id(state)) ->

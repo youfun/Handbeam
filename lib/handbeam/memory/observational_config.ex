@@ -156,22 +156,54 @@ defmodule Handbeam.Memory.ObservationalConfig do
   def enabled?(_), do: false
 
   @doc """
+  Runtime settings win over the application env.
+
+  `om` is the map produced by `ModelAISettings.to_runtime_opts/1`. A missing
+  map keeps `load/0`. This is what a production release uses: `config/prod.exs`
+  does not set `:observational_memory`.
+  """
+  @spec from_runtime(map() | nil) :: t()
+  def from_runtime(om) when is_map(om) do
+    base = load()
+
+    %{
+      base
+      | enabled: enabled_value(om, base.enabled),
+        max_recent_context: non_neg_or(om, :max_recent_context, base.max_recent_context),
+        observer_model: string_or(om, :observer_model, base.observer_model),
+        observer_message_tokens: pos_or(om, :message_tokens, base.observer_message_tokens),
+        observer_buffer_tokens: pos_or(om, :buffer_tokens, base.observer_buffer_tokens),
+        reflector_model: string_or(om, :reflector_model, base.reflector_model),
+        reflector_observation_tokens:
+          pos_or(om, :observation_tokens, base.reflector_observation_tokens)
+    }
+  end
+
+  def from_runtime(_), do: load()
+
+  @doc "Config for this run, or the application env when the run did not carry one."
+  @spec for_state(map()) :: t()
+  def for_state(%{config: %{context: %{observational: %__MODULE__{} = config}}}), do: config
+  def for_state(_), do: load()
+
+  @doc """
   Return the list of middleware modules that should be active.
 
   Used by the Agent Config builder to wire up observational middleware.
   """
   @spec middleware_modules() :: [module()]
-  def middleware_modules do
-    if enabled?() do
-      [
-        Handbeam.Agent.Middleware.ObservationalSessionStart,
-        Handbeam.Agent.Middleware.ObservationalAfterCompletion,
-        Handbeam.Agent.Middleware.ObservationalAfterToolExec
-      ]
-    else
-      []
-    end
+  def middleware_modules, do: middleware_modules(load())
+
+  @spec middleware_modules(t()) :: [module()]
+  def middleware_modules(%__MODULE__{enabled: true}) do
+    [
+      Handbeam.Agent.Middleware.ObservationalSessionStart,
+      Handbeam.Agent.Middleware.ObservationalAfterCompletion,
+      Handbeam.Agent.Middleware.ObservationalAfterToolExec
+    ]
   end
+
+  def middleware_modules(%__MODULE__{}), do: []
 
   @doc """
   Resolve the provider module for the Observer.
@@ -233,4 +265,37 @@ defmodule Handbeam.Memory.ObservationalConfig do
   # Access helpers support both atom and string keys.
   defp normalize_nested(kw) when is_list(kw), do: kw
   defp normalize_nested(kw) when is_map(kw), do: kw
+
+  defp enabled_value(om, default) do
+    case value(om, :enabled) do
+      true -> true
+      false -> false
+      "true" -> true
+      "false" -> false
+      _ -> default
+    end
+  end
+
+  defp non_neg_or(om, key, default) do
+    case value(om, key) do
+      n when is_integer(n) and n >= 0 -> n
+      _ -> default
+    end
+  end
+
+  defp pos_or(om, key, default) do
+    case value(om, key) do
+      n when is_integer(n) and n > 0 -> n
+      _ -> default
+    end
+  end
+
+  defp string_or(om, key, default) do
+    case value(om, key) do
+      text when is_binary(text) and text != "" -> text
+      _ -> default
+    end
+  end
+
+  defp value(om, key), do: Map.get(om, key, Map.get(om, Atom.to_string(key)))
 end

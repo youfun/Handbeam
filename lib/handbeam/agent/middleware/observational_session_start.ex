@@ -21,7 +21,7 @@ defmodule Handbeam.Agent.Middleware.ObservationalSessionStart do
   @impl true
   def call(:session_start, %State{} = state) do
     cond do
-      not Config.enabled?() ->
+      not Config.for_state(state).enabled ->
         state
 
       is_nil(session_id(state)) ->
@@ -57,7 +57,7 @@ defmodule Handbeam.Agent.Middleware.ObservationalSessionStart do
   end
 
   defp inject_recent_context(%State{} = state) do
-    config = Config.load()
+    config = Config.for_state(state)
     sid = session_id(state)
     limit = config.max_recent_context
     observations = ObservationStore.load_recent(sid, limit)

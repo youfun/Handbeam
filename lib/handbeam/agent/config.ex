@@ -101,6 +101,8 @@ defmodule Handbeam.Agent.Config do
           provider_config[:provider]
         )
 
+    observational = observational_config(opts)
+
     %__MODULE__{
       provider: provider,
       allowed_tools: Keyword.get(opts, :allowed_tools),
@@ -125,8 +127,8 @@ defmodule Handbeam.Agent.Config do
           Handbeam.Settings.ModelAISettings.defaults().reasoning
         ),
       memory: Keyword.get(opts, :memory),
-      context: build_context(opts),
-      middleware: Keyword.get(opts, :middleware, default_middleware()),
+      context: build_context(opts, observational),
+      middleware: Keyword.get(opts, :middleware, default_middleware(observational)),
       provider_config: provider_config,
       max_messages: Keyword.get(opts, :max_messages, @default_max_messages),
       max_tokens: Keyword.get(opts, :max_tokens, @default_max_tokens),
@@ -187,7 +189,16 @@ defmodule Handbeam.Agent.Config do
 
   def resolve_provider_from_api(_api, _model, _provider), do: Handbeam.Agent.Provider.OpenAICompat
 
-  defp build_context(opts) do
+  defp observational_config(opts) do
+    case Keyword.fetch(opts, :om) do
+      {:ok, om} -> Handbeam.Memory.ObservationalConfig.from_runtime(om)
+      :error -> Handbeam.Memory.ObservationalConfig.load()
+    end
+  end
+
+  defp build_context(opts, observational) do
+    om = if is_map(Keyword.get(opts, :om)), do: Keyword.get(opts, :om), else: %{}
+
     opts
     |> Keyword.get(:context, @default_context)
     |> Map.merge(%{
@@ -196,12 +207,15 @@ defmodule Handbeam.Agent.Config do
       run_id: Keyword.get(opts, :run_id),
       thread_handoff_id: get_in(Keyword.get(opts, :origin) || %{}, ["handoff_id"]),
       delegated_read_only: Keyword.get(opts, :delegated_read_only, false),
-      memory_scope: get_in(Keyword.get(opts, :om, %{}), [:memory_scope]),
-      privacy_mode: get_in(Keyword.get(opts, :om, %{}), [:privacy_mode])
+      memory_scope: om_value(om, :memory_scope),
+      privacy_mode: om_value(om, :privacy_mode),
+      observational: observational
     })
     |> Enum.reject(fn {_key, value} -> is_nil(value) end)
     |> Map.new()
   end
+
+  defp om_value(om, key), do: Map.get(om, key, Map.get(om, Atom.to_string(key)))
 
   defp build_system_prompt(opts) do
     base =
@@ -411,7 +425,7 @@ defmodule Handbeam.Agent.Config do
     end
   end
 
-  defp default_middleware do
+  defp default_middleware(observational) do
     base = [
       Handbeam.Agent.Middleware.Logger,
       Handbeam.Agent.Middleware.Security,
@@ -419,8 +433,6 @@ defmodule Handbeam.Agent.Config do
       Handbeam.Agent.Middleware.ProgressGuard
     ]
 
-    # Prepend OM middleware when enabled (so they run before other hooks)
-    om_modules = Handbeam.Memory.ObservationalConfig.middleware_modules()
-    om_modules ++ base
+    Handbeam.Memory.ObservationalConfig.middleware_modules(observational) ++ base
   end
 end
