@@ -53,6 +53,7 @@ defmodule HandbeamProbe.HomeScreen do
     :send,
     :stop,
     :new_chat,
+    :new_free_chat,
     :dismiss_approval,
     :review_approval,
     :toggle_deliver_mode,

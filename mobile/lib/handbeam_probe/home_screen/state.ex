@@ -40,6 +40,7 @@ defmodule HandbeamProbe.HomeScreen.State do
     conversations: [],
     history: %{recent: [], inactive: [], inactive_count: 0},
     inactive_history_open: false,
+    free_draft: false,
     notice: nil,
 
     # ── chat ──

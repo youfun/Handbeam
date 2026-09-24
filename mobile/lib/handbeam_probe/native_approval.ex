@@ -17,6 +17,8 @@ defmodule HandbeamProbe.NativeApproval do
   alias Handbeam.Agent.Coordinator
   alias HandbeamProbe.Bridge.Payload
 
+  def mode(nil), do: :prompt
+
   def mode(workspace),
     do: Handbeam.Permissions.ToolPolicy.from_workspace(workspace["path"]).default_mode
 
@@ -74,7 +76,12 @@ defmodule HandbeamProbe.NativeApproval do
          {:ok, %{status: :awaiting_approval}} <- Coordinator.status(conversation_id),
          :ok <- snapshot_ready(requests, action, snapshots),
          :ok <- Coordinator.resume(conversation_id, decisions_for(requests, action, scope)) do
-      case remember(remember_requests(requests, action), workspace["path"], action, scope) do
+      case remember(
+             remember_requests(requests, action),
+             workspace && workspace["path"],
+             action,
+             scope
+           ) do
         :ok -> :ok
         {:error, _} -> {:ok, :rule_not_saved}
       end
@@ -352,6 +359,8 @@ defmodule HandbeamProbe.NativeApproval do
   # `HandbeamProbe.NativeChat.event_payload/1` when the event enters chat state.
   defp requests(nil), do: []
   defp requests(pending), do: pending["action_requests"] || []
+
+  defp remember(_requests, nil, _action, :always), do: {:error, :no_workspace}
 
   defp remember(requests, path, action, :always) do
     list = if action == :approve, do: :allow, else: :deny

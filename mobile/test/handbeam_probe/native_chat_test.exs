@@ -130,6 +130,39 @@ defmodule HandbeamProbe.NativeChatTest do
     refute Enum.any?(state.entries, &(&1["content"] == "abcdef"))
   end
 
+  test "free chat sends with the global model and memory tools, without a workspace path", ctx do
+    write_fixture_models!()
+    {:ok, workspace} = Handbeam.WorkspaceStore.get("default")
+    {:ok, conversation} = Handbeam.ConversationStore.create_free(title: "Free")
+    id = own(ctx.owned, conversation["id"])
+
+    assert {:ok, %{action: :started}} = NativeChat.send_message(workspace, conversation, "hello")
+
+    opts = run_opts(id)
+    assert opts[:chat_scope] == :free
+    assert opts[:workspace_id] == nil
+    refute Keyword.has_key?(opts, :workspace_path)
+    refute Keyword.has_key?(opts, :working_directory)
+    assert opts[:tools] == Handbeam.Agent.free_chat_tools()
+    assert opts[:model] == "native-model"
+  end
+
+  test "workspace chat still sends with a workspace path and default tools", ctx do
+    write_fixture_models!()
+    {:ok, workspace} = Handbeam.WorkspaceStore.get("default")
+    {:ok, conversation} = Handbeam.ConversationStore.create("default")
+    id = own(ctx.owned, conversation["id"])
+
+    assert {:ok, %{action: :started}} = NativeChat.send_message(workspace, conversation, "hello")
+
+    opts = run_opts(id)
+    assert opts[:chat_scope] == :workspace
+    assert opts[:workspace_id] == workspace["id"]
+    assert opts[:workspace_path] == workspace["path"]
+    assert opts[:working_directory] == workspace["path"]
+    assert opts[:tools] == Handbeam.Agent.default_tools()
+  end
+
   test "send rechecks current model capabilities before promoting files or starting a run", ctx do
     write_fixture_models!()
     {:ok, workspace} = Handbeam.WorkspaceStore.get("default")
@@ -410,6 +443,11 @@ defmodule HandbeamProbe.NativeChatTest do
       Process.demonitor(ref, [:flush])
       :ok
     end
+  end
+
+  defp run_opts(conversation_id) do
+    [{pid, _}] = Registry.lookup(Handbeam.AgentRunRegistry, conversation_id)
+    :sys.get_state(pid).opts
   end
 
   defp write_fixture_models! do

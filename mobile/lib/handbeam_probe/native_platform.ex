@@ -35,6 +35,7 @@ defmodule HandbeamProbe.NativePlatform do
     catch
       :error, :undef -> :android
       :error, {:nif_not_loaded, _} -> :android
+      :error, {:load_failed, _} -> :android
     end
   end
 

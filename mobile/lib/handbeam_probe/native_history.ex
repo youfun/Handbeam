@@ -3,7 +3,10 @@ defmodule HandbeamProbe.NativeHistory do
   use Gettext, backend: HandbeamProbe.Gettext
   import HandbeamProbe.NativeUI
 
+  alias Handbeam.ConversationStore
+
   @recent_seconds 72 * 60 * 60
+  @free_group_id "free"
 
   def load(now \\ DateTime.utc_now()) do
     project(Handbeam.ConversationStore.list(), Handbeam.WorkspaceStore.list(), now)
@@ -15,15 +18,13 @@ defmodule HandbeamProbe.NativeHistory do
 
     {recent, inactive} =
       conversations
-      |> Enum.filter(fn c ->
-        c["archived_at"] in [nil, ""] and Map.has_key?(workspace_map, c["workspace_id"])
-      end)
+      |> Enum.filter(&listed?(&1, workspace_map))
       |> Enum.sort_by(&{timestamp(&1), &1["id"]}, :desc)
       |> Enum.split_with(&(timestamp(&1) >= cutoff))
 
     %{
-      recent: groups(recent, workspace_map),
-      inactive: groups(inactive, workspace_map),
+      recent: groups(recent, workspace_map, include_free: true),
+      inactive: groups(inactive, workspace_map, include_free: false),
       inactive_count: length(inactive)
     }
   end
@@ -52,12 +53,49 @@ defmodule HandbeamProbe.NativeHistory do
       )
   end
 
-  defp groups(conversations, workspaces) do
-    conversations
-    |> Enum.group_by(& &1["workspace_id"])
-    |> Enum.map(fn {id, items} -> %{workspace: workspaces[id], conversations: items} end)
-    |> Enum.sort_by(&{timestamp(hd(&1.conversations)), &1.workspace["id"]}, :desc)
+  defp listed?(conversation, workspaces) do
+    conversation["archived_at"] in [nil, ""] and
+      (ConversationStore.free?(conversation) or
+         Map.has_key?(workspaces, conversation["workspace_id"]))
   end
+
+  defp groups(conversations, workspaces, opts) do
+    grouped =
+      conversations
+      |> Enum.group_by(&group_id/1)
+      |> then(fn groups ->
+        if Keyword.get(opts, :include_free, false),
+          do: Map.put_new(groups, @free_group_id, []),
+          else: groups
+      end)
+
+    grouped
+    |> Enum.map(fn {id, items} ->
+      %{workspace: group_workspace(id, workspaces), conversations: items}
+    end)
+    |> Enum.sort_by(&group_sort_key/1, :desc)
+  end
+
+  # Free chats stay at the top so the new-chat action is visible with an empty list.
+  defp group_sort_key(%{workspace: %{"free" => true}} = group),
+    do: {1, group_sort_time(group), ""}
+
+  defp group_sort_key(group), do: {0, group_sort_time(group), group.workspace["id"]}
+
+  defp group_sort_time(%{conversations: [first | _]}), do: timestamp(first)
+  defp group_sort_time(_group), do: 0
+
+  defp group_id(conversation) do
+    if ConversationStore.free?(conversation),
+      do: @free_group_id,
+      else: conversation["workspace_id"]
+  end
+
+  defp group_workspace(@free_group_id, _workspaces) do
+    %{"id" => @free_group_id, "name" => gettext("Chats"), "free" => true}
+  end
+
+  defp group_workspace(id, workspaces), do: workspaces[id]
 
   defp render_groups(groups, selected_id) do
     Enum.flat_map(groups, fn group ->
@@ -65,7 +103,8 @@ defmodule HandbeamProbe.NativeHistory do
         row(
           [
             text(group.workspace["name"], text_size: 12, text_color: color(:muted)),
-            node(:box, weight: 1, height: 1, background: color(:separator))
+            node(:box, weight: 1, height: 1, background: color(:separator)),
+            if(group.workspace["free"], do: icon("add", :new_free_chat))
           ],
           padding_top: 12,
           padding_bottom: 4

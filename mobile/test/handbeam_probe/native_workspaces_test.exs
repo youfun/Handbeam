@@ -212,6 +212,12 @@ defmodule HandbeamProbe.NativeWorkspacesTest do
     assert NativeWorkspaces.get_draft(drafts, default, conv) == "draft-a"
     assert NativeWorkspaces.get_draft(drafts, extra, nil) == "draft-b"
 
+    {:ok, free} = ConversationStore.create_free(title: "Free")
+    drafts = NativeWorkspaces.put_draft(drafts, nil, %{conversation: free}, "free-open")
+    drafts = NativeWorkspaces.put_draft(drafts, nil, nil, "free-new")
+    assert NativeWorkspaces.get_draft(drafts, nil, free) == "free-open"
+    assert NativeWorkspaces.get_draft(drafts, nil, nil) == "free-new"
+
     NativeWorkspaces.persist(extra, nil)
     File.rm_rf!(extra["path"])
     {workspace, conversation} = NativeWorkspaces.restore(default)

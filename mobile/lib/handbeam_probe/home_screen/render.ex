@@ -8,7 +8,7 @@ defmodule HandbeamProbe.HomeScreen.Render do
   use Gettext, backend: HandbeamProbe.Gettext
   import HandbeamProbe.NativeUI
 
-  alias HandbeamProbe.HomeScreen.{Notice, Share}
+  alias HandbeamProbe.HomeScreen.{Nav, Notice, Share}
 
   alias HandbeamProbe.{
     ModelSettings,
@@ -78,13 +78,15 @@ defmodule HandbeamProbe.HomeScreen.Render do
       icon("menu", {:page, :history}),
       text(gettext("Handbeam"), text_size: 13, font_weight: "bold", padding_right: 8),
       button(
-        (a.workspace && a.workspace["name"]) || gettext("Workspace"),
+        chat_title(a),
         {:page, :workspace},
         text_size: 11,
         weight: 1,
         background: color(:surface)
       ),
-      button(gettext("Files"), {:page, :files}, text_size: 11, background: color(:surface)),
+      if(not Nav.free_chat?(a),
+        do: button(gettext("Files"), {:page, :files}, text_size: 11, background: color(:surface))
+      ),
       icon("info", {:page, :about}),
       icon("settings", {:page, :settings})
     ])
@@ -234,6 +236,12 @@ defmodule HandbeamProbe.HomeScreen.Render do
         )
       ])
     ])
+  end
+
+  defp chat_title(a) do
+    if Nav.free_chat?(a),
+      do: gettext("Chats"),
+      else: (a.workspace && a.workspace["name"]) || gettext("Workspace")
   end
 
   defp page_title(:history), do: gettext("Conversations")

@@ -159,8 +159,6 @@ defmodule HandbeamProbe.NativeWorkspaces do
     })
   end
 
-  def put_draft(drafts, nil, _chat, _text), do: drafts || %{}
-
   def put_draft(drafts, workspace, chat, text) do
     Map.put(drafts || %{}, draft_key(workspace, chat && chat.conversation), text || "")
   end
@@ -566,6 +564,7 @@ defmodule HandbeamProbe.NativeWorkspaces do
     end
   end
 
+  defp draft_key(nil, nil), do: {:empty, :free}
   defp draft_key(workspace, nil), do: {:empty, workspace["id"]}
   defp draft_key(_workspace, conversation), do: {:conversation, conversation["id"]}
 

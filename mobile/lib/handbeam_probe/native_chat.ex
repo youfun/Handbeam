@@ -91,15 +91,14 @@ defmodule HandbeamProbe.NativeChat do
   end
 
   def send_message(workspace, conversation, content, attachments \\ [], opts \\ []) do
-    path = workspace["path"]
-    settings = Handbeam.Settings.effective_model_ai(path)
-    model = settings.default_model || ModelConfig.default_model_for_workspace(path)
+    free? = Handbeam.ConversationStore.free?(conversation)
+    {settings, model, models, resolve} = model_binding(workspace, free?)
     inbound_id = Keyword.get(opts, :inbound_id) || Ecto.UUID.generate()
     deliver_as = Keyword.get(opts, :deliver_as, :steer)
-    entry = Enum.find(ModelConfig.available_models_for_workspace(path), &(&1.id == model))
+    entry = Enum.find(models, &(&1.id == model))
 
     with true <- is_binary(model),
-         {:ok, config, model_id} <- ModelConfig.resolve_model_for_workspace(path, model),
+         {:ok, config, model_id} <- resolve.(model),
          :ok <-
            Handbeam.Agent.ModelCapabilities.validate_inputs(
              entry,
@@ -107,11 +106,7 @@ defmodule HandbeamProbe.NativeChat do
            ),
          {:ok, review_opts} <- review_run_opts(conversation["id"], opts),
          {:ok, message, persistable} <-
-           Handbeam.Attachments.MessageBuilder.build(content, attachments,
-             workspace_path: path,
-             conversation_id: conversation["id"],
-             staging_roots: Application.get_env(:handbeam_probe, :staging_roots, [])
-           ) do
+           build_message(content, attachments, conversation, workspace, free?) do
       config = Reasoning.apply_provider_options(config, entry, settings.reasoning)
       runtime_opts = Handbeam.Settings.ModelAISettings.to_runtime_opts(settings)
       message = put_inbound_message_id(message, inbound_id)
@@ -122,20 +117,15 @@ defmodule HandbeamProbe.NativeChat do
              Keyword.merge(
                runtime_opts,
                Keyword.merge(
-                 [
-                   provider_config: config,
-                   model: model_id,
-                   tools: Handbeam.Agent.default_tools(),
-                   workspace_id: workspace["id"],
-                   workspace_path: path,
-                   source: :native,
-                   streaming: true,
-                   deliver_as: deliver_as,
-                   inbound_id: inbound_id,
-                   transcript_id: inbound_id,
-                   message_id: inbound_id,
-                   attachments: persistable
-                 ],
+                 coordinator_opts(
+                   free?,
+                   workspace,
+                   config,
+                   model_id,
+                   deliver_as,
+                   inbound_id,
+                   persistable
+                 ),
                  review_opts
                )
              )
@@ -157,6 +147,90 @@ defmodule HandbeamProbe.NativeChat do
       {:error, :run_in_progress} -> {:error, :run_in_progress}
       {:error, _} = error -> error
     end
+  end
+
+  defp model_binding(_workspace, true) do
+    settings = Handbeam.Settings.global_model_ai()
+    models = ModelConfig.all_global_models()
+
+    model =
+      if settings.default_model && Enum.any?(models, &(&1.id == settings.default_model)),
+        do: settings.default_model,
+        else: models |> List.first() |> then(&if(&1, do: &1.id))
+
+    {settings, model, models, &resolve_global_model/1}
+  end
+
+  defp model_binding(workspace, false) do
+    path = workspace["path"]
+    settings = Handbeam.Settings.effective_model_ai(path)
+    models = ModelConfig.available_models_for_workspace(path)
+    model = settings.default_model || ModelConfig.default_model_for_workspace(path)
+    {settings, model, models, &ModelConfig.resolve_model_for_workspace(path, &1)}
+  end
+
+  defp resolve_global_model(composite_id) do
+    case Enum.find(ModelConfig.all_global_models(), &(&1.id == composite_id)) do
+      %{provider_id: provider_id, model_id: model_id} = _entry ->
+        case ModelConfig.provider_config_for(File.cwd!(), provider_id, model_id) do
+          {:ok, config} -> {:ok, config, model_id}
+          {:error, _} = error -> error
+        end
+
+      _ ->
+        {:error, "Model #{composite_id} is not in the global catalog"}
+    end
+  end
+
+  defp build_message(content, attachments, conversation, _workspace, true) do
+    Handbeam.Attachments.MessageBuilder.build(content, attachments,
+      chat_scope: :free,
+      conversation_id: conversation["id"],
+      staging_roots: Application.get_env(:handbeam_probe, :staging_roots, [])
+    )
+  end
+
+  defp build_message(content, attachments, conversation, workspace, false) do
+    Handbeam.Attachments.MessageBuilder.build(content, attachments,
+      workspace_path: workspace["path"],
+      conversation_id: conversation["id"],
+      staging_roots: Application.get_env(:handbeam_probe, :staging_roots, [])
+    )
+  end
+
+  defp coordinator_opts(true, _workspace, config, model_id, deliver_as, inbound_id, persistable) do
+    [
+      chat_scope: :free,
+      provider_config: config,
+      model: model_id,
+      tools: Handbeam.Agent.free_chat_tools(),
+      workspace_id: nil,
+      source: :native,
+      streaming: true,
+      deliver_as: deliver_as,
+      inbound_id: inbound_id,
+      transcript_id: inbound_id,
+      message_id: inbound_id,
+      attachments: persistable
+    ]
+  end
+
+  defp coordinator_opts(false, workspace, config, model_id, deliver_as, inbound_id, persistable) do
+    [
+      chat_scope: :workspace,
+      provider_config: config,
+      model: model_id,
+      tools: Handbeam.Agent.default_tools(),
+      workspace_id: workspace["id"],
+      workspace_path: workspace["path"],
+      source: :native,
+      streaming: true,
+      deliver_as: deliver_as,
+      inbound_id: inbound_id,
+      transcript_id: inbound_id,
+      message_id: inbound_id,
+      attachments: persistable
+    ]
   end
 
   defp review_run_opts(conversation_id, opts) do
