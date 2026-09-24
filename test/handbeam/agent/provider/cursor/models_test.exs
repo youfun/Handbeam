@@ -45,6 +45,33 @@ defmodule Handbeam.Agent.Provider.Cursor.ModelsTest do
     def close(t), do: t
   end
 
+  defmodule ContextTransport do
+    alias Handbeam.Agent.Provider.Cursor.Proto
+
+    def connect(_opts), do: {:ok, %{}}
+
+    def get_usable_models(transport, _token, _opts) do
+      models = [
+        {"claude-opus-5-high", "Claude Opus 5 1M High"},
+        {"claude-sonnet-5-high", "Claude Sonnet 5 1M"},
+        {"gpt-5.5-medium", "GPT-5.5 1M"},
+        {"grok-4.7-medium", "Grok 4.7 Medium"}
+      ]
+
+      body =
+        models
+        |> Enum.map(fn {id, name} ->
+          model = Proto.finish(Proto.encode_string(1, id) ++ Proto.encode_string(4, name))
+          Proto.encode_message(1, model)
+        end)
+        |> Proto.finish()
+
+      {:ok, transport, body}
+    end
+
+    def close(t), do: t
+  end
+
   setup do
     tmp = Path.join(System.tmp_dir!(), "cursor_models_#{System.unique_integer([:positive])}")
     File.mkdir_p!(tmp)
@@ -84,6 +111,20 @@ defmodule Handbeam.Agent.Provider.Cursor.ModelsTest do
     assert [%{"id" => "gpt-5.3-codex-low-fast", "cost" => cost}] = models
     assert cost["input"] == 1.75
     assert cost["output"] == 14
+  end
+
+  test "discover uses Cursor's documented default contexts instead of advertised 1M maximum", %{
+    auth_path: auth_path
+  } do
+    assert {:ok, models} =
+             Models.discover(auth_path: auth_path, transport_mod: ContextTransport)
+
+    assert Enum.map(models, &{&1["id"], &1["name"], &1["contextWindow"]}) == [
+             {"claude-opus-5-high", "Claude Opus 5 300K High", 300_000},
+             {"claude-sonnet-5-high", "Claude Sonnet 5 200K", 200_000},
+             {"gpt-5.5-medium", "GPT-5.5 272K", 272_000},
+             {"grok-4.7-medium", "Grok 4.7 Medium", 256_000}
+           ]
   end
 
   test "empty catalog is an explicit error", %{auth_path: auth_path} do

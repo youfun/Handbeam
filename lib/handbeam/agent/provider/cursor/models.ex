@@ -57,12 +57,14 @@ defmodule Handbeam.Agent.Provider.Cursor.Models do
   end
 
   defp to_catalog(model) do
+    context_window = default_context_window(model.id)
+
     %{
       "id" => model.id,
-      "name" => display_name(model),
+      "name" => display_name(model, context_window),
       "reasoning" => model.thinking?,
       "input" => ["text"],
-      "contextWindow" => 128_000,
+      "contextWindow" => context_window,
       "maxTokens" => 32_000
     }
     |> maybe_put_cost(LlmDbDefaults.price_for_model_id(model.id))
@@ -71,8 +73,44 @@ defmodule Handbeam.Agent.Provider.Cursor.Models do
   defp maybe_put_cost(catalog, nil), do: catalog
   defp maybe_put_cost(catalog, cost), do: Map.put(catalog, "cost", cost)
 
-  defp display_name(%{name: name}) when is_binary(name) and name != "", do: name
-  defp display_name(%{id: id}), do: id
+  defp display_name(%{name: name}, context_window) when is_binary(name) and name != "" do
+    String.replace(name, ~r/\b1M\b/, format_context(context_window))
+  end
+
+  defp display_name(%{id: id}, _context_window), do: id
+
+  # GetUsableModels does not include token limits. Cursor's catalog names advertise
+  # the optional 1M maximum, while a normal Run request uses the documented default.
+  defp default_context_window(id) do
+    cond do
+      String.starts_with?(id, ["claude-opus-5", "claude-opus-4-8", "claude-fable-5"]) ->
+        300_000
+
+      String.starts_with?(id, "claude-opus-4-7") and not String.ends_with?(id, "-fast") ->
+        300_000
+
+      String.starts_with?(id, ["gpt-", "codex-"]) ->
+        272_000
+
+      String.contains?(id, "grok-4") ->
+        256_000
+
+      String.starts_with?(id, "kimi-k2.7") ->
+        262_144
+
+      String.starts_with?(id, "muse-spark") ->
+        300_000
+
+      id == "default" ->
+        128_000
+
+      true ->
+        200_000
+    end
+  end
+
+  defp format_context(262_144), do: "262K"
+  defp format_context(tokens), do: "#{div(tokens, 1_000)}K"
 
   defp classify(message) do
     down = String.downcase(message)
