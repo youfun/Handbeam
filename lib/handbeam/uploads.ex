@@ -112,6 +112,23 @@ defmodule Handbeam.Uploads do
     Path.join([workspace_path, ".handbeam", "uploads", conversation_id])
   end
 
+  @doc """
+  Upload directory for a workspace-independent chat.
+
+  Files stay under `~/.handbeam/conversations/<id>/uploads`, not a project root.
+  """
+  @spec free_upload_dir(String.t()) :: String.t()
+  def free_upload_dir(conversation_id) when is_binary(conversation_id) do
+    Path.join(Handbeam.ConversationStore.conversation_dir(conversation_id), "uploads")
+  end
+
+  @spec ensure_free_upload_dir!(String.t()) :: String.t()
+  def ensure_free_upload_dir!(conversation_id) do
+    dir = free_upload_dir(conversation_id)
+    File.mkdir_p!(dir)
+    dir
+  end
+
   @spec ensure_conversation_dir!(String.t(), String.t()) :: String.t()
   def ensure_conversation_dir!(workspace_path, conversation_id) do
     dir = conversation_upload_dir(workspace_path, conversation_id)

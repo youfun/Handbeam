@@ -158,7 +158,10 @@ defmodule Handbeam.Agent.Advisor do
     end
   end
 
-  defp unavailable do
+  @doc "Pin used when a run has no workspace advisor."
+  def unavailable, do: unavailable_pin()
+
+  defp unavailable_pin do
     %{
       available: false,
       composite_id: nil,

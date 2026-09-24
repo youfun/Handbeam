@@ -14,7 +14,9 @@
       <div class="mobile-header-title">
         <img src={~p"/images/logo.svg"} class="brand-mark" width="18" height="18" alt="" />
         <span class="mobile-brand">Handbeam</span>
-        <span class="mobile-workspace truncate">{@workspace_label}</span>
+        <span class="mobile-workspace truncate">
+          {if(@chat_scope == :free, do: gettext("对话"), else: @workspace_label)}
+        </span>
       </div>
       <svg
         class="mobile-chevron"
@@ -30,6 +32,7 @@
     </button>
     <div class="mobile-header-actions">
       <button
+        :if={@chat_scope != :free}
         id="mobile-open-files"
         phx-click="select_mobile_right_panel_view"
         phx-value-view="files"
@@ -283,6 +286,50 @@
                   </button>
                 </div>
               </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="free-chats" class="workspace-group mt-2 border-t pt-2">
+          <div class="workspace-title-row">
+            <div class="workspace-header w-full text-left px-3 py-1.5 text-xs flex items-center gap-1.5">
+              <span class="truncate flex-1">{gettext("对话")}</span>
+            </div>
+            <button
+              id="new-free-conversation"
+              phx-click="new_free_conversation"
+              class="workspace-add-btn flex-shrink-0 w-5 h-5 flex items-center justify-center rounded text-tertiary hover:text-primary hover:bg-surface-hover transition-colors mr-1"
+              title={gettext("新建自由对话")}
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <path
+                  d="M6 1v10M1 6h10"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                />
+              </svg>
+            </button>
+          </div>
+          <div class="conversations-list">
+            <div
+              :for={conv <- free_conversations(@conversations_by_workspace)}
+              id={"free-conversation-#{conv.id}"}
+              class="conversation-row"
+            >
+              <button
+                phx-click="select_free_conversation"
+                phx-value-id={conv.id}
+                class={[
+                  "conversation-item flex-1 min-w-0 text-left pl-6 pr-1 py-1.5 text-xs transition-colors flex items-center gap-1.5",
+                  if(@current_conversation_id == conv.id and @chat_scope == :free,
+                    do: "conversation-item-active",
+                    else: "hover:bg-surface-hover text-secondary"
+                  )
+                ]}
+              >
+                <span class="truncate flex-1">{conv.title}</span>
+              </button>
             </div>
           </div>
         </div>
@@ -1215,7 +1262,7 @@
     </div>
 
     <button
-      :if={@right_panel_collapsed}
+      :if={@right_panel_collapsed and @chat_scope != :free}
       id="workspace-panel-toggle"
       phx-click="toggle_right_panel"
       class="workspace-panel-toggle collapsed"
@@ -1242,6 +1289,7 @@
     <!-- Right: Workspace Panel / Editor Group (collapsible) -->
 
     <div
+      :if={@chat_scope != :free}
       id="workspace-panel"
       phx-hook="WorkspacePanel"
       class={[

@@ -10,6 +10,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
 
   def assign_current(socket, ws, conversation_id) do
     socket
+    |> assign(:chat_scope, :workspace)
     |> assign(:current_workspace_id, ws["id"])
     |> assign(:current_conversation_id, conversation_id)
     |> assign(:conversation_menu_id, nil)
@@ -118,6 +119,66 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
     |> reload_conversation_stream()
   end
 
+  @free_key :free
+
+  def free_key, do: @free_key
+
+  def load_free_conversations(opts \\ []) do
+    include_archived? = Keyword.get(opts, :include_archived?, false)
+
+    Handbeam.ConversationStore.list_free(
+      include_archived?: include_archived?,
+      include_timeline?: false
+    )
+    |> Enum.reject(fn conv ->
+      String.starts_with?(ConversationState.conv_value(conv, "title", ""), "New chat") and
+        ConversationState.conv_value(conv, "title_source", nil) in [nil, "manual"] and
+        transcript_empty?(ConversationState.conversation_id(conv))
+    end)
+  end
+
+  def new_free_conversation(socket, opts \\ []) do
+    conversations = Map.get(socket.assigns.conversations_by_workspace, @free_key, [])
+    conversation = build_free_conversation(length(conversations) + 1)
+
+    conversations_by_ws =
+      Map.put(
+        socket.assigns.conversations_by_workspace,
+        @free_key,
+        conversations ++ [conversation]
+      )
+
+    socket =
+      socket
+      |> assign(:conversations_by_workspace, conversations_by_ws)
+      |> reload_conversation_stream()
+      |> assign_free(ConversationState.conversation_id(conversation))
+      |> then(Keyword.get(opts, :initialize_model, &Function.identity/1))
+      |> reset_new_conversation_projection(opts)
+      |> ConversationState.sync_conv_to()
+
+    {socket, ConversationState.conversation_id(conversation)}
+  end
+
+  def select_free_conversation(socket, conv_id) do
+    {assign_free(socket, conv_id), conv_id}
+  end
+
+  def assign_free(socket, conversation_id) do
+    socket
+    |> assign(:chat_scope, :free)
+    |> assign(:current_workspace_id, nil)
+    |> assign(:current_conversation_id, conversation_id)
+    |> assign(:conversation_menu_id, nil)
+    |> assign(:rename_conversation, nil)
+    |> assign(:workspace_root, nil)
+    |> assign(:workspace_label, "Chats")
+    |> assign(:expanded_tool_groups, MapSet.new())
+    |> assign(:pending_messages, %{})
+    |> assign(:history_before, nil)
+    |> assign(:history_has_more?, false)
+  end
+
   def new_conversation(socket, workspace_id, opts \\ []) do
     {:ok, ws} = Handbeam.WorkspaceStore.get(workspace_id)
     Handbeam.WorkspaceStore.touch(workspace_id)
@@ -147,7 +208,11 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
   def refresh_conversation_in_sidebar(socket, conv_id) do
     case Handbeam.ConversationStore.get(conv_id, include_timeline?: false) do
       {:ok, updated_conv} ->
-        ws_id = ConversationState.conv_value(updated_conv, "workspace_id", nil)
+        ws_id =
+          if Handbeam.ConversationStore.free?(updated_conv),
+            do: @free_key,
+            else: ConversationState.conv_value(updated_conv, "workspace_id", nil)
+
         convs = socket.assigns.conversations_by_workspace
         current_convs = Map.get(convs, ws_id, [])
 
@@ -170,7 +235,9 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
   end
 
   def build_initial_conversations(workspaces, _default_ws) do
-    build_conversations_by_workspace(workspaces, include_archived?: true)
+    workspaces
+    |> build_conversations_by_workspace(include_archived?: true)
+    |> Map.put(@free_key, load_free_conversations(include_archived?: true))
   end
 
   def initial_conversation_id(conversations_by_ws, ws_id) do
@@ -186,6 +253,12 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
   def build_conversation(workspace_id, num) do
     title = conversation_title(num)
     {:ok, conversation} = Handbeam.ConversationStore.create(workspace_id, [{"title", title}])
+    conversation
+  end
+
+  def build_free_conversation(num) do
+    title = conversation_title(num)
+    {:ok, conversation} = Handbeam.ConversationStore.create_free(title: title)
     conversation
   end
 
@@ -247,8 +320,9 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
           %{
             id: ConversationState.conversation_id(conv),
             title: ConversationState.conv_value(conv, "title", "New chat"),
-            workspace_id: ws_id,
-            workspace_name: Map.get(ws_names, ws_id, ws_id),
+            workspace_id: stream_workspace_id(ws_id),
+            workspace_name: stream_workspace_name(ws_id, ws_names),
+            scope: if(ws_id == @free_key, do: "free", else: "workspace"),
             archived: archived_conversation?(conv)
           }
         end)
@@ -292,6 +366,13 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
     |> Enum.sort_by(& &1.updated_at, :desc)
   end
 
+  def free_conversations(conversations_by_workspace) when is_map(conversations_by_workspace) do
+    conversations_by_workspace
+    |> Map.get(@free_key, [])
+    |> Enum.reject(&archived_conversation?/1)
+    |> Enum.map(&conversation_row(&1, nil, "对话", "free"))
+  end
+
   def workspace_conversations(conversations_by_workspace, ws_id, workspaces)
       when is_map(conversations_by_workspace) and is_list(workspaces) do
     ws_map = Map.new(workspaces, fn ws -> {ws["id"], ws["name"] || ws["id"]} end)
@@ -300,17 +381,28 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
     |> Map.get(ws_id, [])
     |> Enum.reject(&archived_conversation?/1)
     |> Enum.map(fn conv ->
-      %{
-        id: ConversationState.conversation_id(conv),
-        title: ConversationState.conv_value(conv, "title", "New chat"),
-        workspace_id: ws_id,
-        workspace_name: Map.get(ws_map, ws_id, ws_id),
-        archived: archived_conversation?(conv),
-        updated_at: ConversationState.conv_value(conv, "updated_at", nil),
-        created_at: ConversationState.conv_value(conv, "created_at", nil)
-      }
+      conversation_row(conv, ws_id, Map.get(ws_map, ws_id, ws_id), "workspace")
     end)
   end
+
+  defp conversation_row(conv, workspace_id, workspace_name, scope) do
+    %{
+      id: ConversationState.conversation_id(conv),
+      title: ConversationState.conv_value(conv, "title", "New chat"),
+      workspace_id: workspace_id,
+      workspace_name: workspace_name,
+      scope: scope,
+      archived: archived_conversation?(conv),
+      updated_at: ConversationState.conv_value(conv, "updated_at", nil),
+      created_at: ConversationState.conv_value(conv, "created_at", nil)
+    }
+  end
+
+  defp stream_workspace_id(@free_key), do: nil
+  defp stream_workspace_id(ws_id), do: ws_id
+
+  defp stream_workspace_name(@free_key, _ws_names), do: "对话"
+  defp stream_workspace_name(ws_id, ws_names), do: Map.get(ws_names, ws_id, ws_id)
 
   def archived_stream_count(stream_entries) when is_list(stream_entries) do
     Enum.count(stream_entries, fn {_, conv} -> conv.archived end)

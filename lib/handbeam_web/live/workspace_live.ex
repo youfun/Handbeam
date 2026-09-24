@@ -75,6 +75,7 @@ defmodule HandbeamWeb.WorkspaceLive do
     socket =
       socket
       |> assign(:page_title, "Handbeam — Workspace")
+      |> assign(:chat_scope, :workspace)
       |> assign(:workspaces, workspaces)
       |> assign(:current_workspace_id, current_ws_id)
       |> assign(:current_conversation_id, current_conv_id)
@@ -172,6 +173,33 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   @impl true
+  def handle_params(
+        %{"conversation_id" => conv_id},
+        _uri,
+        %{assigns: %{live_action: :free}} = socket
+      ) do
+    with {:ok, conv} <- Handbeam.ConversationStore.get(conv_id, include_timeline?: false),
+         true <- Handbeam.ConversationStore.free?(conv) do
+      socket =
+        if socket.assigns.current_conversation_id == conv_id and
+             socket.assigns.chat_scope == :free do
+          socket
+        else
+          {socket, _conv_id} = ConversationSwitching.select_free_conversation(socket, conv_id)
+
+          socket
+          |> enter_free_chat()
+          |> subscribe_to_session()
+          |> restore_active_session_snapshot()
+          |> close_mobile_sheets()
+        end
+
+      {:noreply, socket}
+    else
+      _ -> {:noreply, push_patch(socket, to: "/")}
+    end
+  end
+
   def handle_params(
         %{"workspace_id" => ws_id, "conversation_id" => conv_id} = _params,
         _uri,
@@ -868,6 +896,39 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   @impl true
+  def handle_event("new_free_conversation", _params, socket) do
+    {socket, conv_id} =
+      ConversationSwitching.new_free_conversation(socket, conversation_switching_opts())
+
+    socket =
+      socket
+      |> enter_free_chat()
+      |> subscribe_to_session()
+      |> close_mobile_sheets()
+
+    {:noreply, push_patch(socket, to: "/c/#{conv_id}")}
+  end
+
+  @impl true
+  def handle_event("select_free_conversation", %{"id" => conv_id}, socket) do
+    with {:ok, conv} <- Handbeam.ConversationStore.get(conv_id, include_timeline?: false),
+         true <- Handbeam.ConversationStore.free?(conv) do
+      {socket, _conv_id} = ConversationSwitching.select_free_conversation(socket, conv_id)
+
+      socket =
+        socket
+        |> enter_free_chat()
+        |> subscribe_to_session()
+        |> restore_active_session_snapshot()
+        |> close_mobile_sheets()
+
+      {:noreply, push_patch(socket, to: "/c/#{conv_id}")}
+    else
+      _ -> {:noreply, socket}
+    end
+  end
+
+  @impl true
   def handle_event("new_conversation_in_workspace", %{"ws_id" => ws_id}, socket) do
     create_conversation_in_workspace(socket, ws_id, close_sheets?: false)
   end
@@ -1096,6 +1157,18 @@ defmodule HandbeamWeb.WorkspaceLive do
     |> reload_workspace_counts()
     |> load_available_skills()
     |> load_permission_mode_into_socket()
+  end
+
+  defp enter_free_chat(socket) do
+    socket
+    |> assign(:chat_scope, :free)
+    |> assign(:right_panel_collapsed, true)
+    |> assign(:show_file_drawer, false)
+    |> assign(:mobile_right_panel_open, false)
+    |> sync_conv_state(reload?: true)
+    |> reload_free_models()
+    |> assign(:skill_suggestions, [])
+    |> assign(:workspace_tree, %{})
   end
 
   defp load_workspace_tree(socket, relative_dir) do
@@ -1800,12 +1873,18 @@ defmodule HandbeamWeb.WorkspaceLive do
     |> Keyword.put(:initialize_model, &initialize_conversation_model/1)
   end
 
-  defp current_workspace_path(socket) do
-    ws_id = socket.assigns.current_workspace_id
+  defp free_chat?(socket), do: socket.assigns[:chat_scope] == :free
 
-    case Handbeam.WorkspaceStore.get(ws_id) do
-      {:ok, ws} -> ws["path"]
-      {:error, _} -> Handbeam.Workspace.root()
+  defp current_workspace_path(socket) do
+    if free_chat?(socket) do
+      nil
+    else
+      ws_id = socket.assigns.current_workspace_id
+
+      case Handbeam.WorkspaceStore.get(ws_id) do
+        {:ok, ws} -> ws["path"]
+        {:error, _} -> Handbeam.Workspace.root()
+      end
     end
   end
 
@@ -1991,9 +2070,10 @@ defmodule HandbeamWeb.WorkspaceLive do
 
       workspace_path = current_workspace_path(socket)
 
-      case Handbeam.Attachments.MessageBuilder.build(content_text, attachments,
-             workspace_path: workspace_path,
-             conversation_id: conv_id
+      case Handbeam.Attachments.MessageBuilder.build(
+             content_text,
+             attachments,
+             Composer.build_opts(socket, workspace_path)
            ) do
         {:ok, content, persistable} ->
           msg_id = unique_id("msg-user")
@@ -2176,23 +2256,47 @@ defmodule HandbeamWeb.WorkspaceLive do
 
       om_opts = om_from_effective(socket.assigns.effective_settings)
 
-      Handbeam.Agent.Coordinator.add_message(conv_id, content,
-        provider_config: provider_config,
-        model: model_id,
-        reasoning_level: selected_reasoning_level,
-        tools: default_tools(),
-        workspace_id: socket.assigns.current_workspace_id,
-        workspace_path: workspace_path,
-        source: :live_view,
-        streaming: true,
-        deliver_as: Keyword.get(opts, :deliver_as, :steer),
-        transcript_id: msg_id,
-        message_id: msg_id,
-        inbound_id: msg_id,
-        attachments: Keyword.get(opts, :attachments, []),
-        om: Keyword.get(om_opts, :om)
+      Handbeam.Agent.Coordinator.add_message(
+        conv_id,
+        content,
+        run_opts(socket,
+          provider_config: provider_config,
+          model: model_id,
+          reasoning_level: selected_reasoning_level,
+          workspace_path: workspace_path,
+          deliver_as: Keyword.get(opts, :deliver_as, :steer),
+          transcript_id: msg_id,
+          message_id: msg_id,
+          inbound_id: msg_id,
+          attachments: Keyword.get(opts, :attachments, []),
+          om: Keyword.get(om_opts, :om)
+        )
       )
     end
+  end
+
+  defp run_opts(socket, extra) do
+    base =
+      if free_chat?(socket) do
+        [
+          chat_scope: :free,
+          tools: tools_for(socket),
+          workspace_id: nil,
+          source: :live_view,
+          streaming: true
+        ]
+      else
+        [
+          chat_scope: :workspace,
+          tools: tools_for(socket),
+          workspace_id: socket.assigns.current_workspace_id,
+          workspace_path: current_workspace_path(socket),
+          source: :live_view,
+          streaming: true
+        ]
+      end
+
+    Keyword.merge(base, extra)
   end
 
   defp mark_stale_running_message_rejected(socket) do
@@ -2254,20 +2358,20 @@ defmodule HandbeamWeb.WorkspaceLive do
 
         om_opts = om_from_effective(socket.assigns.effective_settings)
 
-        case Handbeam.Agent.Coordinator.add_message(conv_id, content,
-               provider_config: provider_config,
-               model: model_id,
-               reasoning_level: selected_reasoning_level,
-               tools: default_tools(),
-               workspace_id: socket.assigns.current_workspace_id,
-               workspace_path: workspace_path,
-               source: :live_view,
-               streaming: true,
-               transcript_id: msg_id,
-               message_id: msg_id,
-               inbound_id: msg_id,
-               attachments: attachments,
-               om: Keyword.get(om_opts, :om)
+        case Handbeam.Agent.Coordinator.add_message(
+               conv_id,
+               content,
+               run_opts(socket,
+                 provider_config: provider_config,
+                 model: model_id,
+                 reasoning_level: selected_reasoning_level,
+                 workspace_path: workspace_path,
+                 transcript_id: msg_id,
+                 message_id: msg_id,
+                 inbound_id: msg_id,
+                 attachments: attachments,
+                 om: Keyword.get(om_opts, :om)
+               )
              ) do
           {:ok, _ack} ->
             {:noreply, socket}
@@ -2428,15 +2532,41 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   defp default_tools, do: Handbeam.Agent.default_tools()
 
+  defp tools_for(socket) do
+    if free_chat?(socket), do: Handbeam.Agent.free_chat_tools(), else: default_tools()
+  end
+
   # ── Model resolution ──
 
   defp resolve_selected_model(_workspace_path, nil),
     do: {:error, "Configure models before sending"}
 
   defp resolve_selected_model(workspace_path, selected_model) do
-    case Handbeam.Agent.ModelConfig.resolve_model_for_workspace(workspace_path, selected_model) do
-      {:ok, provider_config, model_id} -> {:ok, provider_config, model_id}
-      {:error, reason} -> {:error, reason}
+    if is_binary(workspace_path) and workspace_path != "" do
+      case Handbeam.Agent.ModelConfig.resolve_model_for_workspace(workspace_path, selected_model) do
+        {:ok, provider_config, model_id} -> {:ok, provider_config, model_id}
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      resolve_global_model(selected_model)
+    end
+  end
+
+  defp resolve_global_model(selected_model) do
+    model_entry =
+      Enum.find(Handbeam.Agent.ModelConfig.all_global_models(), &(&1.id == selected_model))
+
+    if model_entry do
+      case Handbeam.Agent.ModelConfig.provider_config_for(
+             File.cwd!(),
+             model_entry.provider_id,
+             model_entry.model_id
+           ) do
+        {:ok, provider_config} -> {:ok, provider_config, model_entry.model_id}
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      {:error, "Model #{selected_model} is not available"}
     end
   end
 
@@ -2481,7 +2611,40 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   # Reload workspace models when switching workspaces.
   # Preserves the current selected_model only if still allowed in the new workspace.
+  defp reload_free_models(socket) do
+    available = Handbeam.Agent.ModelConfig.all_global_models()
+    settings = Handbeam.Settings.global_model_ai()
+
+    selected =
+      cond do
+        settings.default_model && Enum.any?(available, &(&1.id == settings.default_model)) ->
+          settings.default_model
+
+        socket.assigns.selected_model &&
+            Enum.any?(available, &(&1.id == socket.assigns.selected_model)) ->
+          socket.assigns.selected_model
+
+        true ->
+          available |> List.first() |> then(&if(&1, do: &1.id))
+      end
+
+    socket
+    |> assign(:available_models, available)
+    |> assign(:selected_model, selected)
+    |> assign(:effective_settings, settings)
+    |> sync_reasoning_for_model(selected)
+    |> update_status(%{model: model_display_name(selected, available)})
+  end
+
   defp reload_workspace_models(socket) do
+    if free_chat?(socket) do
+      reload_free_models(socket)
+    else
+      reload_workspace_models_for_path(socket)
+    end
+  end
+
+  defp reload_workspace_models_for_path(socket) do
     workspace_root =
       case Handbeam.WorkspaceStore.get(socket.assigns.current_workspace_id) do
         {:ok, ws} -> ws["path"]
@@ -2508,6 +2671,14 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   defp reload_workspace_counts(socket) do
+    if free_chat?(socket) do
+      assign(socket, :mcp_count, 0) |> assign(:skills_count, 0)
+    else
+      reload_workspace_counts_for_path(socket)
+    end
+  end
+
+  defp reload_workspace_counts_for_path(socket) do
     workspace_root = current_workspace_path(socket)
 
     mcp_count =
@@ -2523,7 +2694,9 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   defp load_available_skills(socket) do
-    Skills.load(socket, current_workspace_path(socket))
+    if free_chat?(socket),
+      do: assign(socket, :available_skills, []),
+      else: Skills.load(socket, current_workspace_path(socket))
   end
 
   defp sync_reasoning_for_model(socket, model_id) do
@@ -2744,6 +2917,9 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   def archived_conversations(workspaces, conversations_by_workspace),
     do: ConversationSwitching.archived_conversations(workspaces, conversations_by_workspace)
+
+  def free_conversations(conversations_by_workspace),
+    do: ConversationSwitching.free_conversations(conversations_by_workspace)
 
   def workspace_conversations(conversations_by_workspace, ws_id, workspaces),
     do:
@@ -3031,8 +3207,13 @@ defmodule HandbeamWeb.WorkspaceLive do
     do: ConversationSwitching.stream_conversations(socket, conversations_by_ws, workspaces)
 
   defp load_permission_mode_into_socket(socket) do
-    workspace_root = socket.assigns.workspace_root || Handbeam.Workspace.root()
-    permission_mode = load_permission_mode(workspace_root)
+    permission_mode =
+      if free_chat?(socket) do
+        :deny
+      else
+        load_permission_mode(socket.assigns.workspace_root || Handbeam.Workspace.root())
+      end
+
     assign(socket, :permission_mode, permission_mode)
   end
 
@@ -3063,6 +3244,14 @@ defmodule HandbeamWeb.WorkspaceLive do
   # ── Settings helpers ──
 
   defp load_effective_settings(socket) do
+    if free_chat?(socket) do
+      assign(socket, :effective_settings, Handbeam.Settings.global_model_ai())
+    else
+      load_workspace_effective_settings(socket)
+    end
+  end
+
+  defp load_workspace_effective_settings(socket) do
     workspace_path = socket.assigns.workspace_root || Handbeam.Workspace.root()
 
     if is_nil(workspace_path) or workspace_path == "" do
@@ -3084,6 +3273,14 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   defp initialize_conversation_model(socket) do
+    if free_chat?(socket) do
+      reload_free_models(socket)
+    else
+      initialize_workspace_conversation_model(socket)
+    end
+  end
+
+  defp initialize_workspace_conversation_model(socket) do
     available =
       Handbeam.Agent.ModelConfig.available_models_for_workspace(socket.assigns.workspace_root)
 

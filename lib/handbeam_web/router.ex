@@ -95,6 +95,7 @@ defmodule HandbeamWeb.Router do
     pipe_through :browser
 
     live "/", WorkspaceLive, :index
+    live "/c/:conversation_id", WorkspaceLive, :free
     live "/w/:workspace_id/c/:conversation_id", WorkspaceLive, :index
     live "/settings", SettingsLive, :index
     live "/settings/available-models", AvailableModelsLive, :index

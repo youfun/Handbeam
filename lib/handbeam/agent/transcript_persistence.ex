@@ -684,7 +684,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
 
   defp transcript_metadata(opts) do
     opts
-    |> Keyword.take([:workspace_id, :model, :source])
+    |> Keyword.take([:workspace_id, :model, :source, :chat_scope])
     |> Map.new(fn {key, value} -> {to_string(key), stringify_value(value)} end)
   end
 

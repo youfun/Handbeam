@@ -31,9 +31,9 @@ defmodule Handbeam.Agent do
           {:ok, State.t()} | {:error, term()}
   def resume_after_tool_approval(%State{} = interrupted_state, decisions, opts) do
     # Register tools (same as run)
-    working_dir = Keyword.get(opts, :working_directory, File.cwd!())
+    working_dir = Keyword.get(opts, :working_directory)
     tools = Keyword.get(opts, :tools, default_tools())
-    tools = tools ++ beam_tools_for_workspace(working_dir)
+    tools = maybe_append_beam_tools(tools, working_dir)
     Enum.each(tools, &Handbeam.Tool.Registry.register/1)
 
     if Handbeam.Host.terminal?() do
@@ -100,9 +100,9 @@ defmodule Handbeam.Agent do
   def run(prompt, opts \\ []) do
     # Register tools with the central registry.
     # Default: all built-in + memory tools.
-    working_dir = Keyword.get(opts, :working_directory, File.cwd!())
+    working_dir = Keyword.get(opts, :working_directory)
     tools = Keyword.get(opts, :tools, default_tools())
-    tools = tools ++ beam_tools_for_workspace(working_dir)
+    tools = maybe_append_beam_tools(tools, working_dir)
     Enum.each(tools, &Handbeam.Tool.Registry.register/1)
 
     if Handbeam.Host.terminal?() do
@@ -227,6 +227,21 @@ defmodule Handbeam.Agent do
   @spec default_tools() :: [module()]
   def default_tools, do: Handbeam.Tool.Registry.host_tool_modules()
 
+  @doc """
+  Tools for a workspace-independent chat.
+
+  Memory only. File, shell, search, MCP, and skill tools stay off so a chat
+  without a project root cannot fall through to the process working directory.
+  """
+  def free_chat_tools do
+    [
+      Handbeam.Tool.Memory.MemAssociate,
+      Handbeam.Tool.Memory.MemLearn,
+      Handbeam.Tool.Memory.MemRecall,
+      Handbeam.Tool.Memory.MemReinforce
+    ]
+  end
+
   # ── BEAM tools auto-detection ──
 
   @beam_tools [
@@ -236,6 +251,13 @@ defmodule Handbeam.Agent do
   ]
 
   @beam_eval_tool Handbeam.Tool.Extension.Beam.Eval
+
+  defp maybe_append_beam_tools(tools, working_dir)
+       when is_binary(working_dir) and working_dir != "" do
+    tools ++ beam_tools_for_workspace(working_dir)
+  end
+
+  defp maybe_append_beam_tools(tools, _), do: tools
 
   defp beam_tools_for_workspace(working_dir) do
     config = Handbeam.WorkspaceSettings.beam_tools_config(working_dir)

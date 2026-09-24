@@ -14,7 +14,7 @@ defmodule Handbeam.Agent.Coordinator do
   @type action :: :started | :enqueued
   @type ack :: %{action: action(), run_id: String.t() | nil, run_pid: pid() | nil}
 
-  @required_opts [:workspace_path, :model, :provider_config, :tools, :source]
+  @required_opts [:model, :provider_config, :tools, :source]
 
   @spec add_message(String.t(), String.t() | Handbeam.Agent.Message.t(), keyword()) ::
           {:ok, ack()} | {:error, term()}
@@ -156,10 +156,26 @@ defmodule Handbeam.Agent.Coordinator do
   defp validate_required_opts(opts) do
     missing = Enum.reject(@required_opts, &Keyword.has_key?(opts, &1))
 
+    missing =
+      if free_chat?(opts) or present_workspace_path?(opts) do
+        missing
+      else
+        [:workspace_path | missing]
+      end
+
     if missing == [] do
       :ok
     else
       {:error, {:missing_opts, missing}}
+    end
+  end
+
+  defp free_chat?(opts), do: Keyword.get(opts, :chat_scope) == :free
+
+  defp present_workspace_path?(opts) do
+    case Keyword.get(opts, :workspace_path) do
+      path when is_binary(path) and path != "" -> true
+      _ -> false
     end
   end
 
@@ -174,10 +190,10 @@ defmodule Handbeam.Agent.Coordinator do
   end
 
   defp validate_model_policy(opts) do
-    if explicit_provider_with_raw_model?(opts) do
-      :ok
-    else
-      validate_workspace_model_policy(opts)
+    cond do
+      explicit_provider_with_raw_model?(opts) -> :ok
+      free_chat?(opts) -> :ok
+      true -> validate_workspace_model_policy(opts)
     end
   end
 
@@ -246,10 +262,14 @@ defmodule Handbeam.Agent.Coordinator do
   end
 
   defp validate_advisor_policy(opts) do
-    {:ok, _pin} =
-      Handbeam.Agent.Advisor.validate_start(Keyword.fetch!(opts, :workspace_path), opts)
+    if free_chat?(opts) do
+      :ok
+    else
+      {:ok, _pin} =
+        Handbeam.Agent.Advisor.validate_start(Keyword.fetch!(opts, :workspace_path), opts)
 
-    :ok
+      :ok
+    end
   end
 
   defp maybe_resume_stall(conversation_id) do
@@ -277,16 +297,36 @@ defmodule Handbeam.Agent.Coordinator do
     |> Keyword.put(:conversation_id, conversation_id)
     |> ensure_run_id()
     |> put_transcript_history(conversation_id)
-    |> Keyword.put(:working_directory, Keyword.fetch!(opts, :workspace_path))
-    |> Keyword.put(:skills, true)
+    |> put_working_directory()
+    |> put_skills()
     |> put_advisor_pin()
   end
 
-  defp put_advisor_pin(opts) do
-    {:ok, pin} =
-      Handbeam.Agent.Advisor.validate_start(Keyword.fetch!(opts, :workspace_path), opts)
+  defp put_working_directory(opts) do
+    cond do
+      free_chat?(opts) ->
+        Keyword.delete(opts, :working_directory)
 
-    Keyword.put(opts, :advisor, pin)
+      true ->
+        Keyword.put(opts, :working_directory, Keyword.fetch!(opts, :workspace_path))
+    end
+  end
+
+  defp put_skills(opts) do
+    if free_chat?(opts),
+      do: Keyword.put(opts, :skills, false),
+      else: Keyword.put(opts, :skills, true)
+  end
+
+  defp put_advisor_pin(opts) do
+    if free_chat?(opts) do
+      Keyword.put(opts, :advisor, Handbeam.Agent.Advisor.unavailable())
+    else
+      {:ok, pin} =
+        Handbeam.Agent.Advisor.validate_start(Keyword.fetch!(opts, :workspace_path), opts)
+
+      Keyword.put(opts, :advisor, pin)
+    end
   end
 
   defp present_task_instructions?(opts) do
@@ -359,9 +399,13 @@ defmodule Handbeam.Agent.Coordinator do
       transcript_history_messages(
         conversation_id,
         Keyword.get(opts, :run_id),
-        opts[:workspace_path]
+        history_workspace_path(opts)
       )
     end)
+  end
+
+  defp history_workspace_path(opts) do
+    if free_chat?(opts), do: nil, else: opts[:workspace_path]
   end
 
   defp transcript_history_messages(conversation_id, current_run_id, workspace_path) do

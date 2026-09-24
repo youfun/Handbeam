@@ -127,7 +127,7 @@ defmodule Handbeam.ConversationStore do
     include_archived? = Keyword.get(opts, :include_archived?, false)
 
     list(opts)
-    |> Enum.filter(&(&1["workspace_id"] == workspace_id))
+    |> Enum.filter(&(&1["workspace_id"] == workspace_id and not free?(&1)))
     |> maybe_filter_archived(include_archived?)
     |> Enum.sort_by(&(&1["updated_at"] || ""), :desc)
   end
@@ -138,17 +138,37 @@ defmodule Handbeam.ConversationStore do
       {:ok, index} ->
         index
         |> Map.get("conversations", [])
-        |> Enum.filter(&(&1["workspace_id"] == workspace_id))
+        |> Enum.filter(&(&1["workspace_id"] == workspace_id and not free?(&1)))
         |> Enum.flat_map(fn entry ->
           case get_metadata(entry["id"]) do
-            {:ok, %{"workspace_id" => ^workspace_id} = meta} -> [meta]
-            _ -> []
+            {:ok, %{"workspace_id" => ^workspace_id} = meta} ->
+              if free?(meta), do: [], else: [meta]
+
+            _ ->
+              []
           end
         end)
 
       _ ->
         []
     end
+  end
+
+  @doc """
+  List workspace-independent chats.
+
+  Options:
+    - `:include_archived?` (default false)
+    - `:include_timeline?` (default true) — passed through to `list/1`
+  """
+  @spec list_free(keyword()) :: [conversation()]
+  def list_free(opts \\ []) do
+    include_archived? = Keyword.get(opts, :include_archived?, false)
+
+    list(opts)
+    |> Enum.filter(&free?/1)
+    |> maybe_filter_archived(include_archived?)
+    |> Enum.sort_by(&(&1["updated_at"] || ""), :desc)
   end
 
   @doc "Read only persisted conversation metadata. IDs must be path-safe."
@@ -211,13 +231,19 @@ defmodule Handbeam.ConversationStore do
   @spec exists?(String.t()) :: boolean()
   def exists?(id) when is_binary(id), do: match?({:ok, _}, read_meta(id))
 
-  @doc "Create a new conversation for a workspace."
+  @doc """
+  Create a new conversation for a workspace.
+
+  Free chats are created with `create_free/1` and persist `scope: "free"`
+  with no `workspace_id`. Existing records without `scope` stay workspace chats.
+  """
   @spec create(String.t(), keyword()) :: {:ok, conversation()} | {:error, term()}
-  def create(workspace_id, opts \\ []) do
+  def create(workspace_id, opts \\ []) when is_binary(workspace_id) do
     now = now_iso8601()
 
     conversation = %{
       "id" => Keyword.get(opts, :id, Ecto.UUID.generate()),
+      "scope" => "workspace",
       "workspace_id" => workspace_id,
       "visibility" => Keyword.get(opts, :visibility, "user"),
       "parent_conversation_id" => Keyword.get(opts, :parent_conversation_id),
@@ -239,6 +265,57 @@ defmodule Handbeam.ConversationStore do
 
     upsert(conversation)
   end
+
+  @doc """
+  Create a workspace-independent chat.
+
+  The record has `scope: "free"` and `workspace_id: nil`. It is omitted from
+  `list_for_workspace/2` and `list_metadata/1`.
+  """
+  @spec create_free(keyword()) :: {:ok, conversation()} | {:error, term()}
+  def create_free(opts \\ []) do
+    now = now_iso8601()
+
+    conversation = %{
+      "id" => Keyword.get(opts, :id, Ecto.UUID.generate()),
+      "scope" => "free",
+      "workspace_id" => nil,
+      "visibility" => Keyword.get(opts, :visibility, "user"),
+      "parent_conversation_id" => Keyword.get(opts, :parent_conversation_id),
+      "parent_run_id" => Keyword.get(opts, :parent_run_id),
+      "parent_tool_call_id" => Keyword.get(opts, :parent_tool_call_id),
+      "title" => Keyword.get(opts, :title, "New chat"),
+      "title_source" => Keyword.get(opts, :title_source, "manual"),
+      "timeline" => Keyword.get(opts, :timeline, []),
+      "editor_files" => Keyword.get(opts, :editor_files, []),
+      "active_file" => Keyword.get(opts, :active_file),
+      "file_preview_error" => Keyword.get(opts, :file_preview_error),
+      "selected_model" => Keyword.get(opts, :selected_model),
+      "collaboration" => Keyword.get(opts, :collaboration),
+      "selected_reasoning_level" => Keyword.get(opts, :selected_reasoning_level),
+      "archived_at" => Keyword.get(opts, :archived_at),
+      "created_at" => now,
+      "updated_at" => now
+    }
+
+    upsert(conversation)
+  end
+
+  @doc "True when the conversation is a workspace-independent chat."
+  @spec free?(map() | String.t()) :: boolean()
+  def free?(%{"scope" => "free"}), do: true
+  def free?(%{"scope" => :free}), do: true
+  def free?(%{scope: "free"}), do: true
+  def free?(%{scope: :free}), do: true
+
+  def free?(id) when is_binary(id) do
+    case read_meta(id) do
+      {:ok, meta} -> free?(meta)
+      _ -> false
+    end
+  end
+
+  def free?(_), do: false
 
   @doc """
   Archive a conversation by id.
@@ -750,6 +827,7 @@ defmodule Handbeam.ConversationStore do
       "parent_conversation_id" => conversation["parent_conversation_id"],
       "parent_run_id" => conversation["parent_run_id"],
       "parent_tool_call_id" => conversation["parent_tool_call_id"],
+      "scope" => conversation["scope"] || inferred_scope(conversation),
       "workspace_id" => conversation["workspace_id"],
       "title" => conversation["title"],
       "title_source" => conversation["title_source"],
@@ -757,6 +835,18 @@ defmodule Handbeam.ConversationStore do
       "created_at" => conversation["created_at"],
       "updated_at" => conversation["updated_at"]
     }
+  end
+
+  defp inferred_scope(%{"scope" => "free"}), do: "free"
+  defp inferred_scope(%{"workspace_id" => id}) when is_binary(id) and id != "", do: "workspace"
+  defp inferred_scope(_), do: "workspace"
+
+  defp normalize_scope(conversation) do
+    case string_value(conversation, "scope") do
+      "free" -> "free"
+      "workspace" -> "workspace"
+      _ -> inferred_scope(conversation)
+    end
   end
 
   # ── Item file helpers ───────────────────────────────────────────────────
@@ -1083,6 +1173,7 @@ defmodule Handbeam.ConversationStore do
       "parent_run_id" => conversation["parent_run_id"],
       "parent_tool_call_id" => conversation["parent_tool_call_id"],
       "delegated_usage" => conversation["delegated_usage"] || %{},
+      "scope" => conversation["scope"] || inferred_scope(conversation),
       "workspace_id" => conversation["workspace_id"],
       "title" => conversation["title"],
       "title_source" => conversation["title_source"],
@@ -1193,6 +1284,7 @@ defmodule Handbeam.ConversationStore do
       "parent_run_id" => string_value(conversation, "parent_run_id"),
       "parent_tool_call_id" => string_value(conversation, "parent_tool_call_id"),
       "delegated_usage" => value(conversation, "delegated_usage") || %{},
+      "scope" => normalize_scope(conversation),
       "workspace_id" => string_value(conversation, "workspace_id"),
       "title" => string_value(conversation, "title") || "New chat",
       "title_source" => string_value(conversation, "title_source") || "manual",

@@ -34,6 +34,36 @@ defmodule Handbeam.Attachments.Access do
 
   def resolve_upload(_, _, _), do: {:error, :malformed_ref}
 
+  @doc "Resolve an upload stored on a free chat, not under a workspace."
+  @spec resolve_free_upload(String.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
+  def resolve_free_upload(conversation_id, relative)
+      when is_binary(conversation_id) and is_binary(relative) do
+    upload_dir = Uploads.free_upload_dir(conversation_id)
+    basename = Path.basename(relative)
+
+    with :ok <- conversation_id_ok(conversation_id),
+         true <-
+           basename != "" and basename == Path.basename(relative) and basename != "." and
+             not String.contains?(relative, ["..", "/"]),
+         expected <- Path.join(upload_dir, basename),
+         :ok <- PathValidator.validate_within_workspace(expected, upload_dir),
+         {:ok, %File.Stat{type: :regular, size: size}} <- File.lstat(expected),
+         :ok <-
+           PathValidator.validate_within_workspace(
+             PathValidator.resolve_symlink(expected),
+             upload_dir
+           ),
+         :ok <- within_size(size, :any) do
+      {:ok, Path.expand(expected)}
+    else
+      false -> {:error, :malformed_ref}
+      {:ok, %File.Stat{type: type}} -> {:error, {:not_regular, type}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  def resolve_free_upload(_, _), do: {:error, :malformed_ref}
+
   @spec within_root(String.t(), String.t() | [String.t()]) :: :ok | {:error, term()}
   def within_root(path, roots) when is_list(roots) do
     Enum.find_value(roots, {:error, :outside_trusted_root}, fn root ->

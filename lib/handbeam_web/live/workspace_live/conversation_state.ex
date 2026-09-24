@@ -86,7 +86,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
 
   def sync_conv_to(socket) do
     conv_id = socket.assigns.current_conversation_id
-    ws_id = socket.assigns.current_workspace_id
+    ws_id = conversation_bucket(socket)
     convs = socket.assigns.conversations_by_workspace
     current_convs = Map.get(convs, ws_id, [])
 
@@ -109,7 +109,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
 
   def update_conv(socket, conv) do
     conv_id = socket.assigns.current_conversation_id
-    ws_id = socket.assigns.current_workspace_id
+    ws_id = conversation_bucket(socket)
     convs = socket.assigns.conversations_by_workspace
     current_convs = Map.get(convs, ws_id, [])
 
@@ -155,7 +155,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
 
   def current_conv_map(socket) do
     conv_id = socket.assigns.current_conversation_id
-    ws_id = socket.assigns.current_workspace_id
+    ws_id = conversation_bucket(socket)
     convs = Map.get(socket.assigns.conversations_by_workspace, ws_id, [])
 
     Enum.find(convs, &(conversation_id(&1) == conv_id)) ||
@@ -231,7 +231,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
 
   def replace_current_conversation(socket, conv) do
     conv_id = conversation_id(conv)
-    ws_id = conv_value(conv, "workspace_id", socket.assigns.current_workspace_id)
+    ws_id = bucket_for(conv, socket)
     convs = socket.assigns.conversations_by_workspace
     current_convs = Map.get(convs, ws_id, [])
 
@@ -277,6 +277,20 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
   end
 
   def conversation_id(conversation), do: conv_value(conversation, "id", nil)
+
+  def conversation_bucket(socket) do
+    if Map.get(socket.assigns, :chat_scope) == :free,
+      do: ConversationSwitching.free_key(),
+      else: socket.assigns.current_workspace_id
+  end
+
+  def bucket_for(conv, socket) do
+    cond do
+      Handbeam.ConversationStore.free?(conv) -> ConversationSwitching.free_key()
+      is_binary(conv_value(conv, "workspace_id", nil)) -> conv_value(conv, "workspace_id", nil)
+      true -> conversation_bucket(socket)
+    end
+  end
 
   def build_memory_conversation(workspace_id, num) do
     now = DateTime.utc_now()
@@ -376,8 +390,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
     end
   end
 
-  defp load_or_build_current_conversation(conv_id, ws_id)
-       when is_binary(conv_id) and is_binary(ws_id) do
+  defp load_or_build_current_conversation(conv_id, ws_id) when is_binary(conv_id) do
     case Handbeam.ConversationStore.get(conv_id, include_timeline?: false) do
       {:ok, conversation} ->
         conversation

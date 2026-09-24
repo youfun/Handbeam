@@ -11,7 +11,7 @@ defmodule Handbeam.Threads do
 
   def identity(%{conversation_id: id, workspace_id: workspace}) when is_binary(workspace) do
     with {:ok, meta} <- ConversationStore.get_metadata(id),
-         true <- meta["workspace_id"] == workspace and visible?(meta) do
+         true <- meta["workspace_id"] == workspace and visible?(meta) and not free_chat?(meta) do
       {:ok, meta}
     else
       _ -> {:error, :unauthorized}
@@ -23,7 +23,9 @@ defmodule Handbeam.Threads do
   def authorize(context, id) do
     with {:ok, source} <- identity(context),
          {:ok, target} <- ConversationStore.get_metadata(id),
-         true <- target["workspace_id"] == source["workspace_id"] and visible?(target) do
+         true <-
+           target["workspace_id"] == source["workspace_id"] and visible?(target) and
+             not free_chat?(target) do
       {:ok, target}
     else
       _ -> {:error, :not_accessible}
@@ -31,6 +33,8 @@ defmodule Handbeam.Threads do
   end
 
   def visible?(meta), do: meta["visibility"] not in ["internal", "task"]
+
+  defp free_chat?(meta), do: meta["scope"] == "free"
 
   def find(input, context) do
     with {:ok, source} <- identity(context),

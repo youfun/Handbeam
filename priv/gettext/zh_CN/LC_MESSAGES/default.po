@@ -265,6 +265,12 @@ msgstr "添加项目"
 msgid "在此工作区新建对话"
 msgstr "在此工作区新建对话"
 
+msgid "对话"
+msgstr "对话"
+
+msgid "新建自由对话"
+msgstr "新建自由对话"
+
 #: lib/sigil_web/live/workspace_live.html.heex:175
 #, elixir-autogen
 msgid "回收站"

@@ -161,6 +161,28 @@ defmodule HandbeamWeb.Feature.WorkspaceFeatureTest do
     end
   end
 
+  describe "free chat" do
+    test "new free chat is not bound to a workspace and hides the file panel", %{conn: conn} do
+      session =
+        conn
+        |> visit("/")
+        |> assert_has("#free-chats", "Chats")
+        |> assert_has("#workspace-panel")
+        |> click_button("#new-free-conversation", "")
+
+      session
+      |> assert_has("#no-messages", "No messages yet")
+      |> assert_has("#ai-input")
+      |> refute_has("#workspace-panel")
+      |> assert_path("/c/*")
+
+      "/c/" <> conv_id = session.current_path
+      {:ok, meta} = Handbeam.ConversationStore.get_metadata(conv_id)
+      assert meta["scope"] == "free"
+      assert meta["workspace_id"] in [nil, ""]
+    end
+  end
+
   describe "archive conversation" do
     setup do
       isolate_conversation_home!()

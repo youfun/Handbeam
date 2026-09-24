@@ -136,9 +136,11 @@ defmodule Handbeam.Agent.Runner do
       %{run_id: state.opts[:run_id], active?: true}
     end)
 
-    case Handbeam.Jobs.open_run(job_context(state), self()) do
-      :ok -> :ok
-      {:error, reason} -> Logger.warning("[Runner] job scope unavailable: #{reason}")
+    if job_context_present?(state) do
+      case Handbeam.Jobs.open_run(job_context(state), self()) do
+        :ok -> :ok
+        {:error, reason} -> Logger.warning("[Runner] job scope unavailable: #{reason}")
+      end
     end
 
     :ok =
@@ -374,8 +376,13 @@ defmodule Handbeam.Agent.Runner do
       Map.put(metadata || %{}, :active?, false)
     end)
 
-    Handbeam.Jobs.close_run(job_context(state), :completed)
+    if job_context_present?(state), do: Handbeam.Jobs.close_run(job_context(state), :completed)
     Handbeam.Agent.Provider.Cursor.Session.stop_for_conversation(state.conversation_id)
+  end
+
+  defp job_context_present?(state) do
+    dir = state.opts[:working_directory] || state.opts[:workspace_path]
+    is_binary(dir) and dir != ""
   end
 
   defp job_context(state) do
