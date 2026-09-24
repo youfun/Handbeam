@@ -80,8 +80,7 @@ defmodule Handbeam.Tool.Builtin.Bash do
     working_directory = context[:working_directory]
 
     with :ok <- validate_command(command),
-         {:ok, cwd} <- resolve_cwd(Map.get(input, "cwd"), working_directory),
-         :ok <- validate_command_paths(command, cwd) do
+         {:ok, cwd} <- resolve_cwd(Map.get(input, "cwd"), working_directory) do
       unsandboxed? = Map.get(input, "unsandboxed") == true
 
       case Map.get(input, "job", false) do
@@ -121,42 +120,6 @@ defmodule Handbeam.Tool.Builtin.Bash do
   end
 
   defp validate_command(_), do: :ok
-
-  defp validate_command_paths(cmd, cwd) do
-    paths = Handbeam.Security.ShellPathGuard.extract_paths(cmd)
-
-    if paths == [] or is_nil(cwd) do
-      :ok
-    else
-      violations =
-        Enum.reject(paths, fn path ->
-          safe_external_shell_path?(path) or workspace_path?(path, cwd)
-        end)
-
-      if violations == [] do
-        :ok
-      else
-        {:error,
-         "Path traversal blocked in command: #{Enum.map_join(violations, ", ", &inspect/1)} outside workspace"}
-      end
-    end
-  end
-
-  defp safe_external_shell_path?("/dev/null"), do: true
-  defp safe_external_shell_path?(_path), do: false
-
-  defp workspace_path?(path, cwd) do
-    expanded =
-      if Path.type(path) == :absolute do
-        Path.expand(path)
-      else
-        Path.expand(Path.join(cwd, path))
-      end
-
-    resolved = Handbeam.Security.PathValidator.resolve_symlink(expanded)
-    resolved_cwd = Handbeam.Security.PathValidator.resolve_symlink(Path.expand(cwd))
-    String.starts_with?(resolved, resolved_cwd <> "/") or resolved == resolved_cwd
-  end
 
   defp resolve_cwd(nil, working_directory), do: {:ok, working_directory}
 
