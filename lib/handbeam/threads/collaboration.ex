@@ -11,20 +11,6 @@ defmodule Handbeam.Threads.Collaboration do
 
   @read_tools ~w(read file_search grep code_search find_thread read_thread get_thread_status reply_to_parent_thread send_thread_message)
 
-  # A request budget, not a promise about a provider's currency pricing.
-  def bound_opts(opts) do
-    opts
-    |> Keyword.put(:max_turns, 3)
-    |> Keyword.put(:max_tokens, 8192)
-    |> Keyword.put(:compaction, %{
-      reserve_tokens: 2048,
-      keep_recent_tokens: 4096,
-      fallback: :truncate
-    })
-    |> Keyword.put(:timeout_ms, 120_000)
-    |> Keyword.update(:provider_config, %{max_tokens: 2048}, &Map.put(&1, :max_tokens, 2048))
-  end
-
   def completed(id, result, opts) do
     status = if is_map(result), do: Map.get(result, :status, :error), else: :error
     ConversationStore.update_meta(id, last_run_result: to_string(status))
@@ -125,12 +111,8 @@ defmodule Handbeam.Threads.Collaboration do
       locked(source, fn ->
         id = "delegated-" <> digest({source["id"], key})
 
-        children =
-          ConversationStore.list_metadata(source["workspace_id"])
-          |> Enum.filter(&(get_in(&1, ["collaboration", "parent"]) == source["id"]))
-
         with {:ok, target} <-
-               child(source, id, title, children, "handoff-" <> digest({source["id"], key})) do
+               child(source, id, title, "handoff-" <> digest({source["id"], key})) do
           deliver(input, context, source, target, false)
         end
       end)
@@ -140,13 +122,10 @@ defmodule Handbeam.Threads.Collaboration do
     end
   end
 
-  defp child(source, id, title, children, handoff_id) do
+  defp child(source, id, title, handoff_id) do
     case ConversationStore.get_metadata(id) do
       {:ok, target} ->
         {:ok, target}
-
-      _ when length(children) >= 3 ->
-        {:error, :child_limit}
 
       _ ->
         with {:ok, target} <-
@@ -157,8 +136,7 @@ defmodule Handbeam.Threads.Collaboration do
                    "parent" => source["id"],
                    "read_only" => true,
                    "handoff_id" => handoff_id
-                 },
-                 allow_thread_wakeup: true
+                 }
                ) do
           {:ok, target}
         end
@@ -247,54 +225,38 @@ defmodule Handbeam.Threads.Collaboration do
          source,
          target
        ) do
-    root = get_in(source, ["collaboration", "parent"]) || source["id"]
+    entry = %{
+      "id" => id,
+      "content_type" => "thread_handoff",
+      "role" => "system",
+      "content" => message,
+      "target" => target["id"],
+      "fingerprint" => fingerprint,
+      "delivery_status" => "delivery_unknown",
+      "request_id" => id,
+      "handoff_id" => handoff_id,
+      "source_thread" => source["id"],
+      "source_run" => context[:run_id],
+      "important" => important
+    }
 
-    peers =
-      ConversationStore.list_metadata(source["workspace_id"])
-      |> Enum.filter(&(&1["id"] == root or get_in(&1, ["collaboration", "parent"]) == root))
+    with {:ok, _entry} <- ConversationTranscriptStore.append(source["id"], entry) do
+      result =
+        with {:ok, ack} <-
+               dispatch(id, handoff_id, message, mode, important, context, source, target),
+             {:ok, updated} <-
+               ConversationTranscriptStore.update(source["id"], id, %{
+                 "delivery_status" => Atom.to_string(ack.action),
+                 "run_id" => ack.run_id
+               }) do
+          {:ok, receipt(updated)}
+        else
+          _ -> {:ok, receipt(entry)}
+        end
 
-    count =
-      Enum.reduce(peers, 0, fn peer, count ->
-        {:ok, entries} = ConversationTranscriptStore.list(peer["id"])
-        count + Enum.count(entries, &(&1["content_type"] == "thread_handoff"))
-      end)
-
-    if count >= 8 do
-      {:error, :handoff_budget_exhausted}
-    else
-      entry = %{
-        "id" => id,
-        "content_type" => "thread_handoff",
-        "role" => "system",
-        "content" => message,
-        "target" => target["id"],
-        "fingerprint" => fingerprint,
-        "delivery_status" => "delivery_unknown",
-        "request_id" => id,
-        "handoff_id" => handoff_id,
-        "source_thread" => source["id"],
-        "source_run" => context[:run_id],
-        "important" => important
-      }
-
-      with {:ok, _entry} <- ConversationTranscriptStore.append(source["id"], entry) do
-        result =
-          with {:ok, ack} <-
-                 dispatch(id, handoff_id, message, mode, important, context, source, target),
-               {:ok, updated} <-
-                 ConversationTranscriptStore.update(source["id"], id, %{
-                   "delivery_status" => Atom.to_string(ack.action),
-                   "run_id" => ack.run_id
-                 }) do
-            {:ok, receipt(updated)}
-          else
-            _ -> {:ok, receipt(entry)}
-          end
-
-        notify(source["id"])
-        notify(target["id"])
-        result
-      end
+      notify(source["id"])
+      notify(target["id"])
+      result
     end
   end
 
@@ -324,7 +286,6 @@ defmodule Handbeam.Threads.Collaboration do
           deliver_as: if(mode == "follow_up", do: :follow_up, else: :steer),
           tools: Handbeam.Agent.default_tools()
         )
-        |> bound_opts()
 
       Handbeam.Agent.Coordinator.add_message(
         target["id"],

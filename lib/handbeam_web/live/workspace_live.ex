@@ -78,10 +78,6 @@ defmodule HandbeamWeb.WorkspaceLive do
       |> assign(:workspaces, workspaces)
       |> assign(:current_workspace_id, current_ws_id)
       |> assign(:current_conversation_id, current_conv_id)
-      |> assign(
-        :thread_collaboration_enabled,
-        HandbeamWeb.ThreadHandoff.enabled?(current_conv_id)
-      )
       |> assign(:workspace_root, workspace_root)
       |> assign(:workspace_label, workspace_label)
       |> assign(:conversations_by_workspace, conversations_by_ws)

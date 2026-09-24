@@ -62,7 +62,6 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
     socket =
       socket
       |> assign(:timeline, timeline)
-      |> assign(:thread_collaboration_enabled, HandbeamWeb.ThreadHandoff.enabled?(conv_id))
       |> assign(:history_before, history_before)
       |> assign(:history_has_more?, history_has_more?)
       |> maybe_reset_timeline_stream(timeline, running_for_conversation?)

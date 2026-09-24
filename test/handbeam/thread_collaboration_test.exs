@@ -37,8 +37,8 @@ defmodule Handbeam.ThreadCollaborationTest do
     )
 
     System.put_env("HANDBEAM_MODELS_FILE", models)
-    {:ok, source} = ConversationStore.create("ws", allow_thread_wakeup: true)
-    {:ok, target} = ConversationStore.create("ws", allow_thread_wakeup: true)
+    {:ok, source} = ConversationStore.create("ws")
+    {:ok, target} = ConversationStore.create("ws")
 
     opts = [
       workspace_path: home,
@@ -117,7 +117,7 @@ defmodule Handbeam.ThreadCollaborationTest do
     assert Enum.find(entries, &(&1["id"] == first.message_id))["consumption"] == "consumed"
   end
 
-  test "new delegated runtime is bounded and automatically reports final result once", c do
+  test "new delegated runtime is read-only, unbounded and reports final result once", c do
     {:ok, receipt} =
       Collaboration.create(
         %{"title" => "Audit", "message" => "Read only", "request_id" => "audit"},
@@ -126,10 +126,10 @@ defmodule Handbeam.ThreadCollaborationTest do
 
     assert receipt.delivery == "started"
     assert_receive {:held, provider, config}, 2000
-    assert config.max_tokens == 2048
+    refute Map.has_key?(config, :max_tokens)
     {:ok, status} = Handbeam.Agent.Runner.status(receipt.thread)
     state = :sys.get_state(status.run_pid)
-    assert state.opts[:max_turns] == 3
+    refute state.opts[:max_turns] == 3
     assert state.opts[:delegated_read_only]
 
     assert Handbeam.Agent.Config.from_opts(state.opts).context.thread_handoff_id ==

@@ -86,13 +86,6 @@ defmodule HandbeamWeb.ThreadHandoff do
     """
   end
 
-  def enabled?(id) do
-    case Handbeam.ConversationStore.get_metadata(id) do
-      {:ok, meta} -> meta["allow_thread_wakeup"] == true
-      _ -> false
-    end
-  end
-
   defp body(message) do
     text = message["content"] || ""
 

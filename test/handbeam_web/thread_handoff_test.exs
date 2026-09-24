@@ -101,7 +101,6 @@ defmodule HandbeamWeb.ThreadHandoffTest do
       end
 
     :ok = ConversationTranscriptStore.replace_all(c.parent, history ++ entries)
-    {:ok, _} = ConversationStore.update_meta(c.parent, allow_thread_wakeup: true)
     {:ok, view, _} = live(c.conn, "/w/#{c.ws}/c/#{c.parent}")
 
     refute has_element?(view, "button[phx-click='toggle_thread_collaboration']")

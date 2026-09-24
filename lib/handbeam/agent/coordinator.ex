@@ -266,9 +266,7 @@ defmodule Handbeam.Agent.Coordinator do
     opts =
       case Handbeam.ConversationStore.get_metadata(conversation_id) do
         {:ok, %{"collaboration" => %{"read_only" => true}}} ->
-          opts
-          |> Handbeam.Threads.Collaboration.bound_opts()
-          |> Keyword.put(:delegated_read_only, true)
+          Keyword.put(opts, :delegated_read_only, true)
 
         _ ->
           opts
