@@ -50,7 +50,7 @@ defmodule Handbeam.E2E.SubagentTest do
     sid = "subagent-e2e-#{System.unique_integer([:positive])}"
     {:ok, _} = ConversationStore.create("default", id: sid)
     :ok = Session.subscribe(sid)
-    %{sid: sid, workspace: workspace, old_home: old_home}
+    %{sid: sid, workspace: workspace, home: home, old_home: old_home}
   end
 
   defp start(sid, workspace, fun) do
@@ -348,6 +348,7 @@ defmodule Handbeam.E2E.SubagentTest do
   test "a write subagent works in a worktree and its diff lands only on apply", %{
     sid: sid,
     workspace: workspace,
+    home: home,
     old_home: old_home
   } do
     git = fn args ->
@@ -359,9 +360,9 @@ defmodule Handbeam.E2E.SubagentTest do
     git.(["add", "README.md"])
     git.(["commit", "-q", "-m", "base"])
 
-    File.mkdir_p!(Path.join(workspace, ".handbeam/agents"))
+    File.mkdir_p!(Path.join(home, ".handbeam/agents"))
 
-    File.write!(Path.join(workspace, ".handbeam/agents/writer.md"), """
+    File.write!(Path.join(home, ".handbeam/agents/writer.md"), """
     ---
     name: writer
     description: writes files

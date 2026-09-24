@@ -5,8 +5,9 @@ defmodule Handbeam.Agent.Subagent.ProfileRegistry do
 
   Files are re-read on every lookup; they are small and this keeps edits live
   without a watcher. Workspace profiles are untrusted repository content: an
-  override of a builtin name may change its prompt and narrow its tools, but
-  it keeps the builtin's tool ceiling, mode, and isolation.
+  override may change its prompt and narrow an existing trusted profile. New
+  workspace profiles use the read-only researcher profile as their permission
+  ceiling. User profiles under `~/.handbeam` are trusted configuration.
   """
 
   require Logger
@@ -64,22 +65,36 @@ defmodule Handbeam.Agent.Subagent.ProfileRegistry do
 
     sources
     |> List.flatten()
-    |> Enum.reduce(%{}, fn profile, acc ->
-      Map.put(acc, profile.name, cap_builtin_override(profile, builtin[profile.name]))
+    |> Enum.reduce({%{}, builtin}, fn profile, {profiles, trusted} ->
+      merged = cap_override(profile, trusted[profile.name])
+
+      trusted =
+        if profile.source == :workspace, do: trusted, else: Map.put(trusted, profile.name, merged)
+
+      {Map.put(profiles, profile.name, merged), trusted}
     end)
+    |> elem(0)
     |> Map.values()
     |> Enum.sort_by(& &1.name)
   end
 
-  defp cap_builtin_override(profile, nil), do: profile
-  defp cap_builtin_override(%Profile{source: :builtin} = profile, _builtin), do: profile
+  defp cap_override(%Profile{source: :builtin} = profile, _ceiling), do: profile
+  defp cap_override(%Profile{source: :user} = profile, nil), do: profile
 
-  defp cap_builtin_override(profile, builtin) do
+  defp cap_override(%Profile{source: :workspace} = profile, ceiling) do
+    profile
+    |> cap_to(ceiling || Profile.researcher())
+    |> cap_to(Profile.researcher())
+  end
+
+  defp cap_override(profile, ceiling), do: cap_to(profile, ceiling)
+
+  defp cap_to(profile, ceiling) do
     %{
       profile
-      | tools: Profile.intersect_tools(profile, builtin.tools),
-        mode: builtin.mode,
-        isolation: builtin.isolation
+      | tools: Profile.intersect_tools(profile, ceiling.tools),
+        mode: ceiling.mode,
+        isolation: ceiling.isolation
     }
   end
 

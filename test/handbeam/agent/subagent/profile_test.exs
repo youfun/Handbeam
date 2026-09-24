@@ -153,29 +153,84 @@ defmodule Handbeam.Agent.Subagent.ProfileTest do
     assert merged.isolation == :shared
   end
 
-  test "a new workspace profile is loaded and the parent ceiling still narrows it" do
+  test "a new workspace profile cannot grant itself write or shell access" do
     root = Path.join(System.tmp_dir!(), "profiles-#{System.unique_integer([:positive])}")
+    home = Path.join(root, "home")
     File.mkdir_p!(Path.join(root, ".handbeam/agents"))
     on_exit(fn -> File.rm_rf!(root) end)
 
     File.write!(
       Path.join(root, ".handbeam/agents/test-runner.md"),
-      md("name: test-runner\ndescription: runs tests\ntools: [read, bash, write]")
+      md(
+        "name: test-runner\ndescription: runs tests\ntools: [read, bash, write, edit]\nmode: write\nisolation: worktree"
+      )
     )
 
     File.write!(Path.join(root, ".handbeam/agents/broken.md"), md("name: Broken\ndescription: x"))
 
     alias Handbeam.Agent.Subagent.ProfileRegistry
 
-    names = root |> ProfileRegistry.list(home: root) |> Enum.map(& &1.name)
+    names = root |> ProfileRegistry.list(home: home) |> Enum.map(& &1.name)
     assert names == ["advisor", "researcher", "test-runner"]
 
     runner =
       root
-      |> ProfileRegistry.available(["read", "bash"], home: root, shell?: true)
+      |> ProfileRegistry.available(["read", "bash", "write", "edit"],
+        home: home,
+        shell?: true
+      )
       |> Enum.find(&(&1.name == "test-runner"))
 
-    assert runner.tools == ["read", "bash"]
+    assert runner.tools == ["read"]
+    assert runner.mode == :read_only
+    assert runner.isolation == :shared
+  end
+
+  test "a trusted user profile may define a write-mode agent" do
+    {:ok, writer, _} =
+      Profile.parse(
+        md(
+          "name: writer\ndescription: writes\ntools: [read, bash, write, edit]\nmode: write\nisolation: worktree"
+        ),
+        source: :user
+      )
+
+    merged = Handbeam.Agent.Subagent.ProfileRegistry.merge([[Profile.builtin()], [writer]])
+    writer = Enum.find(merged, &(&1.name == "writer"))
+
+    assert writer.tools == ["read", "bash", "write", "edit"]
+    assert writer.mode == :write
+    assert writer.isolation == :worktree
+  end
+
+  test "a workspace override cannot inherit write access from a trusted user profile" do
+    {:ok, user_writer, _} =
+      Profile.parse(
+        md(
+          "name: writer\ndescription: trusted writer\ntools: [read, bash, write, edit]\nmode: write\nisolation: worktree"
+        ),
+        source: :user
+      )
+
+    {:ok, workspace_writer, _} =
+      Profile.parse(
+        md(
+          "name: writer\ndescription: repository override\ntools: [read, bash, write, edit]\nmode: write\nisolation: worktree"
+        ),
+        source: :workspace
+      )
+
+    merged =
+      Handbeam.Agent.Subagent.ProfileRegistry.merge([
+        [Profile.builtin()],
+        [user_writer],
+        [workspace_writer]
+      ])
+
+    writer = Enum.find(merged, &(&1.name == "writer"))
+    assert writer.tools == ["read"]
+    assert writer.mode == :read_only
+    assert writer.isolation == :shared
   end
 
   test "host filtering drops bash without a shell and hides worktree profiles" do
