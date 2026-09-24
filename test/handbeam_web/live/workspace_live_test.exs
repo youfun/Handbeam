@@ -84,6 +84,37 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
   end
 
   # ── Helper: build an AgentEvent for tests ──
+  defp send_recorded_edit(view, tool_use_id, file_path, change) do
+    send(
+      view.pid,
+      {:agent_event,
+       agent_event(:tool_start, %{
+         tool_use_id: tool_use_id,
+         tool: "edit",
+         input: %{file_path: file_path}
+       })}
+    )
+
+    send(
+      view.pid,
+      {:agent_event,
+       agent_event(
+         :tool_end,
+         %{
+           tool_use_id: tool_use_id,
+           tool: "edit",
+           duration_ms: 42,
+           details: %{
+             file_path: file_path,
+             diff_lines: change.diff_lines,
+             change: change
+           }
+         },
+         2
+       )}
+    )
+  end
+
   defp agent_event(kind, payload, seq \\ 1) do
     agent_event(kind, payload, seq, "s:1")
   end
@@ -2704,6 +2735,50 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         assert File.read!(file_path) == before
         assert rendered =~ "Reverted file to the recorded before state"
         assert rendered =~ "reverted"
+      after
+        File.rm(file_path)
+      end
+    end
+
+    test "changes panel revert restores the session baseline, not the latest call", %{conn: conn} do
+      ws = Handbeam.Workspace.ensure_root!()
+      file_path = Path.join(ws, "revert_net_test.ex")
+      first = "value = 1\n"
+      middle = "value = 2\n"
+      latest = "value = 3\n"
+      File.write!(file_path, latest)
+
+      first_change = Handbeam.ChangeSnapshot.build_edit_snapshot(file_path, first, middle)
+      second_change = Handbeam.ChangeSnapshot.build_edit_snapshot(file_path, middle, latest)
+
+      {:ok, view, _html} = live(conn, "/")
+
+      try do
+        send_recorded_edit(view, "tu_net_1", file_path, first_change)
+        send_recorded_edit(view, "tu_net_2", file_path, second_change)
+
+        view
+        |> element("button[phx-click='select_right_panel_view'][phx-value-view='changes']")
+        |> render_click()
+
+        rendered = render(view)
+        assert rendered =~ "id=\"changes-file-net-"
+        refute rendered =~ "id=\"changes-file-tool-tu_net_2\""
+
+        view
+        |> element("#workspace-changes [id^='changes-file-net-'][id$='-toggle']")
+        |> render_click()
+
+        view
+        |> element("#workspace-changes [id^='changes-file-net-'][id$='-revert']")
+        |> render_click()
+
+        view
+        |> element("#workspace-changes button", "Confirm revert")
+        |> render_click()
+
+        assert File.read!(file_path) == first
+        assert render(view) =~ "Reverted file to the recorded before state"
       after
         File.rm(file_path)
       end

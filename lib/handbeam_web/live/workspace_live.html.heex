@@ -1344,7 +1344,7 @@
         <.card
           :for={entry <- changes}
           entry={entry}
-          open?={entry["file_change_open"] == true}
+          open?={MapSet.member?(@expanded_file_changes, entry["id"])}
           id={"changes-file-#{entry["id"]}"}
           confirm_change_id={@revert_confirm_change_id}
           message={@revert_message}
