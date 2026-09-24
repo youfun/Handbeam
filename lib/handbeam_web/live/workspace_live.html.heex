@@ -201,24 +201,82 @@
                 ]}></span>
                 <span class="truncate flex-1">{conv.title}</span>
               </button>
-              <button
-                phx-click="archive_conversation"
-                phx-value-id={conv.id}
-                phx-value-ws_id={conv.workspace_id}
-                id={"conversation-action-archive-#{conv.workspace_id}-#{conv.id}"}
-                class="conversation-action"
-                title="Archive"
-              >
-                <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
-                  <path
-                    d="M2 3.5h8M4.5 3.5V2.75a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 .75.75V3.5M3 3.5l.5 6.75a.75.75 0 0 0 .75.75h3.5a.75.75 0 0 0 .75-.75L9 3.5"
-                    stroke="currentColor"
-                    stroke-width="1.1"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                  />
-                </svg>
-              </button>
+              <div class="conversation-menu">
+                <button
+                  type="button"
+                  phx-click="toggle_conversation_menu"
+                  phx-value-id={conv.id}
+                  id={"conversation-menu-#{conv.workspace_id}-#{conv.id}"}
+                  class={[
+                    "conversation-action",
+                    @conversation_menu_id == conv.id && "is-open"
+                  ]}
+                  title={gettext("更多操作")}
+                  aria-label={gettext("更多操作")}
+                  aria-haspopup="menu"
+                  aria-expanded={to_string(@conversation_menu_id == conv.id)}
+                >
+                  <span class="sr-only">{gettext("更多操作")}</span>
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+                    <circle cx="2.25" cy="6" r="1" />
+                    <circle cx="6" cy="6" r="1" />
+                    <circle cx="9.75" cy="6" r="1" />
+                  </svg>
+                </button>
+                <div
+                  :if={@conversation_menu_id == conv.id}
+                  id={"conversation-menu-panel-#{conv.id}"}
+                  class="conversation-menu-panel"
+                  role="menu"
+                  phx-click-away="close_conversation_menu"
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    phx-click="open_rename_conversation"
+                    phx-value-id={conv.id}
+                    phx-value-ws_id={conv.workspace_id}
+                    id={"conversation-action-rename-#{conv.workspace_id}-#{conv.id}"}
+                    class="conversation-menu-item"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                      <path
+                        d="M7.2 2.1 9.9 4.8 4.4 10.3 1.5 10.5l.2-2.9L7.2 2.1Z"
+                        stroke="currentColor"
+                        stroke-width="1.1"
+                        stroke-linejoin="round"
+                      />
+                      <path
+                        d="M6.4 2.9 9.1 5.6"
+                        stroke="currentColor"
+                        stroke-width="1.1"
+                        stroke-linecap="round"
+                      />
+                    </svg>
+                    <span>{gettext("重命名")}</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    phx-click="archive_conversation"
+                    phx-value-id={conv.id}
+                    phx-value-ws_id={conv.workspace_id}
+                    id={"conversation-action-archive-#{conv.workspace_id}-#{conv.id}"}
+                    class="conversation-menu-item danger"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                      <path
+                        d="M2 3.5h8M4.5 3.5V2.75a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 .75.75V3.5M3 3.5l.5 6.75a.75.75 0 0 0 .75.75h3.5a.75.75 0 0 0 .75-.75L9 3.5"
+                        stroke="currentColor"
+                        stroke-width="1.1"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                    <span>{gettext("归档")}</span>
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -301,6 +359,70 @@
         if(@mobile_right_panel_open, do: "mobile-right-panel-open", else: "")
       ]}
     >
+      <!-- Rename Conversation Dialog -->
+      <div
+        :if={@rename_conversation}
+        id="rename-conversation-overlay"
+        class="absolute inset-0 z-50 flex items-center justify-center"
+        phx-window-keydown="cancel_rename_conversation"
+        phx-key="Escape"
+      >
+        <button
+          type="button"
+          class="absolute inset-0 bg-transparent border-0"
+          phx-click="cancel_rename_conversation"
+          aria-label={gettext("取消")}
+        >
+        </button>
+        <form
+          id="rename-conversation-dialog"
+          phx-submit="confirm_rename_conversation"
+          class="relative add-project-dialog bg-surface border rounded-xl shadow-2xl w-[420px] p-5"
+        >
+          <h3 class="text-base font-semibold text-primary mb-4">{gettext("重命名会话")}</h3>
+          <div class="space-y-3 mb-4">
+            <div>
+              <label for="rename-conversation-input" class="text-xs text-secondary block mb-1">
+                {gettext("会话名称")}
+              </label>
+              <input
+                id="rename-conversation-input"
+                type="text"
+                name="title"
+                value={@rename_conversation.title}
+                phx-mounted={JS.focus()}
+                maxlength="80"
+                autocomplete="off"
+                class="w-full bg-main border rounded px-2 py-1.5 text-xs text-primary focus:outline-none focus:border-accent"
+              />
+            </div>
+            <div
+              :if={@rename_conversation.error}
+              id="rename-conversation-error"
+              class="text-xs text-error bg-error-subtle rounded px-3 py-2"
+            >
+              {@rename_conversation.error}
+            </div>
+          </div>
+          <div class="flex justify-end gap-3">
+            <button
+              type="button"
+              phx-click="cancel_rename_conversation"
+              class="text-xs text-secondary border rounded px-3 py-1.5 transition-colors hover:text-primary hover:border-hover"
+            >
+              {gettext("取消")}
+            </button>
+            <button
+              type="submit"
+              id="rename-conversation-submit"
+              class="text-xs bg-user text-white rounded px-4 py-1.5 transition-colors hover:bg-user-hover"
+            >
+              {gettext("保存")}
+            </button>
+          </div>
+        </form>
+      </div>
+
       <!-- Add Project Dialog (overlay) -->
       <div
         :if={@show_add_project}

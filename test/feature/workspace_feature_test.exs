@@ -174,7 +174,9 @@ defmodule HandbeamWeb.Feature.WorkspaceFeatureTest do
         "button[phx-click='new_conversation_in_workspace'][phx-value-ws_id='default']",
         ""
       )
-      |> assert_has(".conversation-action[phx-click='archive_conversation'][title='Archive']")
+      |> assert_has("button[phx-click='toggle_conversation_menu']", "More actions")
+      |> click_button("button[phx-click='toggle_conversation_menu']", "More actions")
+      |> assert_has(".conversation-menu-item[phx-click='archive_conversation']", "Archive")
     end
 
     test "archive conversation removes it from active list", %{conn: conn} do
@@ -185,7 +187,8 @@ defmodule HandbeamWeb.Feature.WorkspaceFeatureTest do
         ""
       )
       |> assert_has("button", "New chat")
-      |> click_button("button.conversation-action[phx-click='archive_conversation']", "")
+      |> click_button("button[phx-click='toggle_conversation_menu']", "More actions")
+      |> click_button(".conversation-menu-item[phx-click='archive_conversation']", "Archive")
       |> assert_has("#no-messages", "No messages yet")
     end
 
@@ -197,7 +200,9 @@ defmodule HandbeamWeb.Feature.WorkspaceFeatureTest do
         ""
       )
       |> within(".workspace-group:first-child .conversations-list", fn s ->
-        s |> click_button("button.conversation-action[phx-click='archive_conversation']", "")
+        s
+        |> click_button("button[phx-click='toggle_conversation_menu']", "More actions")
+        |> click_button(".conversation-menu-item[phx-click='archive_conversation']", "Archive")
       end)
 
       # Verify the conversation was archived via the store API
@@ -218,6 +223,34 @@ defmodule HandbeamWeb.Feature.WorkspaceFeatureTest do
     end
   end
 
+  describe "rename conversation" do
+    setup do
+      isolate_conversation_home!()
+      :ok
+    end
+
+    test "rename from the conversation menu updates the sidebar", %{conn: conn} do
+      conn
+      |> visit("/")
+      |> click_button(
+        "button[phx-click='new_conversation_in_workspace'][phx-value-ws_id='default']",
+        ""
+      )
+      |> fill_in("#ai-input", "Message", with: "Need a title", exact: false)
+      |> click_button("#send-button", "")
+      |> within(".workspace-group:first-child .conversations-list", fn s ->
+        s
+        |> click_button("button[phx-click='toggle_conversation_menu']", "More actions")
+        |> click_button(".conversation-menu-item[phx-click='open_rename_conversation']", "Rename")
+      end)
+      |> assert_has("#rename-conversation-dialog", "Rename conversation")
+      |> fill_in("#rename-conversation-input", "Conversation name", with: "底座评估")
+      |> click_button("#rename-conversation-submit", "Save")
+      |> assert_has(".conversation-item", "底座评估")
+      |> refute_has("#rename-conversation-dialog")
+    end
+  end
+
   describe "unarchive conversation" do
     setup do
       isolate_conversation_home!()
@@ -232,7 +265,9 @@ defmodule HandbeamWeb.Feature.WorkspaceFeatureTest do
         ""
       )
       |> within(".workspace-group:first-child .conversations-list", fn s ->
-        s |> click_button("button.conversation-action[phx-click='archive_conversation']", "")
+        s
+        |> click_button("button[phx-click='toggle_conversation_menu']", "More actions")
+        |> click_button(".conversation-menu-item[phx-click='archive_conversation']", "Archive")
       end)
 
       # Verify archive + retrieve the archived id

@@ -264,6 +264,50 @@ defmodule Handbeam.ConversationStore do
     end
   end
 
+  @title_max_length 80
+
+  @doc """
+  Rename a conversation and mark the title as manual.
+
+  A manual title is not overwritten by auto title generation. Empty titles
+  and titles longer than #{@title_max_length} characters are rejected.
+  """
+  @spec rename(String.t(), String.t()) ::
+          {:ok, map()} | {:error, :not_found | :empty | :too_long | term()}
+  def rename(id, title) when is_binary(id) and is_binary(title) do
+    with {:ok, normalized} <- normalize_title(title),
+         {:ok, meta} <- update_meta(id, title: normalized, title_source: "manual") do
+      broadcast_title_updated(id)
+      {:ok, meta}
+    end
+  end
+
+  @doc false
+  @spec normalize_title(String.t()) :: {:ok, String.t()} | {:error, :empty | :too_long}
+  def normalize_title(title) when is_binary(title) do
+    normalized =
+      title
+      |> String.replace(~r/[\r\n\t]+/u, " ")
+      |> String.replace(~r/[[:cntrl:]]/u, "")
+      |> String.replace(~r/\s+/u, " ")
+      |> String.trim()
+
+    cond do
+      normalized == "" -> {:error, :empty}
+      String.length(normalized) > @title_max_length -> {:error, :too_long}
+      true -> {:ok, normalized}
+    end
+  end
+
+  @doc false
+  def broadcast_title_updated(conversation_id) when is_binary(conversation_id) do
+    Phoenix.PubSub.broadcast(
+      Handbeam.PubSub,
+      "conversation:updated",
+      {:conversation_updated, conversation_id}
+    )
+  end
+
   @doc "Insert or replace a conversation."
   @spec upsert(conversation()) :: {:ok, conversation()} | {:error, term()}
   def upsert(conversation) when is_map(conversation) do

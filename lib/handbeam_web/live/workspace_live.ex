@@ -144,6 +144,8 @@ defmodule HandbeamWeb.WorkspaceLive do
       |> assign(:tools_active, %{})
       |> assign(:expanded_tool_groups, MapSet.new())
       |> assign(:show_recycle_bin, false)
+      |> assign(:conversation_menu_id, nil)
+      |> assign(:rename_conversation, nil)
       |> assign(:pending_approval, nil)
       |> assign(:show_permission_menu, false)
       |> assign(:skill_suggestions, [])
@@ -746,13 +748,89 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   @impl true
+  def handle_event("toggle_conversation_menu", %{"id" => conv_id}, socket) do
+    menu_id = if socket.assigns.conversation_menu_id == conv_id, do: nil, else: conv_id
+    {:noreply, assign(socket, :conversation_menu_id, menu_id)}
+  end
+
+  def handle_event("close_conversation_menu", _params, socket) do
+    {:noreply, assign(socket, :conversation_menu_id, nil)}
+  end
+
+  @impl true
+  def handle_event("open_rename_conversation", %{"id" => conv_id, "ws_id" => ws_id}, socket) do
+    case Handbeam.ConversationStore.get(conv_id, include_timeline?: false) do
+      {:ok, %{"workspace_id" => ^ws_id, "title" => title}} ->
+        {:noreply,
+         socket
+         |> assign(:conversation_menu_id, nil)
+         |> assign(:rename_conversation, %{
+           id: conv_id,
+           workspace_id: ws_id,
+           title: title || "",
+           error: nil
+         })}
+
+      _ ->
+        {:noreply, assign(socket, :conversation_menu_id, nil)}
+    end
+  end
+
+  def handle_event("cancel_rename_conversation", _params, socket) do
+    {:noreply, assign(socket, :rename_conversation, nil)}
+  end
+
+  def handle_event("confirm_rename_conversation", %{"title" => title}, socket) do
+    case socket.assigns.rename_conversation do
+      %{id: conv_id} = rename ->
+        case Handbeam.ConversationStore.rename(conv_id, title) do
+          {:ok, meta} ->
+            {:noreply,
+             socket
+             |> ConversationSwitching.refresh_conversation_in_sidebar(conv_id)
+             |> maybe_patch_page_title(conv_id, meta["title"])
+             |> assign(:rename_conversation, nil)}
+
+          {:error, :empty} ->
+            {:noreply,
+             assign(socket, :rename_conversation, %{
+               rename
+               | title: title,
+                 error: gettext("名称不能为空")
+             })}
+
+          {:error, :too_long} ->
+            {:noreply,
+             assign(socket, :rename_conversation, %{
+               rename
+               | title: title,
+                 error: gettext("名称不能超过 80 个字符")
+             })}
+
+          {:error, _reason} ->
+            {:noreply,
+             assign(socket, :rename_conversation, %{
+               rename
+               | title: title,
+                 error: gettext("重命名失败")
+             })}
+        end
+
+      _ ->
+        {:noreply, socket}
+    end
+  end
+
+  @impl true
   def handle_event("archive_conversation", params, socket) do
     conv_id = params["id"]
     ws_id = params["ws_id"] || socket.assigns.current_workspace_id
 
     {socket, next_conv_id} =
       ConversationSwitching.archive_conversation(
-        socket,
+        socket
+        |> assign(:conversation_menu_id, nil)
+        |> assign(:rename_conversation, nil),
         conv_id,
         ws_id,
         conversation_state_opts()
@@ -2870,6 +2948,15 @@ defmodule HandbeamWeb.WorkspaceLive do
     |> assign(:show_settings_sheet, false)
     |> assign(:show_permission_menu, false)
     |> assign(:show_file_drawer, false)
+    |> assign(:conversation_menu_id, nil)
+  end
+
+  defp maybe_patch_page_title(socket, conv_id, title) do
+    if socket.assigns.current_conversation_id == conv_id and is_binary(title) and title != "" do
+      assign(socket, :page_title, title)
+    else
+      socket
+    end
   end
 
   # ── Public helpers for templates (delegated to HandbeamWeb.WorkspaceHelper) ──
