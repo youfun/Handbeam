@@ -27,12 +27,17 @@ defmodule ExFffTest do
       Module.concat(ExFff.Index, String.to_atom("Test_#{System.unique_integer([:positive])}"))
 
     {:ok, pid} = Index.start_link(root_path: tmp_dir, name: name, max_files: 100)
-
-    # Give async build a moment
-    Process.sleep(50)
+    assert :ok = Index.await_index(name)
 
     on_exit(fn ->
-      if Process.alive?(pid), do: GenServer.stop(pid)
+      if Process.alive?(pid) do
+        try do
+          GenServer.stop(pid)
+        catch
+          :exit, _ -> :ok
+        end
+      end
+
       File.rm_rf(tmp_dir)
     end)
 

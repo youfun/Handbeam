@@ -6,8 +6,9 @@ defmodule ExFff.Config do
 
   - `:root_path` — project root directory to scan
   - `:max_files` — max files to index (default 50_000)
-  - `:ignore_patterns` — regex patterns for paths to exclude (default:
-    `_build/`, `deps/`, `.git/`, `node_modules/`, `cover/`)
+  - `:ignore_patterns` — regex patterns for paths to exclude. Defaults also cover
+    build-product directories pruned by name (`build/`, `_build/`, `deps/`,
+    `.git/`, `node_modules/`, `.gradle/`, `target/`, `cover/`, and editor caches).
   """
 
   defstruct root_path: nil,
@@ -22,10 +23,19 @@ defmodule ExFff.Config do
 
   @default_ignore_patterns [
     ~r{_build/},
+    ~r{build/},
     ~r{deps/},
     ~r{\.git/},
     ~r{node_modules/},
-    ~r{cover/}
+    ~r{\.gradle/},
+    ~r{\.elixir_ls/},
+    ~r{target/},
+    ~r{\.zig-cache/},
+    ~r{zig-out/},
+    ~r{\.cxx/},
+    ~r{cover/},
+    ~r{\.idea/},
+    ~r{\.vscode/}
   ]
 
   @doc """

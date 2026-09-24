@@ -101,7 +101,14 @@ defmodule ExFff.CjkTest do
       Process.sleep(100)
 
       on_exit(fn ->
-        if Process.alive?(pid), do: GenServer.stop(pid)
+        if Process.alive?(pid) do
+          try do
+            GenServer.stop(pid)
+          catch
+            :exit, _ -> :ok
+          end
+        end
+
         File.rm_rf(tmp_dir)
       end)
 
