@@ -5,8 +5,9 @@ defmodule Handbeam.WebFetch.Desktop do
   alias Handbeam.WebFetch.Desktop.{Proxy, Route}
 
   # System route and proxy discovery. DNS answers in 198.18.0.0/15 are routing
-  # tokens, not origin addresses, and only when this probe says the TUN or the
-  # system HTTP proxy owns them. They never become public unicast.
+  # tokens, not origin addresses. They are dialed only when a TUN owns that
+  # range, the system HTTP proxy will carry the hostname, or the resolver
+  # itself issues 198.18/15 for an unrelated name. They never become public.
   def get(uri, deadline, opts) do
     resolve = Keyword.get(opts, :resolve, &Address.resolve/2)
     request = Keyword.get(opts, :request, &HTTP.get/3)
@@ -51,15 +52,31 @@ defmodule Handbeam.WebFetch.Desktop do
     end
   end
 
-  defp system_takeover(scheme) do
-    if Route.system_tun?() do
-      :tun
-    else
-      case Proxy.system(scheme) do
-        {:ok, proxy} -> {:proxy, proxy}
-        :error -> :none
-      end
+  # True when `lookup` returns only 198.18.0.0/15. A normal resolver does not
+  # map an unrelated name into that range; a Fake-IP resolver does.
+  def resolver_fake_ip?(lookup) when is_function(lookup, 0) do
+    case lookup.() do
+      {:ok, ips} when is_list(ips) and ips != [] -> Enum.all?(ips, &Address.fake_ip?/1)
+      _ -> false
     end
+  end
+
+  defp system_takeover(scheme) do
+    cond do
+      Route.system_tun?() ->
+        :tun
+
+      true ->
+        case Proxy.system(scheme) do
+          {:ok, proxy} -> {:proxy, proxy}
+          :error -> if resolver_fake_ip?(&canary_lookup/0), do: :tun, else: :none
+        end
+    end
+  end
+
+  defp canary_lookup do
+    host = "hb-fakeip-" <> Base.encode16(:crypto.strong_rand_bytes(6), case: :lower) <> ".com"
+    Address.resolve(host, System.monotonic_time(:millisecond) + 5_000)
   end
 end
 
