@@ -7,8 +7,9 @@ defmodule Handbeam.WebFetch do
 
   Desktop does not assume a DNS answer is the origin address. Public answers
   are still pinned. `198.18.0.0/15` stays non-public and is used only as a
-  Fake-IP routing token when the system TUN owns that range, or the hostname
-  is sent through the system HTTP proxy instead of dialing the token.
+  Fake-IP routing token when the system TUN owns that range, the resolver
+  issues that range for an unrelated name, or the hostname is sent through
+  the system HTTP proxy instead of dialing the token.
   A host that supplies `dns_resolver` keeps the pinned public-address path.
   """
 

@@ -13,6 +13,8 @@ defmodule Handbeam.WebFetch.DesktopNetworkTest do
   # 7. Public answers stay pinned and do not consult takeover.
   # 8. A default or physical route is not TUN ownership. A /15 via utun is.
   #    An HTTP(S) proxy URL is a proxy. socks5:// is not.
+  # 9. A resolver that returns only 198.18/15 for an unrelated name is Fake-IP
+  #    and may dial the token. A public, mixed, empty, or failed canary is not.
 
   alias Handbeam.WebFetch
   alias Handbeam.WebFetch.Address
@@ -198,6 +200,12 @@ defmodule Handbeam.WebFetch.DesktopNetworkTest do
     assert Proxy.from_scutil("HTTPEnable : 0\nHTTPSEnable : 0\n", "https") == nil
     assert is_boolean(Route.system_tun?())
     assert Proxy.system("https") == :error or match?({:ok, _}, Proxy.system("https"))
+
+    assert WebFetch.Desktop.resolver_fake_ip?(fn -> {:ok, [{198, 18, 1, 9}]} end)
+    refute WebFetch.Desktop.resolver_fake_ip?(fn -> {:ok, [{1, 1, 1, 1}]} end)
+    refute WebFetch.Desktop.resolver_fake_ip?(fn -> {:ok, [{198, 18, 0, 1}, {8, 8, 8, 8}]} end)
+    refute WebFetch.Desktop.resolver_fake_ip?(fn -> {:ok, []} end)
+    refute WebFetch.Desktop.resolver_fake_ip?(fn -> {:error, :nxdomain} end)
   end
 
   defp fetch(url, resolved, takeover, request) do
