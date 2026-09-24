@@ -793,14 +793,23 @@ defmodule Handbeam.Agent.Provider.Cursor.Session do
       Proto.encode_run_request(
         conversation_state: conversation_state,
         action: action,
-        model_details: Proto.encode_model_details(model),
         conversation_id: state.cursor_conversation_id,
-        requested_model: Proto.encode_requested_model(model)
+        requested_model: encode_requested_model(model, config)
       )
 
     consumed_messages = history ++ [first]
     {ids, nils} = consumed_sets(consumed_messages)
     {Proto.encode_client(%{run_request: run}), blobs, ids, nils, extra_users}
+  end
+
+  defp encode_requested_model(model, config) do
+    routing = get_in(config, [:model_meta, "cursorRequestedModel"]) || %{}
+
+    Proto.encode_requested_model(
+      routing["modelId"] || model,
+      max_mode: routing["maxMode"] == true,
+      parameters: routing["parameters"] || []
+    )
   end
 
   defp split_action_users(messages) do

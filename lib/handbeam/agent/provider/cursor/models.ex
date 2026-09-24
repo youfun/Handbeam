@@ -1,6 +1,6 @@
 defmodule Handbeam.Agent.Provider.Cursor.Models do
   @moduledoc """
-  Discovers usable Cursor models via unary `GetUsableModels`.
+  Discovers usable Cursor models and their current parameter variants.
 
   Failures are explicit. This never falls back to another provider or a
   hard-coded substitute model. Cost is the upstream vendor price from llm_db
@@ -18,9 +18,9 @@ defmodule Handbeam.Agent.Provider.Cursor.Models do
     provider_id = Keyword.get(opts, :provider_id, "cursor")
 
     with {:ok, %{api_key: token}} <- CursorCredential.resolve_transport_key(provider_id, opts),
-         {:ok, body} <- fetch_models(token, opts),
-         models when models != [] <- Proto.decode_models_response(body) do
-      {:ok, Enum.map(models, &to_catalog/1)}
+         {:ok, usable_body, available_body} <- fetch_models(token, opts),
+         models when models != [] <- build_catalog(usable_body, available_body) do
+      {:ok, models}
     else
       [] -> {:error, "Cursor returned no usable models for this account."}
       {:error, :not_found} -> {:error, "Sign in with a Cursor subscription to connect."}
@@ -43,9 +43,12 @@ defmodule Handbeam.Agent.Provider.Cursor.Models do
     transport_mod = Keyword.get(opts, :transport_mod, Transport)
 
     with {:ok, transport} <- transport_mod.connect(Keyword.get(opts, :transport_opts, [])),
-         {:ok, transport, body} <- transport_mod.get_usable_models(transport, token, opts) do
+         {:ok, transport, usable_body} <-
+           transport_mod.get_usable_models(transport, token, opts),
+         {:ok, transport, available_body} <-
+           transport_mod.available_models(transport, token, opts) do
       _ = transport_mod.close(transport)
-      {:ok, body}
+      {:ok, usable_body, available_body}
     else
       {:error, reason} ->
         {:error, to_string_reason(reason)}
@@ -54,6 +57,123 @@ defmodule Handbeam.Agent.Provider.Cursor.Models do
         _ = transport_mod.close(transport)
         {:error, to_string_reason(reason)}
     end
+  end
+
+  defp build_catalog(usable_body, available_body) do
+    usable = usable_body |> Proto.decode_models_response() |> Enum.map(&to_catalog/1)
+
+    parameterized =
+      available_body
+      |> Proto.decode_available_models_response()
+      |> Enum.flat_map(&parameterized_catalog/1)
+
+    (usable ++ parameterized)
+    |> Map.new(&{&1["id"], &1})
+    |> Map.values()
+    |> Enum.sort_by(& &1["name"])
+  end
+
+  defp parameterized_catalog(model) do
+    model.variants
+    |> Enum.reject(&(&1.parameters == []))
+    |> Enum.map(&variant_catalog(model, &1))
+    |> Enum.uniq_by(& &1["id"])
+  end
+
+  defp variant_catalog(model, variant) do
+    context = parameter(variant, "context")
+    context_window = context_window(context, model, variant)
+    id = variant_id(model.name, variant, context)
+
+    %{
+      "id" => id,
+      "name" => variant_name(model, variant, context),
+      "reasoning" => reasoning_variant?(variant),
+      "input" => if(model.supports_images?, do: ["text", "image"], else: ["text"]),
+      "contextWindow" => context_window,
+      "maxTokens" => 32_000,
+      "cursorRequestedModel" => %{
+        "modelId" => model.name,
+        "maxMode" => variant.max_mode?,
+        "parameters" => Enum.map(variant.parameters, &stringify_parameter/1)
+      }
+    }
+    |> maybe_put_cost(LlmDbDefaults.price_for_model_id(model.name))
+  end
+
+  defp variant_id(base, variant, context) do
+    effort = parameter(variant, "reasoning") || parameter(variant, "effort")
+    thinking = parameter(variant, "thinking")
+    fast = parameter(variant, "fast")
+
+    remaining =
+      variant.parameters
+      |> Enum.reject(&(&1.id in ["context", "reasoning", "effort", "thinking", "fast"]))
+      |> Enum.sort_by(& &1.id)
+      |> Enum.map(&"#{&1.id}-#{&1.value}")
+
+    [
+      base,
+      if(context in [nil, "", "200k", "272k", "300k"], do: nil, else: context),
+      if(variant.max_mode? and context != "1m", do: "max", else: nil),
+      effort,
+      if(thinking == "true", do: "thinking", else: nil),
+      if(fast == "true", do: "fast", else: nil),
+      remaining
+    ]
+    |> List.flatten()
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join("-")
+  end
+
+  defp variant_name(model, variant, context) do
+    base =
+      Enum.find(
+        [
+          variant.outside_picker_name,
+          variant.display_name,
+          model.client_display_name,
+          model.name
+        ],
+        &(&1 != "")
+      )
+
+    if context == "1m" and not String.match?(base, ~r/\b1M\b/i), do: base <> " 1M", else: base
+  end
+
+  defp context_window("1m", _model, _variant), do: 1_000_000
+
+  defp context_window(context, model, variant) when is_binary(context) do
+    case Regex.run(~r/^(\d+)(k|m)$/i, context) do
+      [_, amount, unit] ->
+        String.to_integer(amount) * if(String.downcase(unit) == "m", do: 1_000_000, else: 1_000)
+
+      _ ->
+        model_context_window(model, variant)
+    end
+  end
+
+  defp context_window(_context, model, variant), do: model_context_window(model, variant)
+
+  defp model_context_window(model, %{max_mode?: true}) do
+    model.max_context_token_limit || model.context_token_limit || 128_000
+  end
+
+  defp model_context_window(model, _variant), do: model.context_token_limit || 128_000
+
+  defp reasoning_variant?(variant) do
+    Enum.any?(variant.parameters, &(&1.id in ["reasoning", "effort"]))
+  end
+
+  defp parameter(variant, id) do
+    case Enum.find(variant.parameters, &(&1.id == id)) do
+      %{value: value} -> value
+      nil -> nil
+    end
+  end
+
+  defp stringify_parameter(parameter) do
+    %{"id" => parameter.id, "value" => parameter.value}
   end
 
   defp to_catalog(model) do

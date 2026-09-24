@@ -15,6 +15,7 @@ defmodule Handbeam.Agent.Provider.Cursor.Transport do
   @client_version "cli-2026.01.09-231024f"
   @run_path "/agent.v1.AgentService/Run"
   @models_path "/agent.v1.AgentService/GetUsableModels"
+  @available_models_path "/aiserver.v1.AiService/AvailableModels"
 
   defstruct [
     :conn,
@@ -71,6 +72,16 @@ defmodule Handbeam.Agent.Provider.Cursor.Transport do
 
   def get_usable_models(transport, token, opts \\ []) do
     unary_proto(transport, @models_path, <<>>, token, opts)
+  end
+
+  def available_models(transport, token, opts \\ []) do
+    unary_proto(
+      transport,
+      @available_models_path,
+      Handbeam.Agent.Provider.Cursor.Proto.encode_available_models_request(),
+      token,
+      opts
+    )
   end
 
   def open_run(%__MODULE__{} = transport, token, opts \\ []) do

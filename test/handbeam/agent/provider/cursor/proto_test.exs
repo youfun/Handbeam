@@ -126,4 +126,47 @@ defmodule Handbeam.Agent.Provider.Cursor.ProtoTest do
     body = Proto.finish(Proto.encode_message(1, model))
     assert [%{id: "composer-2.5", name: "Composer 2.5"}] = Proto.decode_models_response(body)
   end
+
+  test "AvailableModels request enables parameter metadata without markdown" do
+    fields = Proto.encode_available_models_request() |> Proto.decode_fields()
+
+    assert Proto.field(fields, 5) == 1
+    assert Proto.field(fields, 7) == 1
+  end
+
+  test "requested model sends max mode and all selected parameters" do
+    encoded =
+      Proto.encode_requested_model("gpt-5.6-luna",
+        max_mode: true,
+        parameters: [
+          %{"id" => "context", "value" => "1m"},
+          %{"id" => "reasoning", "value" => "high"}
+        ]
+      )
+
+    fields = Proto.decode_fields(encoded)
+    assert Proto.field(fields, 1) == "gpt-5.6-luna"
+    assert Proto.field(fields, 2) == 1
+
+    assert Enum.map(Proto.fields(fields, 3), fn parameter ->
+             parameter = Proto.nested(parameter)
+             {Proto.field(parameter, 1), Proto.field(parameter, 2)}
+           end) == [{"context", "1m"}, {"reasoning", "high"}]
+  end
+
+  test "run request uses only current requested_model routing" do
+    requested = Proto.encode_requested_model("gpt-5.6-luna", max_mode: true)
+
+    run =
+      Proto.encode_run_request(
+        conversation_state: <<>>,
+        action: <<>>,
+        conversation_id: "conversation",
+        requested_model: requested
+      )
+
+    fields = Proto.decode_fields(run)
+    assert Proto.field(fields, 3) == nil
+    assert Proto.field(fields, 9) == requested
+  end
 end

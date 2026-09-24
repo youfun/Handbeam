@@ -18,12 +18,15 @@ defmodule Handbeam.Agent.Provider.Cursor.ModelsTest do
       {:ok, transport, Proto.finish(Proto.encode_message(1, model))}
     end
 
+    def available_models(transport, _token, _opts), do: {:ok, transport, <<>>}
+
     def close(t), do: t
   end
 
   defmodule EmptyTransport do
     def connect(_opts), do: {:ok, %{}}
     def get_usable_models(transport, _token, _opts), do: {:ok, transport, <<>>}
+    def available_models(transport, _token, _opts), do: {:ok, transport, <<>>}
     def close(t), do: t
   end
 
@@ -41,6 +44,8 @@ defmodule Handbeam.Agent.Provider.Cursor.ModelsTest do
 
       {:ok, transport, Proto.finish(Proto.encode_message(1, model))}
     end
+
+    def available_models(transport, _token, _opts), do: {:ok, transport, <<>>}
 
     def close(t), do: t
   end
@@ -69,7 +74,50 @@ defmodule Handbeam.Agent.Provider.Cursor.ModelsTest do
       {:ok, transport, body}
     end
 
+    def available_models(transport, _token, _opts), do: {:ok, transport, <<>>}
+
     def close(t), do: t
+  end
+
+  defmodule ParameterizedTransport do
+    alias Handbeam.Agent.Provider.Cursor.Proto
+
+    def connect(_opts), do: {:ok, %{}}
+    def get_usable_models(transport, _token, _opts), do: {:ok, transport, <<>>}
+
+    def available_models(transport, _token, _opts) do
+      default = variant(false, "272k", "high")
+      one_million = variant(true, "1m", "high")
+
+      model =
+        Proto.finish(
+          Proto.encode_string(1, "gpt-5.6-luna") ++
+            Proto.encode_bool(10, true) ++
+            Proto.encode_bool(14, true) ++
+            Proto.encode_uint32(15, 272_000) ++
+            Proto.encode_uint32(16, 1_000_000) ++
+            Proto.encode_string(17, "GPT-5.6 Luna") ++
+            Proto.encode_message(30, default) ++
+            Proto.encode_message(30, one_million)
+        )
+
+      {:ok, transport, Proto.finish(Proto.encode_message(2, model))}
+    end
+
+    def close(t), do: t
+
+    defp variant(max_mode, context, reasoning) do
+      Proto.finish(
+        Proto.encode_message(1, parameter("context", context)) ++
+          Proto.encode_message(1, parameter("reasoning", reasoning)) ++
+          Proto.encode_message(1, parameter("fast", "false")) ++
+          Proto.encode_bool(3, max_mode)
+      )
+    end
+
+    defp parameter(id, value) do
+      Proto.finish(Proto.encode_string(1, id) ++ Proto.encode_string(2, value))
+    end
   end
 
   setup do
@@ -132,5 +180,30 @@ defmodule Handbeam.Agent.Provider.Cursor.ModelsTest do
              Models.discover(auth_path: auth_path, transport_mod: EmptyTransport)
 
     assert message =~ "no usable models"
+  end
+
+  test "discover persists AvailableModels routing for default and 1M variants", %{
+    auth_path: auth_path
+  } do
+    assert {:ok, models} =
+             Models.discover(auth_path: auth_path, transport_mod: ParameterizedTransport)
+
+    default = Enum.find(models, &(&1["id"] == "gpt-5.6-luna-high"))
+    one_million = Enum.find(models, &(&1["id"] == "gpt-5.6-luna-1m-high"))
+
+    assert default["contextWindow"] == 272_000
+    assert default["cursorRequestedModel"]["maxMode"] == false
+
+    assert one_million["contextWindow"] == 1_000_000
+
+    assert one_million["cursorRequestedModel"] == %{
+             "modelId" => "gpt-5.6-luna",
+             "maxMode" => true,
+             "parameters" => [
+               %{"id" => "context", "value" => "1m"},
+               %{"id" => "reasoning", "value" => "high"},
+               %{"id" => "fast", "value" => "false"}
+             ]
+           }
   end
 end
