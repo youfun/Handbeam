@@ -663,7 +663,9 @@ defmodule Handbeam.Agent.Turn do
     chunk_tracker = if streaming?, do: :counters.new(1, []), else: nil
 
     streamed_text_tracker =
-      if streaming?, do: Agent.start_link(fn -> "" end) |> elem(1), else: nil
+      if streaming?,
+        do: Agent.start_link(fn -> %{text: "", phases: %{}} end) |> elem(1),
+        else: nil
 
     on_chunk =
       cond do
@@ -1115,30 +1117,32 @@ defmodule Handbeam.Agent.Turn do
   defp track_streamed_text(_agent, ""), do: :ok
 
   defp track_streamed_text(agent, chunk) when is_binary(chunk) do
-    Agent.update(agent, fn
-      streamed when is_binary(streamed) -> streamed <> chunk
-      streamed when is_map(streamed) -> streamed
+    Agent.update(agent, fn streamed ->
+      %{streamed | text: streamed.text <> chunk}
     end)
   end
 
   defp track_streamed_text(agent, %{text: text, phase: phase, output_index: index})
        when is_binary(text) and is_integer(index) do
     Agent.update(agent, fn streamed ->
-      Map.update(streamed, index, %{phase: phase, text: text}, fn current ->
-        %{current | phase: phase, text: current.text <> text}
-      end)
+      phases =
+        Map.update(streamed.phases, index, %{phase: phase, text: text}, fn current ->
+          %{current | phase: phase, text: current.text <> text}
+        end)
+
+      %{streamed | text: streamed.text <> text, phases: phases}
     end)
   end
 
   defp track_streamed_text(_agent, _chunk), do: :ok
 
-  defp take_streamed_text(nil), do: ""
+  defp take_streamed_text(nil), do: %{text: "", phases: %{}}
 
   defp take_streamed_text(agent) do
     case Agent.get(agent, & &1) do
-      text when is_binary(text) -> text
-      phases when is_map(phases) -> phases
-      _ -> ""
+      %{text: text, phases: phases} = streamed when is_binary(text) and is_map(phases) -> streamed
+      text when is_binary(text) -> %{text: text, phases: %{}}
+      _ -> %{text: "", phases: %{}}
     end
   end
 
@@ -1177,18 +1181,19 @@ defmodule Handbeam.Agent.Turn do
     end
   end
 
-  defp maybe_emit_streaming_completion_tail(opts, new_msgs, streamed) when is_map(streamed) do
+  defp maybe_emit_streaming_completion_tail(opts, new_msgs, %{phases: phases})
+       when map_size(phases) > 0 do
     new_msgs
     |> Enum.filter(&match?(%Message{role: :assistant}, &1))
     |> Enum.flat_map(&text_blocks/1)
     |> Enum.with_index()
     |> Enum.each(fn {block, index} ->
-      streamed_block = Map.get(streamed, index, %{text: "", phase: nil})
+      streamed_block = Map.get(phases, index, %{text: "", phase: nil})
       emit_unstreamed_tail(opts, block, streamed_block, index)
     end)
   end
 
-  defp maybe_emit_streaming_completion_tail(opts, new_msgs, streamed) do
+  defp maybe_emit_streaming_completion_tail(opts, new_msgs, %{text: streamed}) do
     final_text =
       new_msgs
       |> Enum.filter(&match?(%Message{role: :assistant}, &1))

@@ -219,9 +219,52 @@ defmodule Handbeam.Agent.TurnTest do
       @impl true
       def stream(messages, _tool_defs, _config, on_chunk) do
         {:ok, result} = complete(messages, [], %{})
-        on_chunk.(Message.text(hd(result.messages)))
+        text = Message.text(hd(result.messages))
+        phase = hd(result.messages).content |> hd() |> Map.fetch!(:phase)
+        on_chunk.(%{text: text, phase: phase, output_index: 0})
         {:ok, result}
       end
+    end
+
+    defmodule PhasedChunkProvider do
+      @behaviour Handbeam.Agent.Provider
+
+      alias Handbeam.Agent.Message
+
+      @impl true
+      def complete(_messages, _tool_defs, _config) do
+        {:ok,
+         %{
+           stop_reason: :end_turn,
+           messages: [
+             Message.assistant_blocks([
+               %{type: "text", text: "你好", phase: "final_answer", id: "msg_final"}
+             ])
+           ],
+           usage: %{input_tokens: 1, output_tokens: 1}
+         }}
+      end
+
+      @impl true
+      def stream(_messages, _tool_defs, _config, on_chunk) do
+        on_chunk.(%{text: "你", phase: "final_answer", output_index: 0})
+        on_chunk.(%{text: "好", phase: "final_answer", output_index: 0})
+        complete([], [], %{})
+      end
+    end
+
+    test "phased stream chunks do not crash the streamed-text tracker" do
+      config = %Config{
+        provider: PhasedChunkProvider,
+        model: "gpt-6-luna",
+        max_turns: 2,
+        provider_config: %{}
+      }
+
+      result = Turn.run_loop(State.init(config, "你好"), streaming: true, on_event: fn _ -> :ok end)
+
+      assert result.status == :completed
+      assert Handbeam.Agent.Message.text(List.last(result.messages)) == "你好"
     end
 
     test "keeps commentary and requests one final answer without replaying it" do
@@ -248,6 +291,7 @@ defmodule Handbeam.Agent.TurnTest do
       assert result.status == :completed
       assert Enum.join(texts, "\n") =~ "How can I help?"
       refute Enum.join(texts) =~ "What can I help you with?What can I help"
+
       assert :counters.get(chunks, 1) ==
                byte_size("Hello! What can I help you with?Hello! How can I help?")
     end
