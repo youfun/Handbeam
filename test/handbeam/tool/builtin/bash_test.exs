@@ -241,14 +241,16 @@ defmodule Handbeam.Tool.Builtin.BashTest do
       assert reason =~ "Path traversal" or reason =~ "outside workspace"
     end
 
-    test "rejects commands that reference paths outside the workspace" do
-      {:error, reason} =
+    @tag :os_sandbox
+    test "allows reading host paths outside the workspace" do
+      {:ok, output, data} =
         Bash.execute(
-          %{"command" => "cat /etc/passwd"},
+          %{"command" => "test -f /etc/hosts 2>/dev/null && echo host-readable"},
           %{working_directory: File.cwd!()}
         )
 
-      assert reason =~ "Path traversal" or reason =~ "outside workspace"
+      assert output =~ "host-readable"
+      assert data.exit_code == 0
     end
 
     @tag :os_sandbox
@@ -281,21 +283,28 @@ defmodule Handbeam.Tool.Builtin.BashTest do
       end
     end
 
-    test "rejects commands that reference symlinks pointing outside workspace" do
-      # Create a symlink within workspace pointing outside
+    @tag :os_sandbox
+    test "allows reading a workspace symlink that points to a host file" do
       escaped_link = Path.join(File.cwd!(), "tmp_bash_symlink_escape")
-      File.ln_s!("/etc/passwd", escaped_link)
+
+      outside =
+        Path.join(System.tmp_dir!(), "bash-readable-host-#{System.unique_integer([:positive])}")
+
+      File.write!(outside, "host-readable")
+      File.ln_s!(outside, escaped_link)
 
       try do
-        {:error, reason} =
+        {:ok, output, data} =
           Bash.execute(
             %{"command" => "cat #{escaped_link}"},
             %{working_directory: File.cwd!()}
           )
 
-        assert reason =~ "Path traversal" or reason =~ "outside workspace"
+        assert output =~ "host-readable"
+        assert data.exit_code == 0
       after
         File.rm(escaped_link)
+        File.rm(outside)
       end
     end
   end
