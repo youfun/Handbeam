@@ -639,6 +639,20 @@ defmodule HandbeamWeb.WorkspaceHelperTest do
       end
     end
 
+    test "does not return invalid UTF-8 for a binary file", %{ws_root: ws_root} do
+      path = Path.join(ws_root, "helper_test.db-shm")
+      File.write!(path, <<0, 0xFF, "sqlite">>)
+
+      try do
+        result = WorkspaceHelper.render_file_preview(path, ws_root)
+        assert result == "[Binary file preview unavailable]"
+        assert String.valid?(result)
+        assert WorkspaceHelper.file_preview_error(path, ws_root) =~ "Binary files"
+      after
+        File.rm(path)
+      end
+    end
+
     test "returns access denied for file outside workspace", %{ws_root: ws_root} do
       result = WorkspaceHelper.render_file_preview("/etc/passwd", ws_root)
       assert result =~ "Access denied"

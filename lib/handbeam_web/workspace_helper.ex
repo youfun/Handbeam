@@ -478,7 +478,7 @@ defmodule HandbeamWeb.WorkspaceHelper do
   Renders a file preview as HTML-safe text.
 
   Returns "" for nil paths, escaped content for workspace files,
-  and an error message for files outside the workspace or unreadable files.
+  and a safe message for files that cannot be rendered as UTF-8 text.
   """
   def render_file_preview(path, workspace_root \\ Handbeam.Workspace.root()) do
     if is_nil(path) do
@@ -487,12 +487,16 @@ defmodule HandbeamWeb.WorkspaceHelper do
       case Handbeam.Workspace.resolve(path, workspace_root) do
         {:ok, _} ->
           case File.read(path) do
-            {:ok, content} ->
-              content
-              |> String.slice(0, 10_000)
-              |> String.replace("&", "&amp;")
-              |> String.replace("<", "&lt;")
-              |> String.replace(">", "&gt;")
+            {:ok, content} when is_binary(content) ->
+              if previewable_text?(content) do
+                content
+                |> String.slice(0, 10_000)
+                |> String.replace("&", "&amp;")
+                |> String.replace("<", "&lt;")
+                |> String.replace(">", "&gt;")
+              else
+                "[Binary file preview unavailable]"
+              end
 
             {:error, _} ->
               "[Error reading file]"
@@ -502,5 +506,30 @@ defmodule HandbeamWeb.WorkspaceHelper do
           "[Access denied: #{reason}]"
       end
     end
+  end
+
+  @doc false
+  def file_preview_error(nil, _workspace_root), do: nil
+
+  def file_preview_error(path, workspace_root) do
+    case Handbeam.Workspace.resolve(path, workspace_root) do
+      {:ok, _} ->
+        case File.read(path) do
+          {:ok, content} ->
+            if previewable_text?(content),
+              do: nil,
+              else: "Binary files cannot be previewed as text"
+
+          {:error, reason} ->
+            reason
+        end
+
+      {:error, reason} ->
+        reason
+    end
+  end
+
+  defp previewable_text?(content) do
+    String.valid?(content) and :binary.match(content, <<0>>) == :nomatch
   end
 end

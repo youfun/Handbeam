@@ -1536,6 +1536,11 @@ button.workspace-file-row:hover,
   min-width: 0;
 }
 
+.conversation-row:has(.conversation-action.is-open) {
+  position: relative;
+  z-index: 30;
+}
+
 .conversation-row:hover {
   background-color: var(--color-surface-hover);
 }
@@ -1638,8 +1643,15 @@ button.workspace-file-row:hover,
 }
 
 .conversation-row:hover .conversation-action,
+.conversation-row:focus-within .conversation-action,
 .conversation-action.is-open {
   opacity: 1;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .conversation-action {
+    opacity: 0.7;
+  }
 }
 
 .conversation-action:hover,
