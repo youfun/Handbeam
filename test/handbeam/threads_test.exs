@@ -14,7 +14,7 @@ defmodule Handbeam.ThreadsTest do
       File.rm_rf!(home)
     end)
 
-    {:ok, source} = ConversationStore.create("ws", title: "Source", allow_thread_wakeup: true)
+    {:ok, source} = ConversationStore.create("ws", title: "Source")
     {:ok, target} = ConversationStore.create("ws", title: "目标")
     {:ok, foreign} = ConversationStore.create("other", title: "Secret")
     context = %{conversation_id: source["id"], workspace_id: "ws", run_id: "source-run"}
@@ -143,18 +143,16 @@ defmodule Handbeam.ThreadsTest do
              Threads.read(%{"thread" => c.target, "cursor" => page.next_cursor}, c.context)
   end
 
-  test "permission revocation and cross-workspace send reject before persistence", c do
-    ConversationStore.update_meta(c.foreign, allow_thread_wakeup: true)
+  test "cross-workspace send rejects before persistence; same-workspace send needs no opt-in",
+       c do
     input = %{"thread" => c.foreign, "message" => "x", "request_id" => "x"}
     assert {:error, :not_accessible} = Collaboration.send_message(input, c.context)
-    ConversationStore.update_meta(c.target, allow_thread_wakeup: false)
-    ConversationStore.update_meta(c.source, allow_thread_wakeup: false)
+    assert {:ok, []} = ConversationTranscriptStore.list(c.source)
 
     assert {:ok, _} = Collaboration.send_message(%{input | "thread" => c.target}, c.context)
   end
 
   test "concurrent identical sends reserve only once; uncertain delivery is not retried", c do
-    ConversationStore.update_meta(c.target, allow_thread_wakeup: true)
     input = %{"thread" => c.target, "message" => "Report", "request_id" => "request"}
 
     results =
@@ -176,9 +174,8 @@ defmodule Handbeam.ThreadsTest do
     assert {:ok, []} = ConversationTranscriptStore.list(c.target)
   end
 
-  test "stored denial does not block a child; the child cap still applies", c do
+  test "a root thread creates any number of read-only children", c do
     input = %{"title" => "Audit", "message" => "Inspect", "request_id" => "child"}
-    ConversationStore.update_meta(c.source, allow_thread_wakeup: false)
     refute Collaboration.create(input, c.context) == {:error, :delegation_not_permitted}
     {:ok, receipt} = Collaboration.create(input, c.context)
     {:ok, same} = Collaboration.create(input, c.context)
@@ -222,20 +219,13 @@ defmodule Handbeam.ThreadsTest do
                child_context
              )
 
-    for i <- 3..3,
-        do:
-          assert(
-            {:ok, _} = Collaboration.create(%{input | "request_id" => "child#{i}"}, c.context)
-          )
-
-    assert {:error, :child_limit} =
-             Collaboration.create(%{input | "request_id" => "child4"}, c.context)
+    for i <- 3..6 do
+      assert {:ok, _} = Collaboration.create(%{input | "request_id" => "child#{i}"}, c.context)
+    end
   end
 
-  test "finite handoff budget prevents unbounded mutual wakeups", c do
-    ConversationStore.update_meta(c.target, allow_thread_wakeup: true)
-
-    for i <- 1..8 do
+  test "handoffs are not capped by count", c do
+    for i <- 1..12 do
       assert {:ok, _} =
                Collaboration.send_message(
                  %{"thread" => c.target, "message" => "x", "request_id" => "#{i}"},
@@ -243,11 +233,8 @@ defmodule Handbeam.ThreadsTest do
                )
     end
 
-    assert {:error, :handoff_budget_exhausted} =
-             Collaboration.send_message(
-               %{"thread" => c.target, "message" => "x", "request_id" => "9"},
-               c.context
-             )
+    {:ok, entries} = ConversationTranscriptStore.list(c.source)
+    assert Enum.count(entries, &(&1["content_type"] == "thread_handoff")) == 12
   end
 
   test "registered tools use executor-owned context and deny writes in delegated runs", c do

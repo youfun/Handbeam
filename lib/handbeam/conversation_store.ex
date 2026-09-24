@@ -231,7 +231,6 @@ defmodule Handbeam.ConversationStore do
       "file_preview_error" => Keyword.get(opts, :file_preview_error),
       "selected_model" => Keyword.get(opts, :selected_model),
       "collaboration" => Keyword.get(opts, :collaboration),
-      "allow_thread_wakeup" => Keyword.get(opts, :allow_thread_wakeup),
       "selected_reasoning_level" => Keyword.get(opts, :selected_reasoning_level),
       "archived_at" => Keyword.get(opts, :archived_at),
       "created_at" => now,
@@ -315,7 +314,7 @@ defmodule Handbeam.ConversationStore do
       case get_metadata(value(conversation, "id")) do
         {:ok, meta} ->
           Enum.reduce(
-            ~w(collaboration visibility allow_thread_wakeup last_run_result),
+            ~w(collaboration visibility last_run_result),
             conversation,
             fn key, acc ->
               Map.put(acc, key, meta[key])
@@ -1093,7 +1092,6 @@ defmodule Handbeam.ConversationStore do
       "selected_model" => conversation["selected_model"],
       "selected_reasoning_level" => conversation["selected_reasoning_level"],
       "collaboration" => conversation["collaboration"],
-      "allow_thread_wakeup" => conversation["allow_thread_wakeup"],
       "last_run_result" => conversation["last_run_result"]
     }
   end
@@ -1205,7 +1203,6 @@ defmodule Handbeam.ConversationStore do
       "selected_model" => string_value(conversation, "selected_model"),
       "selected_reasoning_level" => string_value(conversation, "selected_reasoning_level"),
       "collaboration" => value(conversation, "collaboration"),
-      "allow_thread_wakeup" => value(conversation, "allow_thread_wakeup"),
       "last_run_result" => value(conversation, "last_run_result"),
       "archived_at" => string_value(conversation, "archived_at"),
       "created_at" => string_value(conversation, "created_at") || now,

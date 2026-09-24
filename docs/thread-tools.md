@@ -24,23 +24,22 @@ persistent thread tools, and its run-scoped authorization and cleanup remain int
 
 ## Handoffs and delegation
 
-A human first enables bounded collaboration on each participating conversation.
-This permits paid wakeups; turning it off rejects subsequent handoffs. Created
-children inherit that consent and a persisted parent route, but cannot delegate
-further or message arbitrary peers. `reply_to_parent_thread` takes no target.
+Any visible conversation may message another visible conversation in the same
+workspace; there is no per-conversation opt-in. Threads may exchange any number
+of handoffs (for example one thread develops while another verifies), and a
+woken run gets no extra turn or token cap; its length is up to the model. Wakeups
+are paid runs. Created children keep a persisted parent route and
+cannot delegate further or message arbitrary peers. `reply_to_parent_thread`
+takes no target.
 
 `send_thread_message` always uses Coordinator; running conversations default to
-`follow_up`, with `steer` only by explicit input. New runs inherit the caller's
+`steer`, with `follow_up` only by explicit input. New runs inherit the caller's
 provider/model, subject to existing workspace model policy. `create_thread`
 creates a persistent read-only child in the same shared directory, **not an
 isolated checkout or sandbox**. A runtime execution allowlist rejects mutating,
 shell, browser, extension and unknown tools, including after approval/resume.
 
-Current fixed limits are intentionally conservative: 3 children per root,
-8 outbound handoffs across the root and its children, 3 turns per wakeup and
-2,048 output tokens per provider request. These are request/token limits, not a
-currency-price guarantee. Provider retry/compaction requests may also incur cost.
-Quotas persist across restarts and are not reset by toggling permission.
+Messages are capped at 8,000 characters.
 
 Every send requires a caller-scoped `request_id`; identical retries return the
 existing receipt and different content/target under that key is rejected.
@@ -66,8 +65,7 @@ Target transcript `consumption` records actual runtime injection separately.
 On normal Runner completion, a child sends a bounded final report unless that run
 already explicitly replied. This callback is supervised but not a durable retry
 worker: a host crash before the callback may require manual inspection. No
-automatic acknowledgment is sent. Exhausted quotas leave results readable in the
-task thread rather than initiating more work.
+automatic acknowledgment is sent.
 
 ## UI
 
