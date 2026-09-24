@@ -115,7 +115,8 @@ defmodule HandbeamProbe.App do
       beam_eval: false,
       mcp: true,
       dist: debug?,
-      git_backend: Handbeam.Git.ExGit
+      git_backend: Handbeam.Git.ExGit,
+      packaged_mix_toolchain: true
     })
 
     System.put_env("HOME", data_dir)

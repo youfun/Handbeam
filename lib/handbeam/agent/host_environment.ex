@@ -12,13 +12,16 @@ defmodule Handbeam.Agent.HostEnvironment do
     [
       %{id: :workspace_files, source: :host_independent},
       %{id: if(Host.shell?(), do: :shell, else: :no_shell), source: :host_shell},
-      %{id: :mix_project, source: :registry_unconditional_seed},
+      mix_section(),
       %{id: browser_section(), source: :host_browser}
-    ] ++
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Kernel.++(
       if(Host.system_intents?(),
         do: [%{id: :host_scripts_and_intents, source: :host_system_intents}],
         else: []
       )
+    )
   end
 
   @doc "Compose a compact environment contract without inferring capabilities from the OS."
@@ -34,6 +37,19 @@ defmodule Handbeam.Agent.HostEnvironment do
       Host.desktop_browser?() -> :desktop_browser
       Host.webview_browser?() -> :webview_browser
       true -> :no_browser
+    end
+  end
+
+  defp mix_section do
+    cond do
+      Host.packaged_mix_toolchain?() ->
+        %{id: :mix_project, source: :host_packaged_mix_toolchain}
+
+      Host.shell?() ->
+        %{id: :system_mix, source: :host_shell}
+
+      true ->
+        nil
     end
   end
 
@@ -56,6 +72,10 @@ defmodule Handbeam.Agent.HostEnvironment do
   defp text(:mix_project) do
     "When exposed and its toolchain is available, `mix_project` manages a workspace mix.exs project: deps.get, compile, test and run. " <>
       "It executes on the host BEAM, not in a shell or sandbox. Only host-compatible pure Elixir/Erlang dependencies are supported; arbitrary NIFs and external builds are not supported."
+  end
+
+  defp text(:system_mix) do
+    "This desktop host does not expose the packaged `mix_project` tool. Use the machine's `mix`, `elixir`, and `erl` through `bash`; their availability and versions come from the host PATH."
   end
 
   defp text(:host_scripts_and_intents) do

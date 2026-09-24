@@ -91,7 +91,7 @@ defmodule Handbeam.Tool.RegistryTest do
       Application.delete_env(:handbeam, :host)
       names = Enum.map(Registry.host_tool_modules(), & &1.name())
       assert "browser" in names
-      assert "mix_project" in names
+      refute "mix_project" in names
       refute "git" in names
       assert "bash" in names
       for tool <- ~w(web_fetch skill task job_status job_cancel), do: assert(tool in names)
@@ -107,7 +107,8 @@ defmodule Handbeam.Tool.RegistryTest do
         shell: false,
         desktop_browser: false,
         webview_browser: true,
-        beam_eval: false
+        beam_eval: false,
+        packaged_mix_toolchain: true
       })
 
       mods = Registry.host_tool_modules()

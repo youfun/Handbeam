@@ -141,7 +141,6 @@ defmodule Handbeam.Tool.Registry do
       Handbeam.Tool.Builtin.Grep,
       Handbeam.Tool.Builtin.JobStatus,
       Handbeam.Tool.Builtin.JobCancel,
-      Handbeam.Tool.Builtin.MixProject,
       Handbeam.Tool.Builtin.Read,
       Handbeam.Tool.Builtin.Skill,
       Handbeam.Tool.Builtin.Advisor,
@@ -165,6 +164,11 @@ defmodule Handbeam.Tool.Registry do
 
     base
     |> Enum.map(&%{module: &1, enabled: true, source: :unconditional_seed})
+    |> host_gate(
+      Handbeam.Host.packaged_mix_toolchain?(),
+      Handbeam.Tool.Builtin.MixProject,
+      :packaged_mix_toolchain
+    )
     |> host_gate(
       not is_nil(Handbeam.Host.get(:git_backend)),
       Handbeam.Tool.Builtin.Git,
