@@ -226,39 +226,49 @@ defmodule Handbeam.Agent.Coordinator do
     workspace_path = Keyword.fetch!(opts, :workspace_path)
     om = Keyword.get(opts, :om, %{})
 
-    observer_model = om[:observer_model]
-    reflector_model = om[:reflector_model]
+    with :ok <- memory_model_allowed(workspace_path, om[:observer_model], :observer),
+         :ok <- memory_model_allowed(workspace_path, om[:reflector_model], :reflector) do
+      :ok
+    end
+  end
 
+  # A removed catalog entry is not a workspace restriction. "Unrestricted" and
+  # an allowlist that simply does not name the model both mean "do not use it
+  # for memory", so the chat model can still start. An explicit allowlist that
+  # excludes a model still present in the catalog remains a hard error.
+  defp memory_model_allowed(_workspace_path, model, _role)
+       when model in [nil, ""],
+       do: :ok
+
+  defp memory_model_allowed(workspace_path, model, role) do
     cond do
-      observer_model &&
-          not Handbeam.Agent.ModelConfig.model_allowed_for_workspace?(
-            workspace_path,
-            observer_model
-          ) ->
-        {:error,
-         Gettext.dgettext(
-           HandbeamWeb.Gettext,
-           "errors",
-           "Observational Memory observer model (%{model}) is not allowed in this workspace. Check Settings → Model / AI → Observational Memory → Observer model.",
-           model: observer_model
-         )}
+      Handbeam.Agent.ModelConfig.model_allowed_for_workspace?(workspace_path, model) ->
+        :ok
 
-      reflector_model &&
-          not Handbeam.Agent.ModelConfig.model_allowed_for_workspace?(
-            workspace_path,
-            reflector_model
-          ) ->
-        {:error,
-         Gettext.dgettext(
-           HandbeamWeb.Gettext,
-           "errors",
-           "Observational Memory reflector model (%{model}) is not allowed in this workspace. Check Settings → Model / AI → Observational Memory → Reflector model.",
-           model: reflector_model
-         )}
+      Handbeam.Agent.ModelConfig.model_in_catalog?(model) ->
+        {:error, memory_model_rejected(role, model)}
 
       true ->
         :ok
     end
+  end
+
+  defp memory_model_rejected(:observer, model) do
+    Gettext.dgettext(
+      HandbeamWeb.Gettext,
+      "errors",
+      "Observational Memory observer model (%{model}) is not allowed in this workspace. Check Settings → Model / AI → Observational Memory → Observer model.",
+      model: model
+    )
+  end
+
+  defp memory_model_rejected(:reflector, model) do
+    Gettext.dgettext(
+      HandbeamWeb.Gettext,
+      "errors",
+      "Observational Memory reflector model (%{model}) is not allowed in this workspace. Check Settings → Model / AI → Observational Memory → Reflector model.",
+      model: model
+    )
   end
 
   defp validate_advisor_policy(opts) do

@@ -582,6 +582,67 @@ defmodule Handbeam.Agent.CoordinatorTest do
     assert_receive_run_end(sid)
   end
 
+  test "removed observational memory model does not block an unrestricted workspace" do
+    sid = "coord-stale-om-#{System.unique_integer([:positive])}"
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
+
+    assert {:ok, %{action: :started}} =
+             Coordinator.add_message(
+               sid,
+               "hello",
+               opts(
+                 om: %{
+                   enabled: true,
+                   observer_model: "xai/grok-4.7",
+                   reflector_model: "xai/grok-4.7"
+                 }
+               )
+             )
+
+    assert_receive_run_end(sid)
+  end
+
+  test "allowlisted workspace still rejects a catalog observational memory model" do
+    sid = "coord-restricted-om-#{System.unique_integer([:positive])}"
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
+    # The helper writes models.json inside the workspace and points
+    # HANDBEAM_MODELS_FILE at it. Policy must live in a different directory,
+    # otherwise saving the catalog overwrites the allowlist.
+    _catalog_dir = tmp_no_policy_workspace()
+    models_path = System.fetch_env!("HANDBEAM_MODELS_FILE")
+
+    workspace =
+      Path.join(System.tmp_dir!(), "sigil_coord_allow_#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(workspace)
+    on_exit(fn -> File.rm_rf(workspace) end)
+
+    File.write!(
+      models_path,
+      ~s({"providers":{"fake":{"baseUrl":"http://localhost","api":"openai-chat-completions","apiKey":"sk-fake","models":[{"id":"fake-model","name":"Fake Model"}]},"other":{"baseUrl":"http://localhost","api":"openai-chat-completions","apiKey":"sk-other","models":[{"id":"other-model","name":"Other Model"}]}}})
+    )
+
+    File.mkdir_p!(Path.dirname(Handbeam.WorkspaceSettings.path(workspace)))
+
+    File.write!(
+      Handbeam.WorkspaceSettings.path(workspace),
+      ~s({"models":{"allow":{"providers":{"fake":{"models":["fake-model"]}}}}})
+    )
+
+    assert {:error, reason} =
+             Coordinator.add_message(
+               sid,
+               "hello",
+               opts(
+                 workspace_path: workspace,
+                 om: %{enabled: true, observer_model: "other/other-model"}
+               )
+             )
+
+    assert reason =~ "other/other-model"
+    refute reason =~ "not in the global catalog"
+  end
+
   test "missing required opts return structured error" do
     sid = "coord-missing-#{System.unique_integer([:positive])}"
 

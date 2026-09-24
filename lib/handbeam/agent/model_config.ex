@@ -690,6 +690,19 @@ defmodule Handbeam.Agent.ModelConfig do
   end
 
   @doc """
+  Whether a composite or bare model id is still in the global catalog.
+
+  Disabled entries count. A deleted provider does not. Callers use this to
+  tell a removed reference apart from a model the workspace allowlist rejects.
+  """
+  @spec model_in_catalog?(String.t()) :: boolean()
+  def model_in_catalog?(model_id) when is_binary(model_id) do
+    Enum.any?(catalog_models(), &model_matches?(&1, model_id))
+  end
+
+  def model_in_catalog?(_), do: false
+
+  @doc """
   Every catalog model, including ones with `"enabled" => false`.
 
   Chat and workspace choices use `all_global_models/0`, which drops disabled
