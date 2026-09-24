@@ -9,9 +9,31 @@ defmodule Handbeam.WebFetch.HTTP do
     {"connection", "close"}
   ]
 
-  # Internal transport: caller must validate the IP. No DNS, pooling, cookies,
-  # proxies, automatic redirects or Req plugins may bypass that validation.
-  def get(uri, ip, deadline) do
+  # Caller validates the destination. A tuple address is pinned. `{:proxy, _}`
+  # dials that proxy with the URL hostname and does not dial a resolved origin
+  # address. No pooling, cookies, automatic redirects or Req plugins.
+  def get(uri, {:proxy, {scheme, address, port, proxy_opts}}, deadline)
+      when scheme in [:http, :https] and is_list(proxy_opts) do
+    timeout = remaining(deadline)
+    {headers, proxy_opts} = Keyword.pop(proxy_opts, :proxy_headers, [])
+
+    proxy_opts =
+      proxy_opts
+      |> Keyword.put(:tunnel_timeout, timeout)
+      |> Keyword.put(:mode, :passive)
+      |> Keyword.put(:transport_opts, proxy_transport_opts(scheme, proxy_opts, timeout))
+
+    extra = [proxy: {scheme, address, port, proxy_opts}]
+    extra = if headers == [], do: extra, else: [{:proxy_headers, headers} | extra]
+
+    connect(uri, uri.host, extra, deadline, inet6?(address))
+  end
+
+  def get(uri, ip, deadline) when is_tuple(ip) do
+    connect(uri, ip, [], deadline, tuple_size(ip) == 8)
+  end
+
+  defp connect(uri, address, extra, deadline, inet6?) do
     timeout = remaining(deadline)
 
     if timeout <= 0 do
@@ -24,15 +46,16 @@ defmodule Handbeam.WebFetch.HTTP do
           do: [cacerts: :public_key.cacerts_get(), verify: :verify_peer],
           else: []
 
-      opts = [
-        hostname: uri.host,
-        protocols: [:http1],
-        mode: :passive,
-        max_header_list_size: 16_384,
-        transport_opts: [timeout: min(timeout, 5_000), inet6: tuple_size(ip) == 8] ++ tls
-      ]
+      opts =
+        [
+          hostname: uri.host,
+          protocols: [:http1],
+          mode: :passive,
+          max_header_list_size: 16_384,
+          transport_opts: [timeout: min(timeout, 5_000), inet6: inet6?] ++ tls
+        ] ++ extra
 
-      case Mint.HTTP.connect(scheme, ip, uri.port, opts) do
+      case Mint.HTTP.connect(scheme, address, uri.port, opts) do
         {:ok, conn} ->
           try do
             request(conn, uri, deadline)
@@ -43,6 +66,25 @@ defmodule Handbeam.WebFetch.HTTP do
         {:error, _} ->
           {:error, "Connection or TLS verification failed"}
       end
+    end
+  end
+
+  defp inet6?(address) when is_binary(address), do: String.contains?(address, ":")
+  defp inet6?(address) when is_tuple(address), do: tuple_size(address) == 8
+  defp inet6?(_), do: false
+
+  defp proxy_transport_opts(scheme, proxy_opts, timeout) do
+    opts =
+      proxy_opts
+      |> Keyword.get(:transport_opts, [])
+      |> Keyword.put_new(:timeout, min(max(timeout, 0), 5_000))
+
+    if scheme == :https do
+      opts
+      |> Keyword.put_new(:cacerts, :public_key.cacerts_get())
+      |> Keyword.put_new(:verify, :verify_peer)
+    else
+      opts
     end
   end
 

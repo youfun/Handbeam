@@ -3,6 +3,33 @@ defmodule Handbeam.WebFetch.HTTPTest do
 
   alias Handbeam.WebFetch.HTTP
 
+  test "proxy mode dials the proxy with the origin hostname, not a fake-ip token" do
+    {port, server} =
+      serve(fn socket, _request ->
+        :gen_tcp.send(
+          socket,
+          "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\nhello"
+        )
+      end)
+
+    uri = URI.parse("http://docs.example/guide?q=1")
+
+    assert {:ok, %{status: 200, body: "hello"}} =
+             HTTP.get(
+               uri,
+               {:proxy,
+                {:http, "127.0.0.1", port,
+                 [proxy_headers: [{"proxy-authorization", "Basic dGVzdA=="}]]}},
+               deadline()
+             )
+
+    assert_receive {:request, ^server, request}
+    assert request =~ "docs.example"
+    assert request =~ "/guide?q=1"
+    assert request =~ "proxy-authorization: Basic dGVzdA==\r\n"
+    refute request =~ "198.18"
+  end
+
   test "connects to supplied IP with original Host, path/query and no cookies" do
     {port, server} =
       serve(fn socket, _request ->
