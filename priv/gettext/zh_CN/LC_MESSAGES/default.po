@@ -276,6 +276,21 @@ msgstr "新建自由对话"
 msgid "回收站"
 msgstr "回收站"
 
+msgid "已存档"
+msgstr "已存档"
+
+msgid "移除工作区"
+msgstr "移除工作区"
+
+msgid "移除「%{name}」后，其中的对话会进入已存档。项目目录不会被删除。"
+msgstr "移除「%{name}」后，其中的对话会进入已存档。项目目录不会被删除。"
+
+msgid "默认工作区不能移除"
+msgstr "默认工作区不能移除"
+
+msgid "移除工作区失败"
+msgstr "移除工作区失败"
+
 #: lib/sigil_web/live/workspace_live.html.heex:219
 #, elixir-autogen
 msgid "恢复"

@@ -331,6 +331,38 @@ defmodule Handbeam.ConversationStore do
   end
 
   @doc """
+  Archive every conversation that belongs to a workspace.
+
+  Already archived conversations are left unchanged. Returns the conversations
+  that were archived by this call.
+  """
+  @spec archive_for_workspace(String.t()) :: {:ok, [conversation()]} | {:error, term()}
+  def archive_for_workspace(workspace_id) when is_binary(workspace_id) do
+    workspace_id
+    |> list_for_workspace(include_archived?: true, include_timeline?: false)
+    |> Enum.reject(&archived_conversation?/1)
+    |> Enum.reduce_while({:ok, []}, fn conversation, {:ok, archived} ->
+      case archive(conversation["id"]) do
+        {:ok, updated} -> {:cont, {:ok, [updated | archived]}}
+        {:error, reason} -> {:halt, {:error, reason}}
+      end
+    end)
+    |> case do
+      {:ok, archived} -> {:ok, Enum.reverse(archived)}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc "True when `archived_at` is a non-empty timestamp."
+  @spec archived_conversation?(map()) :: boolean()
+  def archived_conversation?(conversation) when is_map(conversation) do
+    case Map.get(conversation, "archived_at") do
+      value when is_binary(value) and value != "" -> true
+      _ -> false
+    end
+  end
+
+  @doc """
   Restore (unarchive) a conversation by id.
   """
   @spec unarchive(String.t()) :: {:ok, conversation()} | {:error, :not_found | term()}

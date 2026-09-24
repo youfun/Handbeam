@@ -8,6 +8,8 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
 
   alias HandbeamWeb.WorkspaceLive.ConversationState
 
+  @free_key :free
+
   def assign_current(socket, ws, conversation_id) do
     socket
     |> assign(:chat_scope, :workspace)
@@ -119,7 +121,39 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
     |> reload_conversation_stream()
   end
 
-  @free_key :free
+  def remove_workspace(socket, ws_id) do
+    with {:ok, removed} <- Handbeam.WorkspaceStore.remove(ws_id),
+         {:ok, _archived} <- Handbeam.ConversationStore.archive_for_workspace(ws_id) do
+      workspaces = Handbeam.WorkspaceStore.list()
+
+      conversations_by_ws =
+        workspaces
+        |> build_conversations_by_workspace(include_archived?: true)
+        |> Map.put(@free_key, load_free_conversations(include_archived?: true))
+        |> Map.put(ws_id, orphaned_archived_conversations(ws_id))
+
+      socket =
+        socket
+        |> assign(:workspaces, workspaces)
+        |> assign(:conversations_by_workspace, conversations_by_ws)
+        |> assign(:workspace_menu_id, nil)
+        |> assign(:remove_workspace, nil)
+        |> assign(:show_archive, true)
+        |> reload_conversation_stream()
+
+      {:ok, socket, removed}
+    else
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp orphaned_archived_conversations(ws_id) do
+    Handbeam.ConversationStore.list_for_workspace(ws_id,
+      include_archived?: true,
+      include_timeline?: false
+    )
+    |> Enum.filter(&archived_conversation?/1)
+  end
 
   def free_key, do: @free_key
 
@@ -409,10 +443,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
   end
 
   def archived_conversation?(conversation) do
-    case Map.get(conversation, "archived_at") do
-      v when is_binary(v) and v != "" -> true
-      _ -> false
-    end
+    Handbeam.ConversationStore.archived_conversation?(conversation)
   end
 
   defp reset_new_conversation_projection(socket, opts) do

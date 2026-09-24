@@ -155,7 +155,7 @@
             <button
               phx-click="new_conversation_in_workspace"
               phx-value-ws_id={ws["id"]}
-              class="workspace-add-btn flex-shrink-0 w-5 h-5 flex items-center justify-center rounded text-tertiary hover:text-primary hover:bg-surface-hover transition-colors mr-1"
+              class="workspace-add-btn flex-shrink-0 w-5 h-5 flex items-center justify-center rounded text-tertiary hover:text-primary hover:bg-surface-hover transition-colors"
               title={gettext("在此工作区新建对话")}
             >
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
@@ -167,6 +167,49 @@
                 />
               </svg>
             </button>
+            <div :if={!ws["default"]} class="workspace-menu">
+              <button
+                type="button"
+                phx-click="toggle_workspace_menu"
+                phx-value-id={ws["id"]}
+                id={"workspace-menu-#{ws["id"]}"}
+                class={["workspace-action", @workspace_menu_id == ws["id"] && "is-open"]}
+                title={gettext("更多操作")}
+                aria-label={gettext("更多操作")}
+                aria-haspopup="menu"
+                aria-expanded={to_string(@workspace_menu_id == ws["id"])}
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 12 12"
+                  fill="currentColor"
+                  aria-hidden="true"
+                >
+                  <circle cx="2.25" cy="6" r="1" />
+                  <circle cx="6" cy="6" r="1" />
+                  <circle cx="9.75" cy="6" r="1" />
+                </svg>
+              </button>
+              <div
+                :if={@workspace_menu_id == ws["id"]}
+                id={"workspace-menu-panel-#{ws["id"]}"}
+                class="workspace-menu-panel"
+                role="menu"
+                phx-click-away="close_workspace_menu"
+              >
+                <button
+                  type="button"
+                  role="menuitem"
+                  phx-click="open_remove_workspace"
+                  phx-value-id={ws["id"]}
+                  id={"workspace-action-remove-#{ws["id"]}"}
+                  class="workspace-menu-item danger"
+                >
+                  <span>{gettext("移除工作区")}</span>
+                </button>
+              </div>
+            </div>
           </div>
 
           <div class="conversations-list">
@@ -334,22 +377,22 @@
           </div>
         </div>
 
-        <!-- Recycle bin (toggle) -->
+        <!-- Archived conversations -->
         <div class="workspace-group mt-2 border-t pt-2">
           <button
-            phx-click="toggle_recycle_bin"
+            phx-click="toggle_archive"
             class="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-xs text-tertiary hover:bg-surface-hover transition-colors rounded"
           >
-            <span class={["workspace-chevron", if(@show_recycle_bin, do: "expanded", else: "")]}>
-              {if(@show_recycle_bin, do: "▾", else: "▸")}
+            <span class={["workspace-chevron", if(@show_archive, do: "expanded", else: "")]}>
+              {if(@show_archive, do: "▾", else: "▸")}
             </span>
-            <span>{gettext("回收站")}</span>
+            <span>{gettext("已存档")}</span>
             <span class="ml-auto tabular-nums text-[0.6rem] lowercase">
               {archived_stream_count(@streams.conversations)}
             </span>
           </button>
 
-          <div :if={@show_recycle_bin} class="conversations-list">
+          <div :if={@show_archive} class="conversations-list">
             <div
               :for={{dom_id, conv} <- @streams.conversations}
               :if={conv.archived}
@@ -473,6 +516,49 @@
             </button>
           </div>
         </form>
+      </div>
+
+      <div
+        :if={@remove_workspace}
+        id="remove-workspace-overlay"
+        class="absolute inset-0 z-50 flex items-center justify-center"
+        phx-window-keydown="cancel_remove_workspace"
+        phx-key="Escape"
+      >
+        <button
+          type="button"
+          class="absolute inset-0 bg-transparent border-0"
+          phx-click="cancel_remove_workspace"
+          aria-label={gettext("取消")}
+        ></button>
+        <div
+          id="remove-workspace-dialog"
+          class="relative add-project-dialog bg-surface border rounded-xl shadow-2xl w-[420px] p-5"
+        >
+          <h3 class="text-base font-semibold text-primary mb-2">{gettext("移除工作区")}</h3>
+          <p class="text-xs text-secondary mb-4">
+            {gettext("移除「%{name}」后，其中的对话会进入已存档。项目目录不会被删除。",
+              name: @remove_workspace.name
+            )}
+          </p>
+          <div class="flex justify-end gap-3">
+            <button
+              type="button"
+              phx-click="cancel_remove_workspace"
+              class="text-xs text-secondary border rounded px-3 py-1.5 transition-colors hover:text-primary hover:border-hover"
+            >
+              {gettext("取消")}
+            </button>
+            <button
+              type="button"
+              id="confirm-remove-workspace"
+              phx-click="confirm_remove_workspace"
+              class="text-xs bg-error text-white rounded px-4 py-1.5 transition-colors"
+            >
+              {gettext("移除")}
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- Add Project Dialog (overlay) -->
@@ -1480,6 +1566,16 @@
               <span class="truncate">{ws["name"]}</span>
               <span :if={ws["default"]} class="sheet-section-sub">default</span>
             </div>
+            <button
+              :if={!ws["default"]}
+              phx-click="open_remove_workspace"
+              phx-value-id={ws["id"]}
+              class="sheet-remove-workspace-btn"
+              title={gettext("移除工作区")}
+              aria-label={gettext("移除工作区")}
+            >
+              {gettext("移除")}
+            </button>
             <button
               phx-click="mobile_new_conversation_in_workspace"
               phx-value-ws_id={ws["id"]}

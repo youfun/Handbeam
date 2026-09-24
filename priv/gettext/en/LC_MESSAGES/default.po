@@ -277,6 +277,21 @@ msgstr "New chat"
 msgid "回收站"
 msgstr "Trash"
 
+msgid "已存档"
+msgstr "Archived"
+
+msgid "移除工作区"
+msgstr "Remove workspace"
+
+msgid "移除「%{name}」后，其中的对话会进入已存档。项目目录不会被删除。"
+msgstr "Removing \"%{name}\" archives its conversations. The project directory is not deleted."
+
+msgid "默认工作区不能移除"
+msgstr "The default workspace cannot be removed"
+
+msgid "移除工作区失败"
+msgstr "Failed to remove workspace"
+
 #: lib/sigil_web/live/workspace_live.html.heex:219
 #, elixir-autogen
 msgid "恢复"

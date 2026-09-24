@@ -140,7 +140,9 @@ defmodule HandbeamWeb.WorkspaceLive do
       |> assign(:current_assistant_entry_id, nil)
       |> assign(:tools_active, %{})
       |> assign(:expanded_tool_groups, MapSet.new())
-      |> assign(:show_recycle_bin, false)
+      |> assign(:show_archive, false)
+      |> assign(:workspace_menu_id, nil)
+      |> assign(:remove_workspace, nil)
       |> assign(:conversation_menu_id, nil)
       |> assign(:rename_conversation, nil)
       |> assign(:pending_approval, nil)
@@ -876,11 +878,75 @@ defmodule HandbeamWeb.WorkspaceLive do
     {:noreply, ConversationSwitching.unarchive_conversation(socket, conv_id)}
   end
 
-  # ── Recycle bin toggle ──
+  # ── Archive toggle ──
 
   @impl true
-  def handle_event("toggle_recycle_bin", _params, socket) do
-    {:noreply, update(socket, :show_recycle_bin, &(!&1))}
+  def handle_event("toggle_archive", _params, socket) do
+    {:noreply, update(socket, :show_archive, &(!&1))}
+  end
+
+  @impl true
+  def handle_event("toggle_workspace_menu", %{"id" => ws_id}, socket) do
+    menu_id = if socket.assigns.workspace_menu_id == ws_id, do: nil, else: ws_id
+    {:noreply, assign(socket, :workspace_menu_id, menu_id)}
+  end
+
+  def handle_event("close_workspace_menu", _params, socket) do
+    {:noreply, assign(socket, :workspace_menu_id, nil)}
+  end
+
+  @impl true
+  def handle_event("open_remove_workspace", %{"id" => ws_id}, socket) do
+    case Handbeam.WorkspaceStore.get(ws_id) do
+      {:ok, %{"default" => true}} ->
+        {:noreply, assign(socket, :workspace_menu_id, nil)}
+
+      {:ok, ws} ->
+        {:noreply,
+         socket
+         |> assign(:workspace_menu_id, nil)
+         |> assign(:remove_workspace, %{id: ws["id"], name: ws["name"]})}
+
+      {:error, :not_found} ->
+        {:noreply, assign(socket, :workspace_menu_id, nil)}
+    end
+  end
+
+  def handle_event("cancel_remove_workspace", _params, socket) do
+    {:noreply, assign(socket, :remove_workspace, nil)}
+  end
+
+  @impl true
+  def handle_event("confirm_remove_workspace", _params, socket) do
+    case socket.assigns.remove_workspace do
+      %{id: ws_id} ->
+        case ConversationSwitching.remove_workspace(socket, ws_id) do
+          {:ok, socket, _removed} ->
+            socket =
+              if socket.assigns.current_workspace_id == ws_id do
+                switch_away_from_removed_workspace(socket)
+              else
+                socket
+              end
+
+            {:noreply, socket}
+
+          {:error, :default_workspace} ->
+            {:noreply,
+             socket
+             |> assign(:remove_workspace, nil)
+             |> put_flash(:error, gettext("默认工作区不能移除"))}
+
+          {:error, _reason} ->
+            {:noreply,
+             socket
+             |> assign(:remove_workspace, nil)
+             |> put_flash(:error, gettext("移除工作区失败"))}
+        end
+
+      _ ->
+        {:noreply, socket}
+    end
   end
 
   @impl true
@@ -1123,6 +1189,33 @@ defmodule HandbeamWeb.WorkspaceLive do
             form = Map.put(form, "error", reason)
             {:noreply, assign(socket, :add_project_form, form)}
         end
+    end
+  end
+
+  defp switch_away_from_removed_workspace(socket) do
+    case Enum.find(socket.assigns.workspaces, & &1["default"]) ||
+           List.first(socket.assigns.workspaces) do
+      nil ->
+        socket
+
+      ws ->
+        {socket, conv_id} = ConversationSwitching.select_workspace(socket, ws["id"])
+
+        socket =
+          socket
+          |> handle_workspace_switch()
+          |> subscribe_to_session()
+          |> restore_active_session_snapshot()
+          |> close_mobile_sheets()
+
+        path =
+          if conv_id do
+            "/w/#{ws["id"]}/c/#{conv_id}"
+          else
+            "/"
+          end
+
+        push_patch(socket, to: path)
     end
   end
 

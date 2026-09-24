@@ -3155,6 +3155,57 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       end
     end
 
+    test "removing a workspace archives its conversations and keeps the directory", %{conn: conn} do
+      project_dir =
+        Path.join(
+          System.tmp_dir!(),
+          "sigil_removed_project_#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(project_dir)
+      File.write!(Path.join(project_dir, "keep.txt"), "still here")
+
+      try do
+        {:ok, added} = Handbeam.WorkspaceStore.add(project_dir, name: "To Remove")
+
+        {:ok, conversation} =
+          Handbeam.ConversationStore.create(added["id"],
+            title: "Kept chat",
+            timeline: [%{"id" => "kept-1", "role" => "user", "content" => "do not delete"}]
+          )
+
+        {:ok, view, _html} = live(conn, "/")
+
+        view
+        |> element("#workspace-menu-#{added["id"]}")
+        |> render_click()
+
+        view
+        |> element("#workspace-action-remove-#{added["id"]}")
+        |> render_click()
+
+        dialog = render(view)
+        assert dialog =~ "Remove workspace"
+        assert dialog =~ "archives its conversations"
+
+        view |> element("#confirm-remove-workspace") |> render_click()
+
+        rendered = render(view)
+        refute rendered =~ "To Remove"
+        assert rendered =~ "Archived"
+        assert rendered =~ "Kept chat"
+        assert File.read!(Path.join(project_dir, "keep.txt")) == "still here"
+        assert {:error, :not_found} = Handbeam.WorkspaceStore.get(added["id"])
+
+        assert {:ok, archived} =
+                 Handbeam.ConversationStore.get(conversation["id"], include_timeline?: false)
+
+        assert is_binary(archived["archived_at"])
+      after
+        File.rm_rf!(project_dir)
+      end
+    end
+
     test "sandbox host imports a copied directory as the workspace", %{conn: conn} do
       previous = Application.get_env(:handbeam, :host)
 
@@ -3853,15 +3904,15 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       refute html =~ ~s(id="workspace-sheet" class="bottom-sheet open")
     end
 
-    test "recycle bin toggle shows archived conversations in stream", %{conn: conn} do
+    test "archive toggle shows archived conversations in stream", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/")
 
-      # Recycle bin starts collapsed
       html = render(view)
+      assert html =~ "Archived"
+      refute html =~ "Trash"
       assert html =~ "▸"
 
-      # Toggle recycle bin
-      view |> element("button[phx-click='toggle_recycle_bin']") |> render_click()
+      view |> element("button[phx-click='toggle_archive']") |> render_click()
 
       html = render(view)
       assert html =~ "▾"

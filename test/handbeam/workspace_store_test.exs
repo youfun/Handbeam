@@ -343,6 +343,35 @@ defmodule Handbeam.WorkspaceStoreTest do
     end
   end
 
+  describe "remove/1" do
+    test "removes a non-default workspace without deleting its directory", %{
+      workspace_path: workspace_path
+    } do
+      {:ok, _} = WorkspaceStore.ensure_default!()
+      project_dir = Path.join(workspace_path, "extra")
+      File.mkdir_p!(project_dir)
+      File.write!(Path.join(project_dir, "keep.txt"), "kept")
+
+      {:ok, added} = WorkspaceStore.add(project_dir, name: "Extra")
+      assert {:ok, removed} = WorkspaceStore.remove(added["id"])
+      assert removed["id"] == added["id"]
+      assert {:error, :not_found} = WorkspaceStore.get(added["id"])
+      assert File.read!(Path.join(project_dir, "keep.txt")) == "kept"
+      assert Enum.map(WorkspaceStore.list(), & &1["id"]) == ["default"]
+    end
+
+    test "refuses to remove the default workspace" do
+      {:ok, default} = WorkspaceStore.ensure_default!()
+      assert {:error, :default_workspace} = WorkspaceStore.remove(default["id"])
+      assert {:ok, _} = WorkspaceStore.get("default")
+    end
+
+    test "returns not found for an unknown id" do
+      {:ok, _} = WorkspaceStore.ensure_default!()
+      assert {:error, :not_found} = WorkspaceStore.remove("missing")
+    end
+  end
+
   describe "touch/1" do
     test "updates last_opened_at" do
       {:ok, ws} = WorkspaceStore.ensure_default!()
