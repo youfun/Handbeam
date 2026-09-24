@@ -398,7 +398,7 @@ defmodule HandbeamProbe.ModelSettings.Render do
       text(model.id, text_size: 12, text_color: color(:hint), padding_top: 6, padding_bottom: 8),
       row([
         text(
-          if(enabled?, do: gettext("Enabled"), else: gettext("Disabled")),
+          if(enabled?, do: gettext("Model on"), else: gettext("Model off")),
           text_size: 13,
           text_color: color(:muted),
           weight: 1

@@ -250,7 +250,9 @@ defmodule HandbeamProbe.ModelSettingsTest do
            |> Enum.sort() ==
              ["alpha/one", "beta/two"]
 
-    :ok = Handbeam.WorkspaceSettings.write_policy(ws_a["path"], %{"allow" => %{"providers" => %{}}})
+    :ok =
+      Handbeam.WorkspaceSettings.write_policy(ws_a["path"], %{"allow" => %{"providers" => %{}}})
+
     assert {:ok, policy} = ModelConfig.load_workspace_policy(ws_a["path"])
     assert policy["allow"]["providers"] == %{}
 
@@ -353,6 +355,52 @@ defmodule HandbeamProbe.ModelSettingsTest do
     refute model_form =~ "Provider ID"
     refute model_form =~ "Model ID"
     assert model_form =~ "gpt-4o" or model_form =~ "claude-sonnet-4"
+  end
+
+  test "toggling a model off hides it from chat choices and toggling it on restores it", %{
+    ws_a: ws
+  } do
+    save_named(ws, "alpha", "one")
+    save_named(ws, "alpha", "two")
+    state = ModelSettings.load(ws)
+
+    assert Enum.any?(state.models, &(&1.id == "alpha/one" and &1.enabled))
+
+    stored = Enum.find(read_models()["providers"]["alpha"]["models"], &(&1["id"] == "one"))
+    refute Map.has_key?(stored, "enabled")
+
+    tree = ModelSettings.render(state)
+    assert tap_change?(tree, {:toggle_model_enabled, "alpha", "one", false})
+
+    state =
+      ModelSettings.action({:toggle_model_enabled, "alpha", "one", false}, state, ws)
+
+    one = Enum.find(read_models()["providers"]["alpha"]["models"], &(&1["id"] == "one"))
+    assert one["enabled"] == false
+    assert Enum.any?(state.models, &(&1.id == "alpha/one" and &1.enabled == false))
+    refute Enum.any?(state.allowed_models, &(&1.id == "alpha/one"))
+    assert Enum.any?(state.allowed_models, &(&1.id == "alpha/two"))
+
+    refute Enum.any?(
+             ModelConfig.available_models_for_workspace(ws["path"]),
+             &(&1.id == "alpha/one")
+           )
+
+    refute Enum.any?(ModelConfig.all_global_models(), &(&1.id == "alpha/one"))
+
+    tree = ModelSettings.render(state)
+    assert tap_change?(tree, {:toggle_model_enabled, "alpha", "one", true})
+    assert flatten_text(tree) =~ gettext("Model off")
+
+    state = ModelSettings.action({:toggle_model_enabled, "alpha", "one", true}, state, ws)
+    one = Enum.find(read_models()["providers"]["alpha"]["models"], &(&1["id"] == "one"))
+    assert one["enabled"] == true
+    assert Enum.any?(state.allowed_models, &(&1.id == "alpha/one"))
+
+    assert Enum.any?(
+             ModelConfig.available_models_for_workspace(ws["path"]),
+             &(&1.id == "alpha/one")
+           )
   end
 
   test "provider dropdown switches visible models and keeps readable names", %{ws_a: ws} do
@@ -570,6 +618,9 @@ defmodule HandbeamProbe.ModelSettingsTest do
   end
 
   defp tap?(node, tag), do: Enum.any?(walk(node), &match?(%{props: %{on_tap: {_, ^tag}}}, &1))
+
+  defp tap_change?(node, tag),
+    do: Enum.any?(walk(node), &match?(%{props: %{on_change: {_, ^tag}}}, &1))
 
   defp find_type(node, type, id) do
     Enum.find(walk(node), &(&1.type == type && &1.props[:id] == id))
