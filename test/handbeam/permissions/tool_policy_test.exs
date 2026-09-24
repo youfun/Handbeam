@@ -5,6 +5,84 @@ defmodule Handbeam.Permissions.ToolPolicyTest do
 
   defp call(name, input \\ %{}), do: %{id: "call_#{name}", name: name, input: input}
 
+  # Failure list for bash `unsandboxed: true` (written before the implementation):
+  #   - full-access workspaces (`default_mode: auto`) still prompt;
+  #   - read-only workspaces (`default_mode: deny`) deny;
+  #   - deny rules and session deny overrides still deny;
+  #   - allow rules, `per_tool: auto`, and session allow overrides do not skip the prompt,
+  #     because they were granted for sandboxed execution;
+  #   - only the literal boolean `true` escalates; `"true"` or `1` stays sandboxed.
+  describe "unsandboxed bash" do
+    defp unsandboxed(command \\ "mix test"),
+      do: call("bash", %{"command" => command, "unsandboxed" => true})
+
+    test "prompts even in full-access workspaces" do
+      policy = ToolPolicy.from_settings(%{"tools" => %{"default_mode" => "auto"}})
+      assert ToolPolicy.decision(policy, unsandboxed()) == :prompt
+    end
+
+    test "is denied in read-only workspaces" do
+      policy = ToolPolicy.from_settings(%{"tools" => %{"default_mode" => "deny"}})
+      assert ToolPolicy.decision(policy, unsandboxed()) == :deny
+    end
+
+    test "deny rules and session deny overrides still win" do
+      policy = ToolPolicy.from_settings(%{"tools" => %{"deny" => ["bash(rm:*)"]}})
+      assert ToolPolicy.decision(policy, unsandboxed("rm -rf x")) == :deny
+
+      policy = ToolPolicy.from_settings(%{}, %{"bash" => :deny})
+      assert ToolPolicy.decision(policy, unsandboxed()) == :deny
+    end
+
+    test "sandboxed grants do not skip the prompt" do
+      policy =
+        ToolPolicy.from_settings(
+          %{"tools" => %{"allow" => ["bash"], "per_tool" => %{"bash" => "auto"}}},
+          %{"bash" => :auto}
+        )
+
+      assert ToolPolicy.decision(policy, unsandboxed()) == :prompt
+    end
+
+    test "only the boolean true escalates" do
+      policy = ToolPolicy.from_settings(%{})
+
+      for value <- ["true", 1, false, nil] do
+        input = %{"command" => "ls", "unsandboxed" => value}
+        assert ToolPolicy.decision(policy, call("bash", input)) == :auto
+      end
+    end
+  end
+
+  # Failure list for `task_status` `action: "apply"` (subagent worktree diff → workspace):
+  #   - prompts even with full access and a `task_status` allow grant;
+  #   - denied in read-only workspaces;
+  #   - other actions (list/get/message/discard) follow the normal policy.
+  describe "subagent worktree apply" do
+    test "prompts despite full access or grants, denies in read-only" do
+      apply = call("task_status", %{"action" => "apply", "child_conversation_id" => "c"})
+
+      policy =
+        ToolPolicy.from_settings(
+          %{"tools" => %{"default_mode" => "auto", "per_tool" => %{"task_status" => "auto"}}},
+          %{"task_status" => :auto}
+        )
+
+      assert ToolPolicy.decision(policy, apply) == :prompt
+
+      policy = ToolPolicy.from_settings(%{"tools" => %{"default_mode" => "deny"}})
+      assert ToolPolicy.decision(policy, apply) == :deny
+    end
+
+    test "other actions are not escalated" do
+      policy = ToolPolicy.from_settings(%{"tools" => %{"default_mode" => "auto"}})
+
+      for action <- ~w(list get message discard) do
+        assert ToolPolicy.decision(policy, call("task_status", %{"action" => action})) == :auto
+      end
+    end
+  end
+
   describe "from_settings/2" do
     test "defaults to auto for missing or old settings" do
       assert ToolPolicy.from_settings(%{}) |> ToolPolicy.decision(call("bash")) == :auto
