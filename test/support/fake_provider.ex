@@ -17,6 +17,8 @@ defmodule Handbeam.TestSupport.FakeProvider do
      - `:simple_answer` — one text response → :end_turn
      - `:tool_use_chain` — tool_use → tool_result → final answer
      - `:bash_git_status` — bash git status tool_use → tool_result → final answer
+     - `{:bash_script, [input]}` — one bash tool_use per turn with each input, then final answer
+     - `{:script, fun}` — `fun.(messages, tool_defs)` returns text or `{:tools, calls}`
      - `:multi_tool` — two tool calls → results → final answer
      - `:memory_learn_and_recall` — mem_learn → mem_recall → final answer
      - `:error_response` — provider error
@@ -234,6 +236,69 @@ defmodule Handbeam.TestSupport.FakeProvider do
          usage: %{input_tokens: 10, output_tokens: 12},
          response_metadata: %{id: "fake-msg-bash-git-status-tool", model: "fake-model"}
        }}
+    end
+  end
+
+  # Test-scripted turns. `fun.(messages, tool_defs)` returns a final text or
+  # `{:tools, [%{name: name, input: input}]}`. It runs in the Turn task, so it
+  # may block on `receive` to hold a run open.
+  defp do_complete(messages, tool_defs, {:script, fun}, _turn) when is_function(fun, 2) do
+    case fun.(messages, tool_defs) do
+      {:tools, calls} ->
+        tool_calls =
+          Enum.map(calls, fn call ->
+            %{
+              type: "tool_use",
+              id: "toolu_script_#{System.unique_integer([:positive])}",
+              name: call.name,
+              input: call.input
+            }
+          end)
+
+        {:ok,
+         %{
+           stop_reason: :tool_use,
+           messages: [Message.tool_use(tool_calls)],
+           usage: %{input_tokens: 3, output_tokens: 3},
+           response_metadata: %{id: "fake-msg-script-tools", model: "fake-model"}
+         }}
+
+      text when is_binary(text) ->
+        {:ok,
+         %{
+           stop_reason: :end_turn,
+           messages: [Message.assistant(text)],
+           usage: %{input_tokens: 2, output_tokens: 2},
+           response_metadata: %{id: "fake-msg-script-final", model: "fake-model"}
+         }}
+    end
+  end
+
+  # One bash call per turn, in order; the index is the number of tool results so far,
+  # so an approval pause and resume continue with the same call.
+  defp do_complete(messages, _tool_defs, {:bash_script, inputs}, _turn) do
+    done = Enum.count(messages, &match?(%Message{role: :tool_result}, &1))
+
+    case Enum.at(inputs, done) do
+      nil ->
+        {:ok,
+         %{
+           stop_reason: :end_turn,
+           messages: [Message.assistant("bash script finished")],
+           usage: %{input_tokens: 5, output_tokens: 5},
+           response_metadata: %{id: "fake-msg-bash-script-final", model: "fake-model"}
+         }}
+
+      input ->
+        tool_call = %{type: "tool_use", id: "toolu_bash_#{done}", name: "bash", input: input}
+
+        {:ok,
+         %{
+           stop_reason: :tool_use,
+           messages: [Message.tool_use([tool_call])],
+           usage: %{input_tokens: 5, output_tokens: 5},
+           response_metadata: %{id: "fake-msg-bash-script-#{done}", model: "fake-model"}
+         }}
     end
   end
 

@@ -8,15 +8,28 @@ defmodule Handbeam.PubSub.AgentEvent do
 
   defstruct [:seq, :topic, :kind, :payload, :ts_ms]
 
+  # `Session.broadcast_event/3` does not validate kinds; this type lists every
+  # kind emitted today so consumers get exhaustive matching.
   @type kind ::
           :message_delta
           | :thinking_delta
           | :usage_updated
+          | :delegation_usage
           | :tool_start
           | :tool_end
+          | :tool_approval_requested
           | :session_state
           | :run_start
           | :run_end
+          | :agent_end
+          | :turn_start
+          | :turn_end
+          | :candidate_message_injected
+          | :stall_check_requested
+          | :subagent_start
+          | :subagent_progress
+          | :subagent_end
+          | :subagent_approval_requested
 
   @type t :: %__MODULE__{
           seq: non_neg_integer(),

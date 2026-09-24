@@ -341,7 +341,7 @@ defmodule Handbeam.Agent.Tool.Executor do
     |> Enum.filter(&(is_nil(active) or &1 in active))
     |> Enum.filter(&(is_nil(parent_active) or &1 in parent_active))
     |> Enum.filter(fn _ ->
-      is_nil(parent) or Handbeam.Agent.Delegation.Policy.live_parent?(parent)
+      is_nil(parent) or Handbeam.Agent.Delegation.Policy.authorized_child?(parent, config.run_id)
     end)
   end
 

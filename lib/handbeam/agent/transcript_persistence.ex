@@ -152,6 +152,13 @@ defmodule Handbeam.Agent.TranscriptPersistence do
       when is_list(ids) do
     flush!(conversation_id, opts)
 
+    # Text after an injected message answers it, so it must not extend the
+    # assistant entry written before the injection.
+    if ids != [] do
+      :ok = finalize_assistant(conversation_id, "commentary", opts)
+      Process.put(assistant_key(conversation_id), nil)
+    end
+
     for id <- ids do
       Handbeam.ConversationTranscriptStore.update(
         conversation_id,

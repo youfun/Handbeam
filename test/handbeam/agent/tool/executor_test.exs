@@ -307,7 +307,7 @@ defmodule Handbeam.Agent.Tool.ExecutorTest do
       refute Map.has_key?(block, "details")
     end
 
-    @tag :linux_sandbox
+    @tag :os_sandbox
     test "[TOOLRES-102] bash returns dual-channel ToolResult", %{tmp_dir: tmp_dir} do
       context = %{working_directory: tmp_dir}
 
