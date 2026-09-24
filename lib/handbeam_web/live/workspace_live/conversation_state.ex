@@ -50,6 +50,9 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
     selected_model = conversation_selected_model(socket, conv, available_models)
     token_usage = load_conversation_token_usage(conv_id)
     running_for_conversation? = running_for_conversation?(socket, conv_id)
+    active_file = conv_value(conv, "active_file", nil)
+    workspace_root = Map.get(socket.assigns, :workspace_root, Handbeam.Workspace.root())
+    file_preview_error = load_file_error(active_file, workspace_root)
 
     status_overrides =
       %{model: model_display_name(selected_model, available_models, opts)}
@@ -71,8 +74,8 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
       :editor_files,
       conv_value(conv, "editor_files", []) |> Enum.map(&normalize_editor_file/1)
     )
-    |> assign(:active_file, conv_value(conv, "active_file", nil))
-    |> assign(:file_preview_error, conv_value(conv, "file_preview_error", nil))
+    |> assign(:active_file, active_file)
+    |> assign(:file_preview_error, file_preview_error)
     |> assign(:selected_model, selected_model)
     |> sync_reasoning_for_conversation(conv, selected_model, opts)
     |> maybe_update_status(status_overrides, opts)
@@ -391,19 +394,8 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
     Handbeam.Security.PathValidator.validate_within_workspace(Path.expand(path), workspace_root)
   end
 
-  defp load_file_error(nil, _workspace_root), do: nil
-
   defp load_file_error(path, workspace_root) do
-    case Handbeam.Workspace.resolve(path, workspace_root) do
-      {:ok, _} ->
-        case File.read(path) do
-          {:ok, _} -> nil
-          {:error, reason} -> reason
-        end
-
-      {:error, reason} ->
-        reason
-    end
+    HandbeamWeb.WorkspaceHelper.file_preview_error(path, workspace_root)
   end
 
   defp normalize_editor_file(%{path: _, name: _} = file), do: file

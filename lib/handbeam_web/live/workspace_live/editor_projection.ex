@@ -169,12 +169,6 @@ defmodule HandbeamWeb.WorkspaceLive.EditorProjection do
   defp refresh_active_file_preview(socket, _file_path, _workspace_root), do: socket
 
   defp load_file_error(path, workspace_root) do
-    with {:ok, _} <- Handbeam.Workspace.resolve(path, workspace_root),
-         {:error, reason} <- File.read(path) do
-      reason
-    else
-      {:ok, _contents} -> nil
-      {:error, reason} -> reason
-    end
+    HandbeamWeb.WorkspaceHelper.file_preview_error(path, workspace_root)
   end
 end

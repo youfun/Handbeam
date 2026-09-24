@@ -2413,6 +2413,29 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         File.rm(tmp)
       end
     end
+
+    test "selecting a binary workspace file keeps the LiveView alive", %{conn: conn} do
+      ws = Handbeam.Workspace.ensure_root!()
+      path = Path.join(ws, "sigil_lv_test.db-shm")
+      File.write!(path, <<0, 0xFF, "sqlite">>)
+
+      {:ok, view, _html} = live(conn, "/")
+      _ = create_default_conversation(view)
+
+      try do
+        view
+        |> element(
+          "button[phx-click='select_workspace_file'][phx-value-path='sigil_lv_test.db-shm']"
+        )
+        |> render_click()
+
+        rendered = render(view)
+        assert Process.alive?(view.pid)
+        assert rendered =~ "Binary files cannot be previewed as text"
+      after
+        File.rm(path)
+      end
+    end
   end
 
   describe "diff view" do
@@ -3071,7 +3094,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
           Path.join(System.tmp_dir!(), "handbeam_host_#{System.unique_integer([:positive])}"),
         shell: false,
         terminal: false,
-        desktop_browser: false
+        browser_backend: nil
       })
 
       try do
