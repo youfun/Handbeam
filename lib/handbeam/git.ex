@@ -2,10 +2,10 @@ defmodule Handbeam.Git do
   @moduledoc """
   Workspace-scoped Git facade.
 
-  Path permissions stay here. The default backend is the host Git CLI
-  (`Handbeam.Git.CLI`). Android/iOS hosts inject `Handbeam.Git.ExGit` at
-  boot through `Handbeam.Host` `:git_backend`. Desktop and Phoenix WebUI
-  never fall back to libgit2.
+  Path permissions stay here. Android/iOS hosts inject `Handbeam.Git.ExGit`
+  at boot through `Handbeam.Host` `:git_backend` and register the builtin Git
+  tool. The CLI backend remains available to direct application callers, but
+  desktop agents use the machine's Git through `bash` instead of this facade.
 
   HTTPS clone/fetch/push and fast-forward pull are allowed; SSH is not.
   Credentials are passed per call and never written into a URL.
