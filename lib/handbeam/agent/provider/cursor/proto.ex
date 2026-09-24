@@ -208,6 +208,10 @@ defmodule Handbeam.Agent.Provider.Cursor.Proto do
     finish(encode_message(5, msg))
   end
 
+  def encode_client(%{interaction_response: msg}) do
+    finish(encode_message(6, msg))
+  end
+
   def encode_client(:heartbeat) do
     finish(encode_message(7, <<>>))
   end
@@ -368,6 +372,11 @@ defmodule Handbeam.Agent.Provider.Cursor.Proto do
     |> finish()
   end
 
+  def encode_interaction_approval(id, field) when field in [2, 5, 6] do
+    result = finish(encode_message(1, <<>>))
+    finish(encode_uint32(1, id) ++ encode_message(field, result))
+  end
+
   def encode_mcp_success(text, is_error \\ false) do
     item = finish(encode_message(1, encode_string(1, text || "")))
     success = [encode_message(1, item), encode_bool(2, is_error)] |> finish()
@@ -437,6 +446,10 @@ defmodule Handbeam.Agent.Provider.Cursor.Proto do
     end
   end
 
+  def encode_start_grind_planning_success do
+    finish(encode_message(1, <<>>))
+  end
+
   def encode_native_success(_field, payload) do
     finish(encode_message(1, payload))
   end
@@ -488,6 +501,7 @@ defmodule Handbeam.Agent.Provider.Cursor.Proto do
       (v = field(fields, 2)) != nil -> {:exec, decode_exec(v)}
       (v = field(fields, 3)) != nil -> {:checkpoint, v}
       (v = field(fields, 4)) != nil -> {:kv, decode_kv(v)}
+      (v = field(fields, 7)) != nil -> {:interaction_query, decode_interaction_query(v)}
       true -> {:unknown, fields}
     end
   end
@@ -530,6 +544,24 @@ defmodule Handbeam.Agent.Provider.Cursor.Proto do
     end
   end
 
+  defp decode_interaction_query(bin) do
+    fields = nested(bin)
+
+    {kind, response_field} =
+      cond do
+        field(fields, 2) != nil -> {:web_search, 2}
+        field(fields, 3) != nil -> {:ask_question, 3}
+        field(fields, 4) != nil -> {:switch_mode, 4}
+        field(fields, 5) != nil -> {:exa_search, 5}
+        field(fields, 6) != nil -> {:exa_fetch, 6}
+        field(fields, 7) != nil -> {:create_plan, 7}
+        field(fields, 8) != nil -> {:setup_vm_environment, 8}
+        true -> {:unknown, 0}
+      end
+
+    %{id: field(fields, 1) || 0, kind: kind, response_field: response_field}
+  end
+
   defp decode_exec(bin) do
     f = nested(bin)
     id = field(f, 1) || 0
@@ -554,10 +586,20 @@ defmodule Handbeam.Agent.Provider.Cursor.Proto do
         field(f, 21) != nil -> {:unsupported, %{}, 21}
         field(f, 22) != nil -> {:unsupported, %{}, 22}
         field(f, 23) != nil -> {:unsupported, %{}, 23}
-        true -> {:unsupported, %{}, 2}
+        (v = field(f, 36)) != nil -> {:start_grind_planning, decode_grind_args(v), 36}
+        true -> {:unknown, %{}, 0}
       end
 
     %{id: id, exec_id: exec_id, kind: kind, payload: payload, result_field: result_field}
+  end
+
+  defp decode_grind_args(bin) do
+    f = nested(bin)
+
+    %{
+      explanation: decode_string(field(f, 1) || ""),
+      tool_call_id: decode_string(field(f, 2) || "")
+    }
   end
 
   defp decode_path_args(bin) do

@@ -34,6 +34,10 @@ defmodule Handbeam.Agent.Provider.Cursor.FlowControlTest do
       {:ok, %{conn | window: conn.window + n}, []}
     end
 
+    def stream(conn, {:closed_with, responses}) do
+      {:error, conn, :stream_closed, responses}
+    end
+
     def stream(conn, _other), do: {:ok, conn, []}
     def close(conn), do: {:ok, conn}
   end
@@ -94,5 +98,27 @@ defmodule Handbeam.Agent.Provider.Cursor.FlowControlTest do
 
     cancelled = FlowControl.cancel(state)
     assert FlowControl.empty?(cancelled)
+  end
+
+  test "terminal responses returned with a transport error are still delivered" do
+    {:ok, transport} =
+      Transport.connect(
+        http_mod: WindowHTTP,
+        http2_mod: WindowHTTP2,
+        host: "example",
+        scheme: :http
+      )
+
+    {:ok, transport} = Transport.open_run(transport, "tok", [])
+
+    responses = [
+      {:data, :ref, Handbeam.Agent.Provider.Cursor.Connect.encode("final")},
+      {:done, :ref}
+    ]
+
+    assert {:ok, transport, [{:message, "final"}, :done]} =
+             Transport.handle_mint(transport, {:closed_with, responses})
+
+    refute Transport.open?(transport)
   end
 end
