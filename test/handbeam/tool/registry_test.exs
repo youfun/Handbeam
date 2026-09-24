@@ -92,7 +92,8 @@ defmodule Handbeam.Tool.RegistryTest do
       names = Enum.map(Registry.host_tool_modules(), & &1.name())
       assert "browser" in names
       assert "mix_project" in names
-      assert "git" in names
+      refute "git" in names
+      assert "bash" in names
       for tool <- ~w(web_fetch skill task job_status job_cancel), do: assert(tool in names)
       refute "preview_serve" in names
       assert :ok = Registry.register(Handbeam.Tool.Builtin.Browser)
@@ -119,7 +120,7 @@ defmodule Handbeam.Tool.RegistryTest do
       assert "run_elixir_script" in names
       for tool <- ~w(web_fetch skill task job_status job_cancel), do: assert(tool in names)
       assert "mix_project" in names
-      assert "git" in names
+      refute "git" in names
       refute "bash" in names
 
       Enum.each(mods, &Registry.register/1)
@@ -139,6 +140,19 @@ defmodule Handbeam.Tool.RegistryTest do
                {:ok, %{module: Handbeam.Tool.Builtin.RunElixirScript}},
                Registry.get("run_elixir_script")
              )
+    end
+
+    test "host-provided Git backend enables the builtin git tool" do
+      Handbeam.Host.put!(%{
+        shell: false,
+        desktop_browser: false,
+        webview_browser: true,
+        git_backend: Handbeam.Git.CLI
+      })
+
+      names = Enum.map(Registry.host_tool_modules(), & &1.name())
+      assert "git" in names
+      refute "bash" in names
     end
   end
 

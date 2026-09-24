@@ -79,16 +79,15 @@ defmodule Handbeam.Agent.HostEnvironment do
       "Neither desktop nor WebView browser capability is enabled by the host. Do not assume a browser is available."
 
   defp git_backend_text do
-    if Code.ensure_loaded?(Handbeam.Git) and function_exported?(Handbeam.Git, :backend_kind, 0) do
-      case apply(Handbeam.Git, :backend_kind, []) do
-        :ex_git_libgit2 ->
-          "The git tool uses libgit2, not a Git shell command. Registration does not prove native dependencies are usable."
+    cond do
+      not is_nil(Host.get(:git_backend)) ->
+        "The git tool uses the host-provided Git backend. Registration does not prove native dependencies are usable."
 
-        _ ->
-          "The git tool uses the host Git CLI as argv, not a shell command string. Registration does not prove Git is installed or that a probe of `git --version` will succeed."
-      end
-    else
-      "The git tool uses libgit2, not a Git shell command. Registration does not prove native dependencies are usable."
+      Host.shell?() ->
+        "Use `git` through bash for Git operations on this desktop host; there is no separate git tool."
+
+      true ->
+        "This host exposes neither bash nor a Git backend. Do not assume Git operations are available."
     end
   end
 end

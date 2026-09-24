@@ -138,7 +138,6 @@ defmodule Handbeam.Tool.Registry do
       Handbeam.Tool.Builtin.CodeSearch,
       Handbeam.Tool.Builtin.Edit,
       Handbeam.Tool.Builtin.FileSearch,
-      Handbeam.Tool.Builtin.Git,
       Handbeam.Tool.Builtin.Grep,
       Handbeam.Tool.Builtin.JobStatus,
       Handbeam.Tool.Builtin.JobCancel,
@@ -166,6 +165,11 @@ defmodule Handbeam.Tool.Registry do
 
     base
     |> Enum.map(&%{module: &1, enabled: true, source: :unconditional_seed})
+    |> host_gate(
+      not is_nil(Handbeam.Host.get(:git_backend)),
+      Handbeam.Tool.Builtin.Git,
+      :git_backend
+    )
     |> host_gate(Handbeam.Host.shell?(), Handbeam.Tool.Builtin.Bash, :shell)
     |> host_gate(
       Handbeam.Host.desktop_browser?() or Handbeam.Host.webview_browser?(),

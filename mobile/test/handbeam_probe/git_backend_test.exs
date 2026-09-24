@@ -38,6 +38,7 @@ defmodule HandbeamProbe.GitBackendTest do
   test "phone host injects ExGit instead of the Git CLI" do
     assert Handbeam.Git.backend() == Handbeam.Git.ExGit
     assert Handbeam.Git.backend_kind() == :ex_git_libgit2
+    assert Handbeam.Tool.Builtin.Git in Handbeam.Tool.Registry.host_tool_modules()
     assert Code.ensure_loaded?(ExGit)
     beam = :code.which(Handbeam.Git.ExGit) |> to_string()
     assert beam =~ "handbeam_probe"
