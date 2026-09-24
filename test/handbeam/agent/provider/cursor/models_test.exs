@@ -152,13 +152,12 @@ defmodule Handbeam.Agent.Provider.Cursor.ModelsTest do
     assert Models.preferred_id(models) == "composer-2.5"
   end
 
-  test "discover attaches llm_db price for the base model id", %{auth_path: auth_path} do
+  test "discover returns models without waiting on a price catalog", %{auth_path: auth_path} do
     assert {:ok, models} =
              Models.discover(auth_path: auth_path, transport_mod: PricedTransport)
 
-    assert [%{"id" => "gpt-5.3-codex-low-fast", "cost" => cost}] = models
-    assert cost["input"] == 1.75
-    assert cost["output"] == 14
+    assert [%{"id" => "gpt-5.3-codex-low-fast"}] = models
+    refute Map.has_key?(hd(models), "cost")
   end
 
   test "discover uses Cursor's documented default contexts instead of advertised 1M maximum", %{

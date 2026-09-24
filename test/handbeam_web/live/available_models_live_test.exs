@@ -397,7 +397,7 @@ defmodule HandbeamWeb.AvailableModelsLiveTest do
     assert model["enabled"] == true
   end
 
-  test "cursor rows show the upstream vendor price without a refresh", %{conn: conn} do
+  test "catalog prices fill unpriced rows without another model refresh", %{conn: conn} do
     path = ModelConfig.config_file_path()
 
     File.write!(
@@ -428,6 +428,14 @@ defmodule HandbeamWeb.AvailableModelsLiveTest do
     view
     |> element(~s|button[phx-click="select_provider"][phx-value-id="cursor"]|)
     |> render_click()
+
+    send(view.pid, {
+      :catalog_prices,
+      %{
+        "gpt-5.3-codex-low-fast" => %{"input" => 1.75, "output" => 14},
+        "claude-opus-4.6" => %{"input" => 5, "output" => 25}
+      }
+    })
 
     html = render(view)
     assert html =~ "in 1.75 / out 14"

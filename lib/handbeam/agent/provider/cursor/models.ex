@@ -3,13 +3,12 @@ defmodule Handbeam.Agent.Provider.Cursor.Models do
   Discovers usable Cursor models and their current parameter variants.
 
   Failures are explicit. This never falls back to another provider or a
-  hard-coded substitute model. Cost is the upstream vendor price from llm_db
-  when the id maps to one; otherwise it is omitted, never written as 0.
+  hard-coded substitute model. Cost is omitted here and filled in by settings
+  after the models are saved, never written as 0.
   """
 
   alias Handbeam.Agent.Auth.CursorCredential
   alias Handbeam.Agent.Provider.Cursor.{Proto, Transport}
-  alias Handbeam.LlmDbDefaults
 
   @preferred "composer-2.5"
 
@@ -98,7 +97,6 @@ defmodule Handbeam.Agent.Provider.Cursor.Models do
         "parameters" => Enum.map(variant.parameters, &stringify_parameter/1)
       }
     }
-    |> maybe_put_cost(LlmDbDefaults.price_for_model_id(model.name))
   end
 
   defp variant_id(base, variant, context) do
@@ -187,11 +185,7 @@ defmodule Handbeam.Agent.Provider.Cursor.Models do
       "contextWindow" => context_window,
       "maxTokens" => 32_000
     }
-    |> maybe_put_cost(LlmDbDefaults.price_for_model_id(model.id))
   end
-
-  defp maybe_put_cost(catalog, nil), do: catalog
-  defp maybe_put_cost(catalog, cost), do: Map.put(catalog, "cost", cost)
 
   defp display_name(%{name: name}, context_window) when is_binary(name) and name != "" do
     String.replace(name, ~r/\b1M\b/, format_context(context_window))

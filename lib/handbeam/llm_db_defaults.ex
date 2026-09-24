@@ -83,6 +83,30 @@ defmodule Handbeam.LlmDbDefaults do
     end
   end
 
+  @doc """
+  Prices for many model ids from one catalog load.
+
+  `price_for_model_id/1` loads the catalog on every call. Settings renders a
+  row per model, and that load takes a cluster-wide lock, so calling it once
+  per unpriced model stalls the LiveView until the page looks blank.
+  """
+  @spec prices_for_model_ids([String.t()]) :: %{optional(String.t()) => map()}
+  def prices_for_model_ids(model_ids) when is_list(model_ids) do
+    with :ok <- ensure_loaded() do
+      Map.new(model_ids, fn model_id ->
+        cost =
+          case normalize_model_id(model_id) do
+            {:ok, id} -> lookup_cost(id)
+            _ -> nil
+          end
+
+        {model_id, cost}
+      end)
+    else
+      _ -> %{}
+    end
+  end
+
   defp model_defaults_from(model) do
     cost = Map.get(model, :cost) || %{}
     limits = Map.get(model, :limits) || %{}
