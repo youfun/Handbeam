@@ -101,8 +101,11 @@ defmodule Handbeam.ConversationStore do
         dev_log("[ConversationStore] list index not found path=#{index_path()}")
         []
 
-      {:error, :corrupted} ->
-        dev_log("[ConversationStore] list index corrupted path=#{index_path()}")
+      {:error, reason} ->
+        dev_log(
+          "[ConversationStore] list index unreadable (#{inspect(reason)}) path=#{index_path()}"
+        )
+
         []
     end
   end
@@ -201,7 +204,7 @@ defmodule Handbeam.ConversationStore do
   end
 
   @doc "Read only a conversation's metadata, without loading transcript or editor files."
-  @spec get_meta(String.t()) :: {:ok, map()} | {:error, :not_found | :corrupted}
+  @spec get_meta(String.t()) :: {:ok, map()} | {:error, :not_found | :corrupted | term()}
   def get_meta(id) when is_binary(id), do: read_meta(id)
 
   @doc "Return whether a conversation metadata record exists and is readable."
@@ -281,24 +284,30 @@ defmodule Handbeam.ConversationStore do
 
     normalized = normalize_conversation(conversation)
 
-    normalized =
-      case read_meta(normalized["id"]) do
-        {:ok, existing} ->
-          Map.merge(
-            normalized,
-            Map.take(
-              existing,
-              ~w(visibility parent_conversation_id parent_run_id parent_tool_call_id delegated_usage)
-            )
-          )
-
-        _ ->
-          normalized
-      end
-
-    with :ok <- write_item(normalized),
+    with {:ok, normalized} <- merge_owned_meta(normalized),
+         :ok <- write_item(normalized),
          :ok <- sync_index_entry(normalized) do
       {:ok, normalized}
+    end
+  end
+
+  defp merge_owned_meta(normalized) do
+    case read_meta(normalized["id"]) do
+      {:ok, existing} ->
+        {:ok,
+         Map.merge(
+           normalized,
+           Map.take(
+             existing,
+             ~w(visibility parent_conversation_id parent_run_id parent_tool_call_id delegated_usage)
+           )
+         )}
+
+      {:error, reason} when reason in [:not_found, :corrupted] ->
+        {:ok, normalized}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -594,7 +603,7 @@ defmodule Handbeam.ConversationStore do
           "[ConversationStore] Error reading index #{index_path()}: #{inspect(reason)}"
         )
 
-        {:error, :corrupted}
+        {:error, reason}
     end
   end
 
@@ -604,17 +613,18 @@ defmodule Handbeam.ConversationStore do
 
   defp sync_index_entry(conversation) do
     with_index_lock(fn ->
-      existing = index_entries_for_sync()
-      meta_entries = index_entries_from_items()
-      entry = index_entry(conversation)
+      with {:ok, existing} <- index_entries_for_sync() do
+        meta_entries = index_entries_from_items()
+        entry = index_entry(conversation)
 
-      updated =
-        existing
-        |> merge_index_entries(meta_entries)
-        |> merge_index_entries([entry])
-        |> sort_index_entries()
+        updated =
+          existing
+          |> merge_index_entries(meta_entries)
+          |> merge_index_entries([entry])
+          |> sort_index_entries()
 
-      write_index(%{"conversations" => updated})
+        write_index(%{"conversations" => updated})
+      end
     end)
   end
 
@@ -625,21 +635,26 @@ defmodule Handbeam.ConversationStore do
   defp index_entries_for_sync do
     case read_index() do
       {:ok, data} ->
-        Map.get(data, "conversations", [])
+        {:ok, Map.get(data, "conversations", [])}
 
       {:error, :not_found} ->
         Logger.warning(fn ->
           "[ConversationStore] Index missing at #{index_path()}; rebuilding from items/*/meta.json"
         end)
 
-        []
+        {:ok, []}
 
       {:error, :corrupted} ->
         Logger.error(
           "[ConversationStore] Index corrupted at #{index_path()}; rebuilding from items/*/meta.json"
         )
 
-        []
+        {:ok, []}
+
+      # Unreadable is not corrupt: a rebuild here could replace a good index
+      # (for example while another VM holds the storage lock).
+      {:error, reason} ->
+        {:error, reason}
     end
   end
 
@@ -756,7 +771,7 @@ defmodule Handbeam.ConversationStore do
 
       {:error, reason} ->
         Logger.error("[ConversationStore] Error reading meta #{path}: #{inspect(reason)}")
-        {:error, :corrupted}
+        {:error, reason}
     end
   end
 
@@ -766,13 +781,18 @@ defmodule Handbeam.ConversationStore do
     meta = Map.drop(meta, @usage_meta_keys)
 
     :global.trans({{__MODULE__, :meta, id}, self()}, fn ->
+      # Only a missing or undecodable meta may be replaced from scratch; any
+      # other read error means we cannot see keys we would otherwise drop.
       existing =
         case read_meta(id) do
-          {:ok, data} -> data
-          _ -> %{}
+          {:ok, data} -> {:ok, data}
+          {:error, reason} when reason in [:not_found, :corrupted] -> {:ok, %{}}
+          {:error, reason} -> {:error, reason}
         end
 
-      atomic_write_json(meta_path(id), finalize_meta(existing, Map.merge(existing, meta)))
+      with {:ok, existing} <- existing do
+        atomic_write_json(meta_path(id), finalize_meta(existing, Map.merge(existing, meta)))
+      end
     end)
   end
 
@@ -1112,8 +1132,11 @@ defmodule Handbeam.ConversationStore do
           "file_preview_error" => nil
         })
 
-      {:error, :corrupted} ->
-        Logger.warning(fn -> "[ConversationStore] Skipping corrupted item: #{id}" end)
+      {:error, reason} ->
+        Logger.warning(fn ->
+          "[ConversationStore] Skipping unreadable item #{id}: #{inspect(reason)}"
+        end)
+
         nil
     end
   end
