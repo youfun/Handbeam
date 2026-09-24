@@ -28,6 +28,8 @@ defmodule HandbeamWeb.CoreComponents do
   """
   use Phoenix.Component
 
+  alias Phoenix.LiveView.JS
+
   @doc """
   Renders flash notices.
 
@@ -46,13 +48,18 @@ defmodule HandbeamWeb.CoreComponents do
   attr :id, :string, doc: "the optional id of flash container"
   attr :flash, :map, default: %{}, doc: "the map of flash messages to display"
   attr :title, :string, default: nil
+  attr :navigate, :string, default: nil, doc: "conversation path opened by clicking the notice"
   attr :kind, :atom, values: [:info, :error], doc: "used for styling and flash lookup"
   attr :rest, :global, doc: "the arbitrary HTML attributes to add to the flash container"
 
   slot :inner_block, doc: "the optional inner block that renders the flash message"
 
   def flash(assigns) do
-    assigns = assign_new(assigns, :id, fn -> "flash-#{assigns.kind}" end)
+    assigns =
+      assigns
+      |> assign_new(:id, fn -> "flash-#{assigns.kind}" end)
+      |> assign(:opens_conversation?, is_binary(assigns.navigate) and assigns.navigate != "")
+      |> assign(:open_click, Map.get(assigns.rest, :"phx-click"))
 
     ~H"""
     <div
@@ -61,22 +68,42 @@ defmodule HandbeamWeb.CoreComponents do
       data-flash
       role="alert"
       class="toast toast-top toast-end z-50"
-      {@rest}
     >
       <div class={[
-        "alert w-80 sm:w-96 max-w-80 sm:max-w-96 text-wrap",
-        @kind == :info && "alert-info",
-        @kind == :error && "alert-error"
+        "flash-notice w-80 sm:w-96 max-w-80 sm:max-w-96 text-wrap",
+        @kind == :error && "flash-notice-error",
+        @opens_conversation? && "flash-notice-linked"
       ]}>
-        <.icon :if={@kind == :info} name="hero-information-circle" class="size-5 shrink-0" />
-        <.icon :if={@kind == :error} name="hero-exclamation-circle" class="size-5 shrink-0" />
-        <div>
-          <p :if={@title} class="font-semibold">{@title}</p>
-          <p>{msg}</p>
+        <.link
+          :if={@opens_conversation?}
+          href={@navigate}
+          class="flash-notice-open"
+          aria-label="Open conversation"
+          data-flash-open
+          phx-click={@open_click}
+        >
+          <.icon :if={@kind == :info} name="hero-information-circle" class="size-5 shrink-0" />
+          <.icon :if={@kind == :error} name="hero-exclamation-circle" class="size-5 shrink-0" />
+          <span class="min-w-0">
+            <p :if={@title} class="font-semibold">{@title}</p>
+            <p>{msg}</p>
+          </span>
+        </.link>
+        <div :if={!@opens_conversation?} class="flash-notice-body">
+          <.icon :if={@kind == :info} name="hero-information-circle" class="size-5 shrink-0" />
+          <.icon :if={@kind == :error} name="hero-exclamation-circle" class="size-5 shrink-0" />
+          <span class="min-w-0">
+            <p :if={@title} class="font-semibold">{@title}</p>
+            <p>{msg}</p>
+          </span>
         </div>
-        <div class="flex-1" />
-        <button type="button" class="group self-start cursor-pointer" aria-label="close">
-          <.icon name="hero-x-mark" class="size-5 opacity-40 group-hover:opacity-70" />
+        <button
+          type="button"
+          class="flash-notice-close"
+          phx-click={JS.hide(to: "##{@id}")}
+          aria-label="close"
+        >
+          <.icon name="hero-x-mark" class="size-5" />
         </button>
       </div>
     </div>

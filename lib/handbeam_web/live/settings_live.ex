@@ -245,7 +245,7 @@ defmodule HandbeamWeb.SettingsLive do
   end
 
   def handle_info({:in_app_ended, task, reason}, socket) do
-    {:noreply, put_flash(socket, :info, in_app_ended_message(task, reason))}
+    {:noreply, put_flash(socket, :info, in_app_ended_flash(task, reason))}
   end
 
   # ── Public helpers (used in template) ──
@@ -278,6 +278,21 @@ defmodule HandbeamWeb.SettingsLive do
   defp runtime_banner_text(%{running_count: running}) do
     ngettext("Running 1 task", "Running %{count} tasks", running, count: running)
   end
+
+  defp in_app_ended_flash(task, reason) do
+    %{
+      body: in_app_ended_message(task, reason),
+      navigate: in_app_ended_path(task),
+      navigate_with: :navigate
+    }
+  end
+
+  defp in_app_ended_path(%{conversation_id: conv_id, workspace_id: ws_id})
+       when is_binary(conv_id) and is_binary(ws_id) and conv_id != "" and ws_id != "" do
+    "/w/#{ws_id}/c/#{conv_id}"
+  end
+
+  defp in_app_ended_path(_task), do: nil
 
   defp in_app_ended_message(task, reason) do
     title = task[:title] || gettext("conversation")

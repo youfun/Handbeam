@@ -46,10 +46,3 @@ try {
 } catch (error) {
   console.error("Handbeam LiveSocket failed to start", error);
 }
-
-// Handle flash close
-document.querySelectorAll("[role=alert][data-flash]").forEach((el) => {
-  el.addEventListener("click", () => {
-    el.setAttribute("hidden", "");
-  });
-});
