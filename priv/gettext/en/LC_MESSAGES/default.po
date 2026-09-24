@@ -1131,49 +1131,49 @@ msgid "How many recent turns the observer may read."
 msgstr "How many recent turns the observer may read."
 
 msgid "When done"
-msgstr ""
+msgstr "When done"
 
 msgid "Running: send inserts next · queue waits until this run finishes"
-msgstr ""
+msgstr "Running: send inserts next · queue waits until this run finishes"
 
 msgid "Not delivered"
-msgstr ""
+msgstr "Not delivered"
 
 msgid "Resend"
-msgstr ""
+msgstr "Resend"
 
 msgid "Undo"
-msgstr ""
+msgstr "Undo"
 
 msgid "Inserts after approval"
-msgstr ""
+msgstr "Inserts after approval"
 
 msgid "Queued · when this run finishes"
-msgstr ""
+msgstr "Queued · when this run finishes"
 
 msgid "Waiting to insert · next step"
-msgstr ""
+msgstr "Waiting to insert · next step"
 
 msgid "Already inserted; cannot undo."
-msgstr ""
+msgstr "Already inserted; cannot undo."
 
 msgid "Could not undo that message."
-msgstr ""
+msgstr "Could not undo that message."
 
 msgid "Resent, but the previous copy could not be removed from history."
-msgstr ""
+msgstr "Resent, but the previous copy could not be removed from history."
 
 msgid "Could not resend because the queue is full."
-msgstr ""
+msgstr "Could not resend because the queue is full."
 
 msgid "Could not resend because the run is no longer accepting input."
-msgstr ""
+msgstr "Could not resend because the run is no longer accepting input."
 
 msgid "Cache hit"
-msgstr ""
+msgstr "Cache hit"
 
 msgid "This run: cached input / total input (including cache reads and writes). Not a cost saving rate. — means no cache activity reported."
-msgstr ""
+msgstr "This run: cached input / total input (including cache reads and writes). Not a cost saving rate. — means no cache activity reported."
 
 msgid "选择一个订阅登录方式。订阅额度与 API 余额分开使用。"
 msgstr "Choose a subscription sign-in method. Subscription usage is separate from API credits."
@@ -1208,3 +1208,325 @@ msgstr "Name cannot be longer than 80 characters"
 msgid "重命名失败"
 msgstr "Could not rename conversation"
 
+
+msgid "errors"
+msgstr "errors"
+
+msgid "Model %{model} is not allowed in this workspace. Check Settings → Model / AI → Default model."
+msgstr "Model %{model} is not allowed in this workspace. Check Settings → Model / AI → Default model."
+
+msgid "Observational Memory observer model (%{model}) is not allowed in this workspace. Check Settings → Model / AI → Observational Memory → Observer model."
+msgstr "Observational Memory observer model (%{model}) is not allowed in this workspace. Check Settings → Model / AI → Observational Memory → Observer model."
+
+msgid "Observational Memory reflector model (%{model}) is not allowed in this workspace. Check Settings → Model / AI → Observational Memory → Reflector model."
+msgstr "Observational Memory reflector model (%{model}) is not allowed in this workspace. Check Settings → Model / AI → Observational Memory → Reflector model."
+
+msgid "This change is review-only and cannot be reverted from Handbeam."
+msgstr "This change is review-only and cannot be reverted from Handbeam."
+
+msgid "Created"
+msgstr "Created"
+
+msgid "Edited"
+msgstr "Edited"
+
+msgid "OAuth（凭证不在此显示）"
+msgstr "OAuth (credentials are not shown here)"
+
+msgid "非官方 Cursor 协议接入。费用未知，不会显示为 0 或免费。原生手机 OAuth 入口尚未验证。"
+msgstr "Unofficial Cursor protocol. Cost is unknown and is not shown as 0 or free. The native mobile OAuth entry is not verified yet."
+
+msgid "刷新 Cursor 模型"
+msgstr "Refresh Cursor models"
+
+msgid "推理"
+msgstr "Reasoning"
+
+msgid "支持推理"
+msgstr "Supports reasoning"
+
+msgid "不支持"
+msgstr "Not supported"
+
+msgid "支持，可选择推理等级"
+msgstr "Supported; reasoning level can be selected"
+
+msgid "即将推出"
+msgstr "Coming soon"
+
+msgid "这些设置还不能用。"
+msgstr "These settings are not available yet."
+
+msgid "打开下面的链接，用 Cursor 账号完成浏览器授权。这是非官方协议接入，费用未知，不会显示为免费。"
+msgstr "Open the link below and sign in with your Cursor account in the browser. This uses an unofficial protocol. Cost is unknown and is not shown as free."
+
+msgid "Git"
+msgstr "Git"
+
+msgid "Commit author and HTTPS accounts for clone, fetch, pull, and push. Passwords and tokens are never shown after save. Pick a default account; the agent can also pass a credential name."
+msgstr "Commit author and HTTPS accounts for clone, fetch, pull, and push. Passwords and tokens are never shown after save. Pick a default account; the agent can also pass a credential name."
+
+msgid "Commit identity"
+msgstr "Commit identity"
+
+msgid "Name"
+msgstr "Name"
+
+msgid "Email"
+msgstr "Email"
+
+msgid "Save identity"
+msgstr "Save identity"
+
+msgid "Accounts"
+msgstr "Accounts"
+
+msgid "Add account"
+msgstr "Add account"
+
+msgid "No Git accounts yet."
+msgstr "No Git accounts yet."
+
+msgid "default"
+msgstr "default"
+
+msgid "Use as default"
+msgstr "Use as default"
+
+msgid "Edit"
+msgstr "Edit"
+
+msgid "Delete"
+msgstr "Delete"
+
+msgid "Delete this account?"
+msgstr "Delete this account?"
+
+msgid "Id"
+msgstr "Id"
+
+msgid "Display name"
+msgstr "Display name"
+
+msgid "Username"
+msgstr "Username"
+
+msgid "HTTPS endpoint"
+msgstr "HTTPS endpoint"
+
+msgid "Password or token"
+msgstr "Password or token"
+
+msgid "Leave blank to keep the saved token"
+msgstr "Leave blank to keep the saved token"
+
+msgid "Save account"
+msgstr "Save account"
+
+msgid "Files"
+msgstr "Files"
+
+msgid "Terminal"
+msgstr "Terminal"
+
+msgid "Conversation info"
+msgstr "Conversation info"
+
+msgid "使用系统选择器导入到应用内"
+msgstr "Import into the app with the system picker"
+
+msgid "从下载导入…"
+msgstr "Import from Downloads…"
+
+msgid "浏览..."
+msgstr "Browse..."
+
+msgid "手机不能直接把系统下载目录当工作区。系统授权后会把所选文件夹复制进应用私有目录。Downloads 根目录在部分 Android 版本上不可选，请选其中的项目子文件夹。"
+msgstr "The phone cannot use the system Downloads folder directly as a workspace. After access is granted, the selected folder is copied into the app's private directory. The Downloads root cannot be selected on some Android versions; choose a project subfolder."
+
+msgid "加载更早消息"
+msgstr "Load earlier messages"
+
+msgid "打开预览"
+msgstr "Open preview"
+
+msgid "用浏览器打开"
+msgstr "Open in browser"
+
+msgid "接管浏览器"
+msgstr "Take over browser"
+
+msgid "Changes"
+msgstr "Changes"
+
+msgid "No file changes yet"
+msgstr "No file changes yet"
+
+msgid "Unable to list workspace files"
+msgstr "Unable to list workspace files"
+
+msgid "More approval options"
+msgstr "More approval options"
+
+msgid "Session approval allows these tools for the rest of this run."
+msgstr "Session approval allows these tools for the rest of this run."
+
+msgid "Always allow saves these rules in this workspace:"
+msgstr "Always allow saves these rules in this workspace:"
+
+msgid "Allow once"
+msgstr "Allow once"
+
+msgid "MCP Servers"
+msgstr "MCP Servers"
+
+msgid "Connect HTTP MCP servers and control workspace access."
+msgstr "Connect HTTP MCP servers and control workspace access."
+
+msgid "Add server"
+msgstr "Add server"
+
+msgid "No MCP servers configured."
+msgstr "No MCP servers configured."
+
+msgid "Disabled"
+msgstr "Disabled"
+
+msgid "Enabled"
+msgstr "Enabled"
+
+msgid "tools"
+msgstr "tools"
+
+msgid "Connected"
+msgstr "Connected"
+
+msgid "Not connected"
+msgstr "Not connected"
+
+msgid "This stdio server comes from %{source}. Edit its source configuration to change how it launches."
+msgstr "This stdio server comes from %{source}. Edit its source configuration to change how it launches."
+
+msgid "Delete this server?"
+msgstr "Delete this server?"
+
+msgid "Add MCP Server"
+msgstr "Add MCP Server"
+
+msgid "Edit MCP Server"
+msgstr "Edit MCP Server"
+
+msgid "stdio servers are read-only here. Edit the source configuration to change the launcher."
+msgstr "stdio servers are read-only here. Edit the source configuration to change the launcher."
+
+msgid "e.g. My MCP Server"
+msgstr "e.g. My MCP Server"
+
+msgid "URL"
+msgstr "URL"
+
+msgid "Authentication"
+msgstr "Authentication"
+
+msgid "Bearer token"
+msgstr "Bearer token"
+
+msgid "Custom headers"
+msgstr "Custom headers"
+
+msgid "Token"
+msgstr "Token"
+
+msgid "Leave blank to keep saved token"
+msgstr "Leave blank to keep saved token"
+
+msgid "Headers (JSON)"
+msgstr "Headers (JSON)"
+
+msgid "Leave blank to keep saved headers"
+msgstr "Leave blank to keep saved headers"
+
+msgid "Workspace access"
+msgstr "Workspace access"
+
+msgid "All workspaces, including future workspaces"
+msgstr "All workspaces, including future workspaces"
+
+msgid "Selected workspaces"
+msgstr "Selected workspaces"
+
+msgid "Connected. %{count} tools found."
+msgstr "Connected. %{count} tools found."
+
+msgid "Testing..."
+msgstr "Testing..."
+
+msgid "Test connection"
+msgstr "Test connection"
+
+msgid "Running %{running} · waiting %{waiting}"
+msgstr "Running %{running} · waiting %{waiting}"
+
+msgid "Needs confirmation"
+msgid_plural "Needs confirmation · %{count} tasks"
+msgstr[0] "Needs confirmation"
+msgstr[1] "Needs confirmation · %{count} tasks"
+
+msgid "Running 1 task"
+msgid_plural "Running %{count} tasks"
+msgstr[0] "Running 1 task"
+msgstr[1] "Running %{count} tasks"
+
+msgid "conversation"
+msgstr "conversation"
+
+msgid "Agent stopped in %{title}."
+msgstr "Agent stopped in %{title}."
+
+msgid "This run ended in %{title}."
+msgstr "This run ended in %{title}."
+
+msgid "Agent replied in %{title}."
+msgstr "Agent replied in %{title}."
+
+msgid "MCP"
+msgstr "MCP"
+
+msgid "Failed to update permission mode"
+msgstr "Failed to update permission mode"
+
+msgid "Sent to subagent %{ref}."
+msgstr "Sent to subagent %{ref}."
+
+msgid "Subagent %{ref} is answering a follow-up."
+msgstr "Subagent %{ref} is answering a follow-up."
+
+msgid "Symlinks are not opened from the workspace tree"
+msgstr "Symlinks are not opened from the workspace tree"
+
+msgid "Advisor"
+msgstr "Advisor"
+
+msgid "Advisor model"
+msgstr "Advisor model"
+
+msgid "Optional second model. When set, the agent can ask it for advice and decides for itself when to call."
+msgstr "Optional second model. When set, the agent can ask it for advice and decides for itself when to call."
+
+msgid "Not configured"
+msgstr "Not configured"
+
+msgid "No workspace model"
+msgstr "No workspace model"
+
+msgid "Workspace advisor"
+msgstr "Workspace advisor"
+
+msgid "Inherit the global advisor, choose another model, or turn it off here."
+msgstr "Inherit the global advisor, choose another model, or turn it off here."
+
+msgid "Use global"
+msgstr "Use global"
+
+msgid "Use the model selected above"
+msgstr "Use the model selected above"

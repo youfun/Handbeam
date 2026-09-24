@@ -1849,3 +1849,216 @@ msgstr "%{model} 尚未声明图片输入能力。请选择支持图片的模型
 
 msgid "%{model} does not support image input. Switch to a model that supports images or remove the images before sending. Your draft is kept."
 msgstr "%{model} 不支持图片输入。请切换到支持图片的模型，或移除图片后再发送。草稿已保留。"
+
+msgid "Loading Git settings…"
+msgstr "正在加载 Git 设置…"
+
+msgid "Git"
+msgstr "Git"
+
+msgid "Commit author and HTTPS accounts. The default account is used when the agent omits a credential name."
+msgstr "提交作者与 HTTPS 账号。Agent 未指定凭证名称时使用默认账号。"
+
+msgid "Commit identity"
+msgstr "提交身份"
+
+msgid "Name"
+msgstr "名称"
+
+msgid "Email"
+msgstr "邮箱"
+
+msgid "Save identity"
+msgstr "保存身份"
+
+msgid "Accounts"
+msgstr "账号"
+
+msgid "Add"
+msgstr "添加"
+
+msgid "No Git accounts yet."
+msgstr "尚无 Git 账号。"
+
+msgid "default"
+msgstr "默认"
+
+msgid "Edit"
+msgstr "编辑"
+
+msgid "Save"
+msgstr "保存"
+
+msgid "Edit Git account"
+msgstr "编辑 Git 账号"
+
+msgid "Add Git account"
+msgstr "添加 Git 账号"
+
+msgid "Id: %{id}"
+msgstr "标识：%{id}"
+
+msgid "Id"
+msgstr "标识"
+
+msgid "Username"
+msgstr "用户名"
+
+msgid "HTTPS endpoint"
+msgstr "HTTPS 地址"
+
+msgid "Password or token"
+msgstr "密码或令牌"
+
+msgid "Leave blank to keep the saved token"
+msgstr "留空以保留已保存的令牌"
+
+msgid "Delete"
+msgstr "删除"
+
+msgid "Delete this Git account?"
+msgstr "删除此 Git 账号？"
+
+msgid "Keep"
+msgstr "保留"
+
+msgid "Discard unsaved changes?"
+msgstr "放弃未保存的更改？"
+
+msgid "Keep editing"
+msgstr "继续编辑"
+
+msgid "There is no text to share."
+msgstr "没有可分享的文本。"
+
+msgid "The text is too long to share."
+msgstr "文本过长，无法分享。"
+
+msgid "Place: %{place}"
+msgstr "地点：%{place}"
+
+msgid "What I actually experienced: %{feeling}"
+msgstr "我实际的感受：%{feeling}"
+
+msgid "Unable to display this file."
+msgstr "无法显示此文件。"
+
+msgid "This format opens in another app."
+msgstr "此格式将在其他应用中打开。"
+
+msgid "Truncated to 1 MiB."
+msgstr "已截断至 1 MiB。"
+
+msgid "Not valid UTF-8 text."
+msgstr "不是有效的 UTF-8 文本。"
+
+msgid "This is a binary file and cannot be shown as text."
+msgstr "这是二进制文件，无法按文本显示。"
+
+msgid "Connected · %{count} tools"
+msgstr "已连接 · %{count} 个工具"
+
+msgid "Loading MCP servers…"
+msgstr "正在加载 MCP 服务器…"
+
+msgid "MCP servers"
+msgstr "MCP 服务器"
+
+msgid "No MCP servers configured"
+msgstr "未配置 MCP 服务器"
+
+msgid "Add an HTTP server to make its tools available."
+msgstr "添加 HTTP 服务器以使用其工具。"
+
+msgid "stdio · Read-only on mobile"
+msgstr "stdio · 手机端只读"
+
+msgid "HTTP · %{status} · %{count} tools"
+msgstr "HTTP · %{status} · %{count} 个工具"
+
+msgid "Disabled"
+msgstr "已禁用"
+
+msgid "Edit MCP server"
+msgstr "编辑 MCP 服务器"
+
+msgid "Add MCP server"
+msgstr "添加 MCP 服务器"
+
+msgid "URL"
+msgstr "URL"
+
+msgid "Authentication"
+msgstr "认证方式"
+
+msgid "Bearer"
+msgstr "Bearer"
+
+msgid "Custom headers"
+msgstr "自定义请求头"
+
+msgid "Workspace access"
+msgstr "工作区访问权限"
+
+msgid "Selected"
+msgstr "已选择"
+
+msgid "All (including future)"
+msgstr "全部（含未来新建）"
+
+msgid "Testing…"
+msgstr "测试中…"
+
+msgid "Test connection"
+msgstr "测试连接"
+
+msgid "Bearer token"
+msgstr "Bearer 令牌"
+
+msgid "Custom headers (JSON)"
+msgstr "自定义请求头 (JSON)"
+
+msgid "Leave blank to keep existing credentials"
+msgstr "留空以保留已有凭证"
+
+msgid "Delete this MCP server?"
+msgstr "删除此 MCP 服务器？"
+
+msgid "connected"
+msgstr "已连接"
+
+msgid "not connected"
+msgstr "未连接"
+
+msgid "All workspaces, including future workspaces"
+msgstr "所有工作区（包含未来新建的工作区）"
+
+msgid "Handbeam"
+msgstr "Handbeam"
+
+msgid "MCP"
+msgstr "MCP"
+
+msgid "UI"
+msgstr "界面"
+
+msgid "Wait until the current task finishes before generating a review."
+msgstr "请等当前任务结束后再生成评审。"
+
+msgid "The review rules could not be read from the app package. Nothing was sent."
+msgstr "无法从应用包读取评审规则。未发送任何内容。"
+
+msgid "The message could not be saved. Nothing was sent to the model."
+msgstr "消息未能保存。未向模型发送任何内容。"
+
+msgid "Confirming only adds to the current draft and does not send. Selected text and photos are sent to the model service in Settings only after you send."
+msgstr "确认只会加入当前草稿，不会发送。所选文本和照片只有在你发送之后，才会发给设置中的模型服务。"
+
+msgid "Current target: %{workspace} · %{conversation}"
+msgstr "当前目标：%{workspace} · %{conversation}"
+
+msgid "System share"
+msgstr "系统分享"
+
+msgid "Allowed in %{count} workspaces"
+msgstr "已允许用于 %{count} 个工作区"

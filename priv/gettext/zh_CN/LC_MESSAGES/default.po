@@ -1301,3 +1301,220 @@ msgid "重命名失败"
 msgstr "重命名失败"
 
 
+
+msgid "This change is review-only and cannot be reverted from Handbeam."
+msgstr "此变更仅供查看，无法在 Handbeam 中撤销。"
+
+msgid "Created"
+msgstr "已创建"
+
+msgid "Edited"
+msgstr "已编辑"
+
+msgid "OAuth（凭证不在此显示）"
+msgstr "OAuth（凭证不在此显示）"
+
+msgid "非官方 Cursor 协议接入。费用未知，不会显示为 0 或免费。原生手机 OAuth 入口尚未验证。"
+msgstr "非官方 Cursor 协议接入。费用未知，不会显示为 0 或免费。原生手机 OAuth 入口尚未验证。"
+
+msgid "刷新订阅模型"
+msgstr "刷新订阅模型"
+
+msgid "刷新 Cursor 模型"
+msgstr "刷新 Cursor 模型"
+
+msgid "推理"
+msgstr "推理"
+
+msgid "支持推理"
+msgstr "支持推理"
+
+msgid "不支持"
+msgstr "不支持"
+
+msgid "支持，可选择推理等级"
+msgstr "支持，可选择推理等级"
+
+msgid "选择一个订阅登录方式。订阅额度与 API 余额分开使用。"
+msgstr "选择一个订阅登录方式。订阅额度与 API 余额分开使用。"
+
+msgid "即将推出"
+msgstr "即将推出"
+
+msgid "这些设置还不能用。"
+msgstr "这些设置还不能用。"
+
+msgid "打开下面的链接，输入用户码完成 ChatGPT 授权。使用 Codex 订阅额度，不是 OpenAI API 余额；可用模型与限额由账号决定。"
+msgstr "打开下面的链接，输入用户码完成 ChatGPT 授权。使用 Codex 订阅额度，不是 OpenAI API 余额；可用模型与限额由账号决定。"
+
+msgid "打开下面的链接，用 Cursor 账号完成浏览器授权。这是非官方协议接入，费用未知，不会显示为免费。"
+msgstr "打开下面的链接，用 Cursor 账号完成浏览器授权。这是非官方协议接入，费用未知，不会显示为免费。"
+
+msgid "Git"
+msgstr "Git"
+
+msgid "Commit author and HTTPS accounts for clone, fetch, pull, and push. Passwords and tokens are never shown after save. Pick a default account; the agent can also pass a credential name."
+msgstr "用于 clone、fetch、pull 和 push 的提交作者与 HTTPS 账号。密码和令牌保存后不再显示。请选择一个默认账号；Agent 也可以传入凭证名称。"
+
+msgid "Commit identity"
+msgstr "提交身份"
+
+msgid "Email"
+msgstr "邮箱"
+
+msgid "Save identity"
+msgstr "保存身份"
+
+msgid "Accounts"
+msgstr "账号"
+
+msgid "Add account"
+msgstr "添加账号"
+
+msgid "No Git accounts yet."
+msgstr "尚无 Git 账号。"
+
+msgid "default"
+msgstr "默认"
+
+msgid "Use as default"
+msgstr "设为默认"
+
+msgid "Edit"
+msgstr "编辑"
+
+msgid "Delete this account?"
+msgstr "删除此账号？"
+
+msgid "Id"
+msgstr "标识"
+
+msgid "Display name"
+msgstr "显示名称"
+
+msgid "Username"
+msgstr "用户名"
+
+msgid "HTTPS endpoint"
+msgstr "HTTPS 地址"
+
+msgid "Password or token"
+msgstr "密码或令牌"
+
+msgid "Leave blank to keep the saved token"
+msgstr "留空以保留已保存的令牌"
+
+msgid "Save account"
+msgstr "保存账号"
+
+msgid "Files"
+msgstr "文件"
+
+msgid "Terminal"
+msgstr "终端"
+
+msgid "Conversation info"
+msgstr "对话信息"
+
+msgid "使用系统选择器导入到应用内"
+msgstr "使用系统选择器导入到应用内"
+
+msgid "从下载导入…"
+msgstr "从下载导入…"
+
+msgid "浏览..."
+msgstr "浏览..."
+
+msgid "手机不能直接把系统下载目录当工作区。系统授权后会把所选文件夹复制进应用私有目录。Downloads 根目录在部分 Android 版本上不可选，请选其中的项目子文件夹。"
+msgstr "手机不能直接把系统下载目录当工作区。系统授权后会把所选文件夹复制进应用私有目录。Downloads 根目录在部分 Android 版本上不可选，请选其中的项目子文件夹。"
+
+msgid "加载更早消息"
+msgstr "加载更早消息"
+
+msgid "打开预览"
+msgstr "打开预览"
+
+msgid "用浏览器打开"
+msgstr "用浏览器打开"
+
+msgid "接管浏览器"
+msgstr "接管浏览器"
+
+msgid "Changes"
+msgstr "变更"
+
+msgid "No file changes yet"
+msgstr "尚无文件变更"
+
+msgid "Unable to list workspace files"
+msgstr "无法列出工作区文件"
+
+msgid "URL"
+msgstr "URL"
+
+msgid "Running %{running} · waiting %{waiting}"
+msgstr "运行中 %{running} · 等待 %{waiting}"
+
+msgid "Needs confirmation"
+msgid_plural "Needs confirmation · %{count} tasks"
+msgstr[0] "需要确认"
+msgstr[1] "需要确认 · %{count} 个任务"
+
+msgid "Running 1 task"
+msgid_plural "Running %{count} tasks"
+msgstr[0] "正在运行 1 个任务"
+msgstr[1] "正在运行 %{count} 个任务"
+
+msgid "conversation"
+msgstr "对话"
+
+msgid "Agent stopped in %{title}."
+msgstr "Agent 已在「%{title}」中停止。"
+
+msgid "This run ended in %{title}."
+msgstr "「%{title}」中的本轮已结束。"
+
+msgid "Agent replied in %{title}."
+msgstr "Agent 已在「%{title}」中回复。"
+
+msgid "MCP"
+msgstr "MCP"
+
+msgid "Failed to update permission mode"
+msgstr "更新权限模式失败"
+
+msgid "Sent to subagent %{ref}."
+msgstr "已发送给子 Agent %{ref}。"
+
+msgid "Subagent %{ref} is answering a follow-up."
+msgstr "子 Agent %{ref} 正在回复后续消息。"
+
+msgid "Symlinks are not opened from the workspace tree"
+msgstr "不会从工作区文件树打开符号链接"
+
+msgid "Advisor"
+msgstr "顾问"
+
+msgid "Advisor model"
+msgstr "顾问模型"
+
+msgid "Optional second model. When set, the agent can ask it for advice and decides for itself when to call."
+msgstr "可选的第二个模型。设置后，Agent 可以向它征求建议，并自行决定何时调用。"
+
+msgid "Not configured"
+msgstr "未配置"
+
+msgid "No workspace model"
+msgstr "无工作区模型"
+
+msgid "Workspace advisor"
+msgstr "工作区顾问"
+
+msgid "Inherit the global advisor, choose another model, or turn it off here."
+msgstr "继承全局顾问、另选模型，或在此关闭。"
+
+msgid "Use global"
+msgstr "使用全局设置"
+
+msgid "Use the model selected above"
+msgstr "使用上方所选模型"
