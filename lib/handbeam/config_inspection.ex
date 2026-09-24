@@ -13,7 +13,7 @@ defmodule Handbeam.ConfigInspection do
   alias Handbeam.Permissions.ToolPolicy
   alias Handbeam.Tool.Registry
 
-  @capabilities ~w(shell terminal desktop_browser webview_browser system_intents beam_eval mcp dist)a
+  @capabilities ~w(shell terminal desktop_browser webview_browser system_intents beam_eval mcp dist packaged_mix_toolchain)a
 
   @doc "Inspect this VM. `workspace` selects settings, not another host or a running conversation."
   @spec report(keyword()) :: map()
@@ -34,7 +34,7 @@ defmodule Handbeam.ConfigInspection do
         desktop_browser: dependency(Host.desktop_browser?(), "agent-browser"),
         webview: %{configured: Host.webview_browser?(), operational: :unknown},
         script: %{configured: Host.system_intents?(), backend: :host_beam_not_sandbox},
-        mix_project: %{backend: :host_beam_not_shell, toolchain: toolchain()},
+        mix_project: mix_project_backend(),
         git: git_backend(),
         code_index: code_index(workspace),
         mcp: %{configured: Host.mcp?(), operational: :unknown, reason: :not_probed}
@@ -197,6 +197,19 @@ defmodule Handbeam.ConfigInspection do
       }
     else
       dependency(false, "bash")
+    end
+  end
+
+  defp mix_project_backend do
+    if Host.packaged_mix_toolchain?() do
+      %{configured: true, backend: :packaged_host_beam_not_shell, toolchain: toolchain()}
+    else
+      %{
+        configured: false,
+        backend: :system_mix_via_shell,
+        dependency_available: :unknown,
+        reason: :desktop_uses_host_path
+      }
     end
   end
 

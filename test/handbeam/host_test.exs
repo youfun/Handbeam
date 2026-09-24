@@ -26,6 +26,7 @@ defmodule Handbeam.HostTest do
     refute Host.webview_browser?()
     refute Host.beam_eval?()
     refute Host.configured?()
+    refute Host.packaged_mix_toolchain?()
     assert Host.get(:git_backend) == nil
     assert Handbeam.Git.backend() == Handbeam.Git.CLI
     assert Handbeam.Git.backend_kind() == :host_git_cli
@@ -41,7 +42,8 @@ defmodule Handbeam.HostTest do
       webview_browser: true,
       beam_eval: false,
       mcp: false,
-      dist: true
+      dist: true,
+      packaged_mix_toolchain: true
     })
 
     assert Host.configured?()
@@ -52,6 +54,7 @@ defmodule Handbeam.HostTest do
     refute Host.beam_eval?()
     refute Host.mcp?()
     assert Host.dist?()
+    assert Host.packaged_mix_toolchain?()
     assert Host.data_dir() == "/tmp/mob-data"
     assert Host.priv_dir() == "/tmp/mob-beams/priv"
     assert Host.get(:git_backend) == nil

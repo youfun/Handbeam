@@ -188,7 +188,8 @@ runtime versions, path/install constraints and examples. Registry snapshots
 this into `run_elixir_script`'s description, including with custom system prompts.
 The system prompt only points to the tool. When Mix is present, the script tool
 allows `Mix.install` from `.exs` for host-compatible pure Elixir/Erlang Hex
-packages. `mix_project` is a builtin Agent tool; long Mix work
+packages. The phone host explicitly enables the packaged `mix_project` Agent
+tool; desktop agents instead use the machine's Mix through `bash`. Long Mix work
 is owned by `Handbeam.Workspace.MixOwner`, never HomeScreen. Packaged Mix/Hex/ExUnit
 live in `priv/mix_toolchain` (copied by `mix handbeam.pack_mix_toolchain` during
 `mix mob.pack_apk`). Hex 2.4.1 HTTP on device uses `Handbeam.Workspace.HexHttp`

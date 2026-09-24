@@ -182,7 +182,8 @@ defmodule Handbeam.ConfigInspectionTest do
         terminal: false,
         desktop_browser: false,
         webview_browser: true,
-        system_intents: true
+        system_intents: true,
+        packaged_mix_toolchain: true
       })
 
       for extra <- [[], [system_prompt: "Custom instructions."], [system_prompt: nil]] do
@@ -223,6 +224,7 @@ defmodule Handbeam.ConfigInspectionTest do
     Application.put_env(:handbeam, HandbeamWeb.Endpoint, server: true)
     prompt = Config.from_opts(working_directory: root).system_prompt
     assert prompt =~ "The host permits the bash backend"
+    assert prompt =~ "Use the machine's `mix`, `elixir`, and `erl` through `bash`"
     assert prompt =~ "backend is agent-browser CLI"
     assert prompt =~ "Web is an entry surface, not a Linux execution host"
     refute prompt =~ "There is no Unix shell"

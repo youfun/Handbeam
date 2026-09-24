@@ -29,6 +29,10 @@ defmodule Handbeam.Host do
   builtin Git agent tool. Desktop Mix and Phoenix WebUI leave it unset; their
   agents use the machine's Git through `bash`. Handbeam does not infer the
   backend from the UI, MOB environment variables, or missing Git binaries.
+
+  `packaged_mix_toolchain` enables the builtin `mix_project` tool backed by
+  `priv/mix_toolchain`. Phone hosts set it because they do not have an external
+  Mix executable. Desktop agents use the machine's Mix through `bash` instead.
   """
 
   @keys [
@@ -45,7 +49,8 @@ defmodule Handbeam.Host do
     :beam_eval,
     :mcp,
     :dist,
-    :git_backend
+    :git_backend,
+    :packaged_mix_toolchain
   ]
 
   @spec get(atom(), term()) :: term()
@@ -123,6 +128,9 @@ defmodule Handbeam.Host do
 
   @spec dist?() :: boolean()
   def dist?, do: get(:dist, mix_env() != :prod)
+
+  @spec packaged_mix_toolchain?() :: boolean()
+  def packaged_mix_toolchain?, do: get(:packaged_mix_toolchain, false)
 
   defp mix_env do
     if function_exported?(Mix, :env, 0), do: Mix.env(), else: :prod
