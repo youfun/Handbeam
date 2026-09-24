@@ -36,7 +36,8 @@ defmodule Handbeam.Agent.Auth.XaiCredential do
           "defaultReasoning" => "high",
           "input" => ["text", "image"],
           "contextWindow" => 500_000,
-          "maxTokens" => 500_000,
+          "maxTokens" => 32_000,
+          "include" => ["reasoning.encrypted_content"],
           "cost" => %{
             "input" => 2,
             "output" => 6,

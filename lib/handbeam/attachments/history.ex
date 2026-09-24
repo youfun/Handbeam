@@ -69,14 +69,24 @@ defmodule Handbeam.Attachments.History do
   defp reasoning_item?(_), do: false
 
   defp assistant_message(entry, text) do
+    text_block =
+      %{type: "text", text: text}
+      |> maybe_put(:phase, entry["phase"])
+      |> maybe_put(:id, entry["id"])
+
     case replay_blocks(entry["content_blocks"]) do
       [] ->
-        Message.assistant(text)
+        if text_block[:phase] in ["commentary", "final_answer"],
+          do: Message.assistant_blocks([text_block]),
+          else: Message.assistant(text)
 
       blocks ->
-        Message.assistant_blocks(blocks ++ [%{type: "text", text: text}])
+        Message.assistant_blocks(blocks ++ [text_block])
     end
   end
+
+  defp maybe_put(block, _key, value) when value in [nil, ""], do: block
+  defp maybe_put(block, key, value), do: Map.put(block, key, value)
 
   defp rebuild_user(text, attachments, workspace_path, conversation_id, entry) do
     text_blocks =

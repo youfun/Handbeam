@@ -32,7 +32,7 @@ defmodule Handbeam.Agent.Provider.Codex do
 
   defp request(body, auth, config, on_chunk, attempt) do
     state = :counters.new(1, [:atomics])
-    initial = %{buffer: "", output: %{}, response: nil, error: nil}
+    initial = %{buffer: "", output: %{}, phases: %{}, response: nil, error: nil}
     req = Map.get(config, :req_module, Req)
 
     options =
@@ -214,13 +214,58 @@ defmodule Handbeam.Agent.Provider.Codex do
   defp input_items(%Message{role: :assistant, content: blocks} = message, account_id, model)
        when is_list(blocks) do
     Enum.flat_map(blocks, fn
-      %{type: "codex_reasoning", account_id: ^account_id, model: ^model, item: item} -> [item]
-      %{type: "codex_reasoning"} -> []
-      block -> OpenAI.build_input_items([%{message | content: [block]}], %{})
+      %{type: type, account_id: ^account_id, model: ^model, item: item}
+      when type in ["codex_reasoning", "responses_reasoning"] ->
+        [item]
+
+      %{type: type} when type in ["codex_reasoning", "responses_reasoning"] ->
+        []
+
+      %{type: "text"} = block ->
+        [assistant_message_item(block)]
+
+      block ->
+        OpenAI.build_input_items([%{message | content: [block]}], %{})
     end)
   end
 
   defp input_items(message, _account_id, _model), do: OpenAI.build_input_items([message], %{})
+
+  # Pi replays each assistant message as a completed output item, including
+  # phase. A bare `{role, content}` string is not a Codex message item and is
+  # dropped by newer subscription models, so the next turn looks empty.
+  defp assistant_message_item(%{type: "text", text: text} = block) do
+    item = %{
+      "type" => "message",
+      "role" => "assistant",
+      "content" => [%{"type" => "output_text", "text" => text, "annotations" => []}],
+      "status" => "completed",
+      "id" => message_item_id(block)
+    }
+
+    case block[:phase] do
+      phase when phase in ["commentary", "final_answer"] -> Map.put(item, "phase", phase)
+      _ -> item
+    end
+  end
+
+  defp message_item_id(%{id: id}) when is_binary(id) and id != "" do
+    if byte_size(id) <= 64, do: id, else: "msg_" <> short_hash(id)
+  end
+
+  defp message_item_id(_block),
+    do: "msg_" <> short_hash(Base.encode16(:crypto.strong_rand_bytes(8)))
+
+  defp short_hash(value) do
+    :crypto.hash(:sha256, value) |> Base.encode16(case: :lower) |> binary_part(0, 16)
+  end
+
+  defp streamed_phase(acc, index) do
+    case acc.phases[index] do
+      %{"phase" => "final_answer"} -> "final_answer"
+      _ -> "commentary"
+    end
+  end
 
   defp stream_handler(initial, on_chunk, state) do
     fn {:data, chunk}, {req, response} ->
@@ -249,6 +294,20 @@ defmodule Handbeam.Agent.Provider.Codex do
     end
   end
 
+  # Live chunks are commentary until a message item is known to be the final
+  # answer. Replaying the terminal item would append the same text twice.
+  defp process_event(
+         "response.output_text.delta",
+         %{"delta" => text, "output_index" => index},
+         acc,
+         on_chunk
+       )
+       when is_binary(text) and is_integer(index) do
+    phase = streamed_phase(acc, index)
+    on_chunk.(%{text: text, phase: phase, output_index: index})
+    acc
+  end
+
   defp process_event("response.output_text.delta", %{"delta" => text}, acc, on_chunk)
        when is_binary(text) do
     on_chunk.(text)
@@ -256,13 +315,23 @@ defmodule Handbeam.Agent.Provider.Codex do
   end
 
   defp process_event(
-         "response.output_item.done",
+         "response.output_item.added",
          %{"output_index" => index, "item" => item},
          acc,
          _
        )
        when is_integer(index) and is_map(item),
-       do: %{acc | output: Map.put(acc.output, index, item)}
+       do: %{acc | phases: Map.put(acc.phases, index, item)}
+
+  defp process_event(
+         "response.output_item.done",
+         %{"output_index" => index, "item" => item},
+         acc,
+         _
+       )
+       when is_integer(index) and is_map(item) do
+    %{acc | output: Map.put(acc.output, index, item), phases: Map.put(acc.phases, index, item)}
+  end
 
   defp process_event(type, %{"response" => response}, acc, _)
        when type in ["response.completed", "response.done"] and is_map(response),
@@ -340,13 +409,19 @@ defmodule Handbeam.Agent.Provider.Codex do
         %{"type" => "reasoning", "encrypted_content" => encrypted} = item, {:ok, acc}
         when is_binary(encrypted) ->
           block = %{
-            type: "codex_reasoning",
+            type: "responses_reasoning",
             account_id: account_id,
             model: model,
             item: Map.take(item, ["type", "id", "summary", "encrypted_content"])
           }
 
           {:cont, {:ok, [[block] | acc]}}
+
+        %{"type" => "message"} = item, {:ok, acc} ->
+          case message_blocks(item) do
+            {:ok, blocks} -> {:cont, {:ok, [blocks | acc]}}
+            error -> {:halt, error}
+          end
 
         item, {:ok, acc} ->
           case OpenAI.parse_response(%{"output" => [item]}) do
@@ -360,4 +435,25 @@ defmodule Handbeam.Agent.Provider.Codex do
       error -> error
     end
   end
+
+  defp message_blocks(%{"type" => "message"} = item) do
+    case OpenAI.parse_response(%{"output" => [item]}) do
+      {:ok, %{messages: [message]}} ->
+        {:ok, Enum.map(message.content, &put_message_identity(&1, item))}
+
+      error ->
+        error
+    end
+  end
+
+  defp put_message_identity(%{type: "text"} = block, item) do
+    block
+    |> maybe_put_block(:id, item["id"])
+    |> maybe_put_block(:phase, item["phase"])
+  end
+
+  defp put_message_identity(block, _item), do: block
+
+  defp maybe_put_block(block, _key, value) when value in [nil, ""], do: block
+  defp maybe_put_block(block, key, value), do: Map.put(block, key, value)
 end

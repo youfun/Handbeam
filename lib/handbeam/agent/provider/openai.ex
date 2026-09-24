@@ -276,23 +276,7 @@ defmodule Handbeam.Agent.Provider.OpenAI do
   end
 
   defp format_input_item(%Message{role: :assistant, content: blocks}) when is_list(blocks) do
-    function_calls =
-      blocks
-      |> Enum.filter(&(&1[:type] == "tool_use"))
-      |> Enum.map(&format_assistant_function_call_item/1)
-
-    text_parts =
-      blocks
-      |> Enum.filter(&(&1[:type] == "text"))
-      |> Enum.map_join("\n", & &1.text)
-
-    assistant_text_item =
-      case text_parts do
-        "" -> []
-        text -> [%{"role" => "assistant", "content" => text}]
-      end
-
-    assistant_text_item ++ function_calls
+    Enum.flat_map(blocks, &format_assistant_block/1)
   end
 
   defp format_input_item(%Message{role: :tool_result, content: blocks}) when is_list(blocks) do
@@ -327,6 +311,34 @@ defmodule Handbeam.Agent.Provider.OpenAI do
       end
     end
   end
+
+  defp format_assistant_block(%{type: "responses_reasoning", item: item}) when is_map(item) do
+    if reasoning_replay_item?(item), do: [stringify_reasoning_item(item)], else: []
+  end
+
+  defp format_assistant_block(%{"type" => "responses_reasoning", "item" => item})
+       when is_map(item) do
+    if reasoning_replay_item?(item), do: [stringify_reasoning_item(item)], else: []
+  end
+
+  defp format_assistant_block(%{type: "tool_use"} = block) do
+    [format_assistant_function_call_item(block)]
+  end
+
+  defp format_assistant_block(%{"type" => "tool_use"} = block) do
+    [format_assistant_function_call_item(block)]
+  end
+
+  defp format_assistant_block(%{type: "text", text: text}) when is_binary(text) and text != "" do
+    [%{"role" => "assistant", "content" => text}]
+  end
+
+  defp format_assistant_block(%{"type" => "text", "text" => text})
+       when is_binary(text) and text != "" do
+    [%{"role" => "assistant", "content" => text}]
+  end
+
+  defp format_assistant_block(_block), do: []
 
   defp format_user_content_block(%{type: "text", text: text}) do
     %{"type" => "input_text", "text" => text}
@@ -367,13 +379,29 @@ defmodule Handbeam.Agent.Provider.OpenAI do
     }
   end
 
-  defp format_assistant_function_call_item(%{id: id, name: name, input: input}) do
+  defp format_assistant_function_call_item(block) when is_map(block) do
+    id = block[:id] || block["id"]
+    name = block[:name] || block["name"]
+    input = block[:input] || block["input"] || %{}
+
     %{
       "type" => "function_call",
       "call_id" => id,
       "name" => name,
       "arguments" => Handbeam.JSON.encode!(input)
     }
+  end
+
+  defp reasoning_replay_item?(item) when is_map(item) do
+    type = item["type"] || item[:type]
+    encrypted = item["encrypted_content"] || item[:encrypted_content]
+    type == "reasoning" and is_binary(encrypted) and encrypted != ""
+  end
+
+  defp stringify_reasoning_item(item) do
+    item
+    |> Handbeam.Agent.Provider.stringify_keys()
+    |> Map.take(["type", "id", "summary", "encrypted_content", "status"])
   end
 
   # --- Streaming ---
@@ -488,7 +516,14 @@ defmodule Handbeam.Agent.Provider.OpenAI do
     offset = byte_size(content) - repeated_bytes
     suffix = binary_part(content, offset, repeated_bytes)
     pattern = binary_part(suffix, 0, period)
-    suffix == :binary.copy(pattern, @loop_repetitions)
+
+    suffix == :binary.copy(pattern, @loop_repetitions) and substantive_pattern?(pattern)
+  end
+
+  # Box-drawing rules, `====`, and table separators are formatting, not a loop.
+  # A repeated unit must contain a letter or digit before it counts.
+  defp substantive_pattern?(pattern) do
+    String.match?(pattern, ~r/[\p{L}\p{N}]/u)
   end
 
   defp build_stream_response(%{stream_error: error}) when is_binary(error) do
@@ -506,16 +541,33 @@ defmodule Handbeam.Agent.Provider.OpenAI do
     parse_response(response)
   end
 
-  defp build_stream_response(%{content: content}) do
-    content_blocks = if content == "", do: [], else: [%{type: "text", text: content}]
+  defp build_stream_response(%{content: content, output: output}) do
+    case parse_response(%{"output" => output || []}) do
+      {:ok, parsed} ->
+        {:ok, put_streamed_text(parsed, content)}
 
-    {:ok,
-     %{
-       stop_reason: :end_turn,
-       messages: [%Message{role: :assistant, content: content_blocks}],
-       usage: %{input_tokens: 0, output_tokens: 0}
-     }}
+      {:error, _} ->
+        text_blocks = if content == "", do: [], else: [%{type: "text", text: content}]
+
+        {:ok,
+         %{
+           stop_reason: :end_turn,
+           messages: [%Message{role: :assistant, content: text_blocks}],
+           usage: %{input_tokens: 0, output_tokens: 0}
+         }}
+    end
   end
+
+  defp put_streamed_text(%{messages: [%Message{content: blocks} = message | rest]} = parsed, content)
+       when is_binary(content) and content != "" and is_list(blocks) do
+    if Enum.any?(blocks, &(is_map(&1) and (&1[:type] == "text" or &1["type"] == "text"))) do
+      parsed
+    else
+      %{parsed | messages: [%{message | content: blocks ++ [%{type: "text", text: content}]} | rest]}
+    end
+  end
+
+  defp put_streamed_text(parsed, _content), do: parsed
 
   defp parse_stream_event_error(payload) do
     payload
@@ -550,6 +602,10 @@ defmodule Handbeam.Agent.Provider.OpenAI do
   end
 
   defp upsert_stream_output_item(output, %{"type" => "function_call"} = item) do
+    upsert_stream_output_item_by_id(output, item)
+  end
+
+  defp upsert_stream_output_item(output, %{"type" => "reasoning"} = item) do
     upsert_stream_output_item_by_id(output, item)
   end
 
@@ -726,6 +782,17 @@ defmodule Handbeam.Agent.Provider.OpenAI do
       {:error, _} = err ->
         err
     end
+  end
+
+  defp parse_output_item(%{"type" => "reasoning", "encrypted_content" => encrypted} = item)
+       when is_binary(encrypted) and encrypted != "" do
+    {:ok,
+     [
+       %{
+         type: "responses_reasoning",
+         item: Map.take(item, ["type", "id", "summary", "encrypted_content", "status"])
+       }
+     ]}
   end
 
   defp parse_output_item(_item), do: {:ok, []}

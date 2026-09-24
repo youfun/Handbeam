@@ -448,6 +448,35 @@ defmodule Handbeam.Agent.Turn do
     end
   end
 
+  defp emit_provider_items(opts, messages) do
+    items =
+      messages
+      |> Enum.flat_map(fn
+        %Handbeam.Agent.Message{content: blocks} when is_list(blocks) ->
+          Enum.filter(blocks, fn
+            %{type: "responses_reasoning"} ->
+              true
+
+            %{"type" => "responses_reasoning"} ->
+              true
+
+            %{type: "text", phase: phase} when phase in ["commentary", "final_answer"] ->
+              true
+
+            %{"type" => "text", "phase" => phase} when phase in ["commentary", "final_answer"] ->
+              true
+
+            _ ->
+              false
+          end)
+
+        _ ->
+          []
+      end)
+
+    if items != [], do: emit(opts, :provider_items, %{items: items})
+  end
+
   defp emit_assistant_messages(opts, messages) do
     Enum.each(messages, fn
       %Message{role: :assistant} = msg ->
@@ -462,13 +491,53 @@ defmodule Handbeam.Agent.Turn do
     end)
   end
 
-  defp empty_visible_end_turn?(messages) do
+  # A commentary-only Codex message is visible, but it is not the final answer.
+  # Retry once with that commentary in history. A truly blank assistant message
+  # is still an empty turn.
+  defp missing_final_answer?(messages) do
     assistant_messages = Enum.filter(messages, &match?(%Message{role: :assistant}, &1))
 
-    assistant_messages != [] and
-      Enum.all?(assistant_messages, fn message ->
-        not visible_assistant_text?(message) and Message.tool_calls(message) == []
+    cond do
+      assistant_messages == [] ->
+        false
+
+      Enum.any?(assistant_messages, &final_answer?/1) ->
+        false
+
+      Enum.any?(assistant_messages, &(Message.tool_calls(&1) != [])) ->
+        false
+
+      true ->
+        Enum.all?(assistant_messages, fn message ->
+          commentary_only?(message) or not visible_assistant_text?(message)
+        end)
+    end
+  end
+
+  defp final_answer?(%Message{content: blocks}) when is_list(blocks) do
+    Enum.any?(blocks, fn block ->
+      is_map(block) and block[:type] == "text" and block[:phase] == "final_answer" and
+        is_binary(block[:text]) and String.trim(block[:text]) != ""
+    end)
+  end
+
+  defp final_answer?(%Message{content: text}) when is_binary(text), do: String.trim(text) != ""
+  defp final_answer?(_), do: false
+
+  defp commentary_only?(%Message{content: blocks}) when is_list(blocks) do
+    text_blocks = Enum.filter(blocks, &(is_map(&1) and &1[:type] == "text"))
+
+    text_blocks != [] and
+      Enum.all?(text_blocks, fn block ->
+        block[:phase] == "commentary" and is_binary(block[:text]) and
+          String.trim(block[:text]) != ""
       end)
+  end
+
+  defp commentary_only?(_), do: false
+
+  defp commentary_only_turn?(messages) do
+    messages != [] and Enum.all?(messages, &commentary_only?/1)
   end
 
   defp visible_assistant_text?(%Message{} = message) do
@@ -602,18 +671,16 @@ defmodule Handbeam.Agent.Turn do
           user_on_chunk = Keyword.fetch!(opts, :on_chunk)
 
           fn chunk ->
-            track_chunk(chunk_tracker, chunk)
+            track_chunk(chunk_tracker, chunk_text(chunk))
             track_streamed_text(streamed_text_tracker, chunk)
-            # Logger.debug("[Turn] streaming chunk -> user_on_chunk #{log_chunk(chunk)}")
-            user_on_chunk.(chunk)
+            user_on_chunk.(chunk_text(chunk))
           end
 
         streaming? ->
           fn chunk ->
-            track_chunk(chunk_tracker, chunk)
+            track_chunk(chunk_tracker, chunk_text(chunk))
             track_streamed_text(streamed_text_tracker, chunk)
-            # Logger.debug("[Turn] streaming chunk -> message_delta #{log_chunk(chunk)}")
-            emit(opts, :message_delta, %{chunk: chunk})
+            emit_stream_chunk(opts, chunk)
           end
 
         true ->
@@ -679,6 +746,8 @@ defmodule Handbeam.Agent.Turn do
             "duration_ms=#{System.monotonic_time(:millisecond) - provider_t0}"
         )
 
+        emit_provider_items(opts, new_msgs)
+
         state =
           state
           |> State.append_messages(new_msgs)
@@ -708,6 +777,8 @@ defmodule Handbeam.Agent.Turn do
             "usage=#{inspect(usage)}"
         )
 
+        emit_provider_items(opts, new_msgs)
+
         state =
           state
           |> State.append_messages(new_msgs)
@@ -724,18 +795,19 @@ defmodule Handbeam.Agent.Turn do
         emit_completion_messages(opts, new_msgs, streaming?, chunk_tracker, streamed_text)
 
         cond do
-          empty_visible_end_turn?(new_msgs) and
+          missing_final_answer?(new_msgs) and
               not Keyword.get(opts, :empty_end_turn_retried, false) ->
             Logger.warning(
-              "[Turn] empty visible end_turn — retrying once " <>
-                "(thinking-only or blank assistant message)"
+              "[Turn] commentary without a final answer — requesting the final answer once"
             )
 
             do_turn(state, Keyword.put(opts, :empty_end_turn_retried, true))
 
-          empty_visible_end_turn?(new_msgs) ->
+          missing_final_answer?(new_msgs) ->
             error_msg =
-              "Provider ended the turn with no visible assistant response or tool call"
+              if commentary_only_turn?(new_msgs),
+                do: "Provider ended the turn without a final answer",
+                else: "Provider ended the turn with no visible assistant response or tool call"
 
             Logger.warning("[Turn] #{error_msg}")
 
@@ -1023,19 +1095,52 @@ defmodule Handbeam.Agent.Turn do
   defp track_chunk(nil, _chunk), do: :ok
   defp track_chunk(_counter, ""), do: :ok
   defp track_chunk(counter, chunk) when is_binary(chunk), do: :counters.add(counter, 1, 1)
-  defp track_chunk(_counter, _chunk), do: :ok
+
+  defp chunk_text(%{text: text}) when is_binary(text), do: text
+  defp chunk_text(text) when is_binary(text), do: text
+  defp chunk_text(_chunk), do: ""
+
+  defp emit_stream_chunk(opts, %{text: text, phase: phase, output_index: index})
+       when is_binary(text) and text != "" and is_integer(index) do
+    emit(opts, :message_delta, %{chunk: text, phase: phase, output_index: index})
+  end
+
+  defp emit_stream_chunk(opts, chunk) when is_binary(chunk) and chunk != "" do
+    emit(opts, :message_delta, %{chunk: chunk})
+  end
+
+  defp emit_stream_chunk(_opts, _chunk), do: :ok
 
   defp track_streamed_text(nil, _chunk), do: :ok
   defp track_streamed_text(_agent, ""), do: :ok
 
   defp track_streamed_text(agent, chunk) when is_binary(chunk) do
-    Agent.update(agent, &(&1 <> chunk))
+    Agent.update(agent, fn
+      streamed when is_binary(streamed) -> streamed <> chunk
+      streamed when is_map(streamed) -> streamed
+    end)
+  end
+
+  defp track_streamed_text(agent, %{text: text, phase: phase, output_index: index})
+       when is_binary(text) and is_integer(index) do
+    Agent.update(agent, fn streamed ->
+      Map.update(streamed, index, %{phase: phase, text: text}, fn current ->
+        %{current | phase: phase, text: current.text <> text}
+      end)
+    end)
   end
 
   defp track_streamed_text(_agent, _chunk), do: :ok
 
   defp take_streamed_text(nil), do: ""
-  defp take_streamed_text(agent), do: Agent.get(agent, & &1)
+
+  defp take_streamed_text(agent) do
+    case Agent.get(agent, & &1) do
+      text when is_binary(text) -> text
+      phases when is_map(phases) -> phases
+      _ -> ""
+    end
+  end
 
   defp stop_streamed_text_tracker(nil), do: :ok
 
@@ -1072,19 +1177,70 @@ defmodule Handbeam.Agent.Turn do
     end
   end
 
+  defp maybe_emit_streaming_completion_tail(opts, new_msgs, streamed) when is_map(streamed) do
+    new_msgs
+    |> Enum.filter(&match?(%Message{role: :assistant}, &1))
+    |> Enum.flat_map(&text_blocks/1)
+    |> Enum.with_index()
+    |> Enum.each(fn {block, index} ->
+      streamed_block = Map.get(streamed, index, %{text: "", phase: nil})
+      emit_unstreamed_tail(opts, block, streamed_block, index)
+    end)
+  end
+
   defp maybe_emit_streaming_completion_tail(opts, new_msgs, streamed) do
     final_text =
       new_msgs
       |> Enum.filter(&match?(%Message{role: :assistant}, &1))
       |> Enum.map_join(fn msg -> Message.text(msg) || "" end)
 
+    emit_text_tail(opts, final_text, streamed, nil)
+  end
+
+  defp text_blocks(%Message{content: blocks}) when is_list(blocks) do
+    Enum.filter(blocks, &(is_map(&1) and &1[:type] == "text" and is_binary(&1[:text])))
+  end
+
+  defp text_blocks(%Message{content: text}) when is_binary(text),
+    do: [%{type: "text", text: text}]
+
+  defp text_blocks(_), do: []
+
+  defp emit_unstreamed_tail(opts, block, streamed_block, index) do
+    phase = block[:phase] || streamed_block[:phase]
+
     cond do
-      final_text == "" ->
-        Logger.debug("[Turn] streaming emitted chunks but final assistant text is empty")
+      streamed_block.text == "" ->
+        emit(opts, :message_delta, stream_payload(block.text, phase, index))
 
-      streamed == final_text ->
-        Logger.debug("[Turn] streaming chunks already match final assistant text; skip replay")
+      streamed_block.text == block.text ->
+        :ok
 
+      String.starts_with?(block.text, streamed_block.text) ->
+        tail =
+          binary_part(
+            block.text,
+            byte_size(streamed_block.text),
+            byte_size(block.text) - byte_size(streamed_block.text)
+          )
+
+        emit(opts, :message_delta, stream_payload(tail, phase, index))
+
+      true ->
+        Logger.debug(
+          "[Turn] streaming assistant text diverged from chunks; keeping streamed text"
+        )
+    end
+  end
+
+  defp emit_text_tail(_opts, "", _streamed, _phase), do: :ok
+
+  defp emit_text_tail(_opts, final_text, streamed, _phase) when final_text == streamed do
+    Logger.debug("[Turn] streaming chunks already match final assistant text; skip replay")
+  end
+
+  defp emit_text_tail(opts, final_text, streamed, phase) when is_binary(streamed) do
+    cond do
       String.starts_with?(final_text, streamed) ->
         tail =
           binary_part(
@@ -1093,19 +1249,21 @@ defmodule Handbeam.Agent.Turn do
             byte_size(final_text) - byte_size(streamed)
           )
 
-        Logger.debug(
-          "[Turn] streaming final assistant text extends streamed chunks; emitting tail #{log_chunk(tail)}"
-        )
-
-        emit(opts, :message_delta, %{chunk: tail})
+        emit(opts, :message_delta, stream_payload(tail, phase, nil))
 
       true ->
         Logger.debug(
-          "[Turn] streaming final assistant text diverged from streamed chunks; emitting full final text"
+          "[Turn] streaming final assistant text diverged from streamed chunks; keeping streamed text"
         )
-
-        emit(opts, :message_delta, %{chunk: final_text})
     end
+  end
+
+  defp emit_text_tail(_opts, _final_text, _streamed, _phase), do: :ok
+
+  defp stream_payload(text, phase, index) do
+    payload = %{chunk: text}
+    payload = if is_binary(phase), do: Map.put(payload, :phase, phase), else: payload
+    if is_integer(index), do: Map.put(payload, :output_index, index), else: payload
   end
 
   defp inject_candidate_messages(%State{} = state, opts, deliver_as) do
@@ -1141,21 +1299,10 @@ defmodule Handbeam.Agent.Turn do
     })
   end
 
-  defp log_emit(:message_delta, %{chunk: chunk}) when is_binary(chunk) do
-    # Logger.debug("[Turn] emit message_delta #{log_chunk(chunk)}")
-  end
+  defp log_emit(:message_delta, %{chunk: _chunk}), do: :ok
 
   defp log_emit(kind, payload) do
     Logger.debug("[Turn] emit #{kind} keys=#{inspect(Map.keys(payload || %{}))}")
-  end
-
-  defp log_chunk(chunk) when is_binary(chunk) do
-    preview =
-      chunk
-      |> String.slice(0, 40)
-      |> String.replace(~r/\s+/, " ")
-
-    "bytes=#{byte_size(chunk)} preview=#{inspect(preview)}"
   end
 
   defp handle_tool_use(%State{} = state, new_msgs, opts) do

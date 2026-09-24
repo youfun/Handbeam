@@ -350,6 +350,66 @@ defmodule Handbeam.Agent.Provider.OpenAITest do
       assert Enum.join(chunks) == String.duplicate(phrase, length(chunks))
     end
 
+    test "does not reject a long run of punctuation or box drawing" do
+      chunks = [String.duplicate("─", 64), String.duplicate("=", 128)]
+
+      config =
+        config_with_sse_stream(
+          Enum.map(chunks, &sse_response_output_text_delta/1) ++ ["data: [DONE]\n\n"]
+        )
+
+      assert {:ok, result} =
+               OpenAI.stream([Message.user("Draw a rule")], [], config, fn _ -> :ok end)
+
+      assert Message.text(hd(result.messages)) == Enum.join(chunks)
+    end
+
+    test "replays encrypted reasoning items ahead of assistant text" do
+      item = %{
+        "type" => "reasoning",
+        "id" => "rs_test",
+        "encrypted_content" => "enc-1",
+        "summary" => []
+      }
+
+      message =
+        Message.assistant_blocks([
+          %{type: "responses_reasoning", item: item},
+          %{type: "text", text: "done"}
+        ])
+
+      items = OpenAI.build_input_items([message], %{})
+
+      assert items == [
+               item,
+               %{"role" => "assistant", "content" => "done"}
+             ]
+    end
+
+    test "keeps encrypted reasoning from a completed stream" do
+      reasoning = %{
+        "type" => "reasoning",
+        "id" => "rs_stream",
+        "encrypted_content" => "enc-stream",
+        "summary" => []
+      }
+
+      config =
+        config_with_sse_stream([
+          "event: response.output_item.done\ndata: #{Jason.encode!(%{"type" => "response.output_item.done", "item" => reasoning})}\n\n",
+          sse_response_output_text_delta("visible"),
+          "data: [DONE]\n\n"
+        ])
+
+      assert {:ok, result} =
+               OpenAI.stream([Message.user("Think")], [], config, fn _ -> :ok end)
+
+      assert [
+               %{type: "responses_reasoning", item: ^reasoning},
+               %{type: "text", text: "visible"}
+             ] = hd(result.messages).content
+    end
+
     test "does not reject repeated short formatting tokens" do
       chunks = List.duplicate("- ", 20) ++ ["done"]
 

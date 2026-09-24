@@ -175,6 +175,83 @@ defmodule Handbeam.Agent.TurnTest do
         do: complete(messages, tool_defs, config)
     end
 
+    defmodule CommentaryThenFinalProvider do
+      @behaviour Handbeam.Agent.Provider
+
+      alias Handbeam.Agent.Message
+
+      @impl true
+      def complete(messages, _tool_defs, _config) do
+        commentary? =
+          Enum.any?(messages, fn
+            %Message{content: blocks} when is_list(blocks) ->
+              Enum.any?(blocks, &(&1[:phase] == "commentary"))
+
+            _ ->
+              false
+          end)
+
+        if commentary? do
+          {:ok,
+           %{
+             stop_reason: :end_turn,
+             messages: [
+               Message.assistant_blocks([
+                 %{type: "text", text: "Hello! How can I help?", phase: "final_answer"}
+               ])
+             ],
+             usage: %{input_tokens: 1, output_tokens: 1}
+           }}
+        else
+          {:ok,
+           %{
+             stop_reason: :end_turn,
+             messages: [
+               Message.assistant_blocks([
+                 %{type: "text", text: "Hello! What can I help you with?", phase: "commentary"}
+               ])
+             ],
+             usage: %{input_tokens: 1, output_tokens: 1}
+           }}
+        end
+      end
+
+      @impl true
+      def stream(messages, _tool_defs, _config, on_chunk) do
+        {:ok, result} = complete(messages, [], %{})
+        on_chunk.(Message.text(hd(result.messages)))
+        {:ok, result}
+      end
+    end
+
+    test "keeps commentary and requests one final answer without replaying it" do
+      config = %Config{
+        provider: CommentaryThenFinalProvider,
+        model: "gpt-6-luna",
+        max_turns: 4,
+        provider_config: %{}
+      }
+
+      chunks = :counters.new(1, [])
+
+      result =
+        Turn.run_loop(State.init(config, "hello"),
+          streaming: true,
+          on_event: fn
+            {:message_delta, %{chunk: chunk}} -> :counters.add(chunks, 1, byte_size(chunk))
+            _ -> :ok
+          end
+        )
+
+      texts = Enum.map(result.messages, &Handbeam.Agent.Message.text/1)
+
+      assert result.status == :completed
+      assert Enum.join(texts, "\n") =~ "How can I help?"
+      refute Enum.join(texts) =~ "What can I help you with?What can I help"
+      assert :counters.get(chunks, 1) ==
+               byte_size("Hello! What can I help you with?Hello! How can I help?")
+    end
+
     test "retries a thinking-only end_turn once" do
       Process.delete(:empty_end_calls)
 

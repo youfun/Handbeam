@@ -80,7 +80,8 @@ defmodule Handbeam.Agent.Auth.XaiCredentialTest do
               "reasoning" => true,
               "input" => ["text", "image"],
               "contextWindow" => 500_000,
-              "maxTokens" => 500_000,
+              "maxTokens" => 32_000,
+              "include" => ["reasoning.encrypted_content"],
               "cost" => %{"input" => 2, "output" => 6, "cacheRead" => 0.5, "cacheWrite" => 0}
             }
           ]

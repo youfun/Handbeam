@@ -187,6 +187,92 @@ defmodule Handbeam.Agent.Provider.CodexTest do
     assert Message.text(hd(final.messages)) == "ORCHID-5928"
   end
 
+  test "commentary and final_answer stay separate and replay with phase" do
+    owner = self()
+
+    commentary = %{
+      "id" => "msg_commentary",
+      "type" => "message",
+      "role" => "assistant",
+      "phase" => "commentary",
+      "status" => "completed",
+      "content" => [%{"type" => "output_text", "text" => "Hello! What can I help you with?"}]
+    }
+
+    final_answer = %{
+      "id" => "msg_final",
+      "type" => "message",
+      "role" => "assistant",
+      "phase" => "final_answer",
+      "status" => "completed",
+      "content" => [%{"type" => "output_text", "text" => "Hello! How can I help?"}]
+    }
+
+    Req.Test.stub(__MODULE__, fn conn ->
+      sse(
+        conn,
+        event("response.output_text.delta", %{
+          "delta" => "Hello! What can I help you with?",
+          "output_index" => 0
+        }) <>
+          event("response.output_item.done", %{"output_index" => 0, "item" => commentary}) <>
+          event("response.output_item.added", %{"output_index" => 1, "item" => final_answer}) <>
+          event("response.output_text.delta", %{
+            "delta" => "Hello! How can I help?",
+            "output_index" => 1
+          }) <>
+          event("response.output_item.done", %{"output_index" => 1, "item" => final_answer}) <>
+          completed([commentary, final_answer])
+      )
+    end)
+
+    assert {:ok, result} =
+             Codex.stream([Message.user("hello")], [], config(), &send(owner, {:chunk, &1}))
+
+    assert_received {:chunk, %{text: "Hello! What can I help you with?", phase: "commentary"}}
+    assert_received {:chunk, %{text: "Hello! How can I help?", phase: "final_answer"}}
+
+    assert [
+             %{type: "text", text: "Hello! What can I help you with?", phase: "commentary"},
+             %{
+               type: "text",
+               text: "Hello! How can I help?",
+               phase: "final_answer",
+               id: "msg_final"
+             }
+           ] = Enum.filter(hd(result.messages).content, &(&1.type == "text"))
+
+    Req.Test.stub(__MODULE__, fn conn ->
+      {:ok, body, conn} = read_body(conn)
+
+      assert [
+               %{"role" => "user"},
+               %{
+                 "type" => "message",
+                 "phase" => "commentary",
+                 "id" => "msg_commentary",
+                 "content" => [%{"text" => "Hello! What can I help you with?"}]
+               },
+               %{
+                 "type" => "message",
+                 "phase" => "final_answer",
+                 "id" => "msg_final",
+                 "content" => [%{"text" => "Hello! How can I help?"}]
+               },
+               %{"role" => "user", "content" => "again"}
+             ] = Jason.decode!(body)["input"]
+
+      sse(conn, completed([text_item("done")]))
+    end)
+
+    assert {:ok, _} =
+             Codex.complete(
+               [Message.user("hello"), hd(result.messages), Message.user("again")],
+               [],
+               config()
+             )
+  end
+
   test "opaque reasoning is not replayed under another model or account" do
     message =
       Message.assistant_blocks([
@@ -202,7 +288,16 @@ defmodule Handbeam.Agent.Provider.CodexTest do
     Req.Test.stub(__MODULE__, fn conn ->
       {:ok, body, conn} = read_body(conn)
       refute body =~ "secret"
-      assert hd(Jason.decode!(body)["input"])["content"] == "Prior answer"
+
+      assert [
+               %{
+                 "type" => "message",
+                 "role" => "assistant",
+                 "status" => "completed",
+                 "content" => [%{"type" => "output_text", "text" => "Prior answer"}]
+               }
+             ] = Jason.decode!(body)["input"]
+
       sse(conn, completed([text_item("ok")]))
     end)
 

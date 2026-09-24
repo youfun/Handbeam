@@ -161,7 +161,9 @@ defmodule Handbeam.Agent.Reasoning do
 
   defp put_provider_effort(%{api: api} = config, effort)
        when api in [:openai_responses, :openai_codex_responses] do
-    Map.put(config, :reasoning, %{effort: effort})
+    config
+    |> Map.put(:reasoning, %{effort: effort})
+    |> ensure_encrypted_reasoning_include()
   end
 
   defp put_provider_effort(%{api: :anthropic} = config, effort) do
@@ -178,6 +180,19 @@ defmodule Handbeam.Agent.Reasoning do
 
   defp put_provider_effort(config, effort) do
     Map.put(config, :reasoning_effort, effort)
+  end
+
+  # xAI and OpenAI Responses both require the encrypted item to be requested
+  # before it can be replayed on the next turn. Missing it drops reasoning
+  # context and is a common cause of degenerate repeated output.
+  defp ensure_encrypted_reasoning_include(config) do
+    include = List.wrap(Map.get(config, :include))
+
+    if "reasoning.encrypted_content" in include do
+      config
+    else
+      Map.put(config, :include, include ++ ["reasoning.encrypted_content"])
+    end
   end
 
   defp reasoning?(model_entry) do
