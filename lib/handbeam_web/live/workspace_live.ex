@@ -1472,6 +1472,14 @@ defmodule HandbeamWeb.WorkspaceLive do
     {:noreply, assign(socket, :ext_widget_data, %{event: event, data: data})}
   end
 
+  def handle_info({:start_free_chat_run, conv_id, content, run_opts}, socket) do
+    if socket.assigns.current_conversation_id == conv_id do
+      start_agent_run_now(socket, conv_id, content, run_opts)
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_info(msg, socket) do
     Logger.debug("[WorkspaceLive] unhandled message: #{inspect(msg)}")
     {:noreply, socket}
@@ -2375,6 +2383,8 @@ defmodule HandbeamWeb.WorkspaceLive do
           chat_scope: :free,
           tools: tools_for(socket),
           workspace_id: nil,
+          workspace_path: nil,
+          mcp: false,
           source: :live_view,
           streaming: true
         ]
@@ -2448,40 +2458,49 @@ defmodule HandbeamWeb.WorkspaceLive do
             turns: 0
           })
           |> subscribe_to_session()
+          |> push_event("user-message-sent", %{})
 
         om_opts = om_from_effective(socket.assigns.effective_settings)
 
-        case Handbeam.Agent.Coordinator.add_message(
-               conv_id,
-               content,
-               run_opts(socket,
-                 provider_config: provider_config,
-                 model: model_id,
-                 reasoning_level: selected_reasoning_level,
-                 workspace_path: workspace_path,
-                 transcript_id: msg_id,
-                 message_id: msg_id,
-                 inbound_id: msg_id,
-                 attachments: attachments,
-                 om: Keyword.get(om_opts, :om)
-               )
-             ) do
-          {:ok, _ack} ->
-            {:noreply, socket}
+        run_opts =
+          run_opts(socket,
+            provider_config: provider_config,
+            model: model_id,
+            reasoning_level: selected_reasoning_level,
+            workspace_path: workspace_path,
+            transcript_id: msg_id,
+            message_id: msg_id,
+            inbound_id: msg_id,
+            attachments: attachments,
+            om: Keyword.get(om_opts, :om)
+          )
 
-          {:error, reason} ->
-            Logger.warning("[WorkspaceLive] Failed to start agent run: #{inspect(reason)}")
-
-            {:noreply,
-             socket
-             |> assign(:running, false)
-             |> assign(:running_conversation_id, nil)
-             |> assign(:stream_suppressed, true)
-             |> assign(:composer_error, "Message not delivered: #{inspect(reason)}")}
+        if free_chat?(socket) do
+          send(self(), {:start_free_chat_run, conv_id, content, run_opts})
+          {:noreply, socket}
+        else
+          start_agent_run_now(socket, conv_id, content, run_opts)
         end
 
       {:error, reason} ->
         {:noreply, assign(socket, :composer_error, reason)}
+    end
+  end
+
+  defp start_agent_run_now(socket, conv_id, content, run_opts) do
+    case Handbeam.Agent.Coordinator.add_message(conv_id, content, run_opts) do
+      {:ok, _ack} ->
+        {:noreply, socket}
+
+      {:error, reason} ->
+        Logger.warning("[WorkspaceLive] Failed to start agent run: #{inspect(reason)}")
+
+        {:noreply,
+         socket
+         |> assign(:running, false)
+         |> assign(:running_conversation_id, nil)
+         |> assign(:stream_suppressed, true)
+         |> assign(:composer_error, "Message not delivered: #{inspect(reason)}")}
     end
   end
 

@@ -5035,4 +5035,25 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       refute html =~ ~s(data-target-id="nav-only-user")
     end
   end
+
+  describe "free chat send" do
+    test "sending in a new free chat replies before the run starts", %{conn: conn} do
+      isolate_conversation_home!()
+
+      {:ok, view, _html} = live(conn, "/")
+
+      view |> element("#new-free-conversation") |> render_click()
+
+      assert render(view) =~ "Chats"
+
+      html =
+        view
+        |> form("#composer", %{message: "hello free chat"})
+        |> render_submit()
+
+      assert html =~ "hello free chat"
+      assert render(view) =~ "hello free chat"
+      refute render(view) =~ "Message not delivered"
+    end
+  end
 end

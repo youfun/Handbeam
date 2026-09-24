@@ -63,23 +63,68 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
     if current_conversation_present?(socket) do
       socket
     else
-      ws_id = socket.assigns.current_workspace_id
-
-      conversations_by_ws =
-        build_conversations_by_workspace(socket.assigns.workspaces, include_archived?: true)
-
-      socket =
-        socket
-        |> assign(:conversations_by_workspace, conversations_by_ws)
-        |> reload_conversation_stream()
-
-      {socket, conv} = ensure_active_conversation(socket, ws_id)
-
-      socket
-      |> assign(:current_conversation_id, ConversationState.conversation_id(conv))
-      |> reload_conversation_stream()
-      |> ConversationState.sync_conv_state(opts)
+      if socket.assigns[:chat_scope] == :free do
+        ensure_current_free_conversation(socket, opts)
+      else
+        ensure_current_workspace_conversation(socket, opts)
+      end
     end
+  end
+
+  defp ensure_current_free_conversation(socket, opts) do
+    conversations_by_ws =
+      Map.put(
+        socket.assigns.conversations_by_workspace,
+        @free_key,
+        load_free_conversations(include_archived?: true)
+      )
+
+    socket =
+      socket
+      |> assign(:conversations_by_workspace, conversations_by_ws)
+      |> reload_conversation_stream()
+
+    conversations = Map.get(socket.assigns.conversations_by_workspace, @free_key, [])
+
+    {socket, conv} =
+      case Enum.find(conversations, &(not archived_conversation?(&1))) do
+        nil ->
+          conversation = build_free_conversation(length(conversations) + 1)
+
+          socket =
+            update(socket, :conversations_by_workspace, fn conversations_by_workspace ->
+              Map.put(conversations_by_workspace, @free_key, conversations ++ [conversation])
+            end)
+
+          {socket, conversation}
+
+        conversation ->
+          {socket, conversation}
+      end
+
+    socket
+    |> assign_free(ConversationState.conversation_id(conv))
+    |> reload_conversation_stream()
+    |> ConversationState.sync_conv_state(opts)
+  end
+
+  defp ensure_current_workspace_conversation(socket, opts) do
+    ws_id = socket.assigns.current_workspace_id
+
+    conversations_by_ws =
+      build_conversations_by_workspace(socket.assigns.workspaces, include_archived?: true)
+
+    socket =
+      socket
+      |> assign(:conversations_by_workspace, conversations_by_ws)
+      |> reload_conversation_stream()
+
+    {socket, conv} = ensure_active_conversation(socket, ws_id)
+
+    socket
+    |> assign(:current_conversation_id, ConversationState.conversation_id(conv))
+    |> reload_conversation_stream()
+    |> ConversationState.sync_conv_state(opts)
   end
 
   def archive_conversation(socket, conv_id, ws_id, opts \\ []) do
@@ -496,8 +541,13 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
 
   defp current_conversation_present?(socket) do
     conv_id = socket.assigns.current_conversation_id
-    ws_id = socket.assigns.current_workspace_id
-    convs = Map.get(socket.assigns.conversations_by_workspace, ws_id, [])
+
+    bucket =
+      if socket.assigns[:chat_scope] == :free,
+        do: @free_key,
+        else: socket.assigns.current_workspace_id
+
+    convs = Map.get(socket.assigns.conversations_by_workspace, bucket, [])
 
     is_binary(conv_id) and
       Enum.any?(convs, &(ConversationState.conversation_id(&1) == conv_id))

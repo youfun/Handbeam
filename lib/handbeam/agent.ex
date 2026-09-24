@@ -110,7 +110,6 @@ defmodule Handbeam.Agent do
     end
 
     opts = maybe_bootstrap_mcp(opts)
-
     config = Config.from_opts(opts)
 
     {state, opts, session_id, queue_pid} =
@@ -287,7 +286,7 @@ defmodule Handbeam.Agent do
     enabled? =
       case Keyword.fetch(opts, :mcp) do
         {:ok, value} -> value
-        :error -> Handbeam.Host.mcp?()
+        :error -> Handbeam.Host.mcp?() and Keyword.get(opts, :chat_scope) != :free
       end
 
     if enabled? do
