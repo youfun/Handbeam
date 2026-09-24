@@ -39,6 +39,8 @@ try {
     longPollFallbackMs: 2500
   });
 
+  // LiveView turns on diff logging for localhost. Keep the console quiet.
+  liveSocket.disableDebug();
   liveSocket.connect();
   window.liveSocket = liveSocket;
 } catch (error) {
