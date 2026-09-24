@@ -156,9 +156,23 @@ defmodule HandbeamWeb.AvailableModelsLive do
     {:noreply, maybe_discover_cursor_models(socket, "cursor", attempt_id)}
   end
 
-  def handle_event("toggle_model_enabled", %{"id" => model_id, "value" => value}, socket) do
+  def handle_event("disable_all_models", _params, socket) do
     provider_id = socket.assigns.selected_provider_id
-    enabled = value == "true"
+
+    case ModelConfig.disable_provider_models(provider_id) do
+      :ok ->
+        {:noreply, reload_providers(socket)}
+
+      {:error, reason} ->
+        {:noreply, assign(socket, :form_error, reason)}
+    end
+  end
+
+  def handle_event("toggle_model_enabled", %{"id" => model_id}, socket) do
+    provider_id = socket.assigns.selected_provider_id
+    # Checkbox clicks drop phx-value-value after the first row. Flip the stored
+    # flag instead of requiring the browser to send the next state.
+    enabled = not model_enabled?(socket, provider_id, model_id)
 
     case ModelConfig.update_model(provider_id, model_id, %{"enabled" => enabled}) do
       :ok ->
@@ -887,6 +901,12 @@ defmodule HandbeamWeb.AvailableModelsLive do
 
       %{provider | models: models}
     end)
+  end
+
+  defp model_enabled?(socket, provider_id, model_id) do
+    provider = find_provider(provider_id, socket.assigns.providers)
+    model = provider && Enum.find(provider.models, &(&1.id == model_id))
+    (model && model.enabled) || false
   end
 
   defp display_cost(%{"cost" => cost}) when is_map(cost) and map_size(cost) > 0, do: cost

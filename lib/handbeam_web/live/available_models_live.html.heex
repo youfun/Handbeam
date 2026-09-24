@@ -202,9 +202,19 @@
         <div class="settings-detail-section">
           <div class="flex items-center justify-between mb-3">
             <h3 class="settings-detail-heading !mb-0">{gettext("模型")}</h3>
-            <button phx-click="open_add_model" class="settings-btn settings-btn-accent">
-              {gettext("+ 添加模型")}
-            </button>
+            <div class="flex items-center gap-2">
+              <button
+                :if={Enum.any?(@selected_provider.models, & &1.enabled)}
+                type="button"
+                phx-click="disable_all_models"
+                class="settings-btn"
+              >
+                {gettext("全部关闭")}
+              </button>
+              <button phx-click="open_add_model" class="settings-btn settings-btn-accent">
+                {gettext("+ 添加模型")}
+              </button>
+            </div>
           </div>
 
           <%= if @selected_provider.models == [] do %>
@@ -237,7 +247,6 @@
                         checked={model.enabled}
                         phx-click="toggle_model_enabled"
                         phx-value-id={model.id}
-                        phx-value-value={to_string(not model.enabled)}
                       />
                       <span class="settings-toggle-slider"></span>
                     </label>

@@ -395,6 +395,52 @@ defmodule HandbeamWeb.AvailableModelsLiveTest do
     {:ok, stored} = ModelConfig.config_file_path() |> File.read!() |> Jason.decode()
     model = get_in(stored, ["providers", "stepfun", "models", Access.at(0)])
     assert model["enabled"] == true
+
+    view
+    |> element(~s|input[phx-click="toggle_model_enabled"][phx-value-id="step-5-preview"]|)
+    |> render_click(%{"id" => "step-5-preview"})
+
+    html = render(view)
+    assert html =~ "step-5-preview"
+    assert html =~ "stepfun"
+    refute html =~ "选择左侧供应商查看详情"
+  end
+
+  test "disable all turns off every model for the selected provider and keeps the rows", %{
+    conn: conn
+  } do
+    {:ok, view, _html} =
+      live_isolated(conn, HandbeamWeb.AvailableModelsLive, session: %{"embedded" => "true"})
+
+    view
+    |> element(~s|button[phx-click="select_provider"][phx-value-id="stepfun"]|)
+    |> render_click()
+
+    assert has_element?(view, ~s|button[phx-click="disable_all_models"]|)
+
+    view
+    |> element(~s|button[phx-click="disable_all_models"]|)
+    |> render_click()
+
+    html = render(view)
+    assert html =~ "step-router-v1"
+    assert html =~ "step-5-preview"
+    refute has_element?(view, ~s|button[phx-click="disable_all_models"]|)
+
+    {:ok, stored} = ModelConfig.config_file_path() |> File.read!() |> Jason.decode()
+    models = get_in(stored, ["providers", "stepfun", "models"])
+    assert Enum.all?(models, &(&1["enabled"] == false))
+
+    view
+    |> element(~s|input[phx-click="toggle_model_enabled"][phx-value-id="step-5-preview"]|)
+    |> render_click(%{"id" => "step-5-preview"})
+
+    {:ok, stored} = ModelConfig.config_file_path() |> File.read!() |> Jason.decode()
+
+    enabled =
+      get_in(stored, ["providers", "stepfun", "models"]) |> Enum.filter(&(&1["enabled"] != false))
+
+    assert Enum.map(enabled, & &1["id"]) == ["step-5-preview"]
   end
 
   test "catalog prices fill unpriced rows without another model refresh", %{conn: conn} do

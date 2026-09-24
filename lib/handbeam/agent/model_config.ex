@@ -1261,6 +1261,30 @@ defmodule Handbeam.Agent.ModelConfig do
   end
 
   @doc """
+  Turn off every model for one provider, keeping the rows so they can be
+  turned back on individually.
+  """
+  @spec disable_provider_models(String.t()) :: :ok | {:error, String.t()}
+  def disable_provider_models(provider_id) when is_binary(provider_id) do
+    with {:ok, config} <- load_or_default_config(),
+         :ok <- ensure_provider_exists(config, provider_id) do
+      provider = config["providers"][provider_id]
+
+      models =
+        provider
+        |> Map.get("models", [])
+        |> Enum.map(fn
+          model when is_map(model) -> Map.put(model, "enabled", false)
+          other -> other
+        end)
+
+      updated_provider = Map.put(provider, "models", models)
+      updated_providers = Map.put(config["providers"], provider_id, updated_provider)
+      write_config(Map.put(config, "providers", updated_providers))
+    end
+  end
+
+  @doc """
   Update model-level settings (non-destructive merge).
   """
   @spec update_model(String.t(), String.t(), map()) :: :ok | {:error, String.t()}
