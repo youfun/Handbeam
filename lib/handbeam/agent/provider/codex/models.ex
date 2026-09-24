@@ -4,6 +4,11 @@ defmodule Handbeam.Agent.Provider.Codex.Models do
   alias Handbeam.Agent.Auth.CodexCredential
   alias Handbeam.Agent.Provider.Codex
 
+  # Codex filters /models by this query param. 0.1.0 is below every current
+  # minimal_client_version, so the backend returns no visible models.
+  # Keep this at or above the newest bundled Codex CLI catalog requirement.
+  @client_version "0.156.1"
+
   def discover(opts \\ []) do
     with {:ok, auth} <- CodexCredential.resolve_transport_key("openai_codex", opts) do
       req =
@@ -17,7 +22,7 @@ defmodule Handbeam.Agent.Provider.Codex.Models do
 
       case req.get("https://chatgpt.com/backend-api/codex/models",
              headers: headers,
-             params: [client_version: "0.1.0"],
+             params: [client_version: @client_version],
              retry: false,
              redirect: false,
              receive_timeout: 10_000,
@@ -43,15 +48,7 @@ defmodule Handbeam.Agent.Provider.Codex.Models do
           if model["visibility"] == "hide" do
             []
           else
-            [
-              %{
-                "id" => id,
-                "name" => model["display_name"] || id,
-                "reasoning" => (model["supported_reasoning_levels"] || []) != [],
-                "input" => model["input_modalities"] || ["text"],
-                "contextWindow" => model["context_window"]
-              }
-            ]
+            [catalog_model(id, model)]
           end
 
         _ ->
@@ -63,4 +60,33 @@ defmodule Handbeam.Agent.Provider.Codex.Models do
       _ -> {:ok, Enum.uniq_by(visible, & &1["id"])}
     end
   end
+
+  defp catalog_model(id, model) do
+    levels = reasoning_levels(model["supported_reasoning_levels"])
+
+    %{
+      "id" => id,
+      "name" => model["display_name"] || id,
+      "reasoning" => levels != [],
+      "input" => model["input_modalities"] || ["text"],
+      "contextWindow" => model["context_window"]
+    }
+    |> maybe_put("reasoningLevels", levels)
+    |> maybe_put("defaultReasoning", model["default_reasoning_level"])
+  end
+
+  defp reasoning_levels(levels) when is_list(levels) do
+    levels
+    |> Enum.flat_map(fn
+      %{"effort" => effort} when is_binary(effort) and effort != "" -> [effort]
+      _ -> []
+    end)
+    |> Enum.uniq()
+  end
+
+  defp reasoning_levels(_), do: []
+
+  defp maybe_put(model, _key, value) when value in [nil, ""], do: model
+  defp maybe_put(model, _key, []), do: model
+  defp maybe_put(model, key, value), do: Map.put(model, key, value)
 end

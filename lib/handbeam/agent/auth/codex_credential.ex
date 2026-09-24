@@ -44,12 +44,72 @@ defmodule Handbeam.Agent.Auth.CodexCredential do
       "api" => "openai-codex-responses",
       "authType" => "oauth",
       "baseUrl" => "https://chatgpt.com/backend-api/codex",
+      # Offline fallback from the Codex CLI rust-v0.156.1 bundled catalog.
+      # Refresh replaces this with the account's live /models response.
+      # gpt-5.4 is visibility=hide there and was retired from ChatGPT Codex.
       "models" => [
         %{
-          "id" => "gpt-5.4",
-          "name" => "GPT-5.4",
+          "id" => "gpt-6-sol",
+          "name" => "GPT-6-Sol",
           "reasoning" => true,
-          "input" => ["text", "image"]
+          "input" => ["text", "image"],
+          "contextWindow" => 272_000,
+          "reasoningLevels" => ["low", "medium", "high", "xhigh", "max", "ultra"],
+          "defaultReasoning" => "medium"
+        },
+        %{
+          "id" => "gpt-6-luna",
+          "name" => "GPT-6-Luna",
+          "reasoning" => true,
+          "input" => ["text", "image"],
+          "contextWindow" => 272_000,
+          "reasoningLevels" => ["low", "medium", "high", "xhigh", "max"],
+          "defaultReasoning" => "medium"
+        },
+        %{
+          "id" => "gpt-6-astra",
+          "name" => "GPT-6-Astra",
+          "reasoning" => true,
+          "input" => ["text", "image"],
+          "contextWindow" => 272_000,
+          "reasoningLevels" => ["low", "medium", "high", "xhigh", "max", "ultra"],
+          "defaultReasoning" => "low"
+        },
+        %{
+          "id" => "gpt-5.6-sol",
+          "name" => "GPT-5.6-Sol",
+          "reasoning" => true,
+          "input" => ["text", "image"],
+          "contextWindow" => 272_000,
+          "reasoningLevels" => ["low", "medium", "high", "xhigh", "max", "ultra"],
+          "defaultReasoning" => "low"
+        },
+        %{
+          "id" => "gpt-5.6-terra",
+          "name" => "GPT-5.6-Terra",
+          "reasoning" => true,
+          "input" => ["text", "image"],
+          "contextWindow" => 272_000,
+          "reasoningLevels" => ["low", "medium", "high", "xhigh", "max", "ultra"],
+          "defaultReasoning" => "medium"
+        },
+        %{
+          "id" => "gpt-5.6-luna",
+          "name" => "GPT-5.6-Luna",
+          "reasoning" => true,
+          "input" => ["text", "image"],
+          "contextWindow" => 272_000,
+          "reasoningLevels" => ["low", "medium", "high", "xhigh", "max"],
+          "defaultReasoning" => "medium"
+        },
+        %{
+          "id" => "gpt-5.5",
+          "name" => "GPT-5.5",
+          "reasoning" => true,
+          "input" => ["text", "image"],
+          "contextWindow" => 272_000,
+          "reasoningLevels" => ["low", "medium", "high", "xhigh"],
+          "defaultReasoning" => "medium"
         }
       ]
     }
