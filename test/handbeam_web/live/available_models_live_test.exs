@@ -86,6 +86,94 @@ defmodule HandbeamWeb.AvailableModelsLiveTest do
              "cache_read" => 0.3,
              "cache_write" => 3.75
            }
+
+    refute Map.has_key?(model, "reasoning")
+  end
+
+  test "adding a model marked as reasoning stores the flag and default level", %{conn: conn} do
+    {:ok, view, _html} =
+      live_isolated(conn, HandbeamWeb.AvailableModelsLive, session: %{"embedded" => "true"})
+
+    view
+    |> element(~s|button[phx-click="select_provider"][phx-value-id="stepfun"]|)
+    |> render_click()
+
+    view
+    |> element(~s|button[phx-click="open_add_model"]|)
+    |> render_click()
+
+    render_submit(view, "submit_add_model", %{
+      "add_model" => %{
+        "id" => "custom-reasoner",
+        "name" => "Custom Reasoner",
+        "type" => "text",
+        "context_window" => "256000",
+        "max_tokens" => "8192",
+        "reasoning" => "true"
+      }
+    })
+
+    {:ok, config} =
+      ModelConfig.config_file_path()
+      |> File.read!()
+      |> Jason.decode()
+
+    model =
+      config
+      |> get_in(["providers", "stepfun", "models"])
+      |> Enum.find(&(&1["id"] == "custom-reasoner"))
+
+    assert model["reasoning"] == true
+    assert model["defaultReasoning"] == "medium"
+    assert model["thinkingLevelMap"]["high"] == "high"
+
+    html = render(view)
+    assert html =~ "custom-reasoner"
+    assert Regex.match?(~r/Off\s*\/\s*Minimal\s*\/\s*Low\s*\/\s*Medium\s*\/\s*High\s*\/\s*X-High/, html)
+  end
+
+  test "adding a grok model stores only the selected reasoning levels", %{conn: conn} do
+    {:ok, view, _html} =
+      live_isolated(conn, HandbeamWeb.AvailableModelsLive, session: %{"embedded" => "true"})
+
+    view
+    |> element(~s|button[phx-click="select_provider"][phx-value-id="stepfun"]|)
+    |> render_click()
+
+    view
+    |> element(~s|button[phx-click="open_add_model"]|)
+    |> render_click()
+
+    render_submit(view, "submit_add_model", %{
+      "add_model" => %{
+        "id" => "grok-4.7",
+        "name" => "Grok 4.7",
+        "type" => "text",
+        "reasoning" => "true",
+        "reasoning_levels" => ["", "low", "xhigh"]
+      }
+    })
+
+    {:ok, config} =
+      ModelConfig.config_file_path()
+      |> File.read!()
+      |> Jason.decode()
+
+    model =
+      config
+      |> get_in(["providers", "stepfun", "models"])
+      |> Enum.find(&(&1["id"] == "grok-4.7"))
+
+    assert model["reasoning"] == true
+    assert model["defaultReasoning"] == "low"
+    assert model["thinkingLevelMap"]["low"] == "low"
+    assert model["thinkingLevelMap"]["medium"] == nil
+    assert model["thinkingLevelMap"]["xhigh"] == "high"
+    refute Map.has_key?(model["thinkingLevelMap"], "off")
+
+    html = render(view)
+    assert Regex.match?(~r/grok-4\.7.*?Low\s*\/\s*X-High/s, html)
+    refute Regex.match?(~r/grok-4\.7.*?Off\s*\/\s*Minimal/s, html)
   end
 
   defmodule MockXaiReq do
@@ -168,7 +256,7 @@ defmodule HandbeamWeb.AvailableModelsLiveTest do
     provider = get_in(config, ["providers", "xai"])
     assert provider["authType"] == "oauth"
     assert provider["api"] == "openai-responses"
-    assert Enum.any?(provider["models"], &(&1["id"] == "grok-4.6"))
+    assert Enum.any?(provider["models"], &(&1["id"] == "grok-4.7"))
   end
 
   test "Cursor subscription login shows the browser authorization URL", %{conn: conn} do

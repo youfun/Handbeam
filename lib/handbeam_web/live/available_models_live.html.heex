@@ -218,6 +218,7 @@
                   <th>{gettext("模型 ID")}</th>
                   <th>{gettext("名称")}</th>
                   <th>{gettext("类型")}</th>
+                  <th>{gettext("推理")}</th>
                   <th>{gettext("上下文")}</th>
                   <th>{gettext("价格")}</th>
                   <th class="w-8"></th>
@@ -228,6 +229,12 @@
                   <td class="font-mono text-[11px] text-tertiary">{model.id}</td>
                   <td class="font-medium">{model.name}</td>
                   <td><span class="settings-badge">{model.type}</span></td>
+                  <td>
+                    <span :if={model.reasoning} class="settings-badge">
+                      {Enum.map_join(reasoning_levels_for(@selected_provider.id, model), " / ", &reasoning_level_label/1)}
+                    </span>
+                    <span :if={!model.reasoning} class="text-tertiary">—</span>
+                  </td>
                   <td>
                     <span :if={model.context_window} class="text-tertiary tabular-nums">
                       {format_context(model.context_window)}
@@ -496,6 +503,37 @@
         />
       </div>
 
+      <div class="settings-form-group">
+        <label class="settings-form-label">{gettext("支持推理")}</label>
+        <select
+          name="add_provider[reasoning]"
+          value={@add_provider_form["reasoning"]}
+          class="settings-input"
+        >
+          <option value="false">{gettext("不支持")}</option>
+          <option value="true">{gettext("支持，可选择推理等级")}</option>
+        </select>
+      </div>
+
+      <div :if={@add_provider_form["reasoning"] == "true"} class="settings-form-group">
+        <label class="settings-form-label">{gettext("推理等级")}</label>
+        <input type="hidden" name="add_provider[reasoning_levels]" value="" />
+        <div class="flex flex-wrap gap-2">
+          <label
+            :for={level <- configurable_reasoning_levels(@add_provider_form)}
+            class="settings-badge"
+          >
+            <input
+              type="checkbox"
+              name="add_provider[reasoning_levels][]"
+              value={level}
+              checked={reasoning_level_checked?(@add_provider_form, level)}
+            />
+            {reasoning_level_label(level)}
+          </label>
+        </div>
+      </div>
+
       <div class="settings-dialog-actions">
         <button type="button" phx-click="close_add_provider" class="settings-btn">
           {gettext("取消")}
@@ -740,6 +778,37 @@
           placeholder={gettext("可选")}
           class="settings-input"
         />
+      </div>
+
+      <div class="settings-form-group">
+        <label class="settings-form-label">{gettext("支持推理")}</label>
+        <select
+          name="add_model[reasoning]"
+          value={@add_model_form["reasoning"]}
+          class="settings-input"
+        >
+          <option value="false">{gettext("不支持")}</option>
+          <option value="true">{gettext("支持，可选择推理等级")}</option>
+        </select>
+      </div>
+
+      <div :if={@add_model_form["reasoning"] == "true"} class="settings-form-group">
+        <label class="settings-form-label">{gettext("推理等级")}</label>
+        <input type="hidden" name="add_model[reasoning_levels]" value="" />
+        <div class="flex flex-wrap gap-2">
+          <label
+            :for={level <- configurable_reasoning_levels(Map.put(@add_model_form, "provider_id", @selected_provider.id))}
+            class="settings-badge"
+          >
+            <input
+              type="checkbox"
+              name="add_model[reasoning_levels][]"
+              value={level}
+              checked={reasoning_level_checked?(@add_model_form, level)}
+            />
+            {reasoning_level_label(level)}
+          </label>
+        </div>
       </div>
 
       <div class="settings-dialog-actions">

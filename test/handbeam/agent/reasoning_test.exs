@@ -21,6 +21,25 @@ defmodule Handbeam.Agent.ReasoningTest do
       assert "medium" in levels
     end
 
+    test "infers grok models when the flag is omitted and hides unsupported levels" do
+      levels = Reasoning.supported_levels(%{id: "xai/grok-4.7", model_id: "grok-4.7"})
+
+      assert levels == ["low", "medium", "high", "xhigh"]
+      refute "off" in levels
+      refute "minimal" in levels
+    end
+
+    test "keeps an explicit thinking map for grok, minus unsupported levels" do
+      levels =
+        Reasoning.supported_levels(%{
+          id: "grok-4.7",
+          reasoning: true,
+          thinking_level_map: %{"low" => nil, "xhigh" => "xhigh"}
+        })
+
+      assert levels == ["medium", "high", "xhigh"]
+    end
+
     test "includes off and hides levels mapped to nil" do
       model = %{
         reasoning: true,
@@ -46,8 +65,34 @@ defmodule Handbeam.Agent.ReasoningTest do
       assert Reasoning.default_level(%{reasoning: true}) == "medium"
     end
 
+    test "defaults grok to high when the catalog omits a default" do
+      assert Reasoning.default_level(%{id: "grok-4.7", reasoning: true}) == "high"
+    end
+
     test "returns off for non-reasoning models" do
       assert Reasoning.default_level(%{reasoning: false}) == "off"
+    end
+  end
+
+  describe "catalog_fields/2" do
+    test "builds catalog fields for a manually configured grok model" do
+      fields =
+        Reasoning.catalog_fields(%{id: "grok-4.7", provider_id: "xai"}, ["low", "high", "xhigh"])
+
+      assert fields["reasoning"] == true
+      assert fields["defaultReasoning"] == "high"
+      assert fields["thinkingLevelMap"]["low"] == "low"
+      assert fields["thinkingLevelMap"]["medium"] == nil
+      assert fields["thinkingLevelMap"]["xhigh"] == "high"
+      refute Map.has_key?(fields["thinkingLevelMap"], "off")
+    end
+
+    test "keeps the full level list when a manual model does not select levels" do
+      fields = Reasoning.catalog_fields(%{id: "custom-reasoner"}, [])
+
+      assert fields["defaultReasoning"] == "medium"
+      assert fields["thinkingLevelMap"]["minimal"] == "low"
+      assert fields["thinkingLevelMap"]["xhigh"] == "high"
     end
   end
 
@@ -78,6 +123,25 @@ defmodule Handbeam.Agent.ReasoningTest do
 
       assert Reasoning.apply_provider_options(config, %{reasoning: true}, "high") ==
                %{api: :openai_responses, model: "gpt-5.4", reasoning: %{effort: "high"}}
+    end
+
+    test "adds xAI Responses reasoning effort for grok" do
+      config = %{api: :openai_responses, provider: "openai", model: "grok-4.7"}
+
+      assert Reasoning.apply_provider_options(config, %{id: "grok-4.7", reasoning: true}, "high") ==
+               %{
+                 api: :openai_responses,
+                 provider: "openai",
+                 model: "grok-4.7",
+                 reasoning: %{effort: "high"}
+               }
+    end
+
+    test "does not send an unsupported grok level" do
+      config = %{api: :openai_responses, model: "grok-4.7"}
+
+      assert Reasoning.apply_provider_options(config, %{id: "grok-4.7"}, "off") == config
+      assert Reasoning.apply_provider_options(config, %{id: "grok-4.7"}, "minimal") == config
     end
 
     test "adds OpenAI-compatible reasoning_effort" do
