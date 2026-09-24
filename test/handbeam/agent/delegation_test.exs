@@ -96,7 +96,7 @@ defmodule Handbeam.Agent.DelegationTest do
   defp delegate(context) do
     Task.async(fn ->
       Handbeam.Tool.Builtin.Task.execute(
-        %{"task" => "Find evidence", "criteria" => "Include exact line"},
+        %{"task" => "Find evidence", "criteria" => "Include exact line", "background" => false},
         context
       )
     end)
@@ -192,7 +192,7 @@ defmodule Handbeam.Agent.DelegationTest do
         {:run_lifecycle, context.conversation_id, :run_end, %{status: :interrupted}}
       )
 
-      assert map_size(:sys.get_state(Delegation)) == 1
+      assert map_size(:sys.get_state(Delegation).jobs) == 1
       assert Process.alive?(child)
       send(Delegation, {:run_lifecycle, context.conversation_id, :run_end, %{status: status}})
       assert {:error, _, %{status: :parent_closed}} = Task.await(task, 5_000)
@@ -202,7 +202,7 @@ defmodule Handbeam.Agent.DelegationTest do
   test "child cancellation reconciles tools without exposing its transcript", %{context: context} do
     task = delegate(context)
     assert_receive {:provider, :child, _child, _, _, _}, 2_000
-    [{id, job}] = Map.to_list(:sys.get_state(Delegation))
+    [{id, job}] = Map.to_list(:sys.get_state(Delegation).jobs)
 
     assert {:ok, _} =
              Handbeam.ConversationTranscriptStore.append(id, %{
@@ -232,7 +232,7 @@ defmodule Handbeam.Agent.DelegationTest do
   test "child crash does not restart or stop its parent", %{context: context} do
     task = delegate(context)
     assert_receive {:provider, :child, child, _, _, _}, 2_000
-    [{id, job}] = Map.to_list(:sys.get_state(Delegation))
+    [{id, job}] = Map.to_list(:sys.get_state(Delegation).jobs)
 
     assert {:ok, _} =
              Handbeam.ConversationTranscriptStore.append(id, %{
@@ -271,14 +271,14 @@ defmodule Handbeam.Agent.DelegationTest do
     on_exit(fn -> :erlang.trace(owner, false, [:receive]) end)
     task = delegate(context)
     assert_receive {:provider, :child, child, _, _, _}, 2_000
-    assert_receive {:trace, ^owner, :receive, {:started, id, {:ok, _}}}, 2_000
+    assert_receive {:trace, ^owner, :receive, {:started, id, _run_id, {:ok, _}}}, 2_000
     ref = Process.monitor(child)
     Task.shutdown(task, :brutal_kill)
     assert_receive {:DOWN, ^ref, :process, ^child, _}, 2_000
-    assert_receive {:trace, ^owner, :receive, {:cleaned, ^id}}, 2_000
+    assert_receive {:trace, ^owner, :receive, {:cleaned, ^id, _, _}}, 2_000
     # The worker's DOWN precedes usage persistence. Drain the owner callback
     # before teardown removes HOME and races the final ledger write.
-    refute Map.has_key?(:sys.get_state(owner), id)
+    refute Map.has_key?(:sys.get_state(owner).jobs, id)
     assert Policy.live_parent?(context)
   end
 
@@ -336,7 +336,7 @@ defmodule Handbeam.Agent.DelegationTest do
     refute Map.has_key?(provider, :previous_response_id)
     refute provider.use_previous_response_id
     assert provider.built_in_tools == [%{"type" => "web_search_preview"}]
-    opts = Policy.child_opts(context, 30_000)
+    {:ok, opts} = Policy.child_opts(context, 30_000)
     assert opts[:history_messages] == []
     assert opts[:delivery] == Handbeam.Delivery.Noop
     assert opts[:allowed_tools] == ["read"]

@@ -125,6 +125,11 @@ Session owns runtime event snapshot/replay, not conversation history.
 | `candidate_message_injected` | Turn 或 Session | Turn：`deliver_as`、`count`、`message_ids`（被注入的 `Message.id` 列表，可为空）。Session 入队成功时也会广播同名事件，但 payload 是 `message_id` + `content` + `deliver_as`（**名字是 injected，时机是 enqueued**）。UI 用 `message_ids` 列表删除 pending，用单独的 `message_id`（无 `message_ids`）当作入队确认 | 运行中候选消息入队或被并入上下文 |
 | `run_end` | Turn / Runner / Runtime | `status`、`turns`、`usage`，出错时 `error` | 见下方 `status` 取值 |
 | `agent_end` | Turn | 与同一时刻的 `run_end` 相同 payload | 紧跟 `run_end` 发出；主要供 `Handbeam.Extension.Event` hook 使用。`TranscriptPersistence` 只走 catch-all flush，`Session` 照常广播但不转发到 `"runtime:runs"` |
+| `delegation_usage` | Turn | 累计 usage map | 仅 `config.delegated?` 的子 run 发出；`Delegation` 据此记账到父 conversation |
+| `subagent_start` | Delegation | `tool_use_id`、`child_conversation_id`、`child_run_id`、`subagent_type`、`mode`、`kind` | 子 run 启动成功；广播到**父** conversation 的 Session |
+| `subagent_progress` | Delegation | `tool_use_id`、`child_conversation_id`、`turn`、`current_tool`、`usage` | 每个子 run 每秒最多 1 次（`tool_start` 触发节流） |
+| `subagent_end` | Delegation | `tool_use_id`、`child_conversation_id`、`child_run_id`、`subagent_type`、`kind`（`:initial` / `:dm`）、`status`、`usage`、`report` | 子 run 进入终态；`status: :parent_closed` / `:cancelled` 时不会把报告唤醒父对话 |
+| `subagent_approval_requested` | Delegation | 子 run 的 `tool_approval_requested` payload + `tool_use_id`、`child_conversation_id`、`subagent_type` | 后台子 run 的审批冒泡到父 conversation；job 进入 `:awaiting_approval` 并暂停预算计时，默认 10 分钟（`:subagent_approval_timeout_ms`）无人处理则关闭 |
 
 `run_end` / `agent_end` 的 `status`：
 
@@ -141,7 +146,7 @@ Session owns runtime event snapshot/replay, not conversation history.
 4. `WorkspaceLive` 只在 `status not in [:interrupted]` 时清 `pending_approval`；`TaskTracker` 把 `interrupted`/`awaiting_approval` 视为 waiting 而非 finish。
 5. `Session.maybe_broadcast_run_lifecycle/2` 只把 `run_start`、`run_end`、`tool_approval_requested` 三种转发到 `"runtime:runs"` topic（`{:run_lifecycle, session_id, kind, payload}`），`TaskTracker` 订阅的是这个。
 
-`Handbeam.EventRecorder` 只落盘 `run_start`、`tool_start`、`tool_end`、`run_end`、`error`；`Handbeam.PubSub.AgentEvent` 的 `@type kind` 目前没有列 `tool_approval_requested`/`agent_end`/`turn_*`，但 `Session.broadcast_event/3` 不校验 kind，实际会广播。
+`Handbeam.EventRecorder` 只落盘 `run_start`、`tool_start`、`tool_end`、`run_end`、`error`；`subagent_*` 事件不转发到 `"runtime:runs"`，也不写 `EventRecorder`。`Handbeam.PubSub.AgentEvent` 的 `@type kind` 已列出当前所有实际广播的 kind。
 
 ### Transcript entry 字段（`messages.jsonl`）
 
@@ -166,6 +171,14 @@ inbound 附件相关字段：
 - Web 与 native 读方统一使用 `Handbeam.TranscriptEntry`；旧 `messages.jsonl` 的 `tool` / `status` / `duration_ms` / `error` 仍可读取。canonical 键存在时优先，即使值为 nil，也不复活旧 error。
 - assistant/system 的 `status` / `error` 不受影响。新增读方不得再引入 `a || b` 别名链。
 - Journal 的 retry intent、自动 compaction、分页和跨 VM 原生锁契约见 `docs/transcript-durability.md`。不要直接逐行解析 journal 当作 timeline，也不要删除 `.handbeam-storage.lock` 绕过锁。
+
+### Subagent（task / task_status / advisor）
+
+- `Handbeam.Agent.Delegation`（应用级 GenServer）登记所有委派子 run：ETS `:handbeam_delegation_active` 记 `{child_id, run_id}`；全局上限 16，每个父 run 上限 `:subagent_max_per_run`（默认 4），session 缓存 64（LRU）。
+- Profile 由 `Handbeam.Agent.Subagent.ProfileRegistry` 纯函数合并：内建（`researcher`/`advisor`）→ `~/.handbeam/agents/*.md` → `<workspace>/.handbeam/agents/*.md`，后者覆盖前者但只能缩小权限。`Delegation.Policy` 校验：子工具集是父 `authorized_tools` 子集、禁递归委派、拒绝金额预算、`mode: :write` 必须 `isolation: :worktree`。
+- 子 conversation 是 `visibility: "internal"`，不进对话列表。后台子任务完成后，报告以 `source: :delegation` 的 follow_up 写父 transcript 并唤醒父 run（`:subagent_wake_parent` 可关）；父 run 真正终态时级联关闭其子任务，`:parent_closed`/`:cancelled` 的报告不再唤醒父。
+- 写入型子 Agent 在 `<workspace>/.handbeam/worktrees/<child_id>` 工作（`Handbeam.Agent.Subagent.Worktree`），改动经 `task_status` 的 `apply`/`discard` 或 `Delegation.worktree/3` 落回父 workspace。
+- 直接对话（DM）：`Delegation.message(parent_id, child_ref, text, opts)`；`child_ref` 是子 conversation id 或 subagent_type（取最近一个）。运行中 → steer；已结束 → 带子历史起 follow-up run，回复默认**不**转发父对话（`forward_to_parent: true` 才转发）。Web composer 里 `@<subagent_type 或子 id> 文本` 走这条路，其余 `@...` 仍是普通消息。
 
 ### Delivery
 
@@ -210,6 +223,7 @@ inbound 附件相关字段：
 - `Handbeam.Agent.Turn.run_loop/2` — agent loop 纯函数
 - `Handbeam.Agent.Runner` — 单次 agent 运行的 GenServer owner
 - `Handbeam.Agent.RunSupervisor` — per-conversation 运行监督树（Queue + Runner，one_for_all）
+- `Handbeam.Agent.Delegation` — subagent 注册/预算/清理/报告/DM（见 Subagent 一节）
 - `Handbeam.AgentRunSupervisor` — DynamicSupervisor，管理所有 RunSupervisor
 - `Handbeam.Tool.Registry` — 工具注册中心 (GenServer)
 - `Handbeam.MCP.bootstrap/1` — MCP 服务器启动与工具注册
@@ -342,6 +356,9 @@ find ~/.handbeam/conversations/items -maxdepth 2 -type f
 | Builtin | `file_search` | 模糊文件搜索（ex_fff，typo-tolerant） |
 | Builtin | `grep` | 字面量/正则内容搜索。桌面优先 `rg`，无 `rg` 时纯 Elixir |
 | Builtin | `code_search` | 工作区代码位置（路径+行号）。无 embeddings 时是符号/token 检索，不是自然语言语义；命中后用 `read` 读内容。桌面与手机同一实现 |
+| Builtin | `task` | 派出 subagent：`subagent_type` 选 profile（默认 `researcher`），`background` 默认 `true`（立即返回，报告稍后以 follow_up 送回）；`background: false` 是同步只读查询。工具描述按上下文列出可用 profile |
+| Builtin | `task_status` | 查看/管理当前 conversation 的 subagent：`list` / `get` / `cancel` / `message`（直接对话）/ `apply` / `discard`（worktree 改动，`apply` 走审批） |
+| Builtin | `advisor` | 同步咨询内建 `advisor` profile，经 `Delegation` 内部调用 |
 | Memory | `mem_recall` | 记忆检索 |
 | Memory | `mem_learn` | 记忆学习（短期 → 长期） |
 | Memory | `mem_reinforce` | 记忆强化 |

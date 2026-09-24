@@ -285,34 +285,10 @@ defmodule HandbeamWeb.WorkspaceLive do
 
     socket = assign(socket, :composer_error, nil)
 
-    if message != "" or socket.assigns.pending_attachments != [] or has_upload_entries?(socket) do
-      running_for_current? =
-        running_for_current_conversation?(socket) or not is_nil(socket.assigns.pending_approval)
-
-      socket = if running_for_current?, do: socket, else: ensure_current_conversation(socket)
-
-      case prepare_outbound_message(socket, message) do
-        {:ok, socket, content, attachments} ->
-          conv_id = socket.assigns.current_conversation_id
-
-          if running_for_current? do
-            queue_running_agent_message(
-              socket,
-              conv_id,
-              content,
-              message,
-              attachments,
-              :steer
-            )
-          else
-            start_new_agent_run(socket, conv_id, content, message, attachments)
-          end
-
-        {:error, socket} ->
-          {:noreply, socket}
-      end
+    if dm = subagent_dm(socket, message) do
+      send_subagent_dm(socket, dm)
     else
-      {:noreply, socket}
+      send_conversation_message(socket, message)
     end
   end
 
@@ -1819,6 +1795,73 @@ defmodule HandbeamWeb.WorkspaceLive do
   defp get_limit(%{limit: limit}) when is_integer(limit), do: limit
   defp get_limit(%{"limit" => limit}) when is_integer(limit), do: limit
   defp get_limit(_), do: nil
+
+  defp send_conversation_message(socket, message) do
+    if message != "" or socket.assigns.pending_attachments != [] or has_upload_entries?(socket) do
+      running_for_current? =
+        running_for_current_conversation?(socket) or not is_nil(socket.assigns.pending_approval)
+
+      socket = if running_for_current?, do: socket, else: ensure_current_conversation(socket)
+
+      case prepare_outbound_message(socket, message) do
+        {:ok, socket, content, attachments} ->
+          conv_id = socket.assigns.current_conversation_id
+
+          if running_for_current? do
+            queue_running_agent_message(
+              socket,
+              conv_id,
+              content,
+              message,
+              attachments,
+              :steer
+            )
+          else
+            start_new_agent_run(socket, conv_id, content, message, attachments)
+          end
+
+        {:error, socket} ->
+          {:noreply, socket}
+      end
+    else
+      {:noreply, socket}
+    end
+  end
+
+  # `@<subagent_type or child id> text` goes to a subagent of this conversation.
+  # Anything else, including `@path` mentions, stays a normal message.
+  defp subagent_dm(socket, message) do
+    with conv_id when is_binary(conv_id) <- socket.assigns.current_conversation_id,
+         [] <- socket.assigns.pending_attachments,
+         false <- has_upload_entries?(socket),
+         [_, ref, text] <- Regex.run(~r/\A@([\w.-]+)\s+(\S.*)\z/s, message),
+         {:ok, children} <- Handbeam.Agent.Delegation.status(conv_id, :list),
+         true <- Enum.any?(children, &(ref in [&1.child_conversation_id, &1.subagent_type])) do
+      %{conversation_id: conv_id, ref: ref, text: text}
+    else
+      _ -> nil
+    end
+  end
+
+  defp send_subagent_dm(socket, %{conversation_id: conv_id, ref: ref, text: text}) do
+    case Handbeam.Agent.Delegation.message(conv_id, ref, text, source: :web) do
+      {:ok, %{delivery: delivery}} ->
+        note =
+          if delivery == :steer,
+            do: gettext("Sent to subagent %{ref}.", ref: ref),
+            else: gettext("Subagent %{ref} is answering a follow-up.", ref: ref)
+
+        {:noreply,
+         socket
+         |> assign(:input_value, "")
+         |> put_flash(:info, note)
+         |> push_event("user-message-sent", %{})}
+
+      {:error, reason} ->
+        reason = if is_binary(reason), do: reason, else: inspect(reason)
+        {:noreply, assign(socket, :composer_error, reason)}
+    end
+  end
 
   defp send_or_queue_current(socket, message, deliver_as) do
     running_for_current? =

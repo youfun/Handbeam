@@ -638,6 +638,9 @@ defmodule Handbeam.Agent.Turn do
       end
       |> Handbeam.MCP.Access.filter(state.config.context)
       |> Enum.filter(&(&1.name in authorized_tools))
+      |> Enum.map(
+        &Handbeam.Tool.Builtin.Task.contextualize_def(&1, state.config, authorized_tools)
+      )
 
     # context hook — extensions can filter/modify messages and system_prompt
     # for this provider call only (does NOT modify persistent state/transcript)

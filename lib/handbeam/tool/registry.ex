@@ -147,6 +147,7 @@ defmodule Handbeam.Tool.Registry do
       Handbeam.Tool.Builtin.Skill,
       Handbeam.Tool.Builtin.Advisor,
       Handbeam.Tool.Builtin.Task,
+      Handbeam.Tool.Builtin.TaskStatus,
       Handbeam.Tool.Builtin.WebFetch,
       Handbeam.Tool.Builtin.Write,
       Handbeam.Tool.Builtin.FindThread,
