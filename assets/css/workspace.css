@@ -2462,6 +2462,7 @@ button.workspace-file-row:hover,
 body > .settings-overlay,
 [data-phx-main] > .settings-overlay,
 #settings-available-models .settings-overlay,
+#settings-mcp .settings-overlay,
 #settings-panel-root .settings-overlay {
   position: fixed;
   inset: 0;
@@ -2859,6 +2860,11 @@ input:checked + .settings-toggle-track .settings-toggle-thumb {
   background: var(--surface-hover);
 }
 
+.settings-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .settings-btn-primary {
   background: var(--accent);
   border-color: var(--accent);
@@ -3007,6 +3013,7 @@ input:checked + .settings-toggle-track .settings-toggle-thumb {
 body > .settings-overlay,
 [data-phx-main] > .settings-overlay,
 #settings-available-models .settings-overlay,
+#settings-mcp .settings-overlay,
 #settings-panel-root .settings-overlay {
   position: fixed;
   inset: 0;
@@ -3030,6 +3037,10 @@ body > .settings-overlay,
 
 .settings-dialog-sm {
   width: 340px;
+}
+
+.settings-dialog-md {
+  width: min(520px, calc(100vw - 2rem));
 }
 
 .settings-dialog-title {
