@@ -1,38 +1,44 @@
 defmodule Handbeam.Host do
   @moduledoc """
-  Values the host writes once at boot. Handbeam does not parse MOB_* here.
+  Values the host writes once, before Handbeam and the tool registry start.
 
-  Desktop Mix never sets `:host`, so readers fall back to HOME / app_dir.
-  `webview_browser` and `desktop_browser` are mutually exclusive: if both
-  are set true, desktop CLI browser wins and `webview_browser?/0` is false.
+  Desktop Mix never sets `:host`, so readers fall back to the desktop defaults.
+  The host stores declarations. It does not authorize a run, and it does not
+  infer one capability from another.
 
-  `system_intents` says the host can launch system UI (system browser,
-  open/share an exported artifact via FileProvider) and run host-privileged
-  `.exs` scripts in place of a shell. When the host does not declare it,
-  `system_intents?/0` falls back to `webview_browser?/0` so existing phone
-  hosts keep their Android tools.
+  Boolean capabilities (`shell`, `terminal`, `beam_eval`, `mcp`, `dist`,
+  `packaged_mix_toolchain`, `host_script`) are present only when explicitly
+  true. A missing key is the desktop default, not a guess from the OS, UI, or
+  another capability.
 
-  `directory_picker` is an optional callback (`fun/1` or a module exporting
-  `request_directory_picker/1`) the host installs so the web workspace UI can
-  ask the native shell to pick a workspace directory. Desktop never sets it.
+  A backend is present only when the host injects a module or callback:
+
+  * `browser_backend` — `:cli` or `:webview`. Selects the public `browser` tool
+    and, for `:webview`, the in-app preview tool. Not the system browser.
+  * `git_backend` — module used by the builtin Git tool. Phone hosts set
+    `Handbeam.Git.ExGit`. Desktop leaves it unset; agents use the repository
+    command-line workflow through `bash`.
+  * `artifact_delivery_backend` — module or `fun/2` that presents system UI for
+    `open_url`, `open_file`, and `share_file`.
+  * `directory_picker` — `fun/1` or a module exporting
+    `request_directory_picker/1`. Desktop never sets it.
 
   `script_http: :platform_dns_ca` declares that the host configured Req's
   platform DNS and CA certificates before tool registration. It is guidance,
-  not a network permission or a promise of connectivity.
+  not a network permission.
 
   `dns_resolver` optionally supplies a native `fun/1` returning `{:ok, [ip]}`
-  or `{:error, reason}` for direct connections. Consumers still validate and
-  pin the returned addresses; the callback does not grant network access.
+  or `{:error, reason}`. Consumers still validate and pin the returned
+  addresses; the callback does not grant network access. When it is set,
+  `web_fetch` keeps that pinned public-address path and does not apply the
+  desktop Fake-IP policy.
 
-  `git_backend` is an optional module the host installs for Git storage.
-  Phone hosts set it to `Handbeam.Git.ExGit` at boot, which also enables the
-  builtin Git agent tool. Desktop Mix and Phoenix WebUI leave it unset; their
-  agents use the machine's Git through `bash`. Handbeam does not infer the
-  backend from the UI, MOB environment variables, or missing Git binaries.
+  `packaged_mix_toolchain` enables `mix_project` backed by `priv/mix_toolchain`.
+  Phone hosts set it. Desktop does not register a dedicated Mix tool.
 
-  `packaged_mix_toolchain` enables the builtin `mix_project` tool backed by
-  `priv/mix_toolchain`. Phone hosts set it because they do not have an external
-  Mix executable. Desktop agents use the machine's Mix through `bash` instead.
+  `host_script` enables `run_elixir_script`. The builtin tool evaluates the
+  workspace `.exs` itself; the flag is not a callback and does not follow from
+  the browser or artifact delivery.
   """
 
   @keys [
@@ -40,9 +46,9 @@ defmodule Handbeam.Host do
     :priv_dir,
     :shell,
     :terminal,
-    :desktop_browser,
-    :webview_browser,
-    :system_intents,
+    :browser_backend,
+    :artifact_delivery_backend,
+    :host_script,
     :directory_picker,
     :script_http,
     :dns_resolver,
@@ -51,6 +57,16 @@ defmodule Handbeam.Host do
     :dist,
     :git_backend,
     :packaged_mix_toolchain
+  ]
+
+  @boolean_keys [
+    :shell,
+    :terminal,
+    :beam_eval,
+    :mcp,
+    :dist,
+    :packaged_mix_toolchain,
+    :host_script
   ]
 
   @spec get(atom(), term()) :: term()
@@ -62,7 +78,7 @@ defmodule Handbeam.Host do
 
   @spec put!(map()) :: :ok
   def put!(attrs) when is_map(attrs) do
-    Application.put_env(:handbeam, :host, Map.take(attrs, @keys))
+    Application.put_env(:handbeam, :host, Map.take(Map.new(attrs), @keys))
   end
 
   @spec configured?() :: boolean()
@@ -79,32 +95,33 @@ defmodule Handbeam.Host do
   end
 
   @spec shell?() :: boolean()
-  def shell?, do: get(:shell, true)
+  def shell?, do: capability?(:shell, true)
 
   @spec terminal?() :: boolean()
-  def terminal?, do: get(:terminal, true)
+  def terminal?, do: capability?(:terminal, true)
 
-  @spec desktop_browser?() :: boolean()
-  def desktop_browser?, do: get(:desktop_browser, true)
-
-  @spec webview_browser?() :: boolean()
-  def webview_browser? do
-    get(:webview_browser, false) == true and not desktop_browser?()
-  end
-
-  @doc """
-  Host can present system UI for URLs / exported files and run host scripts.
-
-  Gates `android_open_url`, `android_open_file`, `android_share_file` and
-  `run_elixir_script`. Not a browser capability; see `webview_browser?/0`.
-  """
-  @spec system_intents?() :: boolean()
-  def system_intents? do
-    case get(:system_intents) do
-      value when is_boolean(value) -> value
-      _ -> webview_browser?()
+  @doc "Declared browser backend, or nil when the host did not inject one."
+  @spec browser_backend() :: :cli | :webview | nil
+  def browser_backend do
+    case declared(:browser_backend, :cli) do
+      :cli -> :cli
+      :webview -> :webview
+      _ -> nil
     end
   end
+
+  @spec artifact_delivery_backend() :: module() | (map(), map() -> term()) | nil
+  def artifact_delivery_backend do
+    case declared(:artifact_delivery_backend, nil) do
+      backend when is_atom(backend) and not is_nil(backend) -> backend
+      backend when is_function(backend, 2) -> backend
+      _ -> nil
+    end
+  end
+
+  @doc "`run_elixir_script` is registered only when the host sets this. The tool evaluates the script; this flag does not."
+  @spec host_script?() :: boolean()
+  def host_script?, do: capability?(:host_script, false)
 
   @doc """
   Ask the host to open its native directory picker for a new workspace.
@@ -113,7 +130,7 @@ defmodule Handbeam.Host do
   """
   @spec request_directory_picker(map()) :: :ok | {:error, term()}
   def request_directory_picker(context \\ %{}) when is_map(context) do
-    case get(:directory_picker) do
+    case declared(:directory_picker, nil) do
       fun when is_function(fun, 1) -> fun.(context)
       mod when is_atom(mod) and not is_nil(mod) -> mod.request_directory_picker(context)
       _ -> {:error, :unavailable}
@@ -121,16 +138,39 @@ defmodule Handbeam.Host do
   end
 
   @spec beam_eval?() :: boolean()
-  def beam_eval?, do: get(:beam_eval, false)
+  def beam_eval?, do: capability?(:beam_eval, false)
 
   @spec mcp?() :: boolean()
-  def mcp?, do: get(:mcp, mix_env() != :test)
+  def mcp?, do: capability?(:mcp, mix_env() != :test)
 
   @spec dist?() :: boolean()
-  def dist?, do: get(:dist, mix_env() != :prod)
+  def dist?, do: capability?(:dist, mix_env() != :prod)
 
   @spec packaged_mix_toolchain?() :: boolean()
-  def packaged_mix_toolchain?, do: get(:packaged_mix_toolchain, false)
+  def packaged_mix_toolchain?, do: capability?(:packaged_mix_toolchain, false)
+
+  @doc "Where a declared value came from. Does not describe run authorization."
+  @spec source(atom()) :: :application_host | :host_default | :host_build_environment_default
+  def source(key) when key in @keys do
+    raw = Application.get_env(:handbeam, :host, %{})
+
+    cond do
+      Map.has_key?(raw, key) -> :application_host
+      key in [:mcp, :dist] -> :host_build_environment_default
+      true -> :host_default
+    end
+  end
+
+  defp capability?(key, default) when key in @boolean_keys do
+    declared(key, default) == true
+  end
+
+  defp declared(key, default) do
+    case Application.get_env(:handbeam, :host) do
+      raw when is_map(raw) -> Map.get(raw, key, default)
+      _ -> default
+    end
+  end
 
   defp mix_env do
     if function_exported?(Mix, :env, 0), do: Mix.env(), else: :prod

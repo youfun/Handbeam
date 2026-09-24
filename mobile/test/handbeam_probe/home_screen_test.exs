@@ -4,7 +4,7 @@ defmodule HandbeamProbe.HomeScreenTest do
   import HandbeamProbe.ScreenSettle
 
   alias HandbeamProbe.{HomeScreen, ModelSettings, NativeApproval, NativeChat, PendingRequests}
-  alias Handbeam.Android.Intent
+  alias Handbeam.ArtifactDelivery
   alias Handbeam.PubSub.AgentEvent
   alias HandbeamWeb.WorkspaceHelper
 
@@ -2139,7 +2139,7 @@ defmodule HandbeamProbe.HomeScreenTest do
       )
 
     # Outcome copy is owned by sigil's Intent, not this backend.
-    assert notice_text(view) =~ Intent.format_outcome("chooser_presented")
+    assert notice_text(view) =~ ArtifactDelivery.format_outcome("chooser_presented")
   end
 
   test "a delivery request past its deadline is cancelled and reported once", %{view: view} do
@@ -2176,7 +2176,7 @@ defmodule HandbeamProbe.HomeScreenTest do
     view =
       info(view, {:engine_result, %{request_id: request_id, result: ~s({"outcome":"opened"})}})
 
-    refute (notice_text(view) || "") =~ Intent.format_outcome("opened")
+    refute (notice_text(view) || "") =~ ArtifactDelivery.format_outcome("opened")
   end
 
   test "an engine_result whose generation does not match the request is dropped", %{view: view} do
@@ -2203,7 +2203,7 @@ defmodule HandbeamProbe.HomeScreenTest do
          }}
       )
 
-    refute (notice_text(stale) || "") =~ Intent.format_outcome("opened")
+    refute (notice_text(stale) || "") =~ ArtifactDelivery.format_outcome("opened")
     # The mismatching reply consumed the entry: correlation is one-shot.
     refute PendingRequests.has?(assigns(stale).pending_requests, req.request_id)
 
@@ -2218,7 +2218,7 @@ defmodule HandbeamProbe.HomeScreenTest do
          }}
       )
 
-    assert notice_text(fresh) =~ Intent.format_outcome("opened")
+    assert notice_text(fresh) =~ ArtifactDelivery.format_outcome("opened")
   end
 
   test "host directory picker opens the in-app folder browser and lists off-screen", %{

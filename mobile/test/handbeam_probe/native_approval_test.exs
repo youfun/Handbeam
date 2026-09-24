@@ -207,7 +207,7 @@ defmodule HandbeamProbe.NativeApprovalTest do
         "action_requests" => [
           %{
             "tool_call_id" => "a1",
-            "tool_name" => "android_open_url",
+            "tool_name" => "open_url",
             "arguments" => %{"url" => "https://example.com"}
           }
         ]
@@ -227,7 +227,7 @@ defmodule HandbeamProbe.NativeApprovalTest do
     test "hides allow scopes until file snapshots are pinned" do
       pending = %{
         "action_requests" => [
-          %{"tool_call_id" => "f1", "tool_name" => "android_share_file", "arguments" => %{}}
+          %{"tool_call_id" => "f1", "tool_name" => "share_file", "arguments" => %{}}
         ]
       }
 
@@ -279,7 +279,7 @@ defmodule HandbeamProbe.NativeApprovalTest do
                %{
                  type: "tool_use",
                  id: "android-open-0",
-                 name: "android_open_url",
+                 name: "open_url",
                  input: %{"url" => "https://example.com/doc"}
                }
              ])
@@ -297,7 +297,7 @@ defmodule HandbeamProbe.NativeApprovalTest do
 
     @android_call %{
       id: "android-open-1",
-      name: "android_open_url",
+      name: "open_url",
       input: %{"url" => "https://example.com/doc"}
     }
 
@@ -320,7 +320,7 @@ defmodule HandbeamProbe.NativeApprovalTest do
           model: "fixture",
           streaming: false,
           workspace_path: path,
-          tools: [Handbeam.Tool.Builtin.AndroidOpenUrl],
+          tools: [Handbeam.Tool.Builtin.OpenUrl],
           max_turns: 3
         )
 
@@ -329,7 +329,7 @@ defmodule HandbeamProbe.NativeApprovalTest do
       assert_receive {:agent_event, %{kind: :tool_approval_requested, payload: payload}}, 5_000
 
       assert [request] = payload[:action_requests] || payload["action_requests"]
-      assert (request[:tool_name] || request["tool_name"]) == "android_open_url"
+      assert (request[:tool_name] || request["tool_name"]) == "open_url"
       await_approval(runner)
 
       android_chat = NativeChat.load(conversation)
@@ -348,13 +348,13 @@ defmodule HandbeamProbe.NativeApprovalTest do
       assert NativeApproval.decide(chat, workspace, :approve, :always) == :ok
 
       {:ok, settings} = Handbeam.WorkspaceSettings.load(path)
-      assert "android_open_url" in settings["tools"]["allow"]
+      assert "open_url" in settings["tools"]["allow"]
 
       assert ToolPolicy.from_workspace(path) |> ToolPolicy.decision(@android_call) == :auto
 
       # Only the approved tool is remembered; sibling intents keep asking.
       assert ToolPolicy.from_workspace(path)
-             |> ToolPolicy.decision(%{id: "f1", name: "android_open_file", input: %{}}) ==
+             |> ToolPolicy.decision(%{id: "f1", name: "open_file", input: %{}}) ==
                :prompt
 
       assert_receive {:agent_event,
@@ -368,10 +368,10 @@ defmodule HandbeamProbe.NativeApprovalTest do
         Jason.encode!(%{"tools" => %{"default_mode" => "prompt"}})
       )
 
-      call = %{id: "s1", name: "android_share_file", input: %{"path" => "a.pdf"}}
+      call = %{id: "s1", name: "share_file", input: %{"path" => "a.pdf"}}
       assert ToolPolicy.from_workspace(path) |> ToolPolicy.decision(call) == :prompt
 
-      assert :ok = Handbeam.WorkspaceSettings.append_tool_rule(path, :allow, "android_share_file")
+      assert :ok = Handbeam.WorkspaceSettings.append_tool_rule(path, :allow, "share_file")
       assert ToolPolicy.from_workspace(path) |> ToolPolicy.decision(call) == :auto
     end
   end

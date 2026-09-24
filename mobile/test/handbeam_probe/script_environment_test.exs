@@ -16,7 +16,7 @@ defmodule HandbeamProbe.ScriptEnvironmentTest do
       if prior_tool == :error, do: Registry.unregister("run_elixir_script")
     end)
 
-    Handbeam.Host.put!(%{shell: false, system_intents: true, terminal: false, mcp: false})
+    Handbeam.Host.put!(%{shell: false, host_script: true, terminal: false, mcp: false})
     :ok
   end
 

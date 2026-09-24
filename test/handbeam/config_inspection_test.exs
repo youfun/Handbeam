@@ -70,22 +70,19 @@ defmodule Handbeam.ConfigInspectionTest do
     refute Handbeam.JSON.encode!(report) =~ "private"
   end
 
-  test "host overrides, browser precedence and legacy intents fallback are explained", %{
-    root: root
-  } do
-    Host.put!(%{shell: false, desktop_browser: true, webview_browser: true})
+  test "explicit backends stay independent and report their source", %{root: root} do
+    Host.put!(%{shell: false, browser_backend: :cli, host_script: false})
     report = ConfigInspection.report(workspace: root)
     assert report.host.shell == %{configured: false, source: :application_host}
-
-    assert report.host.webview_browser == %{
-             configured: false,
-             source: :desktop_browser_precedence
-           }
-
-    assert report.host.system_intents == %{configured: false, source: :webview_browser_fallback}
+    assert report.host.browser_backend.backend == :cli
+    assert report.host.browser_backend.source == :application_host
+    assert report.host.artifact_delivery_backend.backend == :none
+    assert report.host.host_script == %{configured: false, source: :application_host}
     assert report.host.terminal.source == :host_default
     assert tool(report, "bash").disabled_reason == :host_capability_disabled
     assert tool(report, "browser").configured
+    refute tool(report, "run_elixir_script").configured
+    refute tool(report, "open_url").configured
   end
 
   test "configured tools are neither dependency availability nor actual registration", %{
@@ -93,20 +90,22 @@ defmodule Handbeam.ConfigInspectionTest do
   } do
     # Registration reflects the existing VM, not the Host values changed after startup.
     names = Registry.list()
-    Host.put!(%{shell: false, desktop_browser: false, webview_browser: true})
+    Host.put!(%{shell: false, browser_backend: :webview})
     report = ConfigInspection.report(workspace: root)
     refute tool(report, "bash").configured
-    assert tool(report, "bash").registered == "bash" in names
-    assert tool(report, "run_elixir_script").configured
-    assert tool(report, "run_elixir_script").registered == "run_elixir_script" in names
+    refute tool(report, "run_elixir_script").configured
+    assert tool(report, "browser").configured
+    assert tool(report, "browser").registered == "browser" in names
     assert tool(report, "run_elixir_script").dependency_available == :unknown
     assert tool(report, "run_elixir_script").run_authorized == :unknown
     assert report.model_visibility.status == :unknown
     assert report.execution.shell.executable_found == :not_checked
-    assert report.execution.webview.operational == :unknown
-    assert report.execution.git.backend == :host_git_cli
-    assert report.execution.git.operational == :unknown
-    assert report.execution.git.reason == :not_probed
+    assert report.execution.browser.backend == :webview
+    assert report.execution.browser.operational == :unknown
+    assert report.execution.git.backend == :none
+    assert report.execution.git.source == :host_default
+    assert report.execution.mix_project.backend == :none
+    assert report.execution.mix_project.source == :host_default
   end
 
   test "missing executables have a reason without being executed", %{root: root} do
@@ -115,7 +114,7 @@ defmodule Handbeam.ConfigInspectionTest do
     refute report.execution.shell.bash_in_path
     assert report.execution.shell.reason == :settings_and_fallback_paths_not_resolved
     assert report.execution.shell.dependency_available == :unknown
-    assert report.execution.desktop_browser.reason == :executable_missing
+    assert report.execution.browser.reason == :executable_missing
     assert report.execution.shell.operational == :unknown
   end
 
@@ -180,9 +179,9 @@ defmodule Handbeam.ConfigInspectionTest do
       Host.put!(%{
         shell: false,
         terminal: false,
-        desktop_browser: false,
-        webview_browser: true,
-        system_intents: true,
+        browser_backend: :webview,
+        artifact_delivery_backend: Handbeam.ArtifactDelivery,
+        host_script: true,
         packaged_mix_toolchain: true
       })
 
@@ -224,16 +223,17 @@ defmodule Handbeam.ConfigInspectionTest do
     Application.put_env(:handbeam, HandbeamWeb.Endpoint, server: true)
     prompt = Config.from_opts(working_directory: root).system_prompt
     assert prompt =~ "The host permits the bash backend"
-    assert prompt =~ "Use the machine's `mix`, `elixir`, and `erl` through `bash`"
+    assert prompt =~ "repository's documented command-line workflow"
+    refute prompt =~ "machine's `mix`"
     assert prompt =~ "backend is agent-browser CLI"
     assert prompt =~ "Web is an entry surface, not a Linux execution host"
     refute prompt =~ "There is no Unix shell"
 
     Host.put!(%{
       shell: true,
-      desktop_browser: false,
-      webview_browser: false,
-      system_intents: false
+      browser_backend: nil,
+      artifact_delivery_backend: nil,
+      host_script: false
     })
 
     prompt = Config.from_opts(working_directory: root).system_prompt

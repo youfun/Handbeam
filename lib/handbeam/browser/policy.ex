@@ -141,7 +141,7 @@ defmodule Handbeam.Browser.Policy do
   def command_token(input) when is_map(input) do
     args = Map.get(input, "args") || Map.get(input, :args)
 
-    if Handbeam.Host.webview_browser?() or is_nil(args) do
+    if Handbeam.Tool.Builtin.Browser.backend() == :webview do
       case native_field(input, "action") do
         action when is_binary(action) -> action
         _ -> ""

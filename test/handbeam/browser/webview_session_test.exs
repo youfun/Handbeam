@@ -7,6 +7,9 @@ defmodule Handbeam.Browser.WebViewSessionTest do
   setup do
     previous_engine = Application.get_env(:handbeam, :browser_engine)
     previous_host = Application.get_env(:handbeam, :host)
+    fixed = :persistent_term.get({Browser, :backend}, :unfixed)
+    :ok = Browser.release_backend!()
+    Handbeam.Host.put!(%{browser_backend: :webview, shell: false})
 
     {:ok, _} = start_supervised({Registry, keys: :unique, name: Handbeam.Browser.WebViewRegistry})
     {:ok, _} = start_supervised(WebViewSupervisor)
@@ -26,6 +29,8 @@ defmodule Handbeam.Browser.WebViewSessionTest do
       else
         Application.delete_env(:handbeam, :host)
       end
+
+      restore_browser(fixed)
     end)
 
     %{conversation_id: conversation_id}
@@ -151,7 +156,7 @@ defmodule Handbeam.Browser.WebViewSessionTest do
 
   test "Browser.execute isolates conversations and preserves session and command fields" do
     test = self()
-    Handbeam.Host.put!(%{desktop_browser: false, webview_browser: true})
+    Handbeam.Host.put!(%{browser_backend: :webview})
 
     install_fake!(fn cmd, _opts ->
       send(test, {:engine, cmd})
@@ -368,19 +373,30 @@ defmodule Handbeam.Browser.WebViewSessionTest do
              is_nil(result)
   end
 
-  test "tool mobile schema is used when webview_browser is on" do
-    Handbeam.Host.put!(%{desktop_browser: false, webview_browser: true})
+  test "tool schema stays on the backend fixed before the test host change" do
+    :ok = Browser.fix_backend!()
     schema = Browser.input_schema()
     assert schema.required == ["action"]
     assert "show" in schema.properties.action.enum
-    assert "close" in schema.properties.action.enum
     refute Map.has_key?(schema.properties, :args)
+
+    Handbeam.Host.put!(%{browser_backend: :cli})
+    assert Browser.backend() == :webview
+    assert Browser.input_schema().required == ["action"]
   end
 
-  test "desktop schema stays args when webview is off" do
+  test "desktop schema stays args when the fixed backend is released" do
+    :ok = Browser.release_backend!()
     Application.delete_env(:handbeam, :host)
     schema = Browser.input_schema()
     assert schema.required == ["args"]
+  end
+
+  defp restore_browser(:unfixed), do: Browser.release_backend!()
+
+  defp restore_browser(backend) do
+    :persistent_term.put({Browser, :backend}, backend)
+    :ok
   end
 
   defp install_fake!(fun) do

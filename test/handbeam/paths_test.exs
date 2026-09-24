@@ -40,8 +40,9 @@ defmodule Handbeam.PathsTest do
       priv_dir: "/tmp/mob-beams/priv",
       shell: false,
       terminal: false,
-      desktop_browser: false,
-      webview_browser: true,
+      browser_backend: :webview,
+      artifact_delivery_backend: Handbeam.ArtifactDelivery,
+      host_script: true,
       beam_eval: false,
       mcp: false
     })
@@ -50,9 +51,9 @@ defmodule Handbeam.PathsTest do
     refute "bash" in names
     assert "browser" in names
     assert "preview_serve" in names
-    assert "android_open_url" in names
-    assert "android_open_file" in names
-    assert "android_share_file" in names
+    assert "open_url" in names
+    assert "open_file" in names
+    assert "share_file" in names
     assert "run_elixir_script" in names
     assert "read" in names
     assert "grep" in names

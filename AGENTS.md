@@ -346,13 +346,14 @@ find ~/.handbeam/conversations/items -maxdepth 2 -type f
 | Builtin | `edit` | 精确文本替换（old_string → new_string） |
 | Builtin | `write` | 创建/覆盖文件 |
 | Builtin | `bash` | 执行 Shell 命令（超时、工作目录）。`Host.shell?` 为 false 的主机（手机）不注册；不嗅探 `MOB_DATA_DIR` |
-| Builtin | `browser` | 桌面包装 `agent-browser`；手机走独立 WebView session（`action` schema） |
-| Builtin | `preview_serve` | 登记静态目录或 loopback 端口，对话卡片打开 PreviewShell |
-| Builtin | `android_open_url` | `Host.system_intents?` 主机：系统浏览器打开 http(s)；不是 Agent WebView |
-| Builtin | `android_open_file` | `Host.system_intents?` 主机：固定 ExportSnapshot 后用系统应用打开产物 |
-| Builtin | `android_share_file` | `Host.system_intents?` 主机：固定 ExportSnapshot 后打开系统分享界面 |
-| Builtin | `run_elixir_script` | `Host.system_intents?` 主机（手机）：执行工作区 `.exs`（`args`/`workspace` 绑定，非沙箱） |
-| Builtin | `mix_project` | Mix/Hex 项目：deps.get / compile / test / run。纯 Elixir/Erlang 包；NIF/外部构建明确报错。单一 MixOwner 串行化并恢复 VM cwd |
+| Builtin | `browser` | 公共工具。Host 在启动前固定 `browser_backend`：`:cli` 走 agent-browser；`:webview` 走独立 Agent WebView（`action` schema）。不是系统浏览器 |
+| Builtin | `preview_serve` | 仅 `browser_backend: :webview` 时注册。登记静态目录或 loopback 端口，对话卡片打开 PreviewShell |
+| Builtin | `open_url` | `artifact_delivery_backend` 存在时注册。系统浏览器打开 http(s)。成功只表示系统界面已出现 |
+| Builtin | `open_file` | 同上。固定 ExportSnapshot 后用系统应用打开产物。成功只表示 viewer 已出现 |
+| Builtin | `share_file` | 同上。打开系统分享界面。成功只表示 chooser 已出现 |
+| Builtin | `run_elixir_script` | 仅 `host_script: true` 时注册。工具自己在宿主 BEAM 上执行工作区 `.exs`（`args`/`workspace` 绑定，非沙箱）。不是 callback，也与 browser、artifact delivery 无关 |
+| Builtin | `git` | 仅 Host 注入 `git_backend`（手机为 ExGit）时注册。桌面不注册，Agent 通过 bash 按仓库工作流调用命令 |
+| Builtin | `mix_project` | 仅 `packaged_mix_toolchain: true` 时注册。手机 packaged Mix/Hex。桌面不注册，Agent 通过 bash 按仓库工作流选择 make、mise、mix 或项目脚本 |
 | Builtin | `file_search` | 模糊文件搜索（ex_fff，typo-tolerant） |
 | Builtin | `grep` | 字面量/正则内容搜索。桌面优先 `rg`，无 `rg` 时纯 Elixir |
 | Builtin | `code_search` | 工作区代码位置（路径+行号）。无 embeddings 时是符号/token 检索，不是自然语言语义；命中后用 `read` 读内容。桌面与手机同一实现 |
@@ -373,9 +374,11 @@ find ~/.handbeam/conversations/items -maxdepth 2 -type f
 | BEAM | `ext__beam__process_info` | 进程深度检查 |
 | MCP | `mcp__<server>__<tool>` | 外部 MCP 服务器工具（动态注册） |
 
-> BEAM 工具通过 ExtensionBridge 动态注册。Elixir 项目自动检测（检查 working_directory 是否有 mix.exs），非 Elixir 项目不暴露 BEAM 工具。eval 不自动注册，需显式调用。`ext__beam__eval` 的 AST 黑名单不是沙箱；手机脚本执行走 `run_elixir_script`（`Host.system_intents?`，未声明时回落到 `Host.webview_browser?`），在宿主 BEAM 上高权限运行。
+> BEAM 工具通过 ExtensionBridge 动态注册。Elixir 项目自动检测（检查 working_directory 是否有 mix.exs），非 Elixir 项目不暴露 BEAM 工具。eval 不自动注册，需显式调用。`ext__beam__eval` 的 AST 黑名单不是沙箱；手机脚本执行走 `run_elixir_script`，只由布尔能力 `host_script` 决定，不从 WebView、shell 或其他能力回落。它在宿主 BEAM 上高权限运行，没有可替换的 script backend。
 >
-> 主机门控的工具种子只有一处：`Handbeam.Tool.Registry.host_tool_modules/0`（`Handbeam.Agent.default_tools/0` 直接调它）。主机注入点：`:host` map（`Handbeam.Host.put!/1`，含 `system_intents` / `directory_picker`）、`Application.get_env(:handbeam, :android_intent)`（出站系统 Intent）、`Application.get_env(:handbeam, :notifier)`（运行通知，`Handbeam.Runtime.AndroidNotify`）。`sigil` 不 `Process.whereis` 任何 probe 进程名。
+> 主机门控的工具种子只有一处：`Handbeam.Tool.Registry.host_tool_modules/0`（`Handbeam.Agent.default_tools/0` 直接调它）。Host 在 Registry 启动前一次性写入：boolean capability（`shell` / `terminal` / `beam_eval` / `mcp` / `dist` / `packaged_mix_toolchain` / `host_script`）和 backend（`browser_backend` / `git_backend` / `artifact_delivery_backend` / `directory_picker`）。backend 非空即表示能力存在，不再同时保留一个可能矛盾的 boolean。已注册不是已授权。`Application.get_env(:handbeam, :notifier)` 仍是运行通知（`Handbeam.Runtime.AndroidNotify`）。`sigil` 不 `Process.whereis` 任何 probe 进程名。
+>
+> 通用 Agent 工具（read/write/edit/grep/file_search/code_search/web_fetch、task/task_status/advisor、线程工具、mem_*、mount_apply/mount_drop）不按 OS、入口或 shell 删减。Subagent 工具集仍是父 run 授权子集，子 Agent 不能拿到 task、task_status、advisor 或线程管理工具。
 >
 > `Handbeam.Extension.HotReloader` 在 dev/prod 启动时先扫一遍已有扩展，并监听 `{cwd}/.handbeam/extensions` 和 `~/.handbeam/extensions`。文件变化 debounce 后 `reload/1`：`Code.compile_file` 成功才覆盖注册 `ext__*`、挂 `handle_event/2` hook、调和 `child_spec/1` 子进程。同名 worker **保留 pid**（只换模块代码，不丢 GenServer state）；编译失败不碰 Registry / 进程。不杀正在跑的 `RunSupervisor`。对话里 `write`/`edit` 落到任意 `{workspace}/.handbeam/extensions` 也会 `notify_path`。内存先试：`ext__mount__apply` / `ext__mount__drop`（`compile_string`，不写盘）。定时任务不属于 Handbeam 内核，需由对话生成普通扩展后通过热插拔接入。测试环境默认 `extension_hot_reload: false`。显式调用：`Handbeam.Extension.HotReloader.reload(project: path)`。
 

@@ -9,7 +9,7 @@ defmodule Handbeam.Jobs.BeamTest do
     previous = Application.get_env(:handbeam, :host)
     work = Path.join(System.tmp_dir!(), "beam-job-#{Ecto.UUID.generate()}")
     File.mkdir_p!(work)
-    Handbeam.Host.put!(%{shell: false, system_intents: true, desktop_browser: false})
+    Handbeam.Host.put!(%{shell: false, host_script: true, browser_backend: nil})
 
     context = %{
       conversation_id: Ecto.UUID.generate(),

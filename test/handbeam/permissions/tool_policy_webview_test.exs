@@ -7,15 +7,17 @@ defmodule Handbeam.Permissions.ToolPolicyWebviewTest do
 
   setup do
     previous = Application.get_env(:handbeam, :host)
+    fixed = :persistent_term.get({Handbeam.Tool.Builtin.Browser, :backend}, :unfixed)
+    :ok = Handbeam.Tool.Builtin.Browser.release_backend!()
+    Handbeam.Host.put!(%{browser_backend: :webview})
 
     on_exit(fn ->
       if previous,
         do: Application.put_env(:handbeam, :host, previous),
         else: Application.delete_env(:handbeam, :host)
-    end)
 
-    Handbeam.Host.put!(%{desktop_browser: false, webview_browser: true})
-    :ok
+      restore_browser(fixed)
+    end)
   end
 
   defp call(name, input), do: %{id: "call_#{name}", name: name, input: input}
@@ -113,5 +115,12 @@ defmodule Handbeam.Permissions.ToolPolicyWebviewTest do
              call("browser", %{"action" => "open", "url" => "https://example.org"})
            ) ==
              "browser(open:*)"
+  end
+
+  defp restore_browser(:unfixed), do: Handbeam.Tool.Builtin.Browser.release_backend!()
+
+  defp restore_browser(backend) do
+    :persistent_term.put({Handbeam.Tool.Builtin.Browser, :backend}, backend)
+    :ok
   end
 end

@@ -1,12 +1,12 @@
-defmodule Handbeam.Tool.Builtin.AndroidOpenFile do
+defmodule Handbeam.Tool.Builtin.OpenFile do
   @moduledoc "Open a workspace artifact via a fixed ExportSnapshot and the system viewer."
 
   @behaviour Handbeam.Agent.Tool
 
-  alias Handbeam.Tool.Builtin.AndroidFile
+  alias Handbeam.Tool.Builtin.ArtifactFile
 
   @impl true
-  def name, do: "android_open_file"
+  def name, do: "open_file"
 
   @impl true
   def description do
@@ -41,5 +41,5 @@ defmodule Handbeam.Tool.Builtin.AndroidOpenFile do
   def concurrent?, do: false
 
   @impl true
-  def execute(input, context), do: AndroidFile.execute(:open_file, input, context)
+  def execute(input, context), do: ArtifactFile.execute(:open_file, input, context)
 end

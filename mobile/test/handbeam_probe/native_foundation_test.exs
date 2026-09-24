@@ -218,8 +218,8 @@ defmodule HandbeamProbe.NativeFoundationTest do
   test "decide_one skips other Android actions without calling them user denials" do
     pending = %{
       "action_requests" => [
-        %{"tool_call_id" => "a1", "tool_name" => "android_open_url"},
-        %{"tool_call_id" => "a2", "tool_name" => "android_compose_sms"}
+        %{"tool_call_id" => "a1", "tool_name" => "open_url"},
+        %{"tool_call_id" => "a2", "tool_name" => "share_file"}
       ]
     }
 
@@ -229,7 +229,7 @@ defmodule HandbeamProbe.NativeFoundationTest do
 
     mixed = %{
       "action_requests" => [
-        %{"tool_call_id" => "a1", "tool_name" => "android_open_url"},
+        %{"tool_call_id" => "a1", "tool_name" => "open_url"},
         %{"tool_call_id" => "w1", "tool_name" => "write"}
       ]
     }
@@ -251,12 +251,12 @@ defmodule HandbeamProbe.NativeFoundationTest do
       "action_requests" => [
         %{
           "tool_call_id" => "f1",
-          "tool_name" => "android_open_file",
+          "tool_name" => "open_file",
           "arguments" => %{"path" => "a.txt"}
         },
         %{
           "tool_call_id" => "f2",
-          "tool_name" => "android_share_file",
+          "tool_name" => "share_file",
           "arguments" => %{"path" => "b.txt"}
         }
       ]

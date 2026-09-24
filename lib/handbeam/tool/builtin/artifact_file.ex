@@ -1,8 +1,8 @@
-defmodule Handbeam.Tool.Builtin.AndroidFile do
+defmodule Handbeam.Tool.Builtin.ArtifactFile do
   @moduledoc false
 
-  alias Handbeam.Android.Input
-  alias Handbeam.Android.Intent
+  alias Handbeam.ArtifactDelivery
+  alias Handbeam.ArtifactDelivery.Input
   alias Handbeam.ExportSnapshot.Binding
 
   @path_keys ["path", "description"]
@@ -27,7 +27,7 @@ defmodule Handbeam.Tool.Builtin.AndroidFile do
          {:ok, binding} <-
            resolve_binding(conversation_id, tool_call_id, rel, op, workspace),
          {:ok, result} <-
-           Intent.dispatch(
+           ArtifactDelivery.dispatch(
              %{
                op: op,
                snapshot_id: field(binding, :snapshot_id),
@@ -51,19 +51,19 @@ defmodule Handbeam.Tool.Builtin.AndroidFile do
         {:error, "file exceeds the export size limit"}
 
       {:error, :unavailable} ->
-        {:error, "file open/share is only available on the Android host"}
+        {:error, "file open/share is not available on this host"}
 
       {:error, :snapshot_mismatch} ->
         {:error, "the approved export copy does not match this path"}
 
       {:error, :file_unavailable} ->
-        {:error, Intent.format_outcome("file_unavailable")}
+        {:error, ArtifactDelivery.format_outcome("file_unavailable")}
 
       {:error, :timeout} ->
-        {:error, Intent.format_outcome("cancelled_before_launch")}
+        {:error, ArtifactDelivery.format_outcome("cancelled_before_launch")}
 
       {:error, reason} ->
-        {:error, Intent.format_outcome(to_string(reason))}
+        {:error, ArtifactDelivery.format_outcome(to_string(reason))}
     end
   end
 
@@ -93,10 +93,10 @@ defmodule Handbeam.Tool.Builtin.AndroidFile do
   end
 
   defp finish(%{outcome: outcome} = result) do
-    text = Intent.format_outcome(outcome)
+    text = ArtifactDelivery.format_outcome(outcome)
     details = Map.take(result, [:outcome, :snapshot_id, :relative_path])
 
-    if Intent.presented?(outcome) do
+    if ArtifactDelivery.presented?(outcome) do
       {:ok, text, details}
     else
       {:error, text, details}
@@ -111,5 +111,5 @@ defmodule Handbeam.Tool.Builtin.AndroidFile do
     })
   end
 
-  defp finish(_), do: {:error, Intent.format_outcome("outcome_unknown")}
+  defp finish(_), do: {:error, ArtifactDelivery.format_outcome("outcome_unknown")}
 end

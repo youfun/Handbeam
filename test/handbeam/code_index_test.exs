@@ -217,14 +217,14 @@ defmodule Handbeam.CodeIndexTest do
   end
 
   test "host seeds include code_search on desktop and phone" do
-    Host.put!(%{shell: true, desktop_browser: true, system_intents: false})
+    Host.put!(%{shell: true, browser_backend: :cli})
     assert "code_search" in names()
 
     Host.put!(%{
       shell: false,
-      desktop_browser: false,
-      webview_browser: true,
-      system_intents: true
+      browser_backend: :webview,
+      artifact_delivery_backend: Handbeam.ArtifactDelivery,
+      host_script: true
     })
 
     assert "code_search" in names()

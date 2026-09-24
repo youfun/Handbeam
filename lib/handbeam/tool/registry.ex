@@ -119,13 +119,12 @@ defmodule Handbeam.Tool.Registry do
   # ── Server Callbacks ──
 
   @doc """
-  Builtin modules seeded from the current `Handbeam.Host` capabilities.
+  Builtin modules seeded from the current `Handbeam.Host` declarations.
 
   Single source of truth for host-gated tool seeding: registry `init/1`
-  and `Handbeam.Agent.default_tools/0` both read this list. Android writes Host
-  before starting `:handbeam`, so registry init must include `browser` and
-  `preview_serve` when `webview_browser?` is true, and the Android intent
-  tools plus `run_elixir_script` when `system_intents?` is true.
+  and `Handbeam.Agent.default_tools/0` both read this list. The host writes
+  backends before starting `:handbeam`. Registration follows the declared
+  backend, not the OS, UI entry, or another capability.
   """
   @spec host_tool_modules() :: [module()]
   def host_tool_modules do
@@ -134,6 +133,8 @@ defmodule Handbeam.Tool.Registry do
 
   @doc "Host seed decisions, not registration, dependency or run authorization facts."
   def host_tool_configuration do
+    alias Handbeam.Host
+
     base = [
       Handbeam.Tool.Builtin.CodeSearch,
       Handbeam.Tool.Builtin.Edit,
@@ -163,51 +164,43 @@ defmodule Handbeam.Tool.Registry do
     ]
 
     base
-    |> Enum.map(&%{module: &1, enabled: true, source: :unconditional_seed})
+    |> Enum.map(&%{module: &1, enabled: true, source: :agent_runtime})
     |> host_gate(
-      Handbeam.Host.packaged_mix_toolchain?(),
+      Host.packaged_mix_toolchain?(),
       Handbeam.Tool.Builtin.MixProject,
       :packaged_mix_toolchain
     )
+    |> host_gate(not is_nil(Host.get(:git_backend)), Handbeam.Tool.Builtin.Git, :git_backend)
+    |> host_gate(Host.shell?(), Handbeam.Tool.Builtin.Bash, :shell)
     |> host_gate(
-      not is_nil(Handbeam.Host.get(:git_backend)),
-      Handbeam.Tool.Builtin.Git,
-      :git_backend
-    )
-    |> host_gate(Handbeam.Host.shell?(), Handbeam.Tool.Builtin.Bash, :shell)
-    |> host_gate(
-      Handbeam.Host.desktop_browser?() or Handbeam.Host.webview_browser?(),
+      not is_nil(Host.browser_backend()),
       Handbeam.Tool.Builtin.Browser,
-      :desktop_or_webview_browser
+      :browser_backend
     )
     |> host_gate(
-      Handbeam.Host.webview_browser?(),
+      Host.browser_backend() == :webview,
       Handbeam.Tool.Builtin.PreviewServe,
-      :webview_browser
+      :browser_backend
     )
     |> host_gate(
-      Handbeam.Host.system_intents?(),
-      Handbeam.Tool.Builtin.AndroidOpenUrl,
-      :system_intents
+      not is_nil(Host.artifact_delivery_backend()),
+      Handbeam.Tool.Builtin.OpenUrl,
+      :artifact_delivery_backend
     )
     |> host_gate(
-      Handbeam.Host.system_intents?(),
-      Handbeam.Tool.Builtin.AndroidOpenFile,
-      :system_intents
+      not is_nil(Host.artifact_delivery_backend()),
+      Handbeam.Tool.Builtin.OpenFile,
+      :artifact_delivery_backend
     )
     |> host_gate(
-      Handbeam.Host.system_intents?(),
-      Handbeam.Tool.Builtin.AndroidShareFile,
-      :system_intents
+      not is_nil(Host.artifact_delivery_backend()),
+      Handbeam.Tool.Builtin.ShareFile,
+      :artifact_delivery_backend
     )
-    |> host_gate(
-      Handbeam.Host.system_intents?(),
-      Handbeam.Tool.Builtin.RunElixirScript,
-      :system_intents
-    )
-    |> host_gate(Handbeam.Host.beam_eval?(), Handbeam.Tool.Extension.Beam.Docs, :beam_eval)
-    |> host_gate(Handbeam.Host.beam_eval?(), Handbeam.Tool.Extension.Beam.Source, :beam_eval)
-    |> host_gate(Handbeam.Host.beam_eval?(), Handbeam.Tool.Extension.Beam.Sql, :beam_eval)
+    |> host_gate(Host.host_script?(), Handbeam.Tool.Builtin.RunElixirScript, :host_script)
+    |> host_gate(Host.beam_eval?(), Handbeam.Tool.Extension.Beam.Docs, :beam_eval)
+    |> host_gate(Host.beam_eval?(), Handbeam.Tool.Extension.Beam.Source, :beam_eval)
+    |> host_gate(Host.beam_eval?(), Handbeam.Tool.Extension.Beam.Sql, :beam_eval)
   end
 
   defp host_gate(list, enabled, mod, source),

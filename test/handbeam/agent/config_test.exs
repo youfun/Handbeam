@@ -150,15 +150,15 @@ defmodule Handbeam.Agent.ConfigTest do
         data_dir: "/tmp/mob-data",
         shell: false,
         terminal: false,
-        desktop_browser: false,
-        webview_browser: true,
+        browser_backend: :webview,
+        host_script: true,
         beam_eval: false
       })
 
       try do
         config = Config.from_opts(working_directory: "/tmp/mob-data/workspace")
         assert config.system_prompt =~ "There is no Unix shell on this host"
-        assert config.system_prompt =~ "browser availability is independent of shell access"
+        assert config.system_prompt =~ "Browser availability is independent of shell access"
         assert config.system_prompt =~ "run_elixir_script"
         assert config.system_prompt =~ "Mix.install/2"
 
@@ -177,38 +177,39 @@ defmodule Handbeam.Agent.ConfigTest do
       end
     end
 
-    test "run_elixir_script prompt text follows system_intents?, not webview_browser?" do
+    test "script and delivery prompt text follow their own backends, not the browser" do
       previous = Application.get_env(:handbeam, :host)
 
       try do
-        # Explicit system_intents without any WebView browser still advertises the script tool.
         Handbeam.Host.put!(%{
           shell: false,
           terminal: false,
-          desktop_browser: false,
-          webview_browser: false,
-          system_intents: true
+          browser_backend: nil,
+          artifact_delivery_backend: nil,
+          host_script: true
         })
 
         config = Config.from_opts(working_directory: "/tmp/mob-data/workspace")
         assert config.system_prompt =~ "There is no Unix shell on this host"
         assert config.system_prompt =~ "`run_elixir_script`"
         assert config.system_prompt =~ "high-privilege host BEAM code"
+        refute config.system_prompt =~ "open_url"
 
-        # A WebView-browser host that opts out of system_intents must not mention it.
         Handbeam.Host.put!(%{
           shell: false,
           terminal: false,
-          desktop_browser: false,
-          webview_browser: true,
-          system_intents: false
+          browser_backend: :webview,
+          artifact_delivery_backend: Handbeam.ArtifactDelivery,
+          host_script: false
         })
 
         config = Config.from_opts(working_directory: "/tmp/mob-data/workspace")
         assert config.system_prompt =~ "There is no Unix shell on this host"
+        assert config.system_prompt =~ "open_url"
         refute config.system_prompt =~ "run_elixir_script"
-        refute config.system_prompt =~ "already has OTP/Elixir installed"
         refute config.system_prompt =~ "high-privilege host BEAM code"
+        refute config.system_prompt =~ "must use git"
+        refute config.system_prompt =~ "must use mix"
       after
         if previous,
           do: Application.put_env(:handbeam, :host, previous),

@@ -4,8 +4,8 @@ defmodule Handbeam.Git do
 
   Path permissions stay here. Android/iOS hosts inject `Handbeam.Git.ExGit`
   at boot through `Handbeam.Host` `:git_backend` and register the builtin Git
-  tool. The CLI backend remains available to direct application callers, but
-  desktop agents use the machine's Git through `bash` instead of this facade.
+  tool. Direct application callers may still use the CLI backend, but desktop
+  agents choose the repository command-line workflow through `bash`.
 
   HTTPS clone/fetch/push and fast-forward pull are allowed; SSH is not.
   Credentials are passed per call and never written into a URL.

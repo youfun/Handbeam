@@ -53,7 +53,7 @@ defmodule Handbeam.Permissions.ToolPolicy do
 
   @spec decision(t(), map()) :: ApprovalMode.t()
   def decision(%__MODULE__{} = policy, call) when is_map(call) do
-    name = normalize_name(call[:name] || call["name"])
+    name = to_string(call[:name] || call["name"] || "")
 
     cond do
       Map.get(policy.overrides, name) == :deny ->
@@ -100,19 +100,19 @@ defmodule Handbeam.Permissions.ToolPolicy do
   # Full access (`default_mode: :auto`) means capability-level prompts do not
   # interrupt. Capability denies (local file URLs, bash wrapping agent-browser)
   # still apply. Safe mode (`:prompt`) and read-only (`:deny`) keep asking.
-  # Host-privileged script execution and Android system intents (system
-  # browser, open/share exported files) ask even in full-access workspaces.
+  # Host-privileged script execution and system UI (system browser,
+  # open/share exported files) ask even in full-access workspaces.
   # Deny, per_tool, session overrides, and allow-list/always-allow stay above
   # this, so "allow for this session" / "always allow" are honored for them.
   defp capability_prompt?(_policy, "run_elixir_script"), do: true
   defp capability_prompt?(_policy, "mix_project"), do: true
 
   defp capability_prompt?(%__MODULE__{default_mode: :auto}, name) do
-    Handbeam.Android.Tools.known?(name)
+    name in Handbeam.ArtifactDelivery.tool_names()
   end
 
   defp capability_prompt?(_policy, name) do
-    Handbeam.Android.Tools.known?(name) or
+    name in Handbeam.ArtifactDelivery.tool_names() or
       MapSet.member?(@builtin_prompt_tools, name) or
       MapSet.member?(@mount_prompt_tools, name)
   end
@@ -166,7 +166,7 @@ defmodule Handbeam.Permissions.ToolPolicy do
   defp classify_browser_call(call) when is_map(call) do
     input = call[:input] || call["input"] || %{}
 
-    if Handbeam.Host.webview_browser?() do
+    if Handbeam.Tool.Builtin.Browser.backend() == :webview do
       BrowserPolicy.classify_native(input)
     else
       args = Map.get(input, "args") || Map.get(input, :args) || []
@@ -204,8 +204,4 @@ defmodule Handbeam.Permissions.ToolPolicy do
   end
 
   defp normalize_overrides(_), do: %{}
-
-  defp normalize_name(name) when is_atom(name), do: Atom.to_string(name)
-  defp normalize_name(name) when is_binary(name), do: name
-  defp normalize_name(_), do: ""
 end

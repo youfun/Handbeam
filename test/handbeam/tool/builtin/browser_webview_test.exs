@@ -3,16 +3,24 @@ defmodule Handbeam.Tool.Builtin.BrowserWebViewTest do
 
   alias Handbeam.Tool.Builtin.Browser
 
-  test "mobile schema uses action not args" do
+  setup do
     previous = Application.get_env(:handbeam, :host)
-    Handbeam.Host.put!(%{desktop_browser: false, webview_browser: true})
+    fixed = :persistent_term.get({Browser, :backend}, :unfixed)
+    :ok = Browser.release_backend!()
+    Handbeam.Host.put!(%{browser_backend: :webview})
 
     on_exit(fn ->
       if previous,
         do: Application.put_env(:handbeam, :host, previous),
         else: Application.delete_env(:handbeam, :host)
+
+      restore_backend(fixed)
     end)
 
+    :ok
+  end
+
+  test "mobile schema uses action not args" do
     schema = Browser.input_schema()
     assert schema.required == ["action"]
 
@@ -72,5 +80,12 @@ defmodule Handbeam.Tool.Builtin.BrowserWebViewTest do
 
     assert text =~ "eval"
     assert details.backend == "webview"
+  end
+
+  defp restore_backend(:unfixed), do: Browser.release_backend!()
+
+  defp restore_backend(backend) do
+    :persistent_term.put({Browser, :backend}, backend)
+    :ok
   end
 end

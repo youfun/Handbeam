@@ -22,8 +22,9 @@ defmodule Handbeam.HostTest do
     Application.delete_env(:handbeam, :host)
     assert Host.shell?()
     assert Host.terminal?()
-    assert Host.desktop_browser?()
-    refute Host.webview_browser?()
+    assert Host.browser_backend() == :cli
+    assert Host.artifact_delivery_backend() == nil
+    refute Host.host_script?()
     refute Host.beam_eval?()
     refute Host.configured?()
     refute Host.packaged_mix_toolchain?()
@@ -38,8 +39,7 @@ defmodule Handbeam.HostTest do
       priv_dir: "/tmp/mob-beams/priv",
       shell: false,
       terminal: false,
-      desktop_browser: false,
-      webview_browser: true,
+      browser_backend: :webview,
       beam_eval: false,
       mcp: false,
       dist: true,
@@ -49,8 +49,9 @@ defmodule Handbeam.HostTest do
     assert Host.configured?()
     refute Host.shell?()
     refute Host.terminal?()
-    refute Host.desktop_browser?()
-    assert Host.webview_browser?()
+    assert Host.browser_backend() == :webview
+    assert Host.artifact_delivery_backend() == nil
+    refute Host.host_script?()
     refute Host.beam_eval?()
     refute Host.mcp?()
     assert Host.dist?()
@@ -74,38 +75,35 @@ defmodule Handbeam.HostTest do
     assert Host.get(:git_backend) == Handbeam.Git.CLI
     assert Handbeam.Git.backend() == Handbeam.Git.CLI
 
-    Host.put!(%{shell: false, webview_browser: true, desktop_browser: false})
+    Host.put!(%{shell: false, browser_backend: :webview})
     assert Host.get(:git_backend) == nil
     assert Handbeam.Git.backend() == Handbeam.Git.CLI
   end
 
-  test "webview_browser is ignored when desktop_browser is true" do
-    Host.put!(%{desktop_browser: true, webview_browser: true})
-    assert Host.desktop_browser?()
-    refute Host.webview_browser?()
+  test "an explicit browser backend is not inferred from another capability" do
+    Host.put!(%{browser_backend: :webview, artifact_delivery_backend: nil, host_script: false})
+    assert Host.browser_backend() == :webview
+    assert Host.artifact_delivery_backend() == nil
+    refute Host.host_script?()
+
+    Host.put!(%{browser_backend: nil, shell: false})
+    assert Host.browser_backend() == nil
   end
 
-  describe "system_intents?/0" do
-    test "desktop default is false" do
-      Application.delete_env(:handbeam, :host)
-      refute Host.system_intents?()
-    end
+  test "unknown host keys and unrelated booleans are not inferred as backends" do
+    Host.put!(%{
+      desktop_browser: false,
+      webview_browser: true,
+      system_intents: true,
+      host_script_backend: :ignored
+    })
 
-    test "falls back to webview_browser? when not declared" do
-      Host.put!(%{desktop_browser: false, webview_browser: true})
-      assert Host.system_intents?()
-
-      Host.put!(%{desktop_browser: true, webview_browser: true})
-      refute Host.system_intents?()
-    end
-
-    test "explicit value wins over webview_browser?" do
-      Host.put!(%{desktop_browser: false, webview_browser: true, system_intents: false})
-      refute Host.system_intents?()
-
-      Host.put!(%{desktop_browser: true, webview_browser: false, system_intents: true})
-      assert Host.system_intents?()
-    end
+    assert Host.browser_backend() == :cli
+    assert Host.artifact_delivery_backend() == nil
+    refute Host.host_script?()
+    refute Map.has_key?(Application.get_env(:handbeam, :host), :system_intents)
+    refute Map.has_key?(Application.get_env(:handbeam, :host), :webview_browser)
+    refute Map.has_key?(Application.get_env(:handbeam, :host), :host_script_backend)
   end
 
   describe "request_directory_picker/1" do

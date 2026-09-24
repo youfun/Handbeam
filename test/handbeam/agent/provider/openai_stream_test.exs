@@ -462,7 +462,7 @@ defmodule Handbeam.Agent.Provider.OpenAIStreamTest do
         new_acc()
         | tool_calls: %{0 => %{id: "", name: "", arguments_buffer: args}},
           finish_reason: "tool_calls",
-          tool_defs: [url_tool.("web_fetch"), url_tool.("android_open_url")]
+          tool_defs: [url_tool.("web_fetch"), url_tool.("open_url")]
       }
 
       assert {:ok, %{messages: [msg]}} = OpenAIStream.build_response(acc)
