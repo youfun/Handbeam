@@ -33,7 +33,8 @@ defmodule Handbeam.JsonSafe do
   def normalize(:null), do: :null
   def normalize(value) when is_boolean(value), do: value
   def normalize(value) when is_atom(value), do: Atom.to_string(value)
-  def normalize(value) when is_binary(value) or is_number(value), do: value
+  def normalize(value) when is_binary(value), do: String.replace_invalid(value, "�")
+  def normalize(value) when is_number(value), do: value
 
   def normalize(value), do: inspect(value)
 
