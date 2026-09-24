@@ -166,13 +166,12 @@ defmodule Handbeam.Platform.ProcessManager do
 
   # ── Platform-specific ──
 
+  # Stop the whole snapshot before killing it: killing a leaf first lets its
+  # parent observe the exit and run the next command before its own turn.
   defp kill_unix(os_pid) do
-    os_pid
-    |> unix_process_tree()
-    |> Enum.each(fn pid ->
-      _ = System.cmd("kill", ["-9", Integer.to_string(pid)], stderr_to_stdout: true)
-    end)
-
+    pids = os_pid |> unix_process_tree() |> Enum.map(&Integer.to_string/1)
+    _ = System.cmd("kill", ["-STOP" | pids], stderr_to_stdout: true)
+    _ = System.cmd("kill", ["-9" | pids], stderr_to_stdout: true)
     :ok
   end
 

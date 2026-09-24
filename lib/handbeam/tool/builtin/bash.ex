@@ -20,9 +20,14 @@ defmodule Handbeam.Tool.Builtin.Bash do
       "(ls, cat, grep, find, rm, ./scripts/test.sh) even on Windows — " <>
       "this tool always runs in a bash environment. " <>
       "Supports timeout control and working directory override. " <>
-      "Set job=true for a run-scoped Linux job. Query job_status until finished before " <>
-      "ending this run: run completion cancels unfinished jobs. Not a detached dev server " <>
-      "or a sandbox; descendants that escape the process group are not contained."
+      "Runs inside an OS sandbox (Linux Bubblewrap, macOS Seatbelt): the host filesystem " <>
+      "is readable, writes are allowed only in the workspace and $TMPDIR, network is not " <>
+      "restricted. Writes elsewhere fail with 'Operation not permitted' or 'Read-only file " <>
+      "system'. Only after such a sandbox denial, retry with unsandboxed=true; that always " <>
+      "asks the user for approval. " <>
+      "Set job=true for a run-scoped job (Linux only). Query job_status until finished before " <>
+      "ending this run: run completion cancels unfinished jobs. Not a detached dev server; " <>
+      "descendants that escape the process group are not contained."
   end
 
   @impl true
@@ -50,6 +55,13 @@ defmodule Handbeam.Tool.Builtin.Bash do
           description:
             "Optional working directory override. Use only for a subdirectory inside " <>
               "the current workspace."
+        },
+        unsandboxed: %{
+          type: "boolean",
+          default: false,
+          description:
+            "Run outside the OS sandbox. Use only after the sandbox denied a needed write; " <>
+              "always requires user approval. Not available for job=true."
         }
       },
       required: ["command"]
@@ -70,9 +82,14 @@ defmodule Handbeam.Tool.Builtin.Bash do
     with :ok <- validate_command(command),
          {:ok, cwd} <- resolve_cwd(Map.get(input, "cwd"), working_directory),
          :ok <- validate_command_paths(command, cwd) do
+      unsandboxed? = Map.get(input, "unsandboxed") == true
+
       case Map.get(input, "job", false) do
         false ->
-          execute_command(command, timeout_sec, cwd, working_directory)
+          execute_command(command, timeout_sec, cwd, working_directory, unsandboxed?)
+
+        true when unsandboxed? ->
+          {:error, "unsandboxed is not available for job=true"}
 
         true when is_integer(timeout_sec) and timeout_sec in 1..3_600 ->
           Handbeam.Jobs.start(
@@ -176,14 +193,29 @@ defmodule Handbeam.Tool.Builtin.Bash do
 
   # ── Execution ──
 
-  defp execute_command(command, timeout_sec, cwd, working_directory) do
+  defp execute_command(command, timeout_sec, cwd, working_directory, unsandboxed?) do
     timeout_ms = timeout_sec * 1000
-
-    opts = if working_directory, do: [workspace_path: working_directory], else: []
+    sandboxed? = working_directory != nil and not unsandboxed?
+    opts = if sandboxed?, do: [workspace_path: working_directory], else: []
 
     case Handbeam.Platform.ProcessRunner.run_bash(command, cwd, timeout_ms, opts) do
-      {:ok, output, meta} -> {:ok, output, meta}
-      {:error, reason} -> {:error, reason}
+      {:ok, output, %{exit_code: code} = meta} when sandboxed? and code != 0 ->
+        {:ok, output <> sandbox_hint(output), meta}
+
+      {:ok, output, meta} ->
+        {:ok, output, meta}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp sandbox_hint(output) do
+    if output =~ "Operation not permitted" or output =~ "Read-only file system" do
+      "\n\n[sandbox] A write outside the workspace and $TMPDIR may have been blocked. " <>
+        "If that write is required, retry with unsandboxed=true (requires user approval)."
+    else
+      ""
     end
   end
 end

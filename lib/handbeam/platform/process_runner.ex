@@ -29,12 +29,7 @@ defmodule Handbeam.Platform.ProcessRunner do
              cwd,
              opts
            ) do
-      options = [:binary, :exit_status, :use_stdio, :stderr_to_stdout, :hide]
-
-      options =
-        if invocation.cwd,
-          do: [{:cd, String.to_charlist(invocation.cwd)} | options],
-          else: options
+      options = port_options(invocation)
 
       try do
         port =
@@ -91,22 +86,15 @@ defmodule Handbeam.Platform.ProcessRunner do
   def run_bash(command, cwd, timeout_ms, opts \\ []) do
     with {:ok, shell} <- ShellResolver.resolve(opts),
          {:ok, invocation} <- ProcessSandbox.wrap(shell, command, cwd, opts) do
-      port_opts = [:binary, :exit_status, :use_stdio, :stderr_to_stdout, :hide]
-
-      port_opts =
-        if invocation.cwd,
-          do: [{:cd, String.to_charlist(invocation.cwd)} | port_opts],
-          else: port_opts
-
       try do
         port =
           Port.open(
             {:spawn_executable, invocation.executable},
-            [{:args, invocation.args} | port_opts]
+            [{:args, invocation.args} | port_options(invocation)]
           )
 
         os_pid = get_os_pid(port)
-        collect_output(port, os_pid, timeout_ms, Keyword.has_key?(opts, :workspace_path))
+        collect_output(port, os_pid, timeout_ms, invocation.pid_namespace?)
       rescue
         e -> {:error, "Failed to spawn: #{Exception.message(e)}"}
       end
@@ -115,17 +103,36 @@ defmodule Handbeam.Platform.ProcessRunner do
 
   # ── Output collection ──
 
-  defp collect_output(port, os_pid, timeout_ms, sandboxed?) do
-    deadline = System.monotonic_time(:millisecond) + timeout_ms
-    state = %{chunks: [], buf_bytes: 0, total_bytes: 0}
-    do_collect(port, os_pid, deadline, state, timeout_ms, sandboxed?)
+  defp port_options(invocation) do
+    options = [:binary, :exit_status, :use_stdio, :stderr_to_stdout, :hide]
+
+    options =
+      case invocation.env do
+        [] ->
+          options
+
+        env ->
+          [{:env, Enum.map(env, fn {k, v} -> {~c"#{k}", ~c"#{v}"} end)} | options]
+      end
+
+    if invocation.cwd,
+      do: [{:cd, String.to_charlist(invocation.cwd)} | options],
+      else: options
   end
 
-  defp do_collect(port, os_pid, deadline, state, original_timeout, sandboxed?) do
+  # With a PID namespace, killing its init (bwrap child) takes every descendant
+  # with it; without one (Seatbelt, plain shell) the whole tree must be killed.
+  defp collect_output(port, os_pid, timeout_ms, pid_namespace?) do
+    deadline = System.monotonic_time(:millisecond) + timeout_ms
+    state = %{chunks: [], buf_bytes: 0, total_bytes: 0}
+    do_collect(port, os_pid, deadline, state, timeout_ms, pid_namespace?)
+  end
+
+  defp do_collect(port, os_pid, deadline, state, original_timeout, pid_namespace?) do
     remaining = deadline - System.monotonic_time(:millisecond)
 
     if remaining <= 0 do
-      if sandboxed?,
+      if pid_namespace?,
         do: ProcessManager.kill_process(os_pid),
         else: ProcessManager.kill_process_tree(os_pid)
 
@@ -138,7 +145,7 @@ defmodule Handbeam.Platform.ProcessRunner do
       receive do
         {^port, {:data, data}} ->
           state = ingest_chunk(state, data)
-          do_collect(port, os_pid, deadline, state, original_timeout, sandboxed?)
+          do_collect(port, os_pid, deadline, state, original_timeout, pid_namespace?)
 
         {^port, {:exit_status, exit_code}} ->
           output = build_output(state)
@@ -153,7 +160,7 @@ defmodule Handbeam.Platform.ProcessRunner do
           end
       after
         min(remaining, 200) ->
-          do_collect(port, os_pid, deadline, state, original_timeout, sandboxed?)
+          do_collect(port, os_pid, deadline, state, original_timeout, pid_namespace?)
       end
     end
   end

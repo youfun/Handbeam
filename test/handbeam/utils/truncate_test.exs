@@ -280,7 +280,7 @@ defmodule Handbeam.Utils.TruncateTest do
       refute output =~ "line 51"
     end
 
-    @tag :linux_sandbox
+    @tag :os_sandbox
     test "[BDD-TRC-014] bash truncation notification" do
       # This is an end-to-end Bash sandbox test, not a pure truncation test.
       tmp_dir = Path.join(System.tmp_dir!(), "sigil_trunc_#{System.unique_integer([:positive])}")

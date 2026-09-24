@@ -62,6 +62,15 @@ defmodule Handbeam.Permissions.ToolPolicy do
       Enum.any?(policy.deny, &Matcher.match?(&1, call)) ->
         :deny
 
+      # Allow rules and session grants were given for sandboxed execution;
+      # leaving the OS sandbox is always a fresh decision.
+      unsandboxed_bash?(name, call) ->
+        if policy.default_mode == :deny, do: :deny, else: :prompt
+
+      # Applying a subagent worktree writes an unreviewed diff into the workspace.
+      worktree_apply?(name, call) ->
+        if policy.default_mode == :deny, do: :deny, else: :prompt
+
       Map.has_key?(policy.per_tool, name) ->
         Map.fetch!(policy.per_tool, name)
 
@@ -128,6 +137,20 @@ defmodule Handbeam.Permissions.ToolPolicy do
   end
 
   defp bash_browser_decision(_name, _call), do: nil
+
+  defp unsandboxed_bash?("bash", call) do
+    input = call[:input] || call["input"] || %{}
+    Map.get(input, "unsandboxed") == true or Map.get(input, :unsandboxed) == true
+  end
+
+  defp unsandboxed_bash?(_name, _call), do: false
+
+  defp worktree_apply?("task_status", call) do
+    input = call[:input] || call["input"] || %{}
+    (Map.get(input, "action") || Map.get(input, :action)) == "apply"
+  end
+
+  defp worktree_apply?(_name, _call), do: false
 
   defp bash_command(call) when is_map(call) do
     input = call[:input] || call["input"] || %{}
