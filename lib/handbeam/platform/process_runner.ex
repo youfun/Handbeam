@@ -109,7 +109,7 @@ defmodule Handbeam.Platform.ProcessRunner do
 
     env =
       Enum.map(@release_env, &{String.to_charlist(&1), false}) ++
-        Enum.map(invocation.env, fn {key, value} ->
+        Enum.map(child_env(invocation.env), fn {key, value} ->
           {String.to_charlist(key), String.to_charlist(value)}
         end)
 
@@ -118,6 +118,39 @@ defmodule Handbeam.Platform.ProcessRunner do
     if invocation.cwd,
       do: [{:cd, String.to_charlist(invocation.cwd)} | options],
       else: options
+  end
+
+  # Desktop releases prepend `<release>/erts-*/bin` to PATH. Unsetting
+  # BINDIR/ROOTDIR is not enough: bash then finds that `erl`, and `mix` demands
+  # the release boot file instead of the machine's dev OTP. Drop only those
+  # directories. Mobile hosts keep their packaged OTP; they do not use bash mix.
+  defp child_env(extra) do
+    case System.get_env("PATH") do
+      path when is_binary(path) and path != "" ->
+        [{"PATH", strip_release_erts(path)} | extra]
+
+      _ ->
+        extra
+    end
+  end
+
+  defp strip_release_erts(path) do
+    path
+    |> String.split(":", trim: true)
+    |> Enum.reject(&release_erts_dir?/1)
+    |> Enum.join(":")
+  end
+
+  defp release_erts_dir?(dir) do
+    expanded = Path.expand(dir)
+    # <release>/erts-<vsn>/bin — the release root is the parent of erts-*, not of bin.
+    erts = Path.dirname(expanded)
+    release = Path.dirname(erts)
+
+    not Handbeam.Host.packaged_mix_toolchain?() and
+      Path.basename(expanded) == "bin" and
+      String.starts_with?(Path.basename(erts), "erts-") and
+      File.regular?(Path.join(release, "releases/start_erl.data"))
   end
 
   # Linux kills the PID namespace init. macOS verifies and kills the independent
