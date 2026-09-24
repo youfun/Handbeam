@@ -23,15 +23,14 @@ defmodule ExFff do
 
   ## Architecture
 
-  Three ETS tables power the engine:
+  Three ETS tables power each index instance. Tables are anonymous and owned
+  by that instance, not registered under global names:
 
-  - `ExFff.Trigrams` (`:duplicate_bag`) — trigram → path mapping for
-    fast candidate lookup
-  - `ExFff.Files` (`:set`) — path → %{mtime, size} for file metadata
-  - `ExFff.Frecency` (`:ordered_set`) — `{score, path}` → true for
-    recency-weighted ranking
+  - trigrams (`:duplicate_bag`) — trigram → path mapping for fast candidate lookup
+  - files (`:set`) — path → %{mtime, size} for file metadata
+  - frecency (`:ordered_set`) — `{score, path}` → true for recency-weighted ranking
 
-  The GenServer is supervised by `ExFff.Application`.
+  `ExFff.Application` supervises one index per workspace root.
   """
 
   @doc """
@@ -40,7 +39,15 @@ defmodule ExFff do
   Returns `{:ok, %ExFff.Query.Result{}}` or `{:error, reason}`.
   """
   @spec search(binary(), keyword()) :: {:ok, map()} | {:error, String.t()}
-  def search(query, opts \\ []) do
+  def search(query, opts \\ []) when is_binary(query) do
     ExFff.Index.search(ExFff.Index, query, opts)
+  end
+
+  @doc """
+  Search a specific index process. Use this in multi-workspace callers.
+  """
+  @spec search(GenServer.server(), binary(), keyword()) :: {:ok, map()} | {:error, String.t()}
+  def search(server, query, opts) when is_binary(query) and is_list(opts) do
+    ExFff.Index.search(server, query, opts)
   end
 end

@@ -53,13 +53,7 @@ defmodule Handbeam.Tool.Builtin.FileSearch do
     with {:ok, root} <- resolve_root(working_directory),
          {:ok, pid} <- ExFff.Index.ensure_started(root),
          {:ok, result} <- ExFff.Index.search(pid, query, limit: limit) do
-      # Touch returned paths to update frecency
-      for %{path: path} <- result.paths do
-        ExFff.Index.touch(pid, path)
-      end
-
-      formatted = format_results(result)
-      {:ok, formatted}
+      {:ok, format_results(result)}
     end
   end
 
@@ -69,16 +63,21 @@ defmodule Handbeam.Tool.Builtin.FileSearch do
 
   # ── Helpers ──
 
-  defp resolve_root(nil) do
-    {:ok, File.cwd!()}
+  defp resolve_root(working_directory) when is_binary(working_directory) do
+    cond do
+      working_directory == "" ->
+        {:error, "working_directory is required"}
+
+      File.dir?(working_directory) ->
+        {:ok, working_directory}
+
+      true ->
+        {:error, "working_directory is not a directory: #{working_directory}"}
+    end
   end
 
-  defp resolve_root(working_directory) do
-    if File.dir?(working_directory) do
-      {:ok, working_directory}
-    else
-      {:ok, File.cwd!()}
-    end
+  defp resolve_root(_working_directory) do
+    {:error, "working_directory is required"}
   end
 
   defp format_results(%{paths: [], query: query, duration_ms: ms}) do

@@ -20,9 +20,14 @@ defmodule Handbeam.Tool.Builtin.FileSearchTest do
     File.write!(Path.join(tmp_dir, "test/user_test.exs"), "module")
 
     on_exit(fn ->
-      # Stop any lingering ExFff.Index GenServer
-      if Process.whereis(ExFff.Index) && Process.alive?(Process.whereis(ExFff.Index)) do
-        GenServer.stop(ExFff.Index)
+      case ExFff.Index.ensure_started(tmp_dir) do
+        {:ok, pid} ->
+          if Process.alive?(pid) do
+            GenServer.stop(pid)
+          end
+
+        _ ->
+          :ok
       end
 
       File.rm_rf(tmp_dir)
@@ -57,8 +62,12 @@ defmodule Handbeam.Tool.Builtin.FileSearchTest do
 
   describe "execute/2" do
     test "returns error when query is missing" do
-      {:error, reason} = FileSearch.execute(%{}, %{})
+      {:error, reason} = FileSearch.execute(%{}, %{working_directory: "/tmp"})
       assert reason =~ "required"
+    end
+
+    test "requires an explicit workspace directory" do
+      assert {:error, "working_directory is required"} = FileSearch.execute(%{"query" => "user"}, %{})
     end
 
     test "returns results for valid query", %{tmp_dir: tmp_dir} do

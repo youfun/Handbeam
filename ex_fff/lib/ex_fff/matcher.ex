@@ -59,11 +59,11 @@ defmodule ExFff.Matcher do
 
   Arguments:
   - `query` — `%ExFff.Query{}`
-  - `files_tab` — ETS table atom for Files
-  - `trigram_tab` — ETS table atom for Trigrams
-  - `frecency_tab` — ETS table atom for Frecency
+  - `files_tab` — ETS table id for Files
+  - `trigram_tab` — ETS table id for Trigrams
+  - `frecency_tab` — ETS table id for Frecency
   """
-  @spec match(ExFff.Query.t(), atom(), atom(), atom()) :: [%{path: String.t(), score: float()}]
+  @spec match(ExFff.Query.t(), :ets.tid(), :ets.tid(), :ets.tid()) :: [%{path: String.t(), score: float()}]
   def match(query, _files_tab, trigram_tab, frecency_tab) do
     candidates = find_candidates(query, trigram_tab)
 
