@@ -58,21 +58,108 @@ defmodule Handbeam.LlmDbDefaults do
     with {:ok, provider_atom} <- normalize_provider(provider_id),
          {:ok, model_id} <- normalize_model_id(model_id),
          {:ok, model} <- LLMDB.model(provider_atom, model_id) do
-      cost = Map.get(model, :cost) || %{}
-      limits = Map.get(model, :limits) || %{}
-
-      %{}
-      |> maybe_put(:model_name, Map.get(model, :name))
-      |> maybe_put(:context_window, Map.get(limits, :context))
-      |> maybe_put(:max_tokens, Map.get(limits, :output))
-      |> maybe_put(:price_input, numeric_cost(cost, :input))
-      |> maybe_put(:price_output, numeric_cost(cost, :output))
-      |> maybe_put(:price_cache_read, numeric_cost(cost, :cache_read))
-      |> maybe_put(:price_cache_write, numeric_cost(cost, :cache_write))
-      |> maybe_put(:price_reasoning, numeric_cost(cost, :reasoning))
+      model_defaults_from(model)
     else
       _ -> %{}
     end
+  end
+
+  @doc """
+  Official upstream price for a model id.
+
+  Cursor is not an llm_db provider. Its catalog ids are upstream models plus
+  effort suffixes (`gpt-5.3-codex-low-fast`, `claude-opus-4-6`). Strip the
+  suffix and read the vendor catalog (OpenAI / Anthropic), not a reseller:
+  reseller prices disagree. Missing prices stay absent — never invent 0.
+  """
+  @spec price_for_model_id(String.t() | nil) :: map() | nil
+  def price_for_model_id(model_id) do
+    with :ok <- ensure_loaded(),
+         {:ok, model_id} <- normalize_model_id(model_id),
+         cost when is_map(cost) <- lookup_cost(model_id) do
+      cost
+    else
+      _ -> nil
+    end
+  end
+
+  defp model_defaults_from(model) do
+    cost = Map.get(model, :cost) || %{}
+    limits = Map.get(model, :limits) || %{}
+
+    %{}
+    |> maybe_put(:model_name, Map.get(model, :name))
+    |> maybe_put(:context_window, Map.get(limits, :context))
+    |> maybe_put(:max_tokens, Map.get(limits, :output))
+    |> maybe_put(:price_input, numeric_cost(cost, :input))
+    |> maybe_put(:price_output, numeric_cost(cost, :output))
+    |> maybe_put(:price_cache_read, numeric_cost(cost, :cache_read))
+    |> maybe_put(:price_cache_write, numeric_cost(cost, :cache_write))
+    |> maybe_put(:price_reasoning, numeric_cost(cost, :reasoning))
+  end
+
+  @effort_suffixes ["-xhigh", "-high", "-medium", "-low", "-fast", "-thinking"]
+  @openai_prefixes ["gpt-", "o1", "o3", "o4", "chatgpt-"]
+  @anthropic_prefixes ["claude-"]
+
+  defp lookup_cost(model_id) do
+    case vendor_cost(model_id) do
+      %{} = cost ->
+        cost
+
+      nil ->
+        case strip_effort(model_id) do
+          ^model_id -> nil
+          base -> vendor_cost(base)
+        end
+    end
+  end
+
+  defp vendor_cost(model_id) do
+    model_id
+    |> vendor_provider()
+    |> case do
+      nil ->
+        nil
+
+      provider ->
+        case LLMDB.model(provider, vendor_model_id(provider, model_id)) do
+          {:ok, model} -> catalog_cost(model)
+          _ -> nil
+        end
+    end
+  end
+
+  defp vendor_model_id(:anthropic, model_id), do: String.replace(model_id, ".", "-")
+  defp vendor_model_id(_provider, model_id), do: model_id
+
+  defp vendor_provider(model_id) do
+    cond do
+      String.starts_with?(model_id, @openai_prefixes) -> :openai
+      String.starts_with?(model_id, @anthropic_prefixes) -> :anthropic
+      true -> nil
+    end
+  end
+
+  defp catalog_cost(model) do
+    cost = Map.get(model, :cost) || %{}
+
+    %{}
+    |> maybe_put("input", numeric_cost(cost, :input))
+    |> maybe_put("output", numeric_cost(cost, :output))
+    |> maybe_put("cache_read", numeric_cost(cost, :cache_read))
+    |> maybe_put("cache_write", numeric_cost(cost, :cache_write))
+    |> maybe_put("reasoning", numeric_cost(cost, :reasoning))
+    |> case do
+      cost when map_size(cost) == 0 -> nil
+      cost -> cost
+    end
+  end
+
+  defp strip_effort(model_id) do
+    Enum.reduce(@effort_suffixes, model_id, fn suffix, id ->
+      String.replace(id, suffix, "")
+    end)
   end
 
   defp ensure_loaded do

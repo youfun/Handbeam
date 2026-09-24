@@ -27,6 +27,24 @@ defmodule Handbeam.Agent.Provider.Cursor.ModelsTest do
     def close(t), do: t
   end
 
+  defmodule PricedTransport do
+    alias Handbeam.Agent.Provider.Cursor.Proto
+
+    def connect(_opts), do: {:ok, %{}}
+
+    def get_usable_models(transport, _token, _opts) do
+      model =
+        Proto.finish(
+          Proto.encode_string(1, "gpt-5.3-codex-low-fast") ++
+            Proto.encode_string(4, "Codex 5.3 Low Fast")
+        )
+
+      {:ok, transport, Proto.finish(Proto.encode_message(1, model))}
+    end
+
+    def close(t), do: t
+  end
+
   setup do
     tmp = Path.join(System.tmp_dir!(), "cursor_models_#{System.unique_integer([:positive])}")
     File.mkdir_p!(tmp)
@@ -57,6 +75,15 @@ defmodule Handbeam.Agent.Provider.Cursor.ModelsTest do
     refute Map.has_key?(hd(models), "cost")
     assert_received {:models_token, "tok"}
     assert Models.preferred_id(models) == "composer-2.5"
+  end
+
+  test "discover attaches llm_db price for the base model id", %{auth_path: auth_path} do
+    assert {:ok, models} =
+             Models.discover(auth_path: auth_path, transport_mod: PricedTransport)
+
+    assert [%{"id" => "gpt-5.3-codex-low-fast", "cost" => cost}] = models
+    assert cost["input"] == 1.75
+    assert cost["output"] == 14
   end
 
   test "empty catalog is an explicit error", %{auth_path: auth_path} do

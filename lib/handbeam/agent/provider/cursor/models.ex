@@ -3,11 +3,13 @@ defmodule Handbeam.Agent.Provider.Cursor.Models do
   Discovers usable Cursor models via unary `GetUsableModels`.
 
   Failures are explicit. This never falls back to another provider or a
-  hard-coded substitute model. Cost is unknown and is not written as 0.
+  hard-coded substitute model. Cost is the upstream vendor price from llm_db
+  when the id maps to one; otherwise it is omitted, never written as 0.
   """
 
   alias Handbeam.Agent.Auth.CursorCredential
   alias Handbeam.Agent.Provider.Cursor.{Proto, Transport}
+  alias Handbeam.LlmDbDefaults
 
   @preferred "composer-2.5"
 
@@ -63,7 +65,11 @@ defmodule Handbeam.Agent.Provider.Cursor.Models do
       "contextWindow" => 128_000,
       "maxTokens" => 32_000
     }
+    |> maybe_put_cost(LlmDbDefaults.price_for_model_id(model.id))
   end
+
+  defp maybe_put_cost(catalog, nil), do: catalog
+  defp maybe_put_cost(catalog, cost), do: Map.put(catalog, "cost", cost)
 
   defp display_name(%{name: name}) when is_binary(name) and name != "", do: name
   defp display_name(%{id: id}), do: id

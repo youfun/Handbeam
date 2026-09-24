@@ -131,6 +131,19 @@ defmodule HandbeamWeb.AvailableModelsLive do
     {:noreply, maybe_discover_cursor_models(socket, "cursor", attempt_id)}
   end
 
+  def handle_event("toggle_model_enabled", %{"id" => model_id, "value" => value}, socket) do
+    provider_id = socket.assigns.selected_provider_id
+    enabled = value == "true"
+
+    case ModelConfig.update_model(provider_id, model_id, %{"enabled" => enabled}) do
+      :ok ->
+        {:noreply, reload_providers(socket)}
+
+      {:error, reason} ->
+        {:noreply, assign(socket, :form_error, reason)}
+    end
+  end
+
   # ── Provider selection ─────────────────────────────────────────────────
 
   @impl true
@@ -731,8 +744,12 @@ defmodule HandbeamWeb.AvailableModelsLive do
 
       case result do
         {:ok, models} ->
-          _ = ModelConfig.update_provider("cursor", %{"models" => models})
-          reload_providers(socket)
+          models = preserve_model_enabled(models, "cursor")
+
+          case ModelConfig.update_provider("cursor", %{"models" => models}) do
+            :ok -> reload_providers(socket)
+            {:error, message} -> assign(socket, :form_error, message)
+          end
 
         {:error, message} ->
           assign(socket, :form_error, message)
@@ -797,6 +814,32 @@ defmodule HandbeamWeb.AvailableModelsLive do
     end
   end
 
+  defp display_cost(%{"cost" => cost}) when is_map(cost) and map_size(cost) > 0, do: cost
+
+  defp display_cost(%{"id" => id}) when is_binary(id) do
+    LlmDbDefaults.price_for_model_id(id) || %{}
+  end
+
+  defp display_cost(_), do: %{}
+
+  defp preserve_model_enabled(models, provider_id) do
+    previous =
+      case load_raw_config() do
+        %{"providers" => %{^provider_id => %{"models" => existing}}} when is_list(existing) ->
+          Map.new(existing, fn model -> {model["id"], model["enabled"]} end)
+
+        _ ->
+          %{}
+      end
+
+    Enum.map(models, fn model ->
+      case Map.get(previous, model["id"]) do
+        enabled when is_boolean(enabled) -> Map.put(model, "enabled", enabled)
+        _ -> model
+      end
+    end)
+  end
+
   defp reload_providers(socket) do
     config = load_raw_config()
     providers = parse_providers(config)
@@ -851,7 +894,8 @@ defmodule HandbeamWeb.AvailableModelsLive do
               thinking_level_map: Map.get(m, "thinkingLevelMap", %{}),
               context_window: Map.get(m, "contextWindow"),
               max_tokens: Map.get(m, "maxTokens"),
-              cost: Map.get(m, "cost", %{})
+              cost: display_cost(m),
+              enabled: Map.get(m, "enabled") != false
             }
           end)
       }

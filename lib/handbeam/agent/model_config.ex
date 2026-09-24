@@ -187,7 +187,7 @@ defmodule Handbeam.Agent.ModelConfig do
     api = Map.get(provider_config, "api")
     normalized_url = normalize_base_url(base_url, api)
 
-    provider_models = Map.get(provider_config, "models", [])
+    provider_models = enabled_models(Map.get(provider_config, "models", []))
     default_model = resolve_default_model(json, default_provider_key, provider_models)
 
     model_meta = find_model_meta(provider_models, default_model)
@@ -264,6 +264,13 @@ defmodule Handbeam.Agent.ModelConfig do
   defp find_model_meta(provider_models, model_id) do
     Enum.find(provider_models, fn m -> Map.get(m, "id") == model_id end) || %{}
   end
+
+  # Missing `enabled` stays on so existing catalogs keep working.
+  defp model_enabled?(%{"enabled" => false}), do: false
+  defp model_enabled?(_model), do: true
+
+  defp enabled_models(models) when is_list(models), do: Enum.filter(models, &model_enabled?/1)
+  defp enabled_models(_), do: []
 
   defp model_summary(model) do
     %{
@@ -649,17 +656,21 @@ defmodule Handbeam.Agent.ModelConfig do
           provider_models = Map.get(provider_config, "models", [])
           model_meta = find_model_meta(provider_models, model_id)
 
-          case assemble_provider_config(
-                 provider_id,
-                 provider_config,
-                 model_id,
-                 normalized_url,
-                 api,
-                 provider,
-                 model_meta
-               ) do
-            {:ok, config} -> {:ok, config}
-            {:error, _} = error -> error
+          if model_id && not model_enabled?(model_meta) do
+            {:error, "Model #{model_id} is disabled"}
+          else
+            case assemble_provider_config(
+                   provider_id,
+                   provider_config,
+                   model_id,
+                   normalized_url,
+                   api,
+                   provider,
+                   model_meta
+                 ) do
+              {:ok, config} -> {:ok, config}
+              {:error, _} = error -> error
+            end
           end
       end
     else
@@ -738,7 +749,9 @@ defmodule Handbeam.Agent.ModelConfig do
     Enum.flat_map(providers, fn {provider_id, provider_config} ->
       models = Map.get(provider_config, "models", [])
 
-      Enum.map(models, fn model ->
+      models
+      |> enabled_models()
+      |> Enum.map(fn model ->
         model_id = Map.get(model, "id")
 
         %{
@@ -1578,6 +1591,7 @@ defmodule Handbeam.Agent.ModelConfig do
       new_model =
         default_provider
         |> Map.get("models", [])
+        |> enabled_models()
         |> Enum.map(& &1["id"])
         |> List.first()
 

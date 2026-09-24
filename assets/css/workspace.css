@@ -3062,6 +3062,14 @@ input:checked + .settings-toggle-track .settings-toggle-thumb {
   background: var(--surface-hover);
 }
 
+.settings-model-table tbody tr.is-disabled td {
+  opacity: 0.55;
+}
+
+.settings-model-table tbody tr.is-disabled td:first-child {
+  opacity: 1;
+}
+
 .settings-model-delete {
   color: var(--muted-2);
   cursor: pointer;
