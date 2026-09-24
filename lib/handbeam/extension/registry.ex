@@ -14,7 +14,8 @@ defmodule Handbeam.Extension.Registry do
     Agent.start_link(fn -> %{extensions: %{}, hook_modules: %{}} end, name: name)
   end
 
-  @spec register(atom() | pid(), Handbeam.Extension.t(), keyword()) :: :ok | {:error, Diagnostic.t()}
+  @spec register(atom() | pid(), Handbeam.Extension.t(), keyword()) ::
+          :ok | {:error, Diagnostic.t()}
   def register(registry, extension, opts \\ []) do
     override = Keyword.get(opts, :override, false)
 

@@ -161,7 +161,10 @@ defmodule Handbeam.Agent.ConfigTest do
         assert config.system_prompt =~ "browser availability is independent of shell access"
         assert config.system_prompt =~ "run_elixir_script"
         assert config.system_prompt =~ "Mix.install/2"
-        assert config.system_prompt =~ "Follow the script tool environment for Mix/Hex availability"
+
+        assert config.system_prompt =~
+                 "Follow the script tool environment for Mix/Hex availability"
+
         refute config.system_prompt =~ "NimbleCSV.RFC4180"
         refute config.system_prompt =~ "Req.get"
 

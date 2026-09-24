@@ -272,7 +272,10 @@ defmodule Handbeam.Extension.HotReloader do
 
     project_path? =
       state.project &&
-        String.starts_with?(expanded, Path.expand(Path.join(state.project, ".handbeam/extensions")))
+        String.starts_with?(
+          expanded,
+          Path.expand(Path.join(state.project, ".handbeam/extensions"))
+        )
 
     project_path? or String.starts_with?(expanded, user_dir)
   end
