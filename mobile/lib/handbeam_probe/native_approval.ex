@@ -194,8 +194,7 @@ defmodule HandbeamProbe.NativeApproval do
   end
 
   defp android_action?(req) do
-    name = req["tool_name"] || ""
-    String.starts_with?(to_string(name), "android_")
+    Handbeam.ArtifactDelivery.tool?(req["tool_name"] || "")
   end
 
   def render(chat, error, snapshots \\ %{}) do
@@ -237,7 +236,7 @@ defmodule HandbeamProbe.NativeApproval do
             do:
               text(
                 gettext(
-                  "If you approve only one Android action, the other Android actions are skipped this round and the Agent has to request them again; this is not recorded as a deny by you."
+                  "If you approve only one system open or share action, the other open or share actions are skipped this round and the Agent has to request them again; this is not recorded as a deny by you."
                 ),
                 text_size: 11,
                 padding: 8
@@ -312,7 +311,7 @@ defmodule HandbeamProbe.NativeApproval do
 
   defp snapshot_line(req, snap) do
     cond do
-      not Handbeam.Android.Tools.file_action?(req["tool_name"] || "") ->
+      not Handbeam.ArtifactDelivery.file_tool?(req["tool_name"] || "") ->
         nil
 
       is_map(snap) ->
@@ -333,7 +332,7 @@ defmodule HandbeamProbe.NativeApproval do
 
   defp file_snapshots_ready?(reqs, snapshots) do
     reqs
-    |> Enum.filter(&Handbeam.Android.Tools.file_action?(&1["tool_name"] || ""))
+    |> Enum.filter(&Handbeam.ArtifactDelivery.file_tool?(&1["tool_name"] || ""))
     |> Enum.all?(fn req -> Map.has_key?(snapshots, req["tool_call_id"]) end)
   end
 

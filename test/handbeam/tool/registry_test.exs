@@ -102,11 +102,12 @@ defmodule Handbeam.Tool.RegistryTest do
       refute "run_elixir_script" in names
     end
 
-    test "webview host seeds browser and preview_serve for Registry.get" do
+    test "webview host seeds browser and preview_serve only for declared backends" do
       Handbeam.Host.put!(%{
         shell: false,
-        desktop_browser: false,
-        webview_browser: true,
+        browser_backend: :webview,
+        artifact_delivery_backend: Handbeam.ArtifactDelivery,
+        host_script: true,
         beam_eval: false,
         packaged_mix_toolchain: true
       })
@@ -115,11 +116,13 @@ defmodule Handbeam.Tool.RegistryTest do
       names = Enum.map(mods, & &1.name())
       assert "browser" in names
       assert "preview_serve" in names
-      assert "android_open_url" in names
-      assert "android_open_file" in names
-      assert "android_share_file" in names
+      assert "open_url" in names
+      assert "open_file" in names
+      assert "share_file" in names
       assert "run_elixir_script" in names
-      for tool <- ~w(web_fetch skill task job_status job_cancel), do: assert(tool in names)
+      for tool <- ~w(web_fetch skill task job_status job_cancel create_thread send_thread_message),
+          do: assert(tool in names)
+
       assert "mix_project" in names
       refute "git" in names
       refute "bash" in names
@@ -133,8 +136,8 @@ defmodule Handbeam.Tool.RegistryTest do
              )
 
       assert match?(
-               {:ok, %{module: Handbeam.Tool.Builtin.AndroidOpenUrl}},
-               Registry.get("android_open_url")
+               {:ok, %{module: Handbeam.Tool.Builtin.OpenUrl}},
+               Registry.get("open_url")
              )
 
       assert match?(
@@ -146,8 +149,7 @@ defmodule Handbeam.Tool.RegistryTest do
     test "host-provided Git backend enables the builtin git tool" do
       Handbeam.Host.put!(%{
         shell: false,
-        desktop_browser: false,
-        webview_browser: true,
+        browser_backend: :webview,
         git_backend: Handbeam.Git.CLI
       })
 

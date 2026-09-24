@@ -1,15 +1,32 @@
-defmodule Handbeam.Android.Intent do
+defmodule Handbeam.ArtifactDelivery do
   @moduledoc """
-  Host dispatch for typed Android UI actions. Never accepts raw Intent fields.
+  Host dispatch for typed system-UI actions.
+
+  The public tools are `open_url`, `open_file`, and `share_file`. Success means
+  the host presented system UI, not that a page loaded, a file was read, or a
+  share completed. Raw platform intent fields are rejected.
   """
+
+  alias Handbeam.Host
+
+  @tool_names ~w(open_url open_file share_file)
+  @file_tools ~w(open_file share_file)
+
+  @doc "Public system-UI tool names. Registration still requires an artifact delivery backend."
+  def tool_names, do: @tool_names
+
+  def tool?(name), do: name in @tool_names
+
+  def file_tool?(name), do: name in @file_tools
 
   @spec dispatch(map(), map()) :: {:ok, map()} | {:error, term()}
   def dispatch(command, context) when is_map(command) and is_map(context) do
     if raw_intent?(command) do
       {:error, :raw_intent_rejected}
     else
-      case Application.get_env(:handbeam, :android_intent) do
+      case Host.artifact_delivery_backend() do
         fun when is_function(fun, 2) -> fun.(command, context)
+        Handbeam.ArtifactDelivery -> {:error, :unavailable}
         mod when is_atom(mod) and not is_nil(mod) -> mod.dispatch(command, context)
         _ -> {:error, :unavailable}
       end

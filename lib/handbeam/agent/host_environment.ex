@@ -13,15 +13,11 @@ defmodule Handbeam.Agent.HostEnvironment do
       %{id: :workspace_files, source: :host_independent},
       %{id: if(Host.shell?(), do: :shell, else: :no_shell), source: :host_shell},
       mix_section(),
-      %{id: browser_section(), source: :host_browser}
+      %{id: browser_section(), source: :host_browser},
+      script_section(),
+      delivery_section()
     ]
     |> Enum.reject(&is_nil/1)
-    |> Kernel.++(
-      if(Host.system_intents?(),
-        do: [%{id: :host_scripts_and_intents, source: :host_system_intents}],
-        else: []
-      )
-    )
   end
 
   @doc "Compose a compact environment contract without inferring capabilities from the OS."
@@ -33,24 +29,26 @@ defmodule Handbeam.Agent.HostEnvironment do
   end
 
   defp browser_section do
-    cond do
-      Host.desktop_browser?() -> :desktop_browser
-      Host.webview_browser?() -> :webview_browser
-      true -> :no_browser
+    case Host.browser_backend() do
+      :cli -> :desktop_browser
+      :webview -> :webview_browser
+      _ -> :no_browser
     end
   end
 
+  defp script_section do
+    if Host.host_script?(),
+      do: %{id: :host_script, source: :host_script}
+  end
+
+  defp delivery_section do
+    if Host.artifact_delivery_backend(),
+      do: %{id: :artifact_delivery, source: :artifact_delivery_backend}
+  end
+
   defp mix_section do
-    cond do
-      Host.packaged_mix_toolchain?() ->
-        %{id: :mix_project, source: :host_packaged_mix_toolchain}
-
-      Host.shell?() ->
-        %{id: :system_mix, source: :host_shell}
-
-      true ->
-        nil
-    end
+    if Host.packaged_mix_toolchain?(),
+      do: %{id: :mix_project, source: :host_packaged_mix_toolchain}
   end
 
   defp text(:workspace_files) do
@@ -61,7 +59,8 @@ defmodule Handbeam.Agent.HostEnvironment do
 
   defp text(:shell) do
     "The host permits the bash backend when exposed. Prefer file tools for file operations. " <>
-      "This does not guarantee installed commands, a Linux environment, or a sandbox."
+      "This does not guarantee installed commands, a Linux environment, or a sandbox. " <>
+      "Read the repository's own workflow and choose make, mise, mix, git, or another command; the prompt does not require one of them."
   end
 
   defp text(:no_shell) do
@@ -74,16 +73,16 @@ defmodule Handbeam.Agent.HostEnvironment do
       "It executes on the host BEAM, not in a shell or sandbox. Only host-compatible pure Elixir/Erlang dependencies are supported; arbitrary NIFs and external builds are not supported."
   end
 
-  defp text(:system_mix) do
-    "This desktop host does not expose the packaged `mix_project` tool. Use the machine's `mix`, `elixir`, and `erl` through `bash`; their availability and versions come from the host PATH."
-  end
-
-  defp text(:host_scripts_and_intents) do
+  defp text(:host_script) do
     "For local computation, file processing or HTTP, use `run_elixir_script` when exposed: write the .exs first, then execute and verify outputs. " <>
       "It receives workspace and args bindings and runs high-privilege host BEAM code, not a shell or sandbox. " <>
       "When Mix is present, use Mix.install/2 at the top of the script for host-compatible pure Elixir/Erlang packages. " <>
-      "Follow the script tool environment for Mix/Hex availability and curated APIs (Handbeam.Tool.ScriptEnvironment). " <>
-      "System open/share tools launch native UI, not an agent browser session; configured callbacks do not guarantee a successful operation."
+      "Follow the script tool environment for Mix/Hex availability and curated APIs (Handbeam.Tool.ScriptEnvironment)."
+  end
+
+  defp text(:artifact_delivery) do
+    "System open/share tools (`open_url`, `open_file`, `share_file`) launch native UI, not an agent browser session. " <>
+      "Success means the system UI was shown, not that a page loaded, a file was read, or a share completed."
   end
 
   defp text(:desktop_browser),
@@ -104,7 +103,7 @@ defmodule Handbeam.Agent.HostEnvironment do
         "The git tool uses the host-provided Git backend. Registration does not prove native dependencies are usable."
 
       Host.shell?() ->
-        "Use `git` through bash for Git operations on this desktop host; there is no separate git tool."
+        "There is no separate git or mix tool. When `bash` is exposed, follow the repository's documented command-line workflow and choose the command yourself; do not assume git or mix must be used."
 
       true ->
         "This host exposes neither bash nor a Git backend. Do not assume Git operations are available."

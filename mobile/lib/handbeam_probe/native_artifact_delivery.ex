@@ -11,7 +11,7 @@ defmodule HandbeamProbe.NativeArtifactDelivery do
 
     * UI tap (`HomeScreen.Delivery`, `NativeWorkspaceOpen`): `start_file_action/3`
       exports, the `:delivery_export` reply continues into `present/6`.
-    * Agent tool (`android_open_file` / `android_share_file`):
+    * Agent tool (`open_file` / `share_file`):
       `start_approval_exports/2` exports at approval time and stores the
       snapshot in `Handbeam.ExportSnapshot.Binding`; `HandbeamProbe.AndroidIntent`
       later builds the present step with `Platform.present_request/6` from
@@ -25,7 +25,8 @@ defmodule HandbeamProbe.NativeArtifactDelivery do
   use Gettext, backend: HandbeamProbe.Gettext
   import HandbeamProbe.NativeUI
 
-  alias Handbeam.Android.{Intent, Url}
+  alias Handbeam.ArtifactDelivery
+  alias Handbeam.ArtifactDelivery.Url
   alias Handbeam.ExportSnapshot.Binding
   alias Handbeam.Security.PathValidator
   alias Handbeam.TranscriptEntry
@@ -102,9 +103,13 @@ defmodule HandbeamProbe.NativeArtifactDelivery do
     ]
   end
 
-  def outcome_notice("ui_presented"), do: Intent.format_outcome("ui_presented")
-  def outcome_notice("chooser_presented"), do: Intent.format_outcome("chooser_presented")
-  def outcome_notice(other), do: Intent.format_outcome(to_string(other || "outcome_unknown"))
+  def outcome_notice("ui_presented"), do: ArtifactDelivery.format_outcome("ui_presented")
+
+  def outcome_notice("chooser_presented"),
+    do: ArtifactDelivery.format_outcome("chooser_presented")
+
+  def outcome_notice(other),
+    do: ArtifactDelivery.format_outcome(to_string(other || "outcome_unknown"))
 
   def start_open_url(socket, url) do
     case Url.parse(url) do
@@ -182,7 +187,7 @@ defmodule HandbeamProbe.NativeArtifactDelivery do
 
   @doc """
   Export step of the artifact sequence for the Agent tool path: pin one
-  snapshot per pending `android_open_file` / `android_share_file` request so
+  snapshot per pending `open_file` / `share_file` request so
   approval never reads a source file that is rewritten afterwards.
   """
   def start_approval_exports(socket, chat) do
@@ -299,11 +304,11 @@ defmodule HandbeamProbe.NativeArtifactDelivery do
     workspace = if is_binary(workspace), do: workspace, else: entry["workspace_path"]
 
     cond do
-      name == "android_open_url" or name == "browser" ->
+      name == "open_url" or name == "browser" ->
         url = Enum.find_value([input, details], & &1["url"])
         if is_binary(url), do: {:url, url}, else: nil
 
-      name in ["write", "edit", "android_open_file", "android_share_file"] ->
+      name in ["write", "edit", "open_file", "share_file"] ->
         path =
           Payload.first(input, ["path", "file_path"]) ||
             Payload.first(details, ["file_path", "relative_path"])
@@ -413,9 +418,9 @@ defmodule HandbeamProbe.NativeArtifactDelivery do
   defp requests(nil), do: []
   defp requests(pending), do: pending["action_requests"] || []
 
-  defp file_tool?(req), do: Handbeam.Android.Tools.file_action?(req["tool_name"] || "")
+  defp file_tool?(req), do: Handbeam.ArtifactDelivery.file_tool?(req["tool_name"] || "")
 
-  defp file_action("android_share_file"), do: :share_file
+  defp file_action("share_file"), do: :share_file
   defp file_action(_), do: :open_file
 
   defp same_workspace?(a, b) when is_binary(a) and is_binary(b),
@@ -501,7 +506,10 @@ defmodule HandbeamProbe.NativeArtifactDelivery do
   def human_error(:timeout),
     do: gettext("The system operation did not answer in time and was cancelled.")
 
-  def human_error(reason) when is_binary(reason), do: Intent.format_outcome(reason)
-  def human_error(reason) when is_atom(reason), do: Intent.format_outcome(Atom.to_string(reason))
-  def human_error(reason), do: Intent.format_outcome(inspect(reason))
+  def human_error(reason) when is_binary(reason), do: ArtifactDelivery.format_outcome(reason)
+
+  def human_error(reason) when is_atom(reason),
+    do: ArtifactDelivery.format_outcome(Atom.to_string(reason))
+
+  def human_error(reason), do: ArtifactDelivery.format_outcome(inspect(reason))
 end

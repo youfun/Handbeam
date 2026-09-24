@@ -28,8 +28,8 @@ must not merge a switched draft. Copy jobs are supervised (`ShareCopy`);
 recursive cleanup/rollback is backgrounded. Neither confirmation sends a message. The review card shows the current
 workspace name and conversation title (empty title reads as a new
 conversation). The composer is chat-only. Camera/document picker/voice remain
-later work. System-browser open (`android_open_url`) and
-artifact open/share (`android_open_file` / `android_share_file`) are wired through
+later work. System-browser open (`open_url`) and
+artifact open/share (`open_file` / `share_file`) are wired through
 ExportSnapshot + isolated FileProvider; they report UI presentation only.
 Assistant long-press still offers `复制全文`. Chat bubbles do not show a
 **Share text** button. Artifact **Share file** still goes through
@@ -155,8 +155,10 @@ wire `generation` must match and the scope (`:composer`, `:workspace_open`,
 otherwise the reply is dropped. Deadlines send `{:pending_request_timeout, ref}`.
 
 `HandbeamProbe.App` writes `Handbeam.Host` once at boot. Desktop Mix never sets
-`:host`, so shell/browser stay on. The phone sets `shell/terminal/desktop_browser/
-beam_eval` false, `mcp/webview_browser` true, `system_intents` true, and
+`:host`, so shell and the CLI browser backend stay on. The phone sets
+`shell/terminal/beam_eval` false, `mcp` true, `browser_backend: :webview`,
+`artifact_delivery_backend: HandbeamProbe.AndroidIntent`,
+`host_script: true`, and
 `directory_picker: HandbeamProbe.DirectoryPicker`. Do not sniff `MOB_DATA_DIR` in
 Handbeam. MCP settings share `Handbeam.MCP.Settings` with WebUI. Mobile supports
 HTTP MCP only; stdio is rejected by the runtime when `Host.shell?()` is false.
@@ -170,8 +172,8 @@ Workspace permissions are checked at discovery and invocation, not just in UI.
 `code_search` is the same root `Handbeam.CodeIndex` as desktop. It is an unconditional builtin seed. Keyword search does not need a shell or Git. Do not start a full index in `on_start`.
 
 Do not register Terminal or bash on device. `run_elixir_script` is
-seeded with `Host.system_intents?` (falls back to `webview_browser?` when
-undeclared): Agent writes a workspace `.exs` via `write`/`edit`, then evaluates
+seeded only when the host sets `host_script: true`. The tool evaluates the script; the flag is not a callback. It is independent of
+the WebView browser and of artifact delivery. Agent writes a workspace `.exs` via `write`/`edit`, then evaluates
 it on the installed Android OTP with `args`/`workspace` bindings (no
 `System.argv`, no global `File.cd`). It is host-privileged, not `beam_eval`
 and not a sandbox. The independent WebView

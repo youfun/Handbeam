@@ -810,7 +810,7 @@ msgstr ""
 
 #: lib/sigil_probe/native_approval.ex:239
 #, elixir-autogen, elixir-format
-msgid "If you approve only one Android action, the other Android actions are skipped this round and the Agent has to request them again; this is not recorded as a deny by you."
+msgid "If you approve only one system open or share action, the other open or share actions are skipped this round and the Agent has to request them again; this is not recorded as a deny by you."
 msgstr ""
 
 #: lib/sigil_probe/native_approval.ex:274

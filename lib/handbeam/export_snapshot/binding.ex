@@ -110,8 +110,6 @@ defmodule Handbeam.ExportSnapshot.Binding do
   defp normalize_action(action) when action in [:open_file, :share_file], do: action
   defp normalize_action("open_file"), do: :open_file
   defp normalize_action("share_file"), do: :share_file
-  defp normalize_action("android_open_file"), do: :open_file
-  defp normalize_action("android_share_file"), do: :share_file
   defp normalize_action(_), do: nil
 
   defp field(map, key), do: map[key] || map[Atom.to_string(key)]

@@ -1,7 +1,7 @@
-defmodule Handbeam.Android.UrlTest do
+defmodule Handbeam.ArtifactDelivery.UrlTest do
   use ExUnit.Case, async: true
 
-  alias Handbeam.Android.Url
+  alias Handbeam.ArtifactDelivery.Url
 
   test "accepts absolute http and https hosts" do
     assert {:ok, "https://example.com/docs"} = Url.parse("https://example.com/docs")

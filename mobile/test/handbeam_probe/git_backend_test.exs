@@ -14,9 +14,9 @@ defmodule HandbeamProbe.GitBackendTest do
     Handbeam.Host.put!(%{
       shell: false,
       terminal: false,
-      desktop_browser: false,
-      webview_browser: true,
-      system_intents: true,
+      browser_backend: :webview,
+      artifact_delivery_backend: Handbeam.ArtifactDelivery,
+      host_script: true,
       git_backend: Handbeam.Git.ExGit
     })
 

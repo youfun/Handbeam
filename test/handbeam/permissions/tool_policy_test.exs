@@ -210,89 +210,89 @@ defmodule Handbeam.Permissions.ToolPolicyTest do
                :auto
     end
 
-    test "android intent tools prompt in full access unless explicitly allowed or denied" do
+    test "system open and share tools prompt in full access unless explicitly allowed or denied" do
       auto = ToolPolicy.from_settings(%{"tools" => %{"default_mode" => "auto"}})
 
-      assert ToolPolicy.decision(auto, call("android_open_url", %{"url" => "https://a.com"})) ==
+      assert ToolPolicy.decision(auto, call("open_url", %{"url" => "https://a.com"})) ==
                :prompt
 
-      assert ToolPolicy.decision(auto, call("android_open_file", %{"path" => "a.pdf"})) ==
+      assert ToolPolicy.decision(auto, call("open_file", %{"path" => "a.pdf"})) ==
                :prompt
 
-      assert ToolPolicy.decision(auto, call("android_share_file", %{"path" => "a.pdf"})) ==
+      assert ToolPolicy.decision(auto, call("share_file", %{"path" => "a.pdf"})) ==
                :prompt
 
       # "Always allow" appends to the workspace allow list; only that tool changes.
       always =
         ToolPolicy.from_settings(%{
-          "tools" => %{"default_mode" => "auto", "allow" => ["android_open_url"]}
+          "tools" => %{"default_mode" => "auto", "allow" => ["open_url"]}
         })
 
-      assert ToolPolicy.decision(always, call("android_open_url", %{"url" => "https://a.com"})) ==
+      assert ToolPolicy.decision(always, call("open_url", %{"url" => "https://a.com"})) ==
                :auto
 
-      assert ToolPolicy.decision(always, call("android_open_file", %{"path" => "a.pdf"})) ==
+      assert ToolPolicy.decision(always, call("open_file", %{"path" => "a.pdf"})) ==
                :prompt
 
-      assert ToolPolicy.decision(always, call("android_share_file", %{"path" => "a.pdf"})) ==
+      assert ToolPolicy.decision(always, call("share_file", %{"path" => "a.pdf"})) ==
                :prompt
 
       # "Allow for this session" writes a session override.
       session =
         ToolPolicy.from_settings(%{"tools" => %{"default_mode" => "auto"}}, %{
-          "android_share_file" => :auto
+          "share_file" => :auto
         })
 
-      assert ToolPolicy.decision(session, call("android_share_file", %{"path" => "a.pdf"})) ==
+      assert ToolPolicy.decision(session, call("share_file", %{"path" => "a.pdf"})) ==
                :auto
 
-      assert ToolPolicy.decision(session, call("android_open_url", %{"url" => "https://a.com"})) ==
+      assert ToolPolicy.decision(session, call("open_url", %{"url" => "https://a.com"})) ==
                :prompt
 
       denied =
         ToolPolicy.from_settings(%{
-          "tools" => %{"default_mode" => "auto", "deny" => ["android_open_url"]}
+          "tools" => %{"default_mode" => "auto", "deny" => ["open_url"]}
         })
 
-      assert ToolPolicy.decision(denied, call("android_open_url", %{"url" => "https://a.com"})) ==
+      assert ToolPolicy.decision(denied, call("open_url", %{"url" => "https://a.com"})) ==
                :deny
 
       per_tool_denied =
         ToolPolicy.from_settings(%{
           "tools" => %{
             "default_mode" => "auto",
-            "allow" => ["android_open_file"],
-            "per_tool" => %{"android_open_file" => "deny"}
+            "allow" => ["open_file"],
+            "per_tool" => %{"open_file" => "deny"}
           }
         })
 
-      assert ToolPolicy.decision(per_tool_denied, call("android_open_file", %{"path" => "a.pdf"})) ==
+      assert ToolPolicy.decision(per_tool_denied, call("open_file", %{"path" => "a.pdf"})) ==
                :deny
 
       session_denied =
         ToolPolicy.from_settings(
-          %{"tools" => %{"default_mode" => "auto", "allow" => ["android_open_url"]}},
-          %{"android_open_url" => :deny}
+          %{"tools" => %{"default_mode" => "auto", "allow" => ["open_url"]}},
+          %{"open_url" => :deny}
         )
 
       assert ToolPolicy.decision(
                session_denied,
-               call("android_open_url", %{"url" => "https://a.com"})
+               call("open_url", %{"url" => "https://a.com"})
              ) == :deny
     end
 
-    test "android intent tools still prompt in safe mode and honor allow rules there" do
+    test "system open and share tools still prompt in safe mode and honor allow rules there" do
       prompt = ToolPolicy.from_settings(%{"tools" => %{"default_mode" => "prompt"}})
 
-      assert ToolPolicy.decision(prompt, call("android_open_url", %{"url" => "https://a.com"})) ==
+      assert ToolPolicy.decision(prompt, call("open_url", %{"url" => "https://a.com"})) ==
                :prompt
 
       allowed =
         ToolPolicy.from_settings(%{
-          "tools" => %{"default_mode" => "prompt", "allow" => ["android_open_url"]}
+          "tools" => %{"default_mode" => "prompt", "allow" => ["open_url"]}
         })
 
-      assert ToolPolicy.decision(allowed, call("android_open_url", %{"url" => "https://a.com"})) ==
+      assert ToolPolicy.decision(allowed, call("open_url", %{"url" => "https://a.com"})) ==
                :auto
     end
 

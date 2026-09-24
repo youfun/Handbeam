@@ -1,17 +1,17 @@
-defmodule Handbeam.Tool.Builtin.AndroidShareFile do
+defmodule Handbeam.Tool.Builtin.ShareFile do
   @moduledoc "Share a workspace artifact via a fixed ExportSnapshot and the system chooser."
 
   @behaviour Handbeam.Agent.Tool
 
-  alias Handbeam.Tool.Builtin.AndroidFile
+  alias Handbeam.Tool.Builtin.ArtifactFile
 
   @impl true
-  def name, do: "android_share_file"
+  def name, do: "share_file"
 
   @impl true
   def description do
     "Share a workspace file (report, image, PDF, or code archive) through the " <>
-      "system share sheet so the user can hand it to WeChat, mail, or a drive app. " <>
+      "system share sheet so the user can hand it to another app. " <>
       "Pass only a workspace-relative path. The approved bytes come from a fixed " <>
       "export copy. Success means the chooser was shown, not that the file was sent."
   end
@@ -41,5 +41,5 @@ defmodule Handbeam.Tool.Builtin.AndroidShareFile do
   def concurrent?, do: false
 
   @impl true
-  def execute(input, context), do: AndroidFile.execute(:share_file, input, context)
+  def execute(input, context), do: ArtifactFile.execute(:share_file, input, context)
 end

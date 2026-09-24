@@ -1,10 +1,15 @@
 defmodule Handbeam.Tool.Builtin.Browser do
   @moduledoc """
-  Native browser tool.
+  Public browser tool.
 
-  Desktop Mix keeps the `args` + `agent-browser` schema.
-  Android / ARC (`webview_browser: true`, `desktop_browser: false`)
-  uses a narrow `action` schema against an independent WebView session.
+  The host fixes `browser_backend` before registry init:
+
+  * `:cli` keeps the `args` + `agent-browser` schema.
+  * `:webview` uses a narrow `action` schema against an independent WebView
+    session. That is not the system browser; use `open_url` for system UI.
+
+  Execute uses the backend fixed at startup. It does not re-guess from the
+  OS, host, or input shape.
   """
 
   @behaviour Handbeam.Agent.Tool
@@ -19,26 +24,24 @@ defmodule Handbeam.Tool.Builtin.Browser do
 
   @impl true
   def description do
-    if Handbeam.Host.webview_browser?() do
-      "Drive the on-device Agent WebView. Pass action (open, snapshot, eval, " <>
-        "click, fill, back, show, hide, close). This is not the system browser. " <>
-        "Use android_open_url when the user should leave Handbeam and open http(s) " <>
-        "in Chrome or another installed browser."
-    else
-      "Drive a real browser for web research, reading live docs, clicking, " <>
-        "filling forms, taking screenshots, and extracting page content. " <>
-        "Pass CLI args after agent-browser (for example open, snapshot -i, click @eN). " <>
-        "Do not include --json or the binary name."
+    case backend() do
+      :webview ->
+        "Drive the on-device Agent WebView. Pass action (open, snapshot, eval, " <>
+          "click, fill, back, show, hide, close). This is not the system browser. " <>
+          "Use open_url when the user should leave Handbeam and open http(s) " <>
+          "in the installed system browser."
+
+      _ ->
+        "Drive a real browser for web research, reading live docs, clicking, " <>
+          "filling forms, taking screenshots, and extracting page content. " <>
+          "Pass CLI args after agent-browser (for example open, snapshot -i, click @eN). " <>
+          "Do not include --json or the binary name."
     end
   end
 
   @impl true
   def input_schema do
-    if Handbeam.Host.webview_browser?() do
-      mobile_schema()
-    else
-      desktop_schema()
-    end
+    if backend() == :webview, do: mobile_schema(), else: desktop_schema()
   end
 
   @impl true
@@ -49,23 +52,45 @@ defmodule Handbeam.Tool.Builtin.Browser do
 
   @impl true
   def execute(input, context) when is_map(input) and is_map(context) do
-    if webview_backend?(context, input) do
-      execute_webview(input, context)
-    else
-      execute_desktop(input, context)
+    case backend() do
+      :webview -> execute_webview(input, context)
+      :cli -> execute_desktop(input, context)
+      _ -> {:error, "browser backend is not configured"}
     end
   end
 
   def execute(_input, _context), do: {:error, "invalid browser input"}
 
-  defp webview_backend?(context, input) do
-    cond do
-      context[:browser_backend] == :webview -> true
-      Handbeam.Host.webview_browser?() -> true
-      is_function(context[:browser_webview_runner], 2) -> true
-      field(input, "action") && is_nil(field(input, "args")) -> true
-      true -> false
+  @doc """
+  Backend fixed at startup.
+
+  Before `fix_backend!/0`, readers see the current host declaration. After it,
+  a later host change cannot move schema or execution between CLI and WebView.
+  `nil` means the host declared no browser.
+  """
+  @spec backend() :: :cli | :webview | nil
+  def backend do
+    case :persistent_term.get({__MODULE__, :backend}, :unfixed) do
+      :unfixed -> Handbeam.Host.browser_backend()
+      backend -> backend
     end
+  end
+
+  @doc """
+  Freeze the backend selected at registry init.
+
+  Later host changes must not change this tool's schema or execution path.
+  Tests that need another backend call `release_backend!/0` first.
+  """
+  def fix_backend! do
+    :persistent_term.put({__MODULE__, :backend}, Handbeam.Host.browser_backend())
+    :ok
+  end
+
+  @doc false
+  def release_backend! do
+    :persistent_term.erase({__MODULE__, :backend})
+    :ok
   end
 
   defp execute_desktop(input, context) do

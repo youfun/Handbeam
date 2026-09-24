@@ -82,7 +82,7 @@ defmodule Handbeam.Jobs.RunnerIntegrationTest do
 
       input =
         if unquote(tool == Handbeam.Tool.Builtin.RunElixirScript) do
-          Handbeam.Host.put!(%{shell: false, system_intents: true, desktop_browser: false})
+          Handbeam.Host.put!(%{shell: false, host_script: true, browser_backend: nil})
 
           File.write!(
             Path.join(dir, "wait.exs"),

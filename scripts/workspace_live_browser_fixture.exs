@@ -133,7 +133,7 @@ File.write!(
   })
 )
 
-Handbeam.Host.put!(%{data_dir: home, shell: false, mcp: false, desktop_browser: false})
+Handbeam.Host.put!(%{data_dir: home, shell: false, mcp: false, browser_backend: nil})
 
 endpoint_cfg =
   Application.get_env(:handbeam, HandbeamWeb.Endpoint)

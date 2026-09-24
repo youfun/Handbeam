@@ -6,6 +6,7 @@ defmodule Handbeam.Permissions.Remember do
   @spec pattern(map()) :: String.t()
   def pattern(call) when is_map(call) do
     name = normalize_name(call[:name] || call["name"])
+
     input = call[:input] || call["input"] || %{}
     do_pattern(name, input)
   end

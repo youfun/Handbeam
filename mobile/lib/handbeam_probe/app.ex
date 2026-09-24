@@ -106,9 +106,9 @@ defmodule HandbeamProbe.App do
       priv_dir: priv_dir,
       shell: false,
       terminal: false,
-      desktop_browser: false,
-      webview_browser: true,
-      system_intents: true,
+      browser_backend: :webview,
+      artifact_delivery_backend: HandbeamProbe.AndroidIntent,
+      host_script: true,
       directory_picker: HandbeamProbe.DirectoryPicker,
       script_http: :platform_dns_ca,
       dns_resolver: &HandbeamProbe.ReqDNS.resolve/1,
@@ -133,7 +133,6 @@ defmodule HandbeamProbe.App do
     Application.put_env(:handbeam, :ecto_repos, [Handbeam.Repo])
     Application.put_env(:handbeam, :extension_hot_reload, false)
     Application.put_env(:handbeam, :trust_project_code, false)
-    Application.put_env(:handbeam, :android_intent, HandbeamProbe.AndroidIntent)
     Application.put_env(:handbeam, :notifier, :handbeam_notify)
 
     Application.put_env(:handbeam, Handbeam.Repo,

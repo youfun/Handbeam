@@ -92,24 +92,21 @@ defmodule Handbeam.Application do
   end
 
   defp browser_children do
-    desktop =
-      if Handbeam.Host.desktop_browser?() do
-        [Handbeam.Browser.Registry, Handbeam.Browser.Supervisor]
-      else
-        []
-      end
+    :ok = Handbeam.Tool.Builtin.Browser.fix_backend!()
 
-    webview =
-      if Handbeam.Host.webview_browser?() do
+    case Handbeam.Host.browser_backend() do
+      :cli ->
+        [Handbeam.Browser.Registry, Handbeam.Browser.Supervisor]
+
+      :webview ->
         [
           {Registry, keys: :unique, name: Handbeam.Browser.WebViewRegistry},
           Handbeam.Browser.WebViewSupervisor
         ]
-      else
-        []
-      end
 
-    desktop ++ webview
+      _ ->
+        []
+    end
   end
 
   defp mcp_children do

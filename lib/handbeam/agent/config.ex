@@ -272,7 +272,7 @@ defmodule Handbeam.Agent.Config do
         Handbeam.Host.shell?() ->
           "`read`, `edit`, `write`, `bash`, `file_search`, `code_search`"
 
-        Handbeam.Host.system_intents?() ->
+        Handbeam.Host.host_script?() ->
           "`read`, `edit`, `write`, `grep`, `file_search`, `code_search`, `run_elixir_script`"
 
         true ->

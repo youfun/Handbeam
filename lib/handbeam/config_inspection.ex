@@ -13,7 +13,8 @@ defmodule Handbeam.ConfigInspection do
   alias Handbeam.Permissions.ToolPolicy
   alias Handbeam.Tool.Registry
 
-  @capabilities ~w(shell terminal desktop_browser webview_browser system_intents beam_eval mcp dist packaged_mix_toolchain)a
+  @capabilities ~w(shell terminal beam_eval mcp dist packaged_mix_toolchain host_script)a
+  @backends ~w(browser_backend git_backend artifact_delivery_backend directory_picker)a
 
   @doc "Inspect this VM. `workspace` selects settings, not another host or a running conversation."
   @spec report(keyword()) :: map()
@@ -25,16 +26,16 @@ defmodule Handbeam.ConfigInspection do
 
     %{
       scope: :current_vm_not_a_run,
-      host: capabilities(),
+      host: Map.merge(capabilities(), backends()),
       tools: Enum.map(seeds, &tool(&1, registered)),
       registry: registry_summary(registered, seeds),
       model_visibility: %{status: :unknown, reason: :no_run_or_provider_request_inspected},
       execution: %{
         shell: shell_backend(),
-        desktop_browser: dependency(Host.desktop_browser?(), "agent-browser"),
-        webview: %{configured: Host.webview_browser?(), operational: :unknown},
-        script: %{configured: Host.system_intents?(), backend: :host_beam_not_sandbox},
-        mix_project: mix_project_backend(),
+        browser: browser_execution(),
+        script: script_execution(),
+        artifact_delivery: delivery_execution(),
+        mix_project: mix_project_backend(Host.source(:packaged_mix_toolchain)),
         git: git_backend(),
         code_index: code_index(workspace),
         mcp: %{configured: Host.mcp?(), operational: :unknown, reason: :not_probed}
@@ -44,9 +45,7 @@ defmodule Handbeam.ConfigInspection do
         reason: :entry_surface_is_not_execution_host,
         web_server_configured: endpoint_server(),
         native_picker_configured: not is_nil(Host.get(:directory_picker)),
-        native_intent_adapter_configured:
-          not is_nil(Application.get_env(:handbeam, :android_intent)),
-        source: :application_env,
+        source: Host.source(:directory_picker),
         operational: :unknown
       },
       approval: approval(workspace_settings),
@@ -81,23 +80,27 @@ defmodule Handbeam.ConfigInspection do
   end
 
   defp capabilities do
-    raw = Application.get_env(:handbeam, :host, %{})
-
     Map.new(@capabilities, fn key ->
-      value = apply(Host, String.to_existing_atom("#{key}?"), [])
-
-      source =
-        cond do
-          key == :webview_browser and Host.desktop_browser?() -> :desktop_browser_precedence
-          key == :system_intents and not is_boolean(raw[key]) -> :webview_browser_fallback
-          Map.has_key?(raw, key) -> :application_host
-          key in [:mcp, :dist] -> :host_build_environment_default
-          true -> :host_default
-        end
-
-      {key, %{configured: value == true, source: source}}
+      {key,
+       %{
+         configured: apply(Host, String.to_existing_atom("#{key}?"), []),
+         source: Host.source(key)
+       }}
     end)
   end
+
+  defp backends do
+    Map.new(@backends, fn key ->
+      value = Host.get(key)
+
+      {key,
+       %{configured: not is_nil(value), backend: backend_label(value), source: Host.source(key)}}
+    end)
+  end
+
+  defp backend_label(nil), do: :none
+  defp backend_label(value) when is_atom(value), do: value
+  defp backend_label(fun) when is_function(fun), do: :callback
 
   defp tool(seed, registered) do
     name = seed.module.name()
@@ -171,15 +174,93 @@ defmodule Handbeam.ConfigInspection do
   end
 
   defp git_backend do
-    if Code.ensure_loaded?(Handbeam.Git) and function_exported?(Handbeam.Git, :backend_kind, 0) do
+    case Host.get(:git_backend) do
+      nil ->
+        %{
+          configured: false,
+          backend: :none,
+          source: Host.source(:git_backend),
+          operational: :unknown
+        }
+
+      mod ->
+        %{
+          configured: true,
+          backend: git_kind(mod),
+          source: Host.source(:git_backend),
+          operational: :unknown,
+          reason: :not_probed
+        }
+    end
+  end
+
+  defp git_kind(Handbeam.Git.CLI), do: :host_git_cli
+  defp git_kind(Handbeam.Git.ExGit), do: :ex_git_libgit2
+  defp git_kind(_mod), do: :injected
+
+  defp browser_execution do
+    case Host.browser_backend() do
+      :cli ->
+        Map.merge(dependency(true, "agent-browser"), %{
+          backend: :cli,
+          source: Host.source(:browser_backend)
+        })
+
+      :webview ->
+        %{
+          configured: true,
+          backend: :webview,
+          source: Host.source(:browser_backend),
+          operational: :unknown
+        }
+
+      _ ->
+        %{
+          configured: false,
+          backend: :none,
+          source: Host.source(:browser_backend),
+          operational: :unknown,
+          reason: :host_capability_disabled
+        }
+    end
+  end
+
+  defp script_execution do
+    if Host.host_script?() do
       %{
-        backend: apply(Handbeam.Git, :backend_kind, []),
-        source: :host_default,
-        operational: :unknown,
-        reason: :not_probed
+        configured: true,
+        source: Host.source(:host_script),
+        implementation: :builtin_eval_not_sandbox,
+        dependency_available: :unknown,
+        run_authorized: :unknown
       }
     else
-      %{backend: :libgit2_not_shell, operational: :unknown}
+      %{
+        configured: false,
+        source: Host.source(:host_script),
+        reason: :host_capability_disabled
+      }
+    end
+  end
+
+  defp delivery_execution do
+    case Host.artifact_delivery_backend() do
+      nil ->
+        %{
+          configured: false,
+          backend: :none,
+          source: Host.source(:artifact_delivery_backend),
+          reason: :host_capability_disabled
+        }
+
+      _ ->
+        %{
+          configured: true,
+          backend: backend_label(Host.artifact_delivery_backend()),
+          source: Host.source(:artifact_delivery_backend),
+          operational: :unknown,
+          reason: :ui_presentation_only
+        }
     end
   end
 
@@ -200,15 +281,22 @@ defmodule Handbeam.ConfigInspection do
     end
   end
 
-  defp mix_project_backend do
+  defp mix_project_backend(source) do
     if Host.packaged_mix_toolchain?() do
-      %{configured: true, backend: :packaged_host_beam_not_shell, toolchain: toolchain()}
+      %{
+        configured: true,
+        backend: :packaged_host_beam_not_shell,
+        source: source,
+        toolchain: toolchain(),
+        dependency_available: :unknown,
+        run_authorized: :unknown
+      }
     else
       %{
         configured: false,
-        backend: :system_mix_via_shell,
-        dependency_available: :unknown,
-        reason: :desktop_uses_host_path
+        backend: :none,
+        source: source,
+        reason: :host_capability_disabled
       }
     end
   end

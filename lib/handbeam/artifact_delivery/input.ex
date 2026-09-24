@@ -1,4 +1,4 @@
-defmodule Handbeam.Android.Input do
+defmodule Handbeam.ArtifactDelivery.Input do
   @moduledoc false
 
   @blocked ~w(action component package flags extras intent class mimeType type)

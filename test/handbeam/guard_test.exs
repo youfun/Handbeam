@@ -1,13 +1,10 @@
 defmodule Handbeam.GuardTest do
   @moduledoc """
-  Guards against merge regressions in host-capability tool seeding
-  (tech-debt plan WP1, tightened by WP10).
+  Guards against merge regressions in host-capability tool seeding.
 
-  WP10 collapsed the two hand-maintained seed lists into one:
   `Handbeam.Tool.Registry.host_tool_modules/0` owns the list and
-  `Handbeam.Agent.default_tools/0` delegates to it. These tests fail if a merge
-  reintroduces a second copy that drifts, or re-gates the Android intent
-  tools on `webview_browser?` instead of `system_intents?`.
+  `Handbeam.Agent.default_tools/0` delegates to it. Host backends are independent:
+  a WebView browser does not imply artifact delivery or a host script runtime.
   """
 
   use ExUnit.Case, async: false
@@ -15,7 +12,8 @@ defmodule Handbeam.GuardTest do
   alias Handbeam.Agent
   alias Handbeam.Tool.Registry
 
-  @android_tools MapSet.new(~w(android_open_url android_open_file android_share_file))
+  @delivery_tools MapSet.new(~w(open_url open_file share_file))
+  @runtime_tools ~w(task task_status advisor create_thread find_thread read_thread get_thread_status send_thread_message reply_to_parent_thread mem_recall mem_learn)
 
   setup do
     previous = Application.get_env(:handbeam, :host)
@@ -32,52 +30,88 @@ defmodule Handbeam.GuardTest do
   test "Agent.default_tools/0 is the same list as Registry.host_tool_modules/0" do
     for host <- [
           nil,
-          %{shell: false, desktop_browser: false, webview_browser: true, beam_eval: false},
-          %{shell: false, desktop_browser: false, webview_browser: false, system_intents: true},
-          %{shell: true, desktop_browser: true, system_intents: false}
+          %{shell: false, browser_backend: :webview, beam_eval: false},
+          %{
+            shell: false,
+            browser_backend: nil,
+            artifact_delivery_backend: Handbeam.ArtifactDelivery,
+            host_script: false
+          },
+          %{shell: true, browser_backend: :cli, host_script: false}
         ] do
       put_host(host)
       assert Agent.default_tools() == Registry.host_tool_modules()
     end
   end
 
-  test "desktop defaults register no Android intent tools" do
+  test "desktop defaults register shell and CLI browser, not mobile backends" do
     put_host(nil)
-    assert android(Registry.host_tool_modules()) == MapSet.new()
-    refute "run_elixir_script" in names(Registry.host_tool_modules())
+    names = names(Registry.host_tool_modules())
+    assert "bash" in names
+    assert "browser" in names
+    assert delivery(Registry.host_tool_modules()) == MapSet.new()
+    refute "run_elixir_script" in names
+    refute "git" in names
+    refute "mix_project" in names
+    refute "preview_serve" in names
+    for tool <- @runtime_tools, do: assert(tool in names)
   end
 
-  test "Android intent tools and run_elixir_script are gated on system_intents?, not webview_browser?" do
+  test "script, artifact delivery, and browser backends register independently" do
     put_host(%{
       shell: false,
-      desktop_browser: false,
-      webview_browser: false,
-      system_intents: true
+      browser_backend: nil,
+      artifact_delivery_backend: Handbeam.ArtifactDelivery,
+      host_script: false
     })
 
     mods = Registry.host_tool_modules()
-    assert android(mods) == @android_tools
-    assert "run_elixir_script" in names(mods)
+    assert delivery(mods) == @delivery_tools
+    refute "run_elixir_script" in names(mods)
     refute "browser" in names(mods)
     refute "preview_serve" in names(mods)
 
     put_host(%{
       shell: false,
-      desktop_browser: false,
-      webview_browser: true,
-      system_intents: false
+      browser_backend: :webview,
+      artifact_delivery_backend: nil,
+      host_script: true
     })
 
     mods = Registry.host_tool_modules()
-    assert android(mods) == MapSet.new()
-    refute "run_elixir_script" in names(mods)
+    assert delivery(mods) == MapSet.new()
+    assert "run_elixir_script" in names(mods)
     assert "browser" in names(mods)
     assert "preview_serve" in names(mods)
   end
 
-  test "hosts that only declare webview_browser keep their Android tools (fallback)" do
-    put_host(%{shell: false, desktop_browser: false, webview_browser: true, beam_eval: false})
-    assert android(Registry.host_tool_modules()) == @android_tools
+  test "a webview browser alone does not imply delivery or scripts" do
+    put_host(%{shell: false, browser_backend: :webview, beam_eval: false})
+    names = names(Registry.host_tool_modules())
+    assert delivery(Registry.host_tool_modules()) == MapSet.new()
+    refute "run_elixir_script" in names
+    assert "browser" in names
+    assert "task" in names
+    assert "grep" in names
+  end
+
+  test "shell off does not remove runtime tools, and git off does not remove grep" do
+    put_host(%{
+      shell: false,
+      browser_backend: nil,
+      git_backend: nil,
+      packaged_mix_toolchain: false
+    })
+
+    names = names(Registry.host_tool_modules())
+    refute "bash" in names
+    refute "git" in names
+    refute "mix_project" in names
+
+    for tool <- ~w(read write edit grep file_search code_search web_fetch),
+        do: assert(tool in names)
+
+    for tool <- @runtime_tools, do: assert(tool in names)
   end
 
   defp put_host(nil), do: Application.delete_env(:handbeam, :host)
@@ -85,10 +119,10 @@ defmodule Handbeam.GuardTest do
 
   defp names(mods), do: Enum.map(mods, & &1.name())
 
-  defp android(mods) do
+  defp delivery(mods) do
     mods
     |> names()
-    |> Enum.filter(&String.starts_with?(&1, "android_"))
+    |> Enum.filter(&(&1 in @delivery_tools))
     |> MapSet.new()
   end
 end

@@ -1,7 +1,7 @@
 defmodule HandbeamProbe.AndroidIntent do
   @moduledoc """
-  `Application.get_env(:handbeam, :android_intent)` adapter: the thin layer
-  between `Handbeam.Android.Intent.dispatch/2` (Agent tools) and the platform
+  Host `:artifact_delivery_backend` adapter: the thin layer
+  between `Handbeam.ArtifactDelivery.dispatch/2` (Agent tools) and the platform
   NIF.
 
   It owns no request shape of its own. `open_url` is
@@ -134,7 +134,7 @@ defmodule HandbeamProbe.AndroidIntent do
     Application.get_env(:handbeam_probe, :android_intent_await_ms, @await_ms)
   end
 
-  # Body → the `{:ok, %{outcome: ...}}` contract `Handbeam.Tool.Builtin.Android*` reads.
+  # Body → the `{:ok, %{outcome: ...}}` contract open_url / open_file / share_file read.
   defp normalize({:ok, map}) when is_map(map) do
     snap = Inbound.snapshot(map)
 

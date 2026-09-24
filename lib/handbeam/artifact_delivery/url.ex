@@ -1,4 +1,4 @@
-defmodule Handbeam.Android.Url do
+defmodule Handbeam.ArtifactDelivery.Url do
   @moduledoc """
   Absolute http(s) URLs for the system browser. Not the Agent WebView.
   """

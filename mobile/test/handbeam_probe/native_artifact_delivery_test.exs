@@ -34,7 +34,7 @@ defmodule HandbeamProbe.NativeArtifactDeliveryTest do
       chat(dir, "c1", 1, [
         %{
           "tool_call_id" => "t1",
-          "tool_name" => "android_open_file",
+          "tool_name" => "open_file",
           "arguments" => %{"path" => "a.txt"}
         }
       ])

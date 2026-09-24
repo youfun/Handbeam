@@ -1417,8 +1417,8 @@ defmodule Handbeam.Agent.TurnPermissionTest do
         provider_config: %{}
       }
 
-      one = %{type: "tool_use", id: "a1", name: "android_open_url", input: %{}}
-      two = %{type: "tool_use", id: "a2", name: "android_share_file", input: %{}}
+      one = %{type: "tool_use", id: "a1", name: "open_url", input: %{}}
+      two = %{type: "tool_use", id: "a2", name: "share_file", input: %{}}
 
       state = %State{
         config: config,
@@ -1486,12 +1486,12 @@ defmodule Handbeam.Agent.TurnPermissionTest do
         provider_config: %{}
       }
 
-      android = %{type: "tool_use", id: "android_1", name: "android_open_url", input: %{}}
+      opened = %{type: "tool_use", id: "open_1", name: "open_url", input: %{}}
       auto = %{type: "tool_use", id: "read_1", name: "read", input: %{"file_path" => "x"}}
 
       state = %State{
         config: config,
-        messages: [Message.user("do"), Message.tool_use([android, auto])],
+        messages: [Message.user("do"), Message.tool_use([opened, auto])],
         turn: 1,
         status: :interrupted,
         error: nil,
@@ -1503,7 +1503,7 @@ defmodule Handbeam.Agent.TurnPermissionTest do
         provider_response_metadata: %{},
         interrupt_data: %{
           type: :tool_approval,
-          hitl_tool_call_ids: ["android_1"],
+          hitl_tool_call_ids: ["open_1"],
           auto_approved_tool_call_ids: ["read_1"]
         },
         tool_guard_overrides: %{},
@@ -1514,12 +1514,12 @@ defmodule Handbeam.Agent.TurnPermissionTest do
       result =
         Turn.resume_after_tool_approval(
           state,
-          [%{"tool_call_id" => "android_1", "action" => "deny"}],
+          [%{"tool_call_id" => "open_1", "action" => "deny"}],
           []
         )
 
       denied = result.tool_guard_result_blocks
-      assert Enum.any?(denied, &((&1[:tool_use_id] || &1["tool_use_id"]) == "android_1"))
+      assert Enum.any?(denied, &((&1[:tool_use_id] || &1["tool_use_id"]) == "open_1"))
       refute Enum.any?(denied, &((&1[:tool_use_id] || &1["tool_use_id"]) == "read_1"))
     end
 

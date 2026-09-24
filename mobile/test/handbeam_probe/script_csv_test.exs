@@ -50,7 +50,7 @@ defmodule HandbeamProbe.ScriptCSVTest do
     previous = Application.get_env(:handbeam, :host)
 
     try do
-      Handbeam.Host.put!(%{shell: false, system_intents: true})
+      Handbeam.Host.put!(%{shell: false, host_script: true})
       prompt = Handbeam.Tool.Builtin.RunElixirScript.description()
       assert prompt =~ "NimbleCSV.RFC4180 is installed"
       assert prompt =~ "skip_headers: false"
