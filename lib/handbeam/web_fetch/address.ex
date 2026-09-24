@@ -70,11 +70,25 @@ defmodule Handbeam.WebFetch.Address do
 
   def select_public(_), do: {:error, "DNS returned no usable addresses"}
 
+  @doc "True only for the benchmarking range proxies use as a Fake-IP token. Not public."
+  def fake_ip?({a, b, c, d} = ip)
+      when a in 0..255 and b in 0..255 and c in 0..255 and d in 0..255 do
+    in_network?(ip, {198, 18, 0, 0}, 15)
+  end
+
+  def fake_ip?(_), do: false
+
+  @doc "Resolve `host`, but an IP literal never reaches `resolver` or the network."
+  def resolve_with(host, deadline, resolver) when is_function(resolver, 2) do
+    case :inet.parse_address(String.to_charlist(host)) do
+      {:ok, ip} -> {:ok, [ip]}
+      {:error, _} -> resolver.(host, deadline)
+    end
+  end
+
   def public?({a, b, c, d} = ip)
       when a in 0..255 and b in 0..255 and c in 0..255 and d in 0..255 do
-    Enum.all?(@blocked_v4, fn {network, bits} ->
-      ipv4(ip) >>> (32 - bits) != ipv4(network) >>> (32 - bits)
-    end)
+    Enum.all?(@blocked_v4, fn {network, bits} -> not in_network?(ip, network, bits) end)
   end
 
   def public?({a, b, c, d, e, f, g, h})
@@ -86,6 +100,10 @@ defmodule Handbeam.WebFetch.Address do
   end
 
   def public?(_), do: false
+
+  defp in_network?(ip, network, bits) do
+    ipv4(ip) >>> (32 - bits) == ipv4(network) >>> (32 - bits)
+  end
 
   defp ipv4({a, b, c, d}), do: (a <<< 24) + (b <<< 16) + (c <<< 8) + d
 

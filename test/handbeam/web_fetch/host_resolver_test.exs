@@ -41,6 +41,14 @@ defmodule Handbeam.WebFetch.HostResolverTest do
 
     Handbeam.Host.put!(%{dns_resolver: fn _ -> {:ok, [{127, 0, 0, 1}]} end})
     assert {:error, _} = WebFetch.fetch("https://native.test/start", 100, request: request)
+
+    Handbeam.Host.put!(%{dns_resolver: fn _ -> {:ok, [{198, 18, 0, 4}]} end})
+
+    assert {:error, _} =
+             WebFetch.fetch("https://native.test/start", 100,
+               takeover: fn _ -> :tun end,
+               request: fn _, _, _ -> flunk("host network dialed a fake-ip") end
+             )
   end
 
   test "native resolution deadline stops waiting and literal IPs bypass the callback" do

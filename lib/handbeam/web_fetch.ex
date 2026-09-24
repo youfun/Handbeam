@@ -1,11 +1,18 @@
 defmodule Handbeam.WebFetch do
   @moduledoc """
-  Bounded public-web GET and local document extraction. Each redirect resolves
-  and validates its destination again, then connects directly to that IP.
-  No browser, API key, proxy or external extraction service is involved.
+  Bounded public-web GET and local document extraction.
+
+  Every redirect is parsed and checked again. Loopback, private literals,
+  link-local and cloud-metadata addresses are never requested.
+
+  Desktop does not assume a DNS answer is the origin address. Public answers
+  are still pinned. `198.18.0.0/15` stays non-public and is used only as a
+  Fake-IP routing token when the system TUN owns that range, or the hostname
+  is sent through the system HTTP proxy instead of dialing the token.
+  A host that supplies `dns_resolver` keeps the pinned public-address path.
   """
 
-  alias Handbeam.WebFetch.{Address, Document, HTTP}
+  alias Handbeam.WebFetch.{Address, Document}
 
   @doc "Fetch text from a public HTTP(S) URL. Options inject resolver/transport for tests."
   def fetch(url, max_chars \\ 20_000, opts \\ []) do
@@ -29,12 +36,7 @@ defmodule Handbeam.WebFetch do
   end
 
   defp follow(uri, deadline, redirects, opts) do
-    resolve = Keyword.get(opts, :resolve, &Address.resolve/2)
-    request = Keyword.get(opts, :request, &HTTP.get/3)
-
-    with {:ok, ips} <- resolve.(uri.host, deadline),
-         {:ok, ip} <- Address.select_public(ips),
-         {:ok, response} <- request.(uri, ip, deadline) do
+    with {:ok, response} <- backend(opts).get(uri, deadline, opts) do
       cond do
         response.status in [301, 302, 303, 307, 308] ->
           redirect(uri, response.headers, deadline, redirects, opts)
@@ -46,6 +48,17 @@ defmodule Handbeam.WebFetch do
           {:error, "HTTP status #{response.status}"}
       end
     end
+  end
+
+  defp backend(opts) do
+    case Keyword.get(opts, :network) do
+      module when is_atom(module) and not is_nil(module) -> module
+      _ -> if host_network?(), do: Handbeam.WebFetch.HostNetwork, else: Handbeam.WebFetch.Desktop
+    end
+  end
+
+  defp host_network? do
+    is_function(Handbeam.Host.get(:dns_resolver), 1)
   end
 
   defp redirect(_uri, _headers, _deadline, 0, _opts),
