@@ -33,4 +33,11 @@ defmodule Handbeam.JsonSafeTest do
 
     assert {:ok, _json} = Jason.encode(safe)
   end
+
+  test "replaces invalid UTF-8 in runtime binaries" do
+    safe = JsonSafe.normalize(%{output: <<"valid", 0xFF, "tail">>})
+
+    assert safe["output"] == "valid�tail"
+    assert {:ok, _json} = Handbeam.JSON.encode(safe)
+  end
 end

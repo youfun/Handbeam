@@ -443,6 +443,28 @@ defmodule Handbeam.Agent.TranscriptPersistenceTest do
     refute Map.has_key?(tool, "error")
   end
 
+  test "persists invalid UTF-8 in a tool error without crashing the run" do
+    {:ok, conversation} = Handbeam.ConversationStore.create("default", timeline: [])
+    conversation_id = conversation["id"]
+
+    assert :ok =
+             TranscriptPersistence.handle_event(
+               conversation_id,
+               {:tool_start, %{tool_use_id: "invalid-error", tool: "bash", input: %{}}}
+             )
+
+    assert :ok =
+             TranscriptPersistence.handle_event(
+               conversation_id,
+               {:tool_end,
+                %{tool_use_id: "invalid-error", tool: "bash", error: <<"failed", 0xFF>>}}
+             )
+
+    [entry] = Handbeam.ConversationStore.load_messages(conversation_id)
+    assert entry["tool_status"] == "error"
+    assert entry["tool_error"] == "failed�"
+  end
+
   test "redacts sensitive tool inputs before writing durable history" do
     {:ok, conversation} = Handbeam.ConversationStore.create("default", timeline: [])
 

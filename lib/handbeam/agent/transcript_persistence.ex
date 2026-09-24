@@ -107,8 +107,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
         "started_at" => now_iso8601()
       })
 
-    {:ok, _saved} = append_or_update(conversation_id, entry, opts)
-    :ok
+    with {:ok, _saved} <- append_or_update(conversation_id, entry, opts), do: :ok
   end
 
   def handle_event(conversation_id, {:tool_end, payload}, opts) when is_binary(conversation_id) do
@@ -144,8 +143,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
       })
       |> Map.merge(patch)
 
-    {:ok, _saved} = append_or_update(conversation_id, entry, opts)
-    :ok
+    with {:ok, _saved} <- append_or_update(conversation_id, entry, opts), do: :ok
   end
 
   def handle_event(conversation_id, {:candidate_message_injected, %{message_ids: ids}}, opts)
