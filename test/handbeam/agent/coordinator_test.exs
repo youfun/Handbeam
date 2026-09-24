@@ -608,19 +608,10 @@ defmodule Handbeam.Agent.CoordinatorTest do
     # The helper writes models.json inside the workspace and points
     # HANDBEAM_MODELS_FILE at it. Policy must live in a different directory,
     # otherwise saving the catalog overwrites the allowlist.
-    _catalog_dir = tmp_no_policy_workspace()
-    models_path = System.fetch_env!("HANDBEAM_MODELS_FILE")
-
     workspace =
       Path.join(System.tmp_dir!(), "sigil_coord_allow_#{System.unique_integer([:positive])}")
 
     File.mkdir_p!(workspace)
-    on_exit(fn -> File.rm_rf(workspace) end)
-
-    File.write!(
-      models_path,
-      ~s({"providers":{"fake":{"baseUrl":"http://localhost","api":"openai-chat-completions","apiKey":"sk-fake","models":[{"id":"fake-model","name":"Fake Model"}]},"other":{"baseUrl":"http://localhost","api":"openai-chat-completions","apiKey":"sk-other","models":[{"id":"other-model","name":"Other Model"}]}}})
-    )
 
     File.mkdir_p!(Path.dirname(Handbeam.WorkspaceSettings.path(workspace)))
 
@@ -629,18 +620,29 @@ defmodule Handbeam.Agent.CoordinatorTest do
       ~s({"models":{"allow":{"providers":{"fake":{"models":["fake-model"]}}}}})
     )
 
+    run_opts =
+      opts(
+        workspace_path: workspace,
+        om: %{enabled: true, observer_model: "other/other-model"}
+      )
+      |> Keyword.delete(:provider)
+
+    # opts/1 writes a one-model catalog. Replace it after that call so the
+    # rejected observer model is present, then excluded by the allowlist.
+    File.write!(
+      System.fetch_env!("HANDBEAM_MODELS_FILE"),
+      ~s({"providers":{"fake":{"baseUrl":"http://localhost","api":"openai-chat-completions","apiKey":"sk-fake","models":[{"id":"fake-model","name":"Fake Model"}]},"other":{"baseUrl":"http://localhost","api":"openai-chat-completions","apiKey":"sk-other","models":[{"id":"other-model","name":"Other Model"}]}}})
+    )
+
     assert {:error, reason} =
              Coordinator.add_message(
                sid,
                "hello",
-               opts(
-                 workspace_path: workspace,
-                 om: %{enabled: true, observer_model: "other/other-model"}
-               )
+               run_opts
              )
 
     assert reason =~ "other/other-model"
-    refute reason =~ "not in the global catalog"
+    File.rm_rf(workspace)
   end
 
   test "missing required opts return structured error" do

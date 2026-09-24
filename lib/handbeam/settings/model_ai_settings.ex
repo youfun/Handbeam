@@ -149,6 +149,24 @@ defmodule Handbeam.Settings.ModelAISettings do
   end
 
   @doc """
+  Drop an observational-memory model that is no longer in the catalog.
+
+  Nil means "same as the chat model" and is already safe. A model the catalog
+  still lists is kept, even when a workspace allowlist would reject it.
+  """
+  @spec drop_unknown_memory_model(t(), atom(), (String.t() -> boolean())) :: t()
+  def drop_unknown_memory_model(%__MODULE__{} = settings, field, known?)
+      when field in [:om_observer_model, :om_reflector_model] and is_function(known?, 1) do
+    model = Map.get(settings, field)
+
+    if is_binary(model) and model != "" and not known?.(model) do
+      Map.put(settings, field, nil)
+    else
+      settings
+    end
+  end
+
+  @doc """
   Resolve the advisor object carried by one settings layer.
 
   This does not apply workspace policy. Callers that need a runnable model
