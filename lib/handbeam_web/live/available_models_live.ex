@@ -15,6 +15,7 @@ defmodule HandbeamWeb.AvailableModelsLive do
   alias Handbeam.Agent.Provider.Codex.Models, as: CodexModels
   alias Handbeam.Agent.Provider.Cursor.Models, as: CursorModels
   alias Handbeam.Agent.ModelConfig
+  alias Handbeam.Agent.Reasoning
   alias Handbeam.LlmDbDefaults
 
   # ── Lifecycle ──────────────────────────────────────────────────────────
@@ -245,6 +246,7 @@ defmodule HandbeamWeb.AvailableModelsLive do
               "maxTokens" => parse_int(params["max_tokens"], 8192),
               "cost" => model_cost
             }
+            |> maybe_put_reasoning(params, model_id)
             |> maybe_drop_empty_cost()
           ]
         }
@@ -457,6 +459,7 @@ defmodule HandbeamWeb.AvailableModelsLive do
           "maxTokens" => parse_int(params["max_tokens"], 8192),
           "cost" => model_cost
         }
+        |> maybe_put_reasoning(Map.put(params, "provider_id", provider_id), model_id)
         |> maybe_drop_empty_cost()
 
       case ModelConfig.add_model(provider_id, model_id, model_attrs) do
@@ -474,6 +477,7 @@ defmodule HandbeamWeb.AvailableModelsLive do
            |> assign(:show_add_model, false)
            |> assign(:form_error, nil)
            |> assign(:add_model_form, reset_add_model_form())
+           |> reload_providers()
            |> assign(:toast, toast)}
 
         {:error, reason} ->
@@ -843,6 +847,8 @@ defmodule HandbeamWeb.AvailableModelsLive do
               id: Map.get(m, "id", ""),
               name: Map.get(m, "name", ""),
               type: List.first(Map.get(m, "input", ["text"])) || "text",
+              reasoning: Map.get(m, "reasoning") == true,
+              thinking_level_map: Map.get(m, "thinkingLevelMap", %{}),
               context_window: Map.get(m, "contextWindow"),
               max_tokens: Map.get(m, "maxTokens"),
               cost: Map.get(m, "cost", %{})
@@ -884,7 +890,9 @@ defmodule HandbeamWeb.AvailableModelsLive do
       "price_output" => "",
       "price_cache_read" => "",
       "price_cache_write" => "",
-      "price_reasoning" => ""
+      "price_reasoning" => "",
+      "reasoning" => "false",
+      "reasoning_levels" => []
     }
   end
 
@@ -899,7 +907,9 @@ defmodule HandbeamWeb.AvailableModelsLive do
       "price_output" => "",
       "price_cache_read" => "",
       "price_cache_write" => "",
-      "price_reasoning" => ""
+      "price_reasoning" => "",
+      "reasoning" => "false",
+      "reasoning_levels" => []
     }
   end
 
@@ -957,6 +967,64 @@ defmodule HandbeamWeb.AvailableModelsLive do
     do: Map.delete(model, "cost")
 
   defp maybe_drop_empty_cost(model), do: model
+
+  defp maybe_put_reasoning(model, params, model_id) do
+    if truthy?(params["reasoning"]) do
+      Map.merge(model, reasoning_catalog_fields(params, model_id))
+    else
+      model
+    end
+  end
+
+  defp reasoning_catalog_fields(params, model_id) do
+    Reasoning.catalog_fields(
+      %{id: model_id, provider_id: params["provider_id"] || params["id"]},
+      selected_reasoning_levels(params)
+    )
+  end
+
+  defp selected_reasoning_levels(params) do
+    params
+    |> Map.get("reasoning_levels", [])
+    |> List.wrap()
+    |> Enum.reject(&(&1 in [nil, ""]))
+  end
+
+  defp reasoning_level_checked?(form, level) do
+    selected = selected_reasoning_levels(form)
+    selected == [] or level in selected
+  end
+
+  defp truthy?(value) when value in [true, "true", "on", "1"], do: true
+  defp truthy?(_value), do: false
+
+  def reasoning_level_label(level) do
+    case level do
+      "off" -> gettext("Off")
+      "minimal" -> gettext("Minimal")
+      "low" -> gettext("Low")
+      "medium" -> gettext("Medium")
+      "high" -> gettext("High")
+      "xhigh" -> gettext("X-High")
+      _ -> level
+    end
+  end
+
+  def reasoning_levels_for(provider_id, model) do
+    model
+    |> Map.put(:id, model.id)
+    |> Map.put(:provider_id, provider_id)
+    |> Map.put(:reasoning, true)
+    |> Map.put(:thinking_level_map, Map.get(model, :thinking_level_map, %{}))
+    |> Reasoning.supported_levels()
+  end
+
+  def configurable_reasoning_levels(form) do
+    model_id = form["model_id"] || form["id"]
+    provider_id = form["provider_id"] || form["id"]
+
+    Reasoning.configurable_levels(%{id: model_id, provider_id: provider_id, reasoning: true})
+  end
 
   defp provider_source_changed?(previous, params) do
     present_or(params["id"], previous["id"]) != previous["id"] or

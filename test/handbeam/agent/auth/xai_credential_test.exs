@@ -75,8 +75,8 @@ defmodule Handbeam.Agent.Auth.XaiCredentialTest do
           "name" => "xAI",
           "models" => [
             %{
-              "id" => "grok-4.6",
-              "name" => "Grok 4.6",
+              "id" => "grok-4.7",
+              "name" => "Grok 4.7",
               "reasoning" => true,
               "input" => ["text", "image"],
               "contextWindow" => 500_000,
@@ -90,7 +90,7 @@ defmodule Handbeam.Agent.Auth.XaiCredentialTest do
 
     config = %{
       "defaultProvider" => "xai",
-      "defaultModel" => "grok-4.6",
+      "defaultModel" => "grok-4.7",
       "providers" => %{"xai" => provider}
     }
 
@@ -121,7 +121,7 @@ defmodule Handbeam.Agent.Auth.XaiCredentialTest do
     write_xai_provider(models_path)
     put_oauth(auth_path)
 
-    assert {:ok, config} = ModelConfig.provider_config_for(models_path, "xai", "grok-4.6")
+    assert {:ok, config} = ModelConfig.provider_config_for(models_path, "xai", "grok-4.7")
     assert config.api_key == "live-access"
     assert config.base_url == "https://api.x.ai"
     assert config.api == :openai_responses
@@ -191,7 +191,7 @@ defmodule Handbeam.Agent.Auth.XaiCredentialTest do
     write_xai_provider(models_path, %{"authType" => "api_key", "apiKey" => "sk-file-key"})
     put_oauth(auth_path, %{"access" => "oauth-should-not-win"})
 
-    assert {:ok, config} = ModelConfig.provider_config_for(models_path, "xai", "grok-4.6")
+    assert {:ok, config} = ModelConfig.provider_config_for(models_path, "xai", "grok-4.7")
     assert config.api_key == "sk-file-key"
     assert config.auth_type == :api_key
   end
@@ -201,17 +201,17 @@ defmodule Handbeam.Agent.Auth.XaiCredentialTest do
   } do
     write_xai_provider(models_path)
 
-    assert {:error, message} = ModelConfig.provider_config_for(models_path, "xai", "grok-4.6")
+    assert {:error, message} = ModelConfig.provider_config_for(models_path, "xai", "grok-4.7")
     assert message =~ "Sign in"
   end
 
-  test "xai preset seeds grok-4.6 as an openai-responses model" do
+  test "xai preset seeds grok-4.7 as an openai-responses model" do
     preset = XaiCredential.provider_preset()
 
     assert preset["baseUrl"] == "https://api.x.ai/v1"
     assert preset["api"] == "openai-responses"
     assert preset["authType"] == "oauth"
-    assert Enum.any?(preset["models"], &(&1["id"] == "grok-4.6"))
-    refute Enum.any?(preset["models"], &(&1["id"] in ["grok-3", "grok-2"]))
+    assert Enum.any?(preset["models"], &(&1["id"] == "grok-4.7" and &1["reasoning"] == true))
+    refute Enum.any?(preset["models"], &(&1["id"] in ["grok-3", "grok-2", "grok-4.6"]))
   end
 end

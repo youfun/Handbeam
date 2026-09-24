@@ -30,9 +30,10 @@ defmodule Handbeam.Agent.Auth.XaiCredential do
       "authType" => "oauth",
       "models" => [
         %{
-          "id" => "grok-4.6",
-          "name" => "Grok 4.6",
+          "id" => "grok-4.7",
+          "name" => "Grok 4.7",
           "reasoning" => true,
+          "defaultReasoning" => "high",
           "input" => ["text", "image"],
           "contextWindow" => 500_000,
           "maxTokens" => 500_000,

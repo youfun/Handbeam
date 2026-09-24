@@ -8,7 +8,7 @@ defmodule Handbeam.Agent.Turn do
   This is a pure function — no GenServer, no process overhead.
   """
 
-  alias Handbeam.Agent.{Compactor, Message, State}
+  alias Handbeam.Agent.{Compactor, Message, Reasoning, State}
   alias Handbeam.Agent.Middleware
   alias Handbeam.Agent.Provider.Retry
   alias Handbeam.Agent.Tool.Executor
@@ -1340,6 +1340,29 @@ defmodule Handbeam.Agent.Turn do
     |> Map.put(:provider_state, provider_state)
     |> Map.put(:working_directory, config.working_directory)
     |> maybe_put_context(config)
+    |> apply_reasoning_level(config)
+  end
+
+  defp apply_reasoning_level(provider_config, config) do
+    model_entry =
+      case Map.get(provider_config, :model_meta) do
+        meta when is_map(meta) and map_size(meta) > 0 ->
+          meta
+          |> Map.put_new("id", config.model)
+          |> Map.put_new(:provider, Map.get(provider_config, :provider))
+          |> Map.put_new(:provider_id, Map.get(provider_config, :provider_key))
+          |> Map.put_new(:api, Map.get(provider_config, :api))
+
+        _ ->
+          %{
+            id: config.model,
+            provider: Map.get(provider_config, :provider),
+            provider_id: Map.get(provider_config, :provider_key),
+            api: Map.get(provider_config, :api)
+          }
+      end
+
+    Reasoning.apply_provider_options(provider_config, model_entry, config.reasoning_level)
   end
 
   defp maybe_put_context(provider_config, config) do
