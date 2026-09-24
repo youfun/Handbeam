@@ -42,6 +42,11 @@ defmodule HandbeamProbe.HomeScreen.Settings do
     assign(socket, :models, ModelSettings.change(socket.assigns.models, field, value))
   end
 
+  def handle({:change, {:toggle_model_enabled, provider, model, _current}, enabled}, socket)
+      when is_boolean(enabled) do
+    action(socket, {:toggle_model_enabled, provider, model, enabled})
+  end
+
   def handle({:dismiss, :cancel_confirm}, socket), do: action(socket, :cancel_confirm)
 
   def handle({:tap, {:ask_delete_model, provider, model}}, socket),

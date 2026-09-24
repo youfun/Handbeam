@@ -690,6 +690,18 @@ defmodule Handbeam.Agent.ModelConfig do
   end
 
   @doc """
+  Every catalog model, including ones with `"enabled" => false`.
+
+  Chat and workspace choices use `all_global_models/0`, which drops disabled
+  entries. Settings rows use this list so a disabled model can be turned back on.
+  Missing `enabled` is treated as on.
+  """
+  @spec catalog_models() :: [map()]
+  def catalog_models do
+    load_raw_global_config() |> extract_catalog_models()
+  end
+
+  @doc """
   Returns whether the global model configuration file exists and parses.
   """
   @spec global_config_status() :: :ok | {:error, String.t()}
@@ -744,31 +756,40 @@ defmodule Handbeam.Agent.ModelConfig do
   defp extract_all_models(nil), do: []
 
   defp extract_all_models(json) do
+    json
+    |> extract_catalog_models()
+    |> Enum.filter(& &1.enabled)
+  end
+
+  defp extract_catalog_models(nil), do: []
+
+  defp extract_catalog_models(json) do
     providers = Map.get(json, "providers", %{})
 
     Enum.flat_map(providers, fn {provider_id, provider_config} ->
-      models = Map.get(provider_config, "models", [])
-
-      models
-      |> enabled_models()
-      |> Enum.map(fn model ->
-        model_id = Map.get(model, "id")
-
-        %{
-          id: "#{provider_id}/#{model_id}",
-          name: Map.get(model, "name", model_id),
-          provider_id: provider_id,
-          model_id: model_id,
-          input: Map.get(model, "input", []),
-          reasoning: Map.get(model, "reasoning"),
-          default_reasoning: Map.get(model, "defaultReasoning"),
-          thinking_level_map: Map.get(model, "thinkingLevelMap", %{}),
-          context_window: Map.get(model, "contextWindow"),
-          max_tokens: Map.get(model, "maxTokens"),
-          cost: Map.get(model, "cost", %{})
-        }
-      end)
+      provider_config
+      |> Map.get("models", [])
+      |> Enum.map(&catalog_model_summary(provider_id, &1))
     end)
+  end
+
+  defp catalog_model_summary(provider_id, model) do
+    model_id = Map.get(model, "id")
+
+    %{
+      id: "#{provider_id}/#{model_id}",
+      name: Map.get(model, "name", model_id),
+      provider_id: provider_id,
+      model_id: model_id,
+      input: Map.get(model, "input", []),
+      reasoning: Map.get(model, "reasoning"),
+      default_reasoning: Map.get(model, "defaultReasoning"),
+      thinking_level_map: Map.get(model, "thinkingLevelMap", %{}),
+      context_window: Map.get(model, "contextWindow"),
+      max_tokens: Map.get(model, "maxTokens"),
+      cost: Map.get(model, "cost", %{}),
+      enabled: model_enabled?(model)
+    }
   end
 
   defp filter_models_by_policy(all_models, policy) do

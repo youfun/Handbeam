@@ -288,6 +288,10 @@ defmodule HandbeamProbe.HomeScreen do
        do: Settings.handle(msg, socket)
 
   defp dispatch({:change, {:model_field, _}, _} = msg, socket), do: Settings.handle(msg, socket)
+
+  defp dispatch({:change, {:toggle_model_enabled, _, _, _}, _} = msg, socket),
+    do: Settings.handle(msg, socket)
+
   defp dispatch({:dismiss, :cancel_confirm} = msg, socket), do: Settings.handle(msg, socket)
   defp dispatch({:models_updated} = msg, socket), do: Settings.handle(msg, socket)
 

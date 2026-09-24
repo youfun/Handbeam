@@ -387,12 +387,30 @@ defmodule HandbeamProbe.ModelSettings.Render do
   end
 
   defp model_row(model) do
+    enabled? = Map.get(model, :enabled, true)
+
     card([
       row([
         text(model.name, text_size: 15, weight: 1),
         secondary_button(gettext("Edit model"), {:edit_model, model.provider_id, model.model_id})
       ]),
       text(model.id, text_size: 12, text_color: color(:hint), padding_top: 6, padding_bottom: 8),
+      row([
+        text(
+          if(enabled?, do: gettext("Enabled"), else: gettext("Disabled")),
+          text_size: 13,
+          text_color: color(:muted),
+          weight: 1
+        ),
+        node(
+          :toggle,
+          value: enabled?,
+          label: gettext("Show in model choices"),
+          on_change:
+            {self(), {:toggle_model_enabled, model.provider_id, model.model_id, not enabled?}},
+          id: "toggle-model-#{model.provider_id}-#{model.model_id}"
+        )
+      ]),
       danger_button(
         gettext("Delete model"),
         {:ask_delete_model, model.provider_id, model.model_id}

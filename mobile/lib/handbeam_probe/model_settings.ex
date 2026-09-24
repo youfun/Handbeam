@@ -49,7 +49,7 @@ defmodule HandbeamProbe.ModelSettings do
 
     %{
       empty()
-      | models: ModelConfig.all_global_models(),
+      | models: ModelConfig.catalog_models(),
         providers: providers,
         selected_provider:
           Providers.pick_selected(providers, previous && previous.selected_provider),
@@ -149,6 +149,9 @@ defmodule HandbeamProbe.ModelSettings do
   def action(:model_reasoning, state, _ws), do: Providers.toggle_reasoning(state)
   def action(:save_model, state, ws), do: Providers.save_model(state, ws)
   def action(:save_provider, state, ws), do: Providers.save_provider(state, ws)
+
+  def action({:toggle_model_enabled, provider, model, enabled}, state, ws),
+    do: Providers.toggle_enabled(state, provider, model, enabled, ws)
 
   def action({:ask_delete_model, provider, model}, state, _ws),
     do: Providers.ask_delete(state, :delete_model, provider, model)
