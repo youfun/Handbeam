@@ -143,8 +143,16 @@ defmodule HandbeamProbe.HomeScreen do
 
   defp dispatch({@timeout_message, ref}, socket) do
     case Requests.expire(socket, ref) do
-      {:ok, entry, socket} -> Platform.handle_timeout(socket, entry)
-      :error -> socket
+      {:ok, %PendingRequests.Entry{kind: :subscription_poll_due, ctx: ctx} = entry, socket} ->
+        if Requests.current?(socket, entry.scope, entry.generation),
+          do: Settings.poll_due(socket, ctx),
+          else: socket
+
+      {:ok, entry, socket} ->
+        Platform.handle_timeout(socket, entry)
+
+      :error ->
+        socket
     end
   end
 
@@ -345,6 +353,15 @@ defmodule HandbeamProbe.HomeScreen do
 
   defp async_result(:model_settings_refs, {target, result}, socket),
     do: Settings.handle_refs(socket, target, result)
+
+  defp async_result(kind, result, socket)
+       when kind in [
+              :subscription_started,
+              :subscription_polled,
+              :subscription_authorized,
+              :subscription_discovered
+            ],
+       do: Settings.handle_subscription(kind, result, socket)
 
   defp async_result(kind, result, socket)
        when kind in [:mcp_loaded, :mcp_edited, :mcp_saved, :mcp_tested, :mcp_deleted],

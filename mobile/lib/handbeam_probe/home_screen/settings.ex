@@ -7,16 +7,25 @@ defmodule HandbeamProbe.HomeScreen.Settings do
   `HandbeamProbe.TaskSupervisor`; their task refs are registered under the
   `:models` scope of `HandbeamProbe.PendingRequests` (`HomeScreen.Requests`),
   so a stale reply is dropped before it reaches this module, and a loaded
-  result is also dropped when an unsaved form is open. Everything else is a
-  pure `ModelSettings.action/3` reduction.
+  result is also dropped when an unsaved form is open. Subscription device
+  login uses the same table under `:subscription_login`: start, poll, persist,
+  and catalog discovery are tasks, and the next poll is armed with
+  `{:pending_request_timeout, ref}`. Cancel bumps that scope so a late poll is
+  dropped. Copy uses `Mob.Clipboard.put/2`. Opening the verification link uses
+  `Platform.open_url/4`.
   """
 
+  use Gettext, backend: HandbeamProbe.Gettext
   import Mob.Socket, only: [assign: 3]
 
-  alias HandbeamProbe.HomeScreen.Requests
+  alias Handbeam.ArtifactDelivery.Url
+  alias HandbeamProbe.HomeScreen.{Async, Notice, Requests}
   alias HandbeamProbe.ModelSettings
+  alias HandbeamProbe.ModelSettings.Subscriptions
+  alias HandbeamProbe.Platform
 
   @scope :models
+  @subscription_scope :subscription_login
 
   @settings_pages [:models, :settings]
 
@@ -55,6 +64,20 @@ defmodule HandbeamProbe.HomeScreen.Settings do
   def handle({:tap, {:ask_delete_provider, provider}}, socket),
     do: find_refs(socket, :delete_provider, provider, nil)
 
+  def handle({:tap, {:start_subscription, provider_id}}, socket) when is_binary(provider_id),
+    do: start_subscription(socket, provider_id)
+
+  def handle({:tap, :open_subscription_link}, socket), do: open_subscription_link(socket)
+
+  def handle({:tap, {:copy_subscription, field}}, socket)
+      when field in [:verification_uri, :user_code],
+      do: copy_subscription(socket, field)
+
+  def handle({:tap, :cancel_subscription_login}, socket) do
+    {_generation, socket} = Requests.bump(socket, @subscription_scope)
+    action(socket, :cancel_subscription_login)
+  end
+
   def handle({:tap, action}, socket), do: action(socket, action)
 
   def handle({:models_updated}, socket) do
@@ -90,6 +113,173 @@ defmodule HandbeamProbe.HomeScreen.Settings do
 
   def handle_refs(socket, {kind, provider, model}, result),
     do: action(socket, {:delete_refs_ready, kind, provider, model, result})
+
+  def handle_subscription(:subscription_started, {:ok, session}, socket) do
+    socket
+    |> action({:subscription_started, session})
+    |> schedule_subscription_poll(session.device, session.interval_ms)
+  end
+
+  def handle_subscription(:subscription_started, {:error, message}, socket) do
+    action(socket, {:subscription_failed, message})
+  end
+
+  def handle_subscription(
+        :subscription_polled,
+        {:continue, _status, public_device, interval_ms, device},
+        socket
+      ) do
+    socket
+    |> action({:subscription_waiting, public_device})
+    |> schedule_subscription_poll(device, interval_ms)
+  end
+
+  def handle_subscription(:subscription_polled, {:authorized, credential}, socket) do
+    persist_subscription(socket, socket.assigns[:subscription_provider_id], credential)
+  end
+
+  def handle_subscription(:subscription_polled, {:error, message}, socket) do
+    action(socket, {:subscription_failed, message})
+  end
+
+  def handle_subscription(
+        :subscription_authorized,
+        {:ok, %{provider_id: provider_id, generation: generation}},
+        socket
+      ) do
+    discover_subscription(socket, provider_id, generation)
+  end
+
+  def handle_subscription(:subscription_authorized, {:error, message}, socket) do
+    action(socket, {:subscription_failed, message})
+  end
+
+  def handle_subscription(:subscription_discovered, :ok, socket) do
+    provider_id = socket.assigns[:subscription_provider_id]
+
+    socket
+    |> assign(:subscription_provider_id, nil)
+    |> action(:cancel_subscription_login)
+    |> Notice.put_info(Subscriptions.connected_message(provider_id))
+    |> load_models()
+  end
+
+  def handle_subscription(:subscription_discovered, {:error, message}, socket) do
+    socket
+    |> assign(:subscription_provider_id, nil)
+    |> action({:subscription_failed, message})
+  end
+
+  def handle_subscription(_kind, _result, socket), do: socket
+
+  defp start_subscription(socket, provider_id) do
+    {_generation, socket} = Requests.bump(socket, @subscription_scope)
+
+    socket =
+      socket
+      |> assign(:subscription_provider_id, provider_id)
+      |> assign(:models, %{socket.assigns.models | subscription_busy?: true, notice: nil})
+
+    Async.run(socket, :subscription_started, fn -> Subscriptions.start(provider_id) end,
+      scope: @subscription_scope,
+      bump?: false
+    )
+  end
+
+  # The private device session lives on the pending-request ctx, not in
+  # assigns. The deadline message starts the next poll so the screen never
+  # sleeps or calls the network itself.
+  defp schedule_subscription_poll(socket, device, interval_ms) when is_map(device) do
+    provider_id = socket.assigns[:subscription_provider_id]
+    ref = make_ref()
+
+    Requests.register(socket, ref, :subscription_poll_due,
+      scope: @subscription_scope,
+      timeout_ms: max(interval_ms, 0),
+      ctx: %{provider_id: provider_id, device: device}
+    )
+  end
+
+  def poll_due(socket, %{provider_id: provider_id, device: device})
+      when is_binary(provider_id) and is_map(device) do
+    Async.run(socket, :subscription_polled, fn -> Subscriptions.poll(provider_id, device) end,
+      scope: @subscription_scope,
+      bump?: false
+    )
+  end
+
+  def poll_due(socket, _ctx), do: socket
+
+  defp persist_subscription(socket, provider_id, credential) when is_binary(provider_id) do
+    Async.run(
+      socket,
+      :subscription_authorized,
+      fn -> Subscriptions.persist(provider_id, credential) end,
+      scope: @subscription_scope,
+      bump?: false
+    )
+  end
+
+  defp persist_subscription(socket, _provider_id, _credential) do
+    action(socket, {:subscription_failed, Subscriptions.hint(nil)})
+  end
+
+  defp discover_subscription(socket, provider_id, generation) do
+    Async.run(
+      socket,
+      :subscription_discovered,
+      fn -> Subscriptions.discover(provider_id, generation) end,
+      scope: @subscription_scope,
+      bump?: false
+    )
+  end
+
+  defp open_subscription_link(socket) do
+    case subscription_field(socket, :verification_uri) do
+      uri when is_binary(uri) ->
+        case Url.parse(uri) do
+          {:ok, parsed} ->
+            request_id = Ecto.UUID.generate()
+            generation = Requests.composer_generation(socket)
+
+            case Platform.open_url(self(), request_id, generation, parsed) do
+              {:ok, _} ->
+                Requests.track(socket, request_id, :open_url, %{url: parsed})
+
+              {:error, reason} ->
+                Notice.put_error(socket, open_url_error(reason))
+            end
+
+          {:error, _reason} ->
+            Notice.put_error(socket, gettext("Could not open the verification link."))
+        end
+
+      _ ->
+        socket
+    end
+  end
+
+  defp copy_subscription(socket, field) do
+    case subscription_field(socket, field) do
+      text when is_binary(text) and text != "" ->
+        socket = Subscriptions.copy(socket, text)
+        Notice.put_info(socket, copied_notice(field))
+
+      _ ->
+        socket
+    end
+  end
+
+  defp subscription_field(socket, field) do
+    login = socket.assigns.models.subscription_login
+    login && Map.get(login, field)
+  end
+
+  defp copied_notice(:verification_uri), do: gettext("Verification link copied")
+  defp copied_notice(:user_code), do: gettext("User code copied")
+
+  defp open_url_error(reason) when is_binary(reason), do: reason
+  defp open_url_error(_reason), do: gettext("Could not open the verification link.")
 
   defp find_refs(socket, kind, provider, model) do
     generation = Requests.generation(socket, @scope)

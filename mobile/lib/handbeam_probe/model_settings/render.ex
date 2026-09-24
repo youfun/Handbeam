@@ -10,7 +10,7 @@ defmodule HandbeamProbe.ModelSettings.Render do
   use Gettext, backend: HandbeamProbe.Gettext
   import HandbeamProbe.NativeUI
   alias Handbeam.Agent.Reasoning
-  alias HandbeamProbe.ModelSettings.{Labels, Providers, RenderForms}
+  alias HandbeamProbe.ModelSettings.{Labels, Providers, RenderForms, SubscriptionRender}
 
   def render(state) do
     Process.put({__MODULE__, :select_open}, state.select_open)
@@ -58,6 +58,7 @@ defmodule HandbeamProbe.ModelSettings.Render do
     defaults_card(state) ++
       memory_card(state) ++
       policy_card(state) ++
+      SubscriptionRender.section(state) ++
       catalog_header(state) ++
       catalog_rows(state)
   end

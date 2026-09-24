@@ -1835,3 +1835,123 @@ msgstr ""
 
 msgid "The message will be inserted at the next step. To wait until this run finishes, switch to “When done”, or write “when you’re done…”."
 msgstr ""
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "ChatGPT sign-in changed before the model list was saved."
+msgstr "ChatGPT sign-in changed before the model list was saved."
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Choose a subscription sign-in. Subscription quota is separate from API balance."
+msgstr "Choose a subscription sign-in. Subscription quota is separate from API balance."
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Connected ChatGPT / Codex subscription"
+msgstr "Connected ChatGPT / Codex subscription"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Connected Cursor subscription"
+msgstr "Connected Cursor subscription"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Connected subscription"
+msgstr "Connected subscription"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Connected xAI / Grok subscription"
+msgstr "Connected xAI / Grok subscription"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Copy"
+msgstr "Copy"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Could not open the verification link."
+msgstr "Could not open the verification link."
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Open link"
+msgstr "Open link"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Open the link and authorize with your Cursor account. This uses an unofficial protocol. Cost is unknown and is not shown as free."
+msgstr "Open the link and authorize with your Cursor account. This uses an unofficial protocol. Cost is unknown and is not shown as free."
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Open the link and enter the user code to authorize ChatGPT. This uses the Codex subscription, not an OpenAI API balance. Available models and limits depend on the account."
+msgstr "Open the link and enter the user code to authorize ChatGPT. This uses the Codex subscription, not an OpenAI API balance. Available models and limits depend on the account."
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Open the link and enter the user code to authorize the xAI subscription."
+msgstr "Open the link and enter the user code to authorize the xAI subscription."
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Open the link to finish subscription sign-in."
+msgstr "Open the link to finish subscription sign-in."
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Sign in"
+msgstr "Sign in"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Sign in with a subscription"
+msgstr "Sign in with a subscription"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Starting sign-in…"
+msgstr "Starting sign-in…"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Subscription login for %{id} is not available yet."
+msgstr "Subscription login for %{id} is not available yet."
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Subscription sign-in"
+msgstr "Subscription sign-in"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Subscription sign-in failed."
+msgstr "Subscription sign-in failed."
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "User code"
+msgstr "User code"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "User code copied"
+msgstr "User code copied"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Verification link"
+msgstr "Verification link"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Verification link copied"
+msgstr "Verification link copied"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Waiting for authorization…"
+msgstr "Waiting for authorization…"

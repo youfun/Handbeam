@@ -23,9 +23,16 @@ defmodule HandbeamProbe.HomeScreen.Async do
     scope = Keyword.get(opts, :scope, kind)
 
     {generation, socket} =
-      if scope == kind,
-        do: Requests.bump(socket, kind),
-        else: {Requests.generation(socket, scope), socket}
+      cond do
+        Keyword.get(opts, :bump?, scope == kind) == false ->
+          {Requests.generation(socket, scope), socket}
+
+        scope == kind ->
+          Requests.bump(socket, scope)
+
+        true ->
+          {Requests.generation(socket, scope), socket}
+      end
 
     task =
       Task.Supervisor.async_nolink(HandbeamProbe.TaskSupervisor, fn ->

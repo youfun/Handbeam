@@ -15,7 +15,17 @@ defmodule HandbeamProbe.ModelSettings do
 
   alias Handbeam.Agent.ModelConfig
   alias Handbeam.Settings.{ModelAIOverride, ModelAISettings, ModelPolicy, ModelRefs}
-  alias HandbeamProbe.ModelSettings.{Defaults, Forms, Memory, Policy, Providers, Render}
+
+  alias HandbeamProbe.ModelSettings.{
+    Defaults,
+    Forms,
+    Memory,
+    Policy,
+    Providers,
+    Render,
+    Subscriptions
+  }
+
   alias HandbeamProbe.ModelSettings.RenderConfirm
 
   def empty do
@@ -36,7 +46,11 @@ defmodule HandbeamProbe.ModelSettings do
       confirm: nil,
       chat_blocked: nil,
       help_open: %{},
-      select_open: nil
+      select_open: nil,
+      subscription_picker: false,
+      subscription_login: nil,
+      subscription_busy?: false,
+      subscription_methods: Subscriptions.methods()
     }
   end
 
@@ -59,7 +73,11 @@ defmodule HandbeamProbe.ModelSettings do
         defaults: Defaults.form_for_scope(:workspace, workspace),
         sources: ModelAIOverride.sources(path),
         policy: ModelPolicy.form(path),
-        chat_blocked: Policy.chat_blocked(path, allowed, effective_default)
+        chat_blocked: Policy.chat_blocked(path, allowed, effective_default),
+        subscription_picker: previous && previous.subscription_picker,
+        subscription_login: previous && previous.subscription_login,
+        subscription_busy?: previous && previous.subscription_busy?,
+        subscription_methods: Subscriptions.methods()
     }
   end
 
@@ -189,6 +207,55 @@ defmodule HandbeamProbe.ModelSettings do
 
   def action({:policy_default, model}, state, _ws), do: Policy.set_default(state, model)
   def action(:save_policy, state, ws), do: Policy.save(state, ws)
+
+  def action(:open_subscription_login, state, _ws) do
+    %{
+      state
+      | subscription_picker: true,
+        subscription_login: nil,
+        notice: nil,
+        subscription_methods: Subscriptions.methods()
+    }
+  end
+
+  def action(:close_subscription_login, state, _ws) do
+    %{state | subscription_picker: false}
+  end
+
+  def action(:cancel_subscription_login, state, _ws) do
+    %{state | subscription_picker: false, subscription_login: nil, subscription_busy?: false}
+  end
+
+  def action({:subscription_started, session}, state, _ws) when is_map(session) do
+    %{
+      state
+      | subscription_picker: false,
+        subscription_busy?: false,
+        subscription_login: Subscriptions.public_session(session),
+        notice: nil
+    }
+  end
+
+  def action({:subscription_failed, message}, state, _ws) when is_binary(message) do
+    %{
+      state
+      | subscription_picker: false,
+        subscription_login: nil,
+        subscription_busy?: false,
+        notice: message
+    }
+  end
+
+  def action({:subscription_waiting, public_device}, state, _ws) when is_map(public_device) do
+    case state.subscription_login do
+      %{} = login ->
+        code = public_device[:user_code] || login.user_code
+        %{state | subscription_login: %{login | user_code: code}}
+
+      _ ->
+        state
+    end
+  end
 
   def action(_unknown, state, _workspace), do: state
 

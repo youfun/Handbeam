@@ -2062,3 +2062,123 @@ msgstr "系统分享"
 
 msgid "Allowed in %{count} workspaces"
 msgstr "已允许用于 %{count} 个工作区"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "ChatGPT sign-in changed before the model list was saved."
+msgstr "模型列表保存前，ChatGPT 登录已变更。"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Choose a subscription sign-in. Subscription quota is separate from API balance."
+msgstr "选择一种订阅登录。订阅额度与 API 余额分开使用。"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Connected ChatGPT / Codex subscription"
+msgstr "已连接 ChatGPT / Codex 订阅"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Connected Cursor subscription"
+msgstr "已连接 Cursor 订阅"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Connected subscription"
+msgstr "已连接订阅"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Connected xAI / Grok subscription"
+msgstr "已连接 xAI / Grok 订阅"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Copy"
+msgstr "复制"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Could not open the verification link."
+msgstr "无法打开验证链接。"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Open link"
+msgstr "打开链接"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Open the link and authorize with your Cursor account. This uses an unofficial protocol. Cost is unknown and is not shown as free."
+msgstr "打开链接，用 Cursor 账号完成授权。这是非官方协议接入，费用未知，不会显示为免费。"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Open the link and enter the user code to authorize ChatGPT. This uses the Codex subscription, not an OpenAI API balance. Available models and limits depend on the account."
+msgstr "打开链接并输入用户码完成 ChatGPT 授权。使用 Codex 订阅额度，不是 OpenAI API 余额；可用模型与限额由账号决定。"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Open the link and enter the user code to authorize the xAI subscription."
+msgstr "打开链接并输入用户码，完成 xAI 订阅授权。"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Open the link to finish subscription sign-in."
+msgstr "打开链接以完成订阅登录。"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Sign in"
+msgstr "登录"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Sign in with a subscription"
+msgstr "使用订阅登录"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Starting sign-in…"
+msgstr "正在开始登录…"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Subscription login for %{id} is not available yet."
+msgstr "%{id} 的订阅登录尚不可用。"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Subscription sign-in"
+msgstr "订阅登录"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Subscription sign-in failed."
+msgstr "订阅登录失败。"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "User code"
+msgstr "用户码"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "User code copied"
+msgstr "已复制用户码"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Verification link"
+msgstr "验证链接"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Verification link copied"
+msgstr "已复制验证链接"
+
+#: lib/handbeam_probe/model_settings/subscriptions.ex
+#, elixir-autogen, elixir-format
+msgid "Waiting for authorization…"
+msgstr "等待授权…"
