@@ -1185,3 +1185,94 @@ msgstr "缓存命中"
 
 msgid "This run: cached input / total input (including cache reads and writes). Not a cost saving rate. — means no cache activity reported."
 msgstr "本次运行累计：缓存读取 token ÷ 总输入 token（含缓存读取与写入）。不是费用节省比例。— 表示未报告缓存活动。"
+
+msgid "MCP Servers"
+msgstr "MCP 服务器"
+
+msgid "Connect HTTP MCP servers and control workspace access."
+msgstr "连接 HTTP MCP 服务器并管理工作区访问权限。"
+
+msgid "Add server"
+msgstr "添加服务器"
+
+msgid "No MCP servers configured."
+msgstr "未配置任何 MCP 服务器。"
+
+msgid "Add MCP Server"
+msgstr "添加 MCP 服务器"
+
+msgid "Edit MCP Server"
+msgstr "编辑 MCP 服务器"
+
+msgid "tools"
+msgstr "个工具"
+
+msgid "Connected"
+msgstr "已连接"
+
+msgid "Not connected"
+msgstr "未连接"
+
+msgid "Delete"
+msgstr "删除"
+
+msgid "Delete this server?"
+msgstr "确定删除此服务器？"
+
+msgid "Name"
+msgstr "名称"
+
+msgid "Authentication"
+msgstr "认证方式"
+
+msgid "Bearer token"
+msgstr "Bearer 令牌"
+
+msgid "Custom headers"
+msgstr "自定义请求头"
+
+msgid "Token"
+msgstr "令牌"
+
+msgid "Leave blank to keep saved token"
+msgstr "留空以保留已保存的令牌"
+
+msgid "Headers (JSON)"
+msgstr "请求头 (JSON)"
+
+msgid "Leave blank to keep saved headers"
+msgstr "留空以保留已保存的请求头"
+
+msgid "Disabled"
+msgstr "已禁用"
+
+msgid "Enabled"
+msgstr "已启用"
+
+msgid "Workspace access"
+msgstr "工作区访问权限"
+
+msgid "All workspaces, including future workspaces"
+msgstr "所有工作区（包含未来新建的工作区）"
+
+msgid "Selected workspaces"
+msgstr "指定工作区"
+
+msgid "Test connection"
+msgstr "测试连接"
+
+msgid "Testing..."
+msgstr "测试中..."
+
+msgid "Connected. %{count} tools found."
+msgstr "已连接，发现 %{count} 个工具。"
+
+msgid "e.g. My MCP Server"
+msgstr "例如 我的 MCP 服务器"
+
+msgid "stdio servers are read-only here. Edit the source configuration to change the launcher."
+msgstr "此处 stdio 服务器为只读。请编辑源配置以修改启动方式。"
+
+msgid "This stdio server comes from %{source}. Edit its source configuration to change how it launches."
+msgstr "此 stdio 服务器来自 %{source}。请编辑源配置以修改启动方式。"
+
