@@ -134,7 +134,13 @@ defmodule Handbeam.Platform.ProcessSandboxTest do
     end
 
     test "no workspace means no sandbox and no extra environment" do
-      assert {:ok, %{executable: "/bin/bash", env: [], pid_namespace?: false}} =
+      assert {:ok,
+              %{
+                executable: "/bin/bash",
+                env: [],
+                pid_namespace?: false,
+                process_group?: false
+              }} =
                ProcessSandbox.wrap(@shell, "echo x", nil, [])
     end
   end
@@ -157,6 +163,8 @@ defmodule Handbeam.Platform.ProcessSandboxTest do
         refute String.starts_with?(tmp, real <> "/")
         refute tmp == Handbeam.Security.PathValidator.resolve_symlink(System.tmp_dir!())
         assert invocation.pid_namespace? == false
+        assert invocation.process_group? == true
+        assert invocation.executable == "/usr/bin/sandbox-exec"
       end
     end
   end
@@ -226,6 +234,29 @@ defmodule Handbeam.Platform.ProcessSandboxTest do
       assert_receive {:checked, ^ref}, 3_000
       refute File.exists?(marker)
       _ = root
+    end
+
+    test "timeout kills a descendant reparented before the process-tree snapshot", %{
+      workspace: workspace
+    } do
+      marker = Path.join(workspace, "reparented-late")
+
+      assert {:ok, output, %{timed_out: true}} =
+               Handbeam.Platform.ProcessRunner.run_bash(
+                 "/usr/bin/perl -e '$pid = fork(); die $! unless defined $pid; exit 0 if $pid; " <>
+                   "while (getppid() != 1) { select undef, undef, undef, 0.01 }; " <>
+                   ~S/$| = 1; print "detached\n"; sleep 2; open my $fh, ">", "reparented-late" or die $!; print $fh "late"' & sleep 30/,
+                 workspace,
+                 1_000,
+                 workspace_path: workspace
+               )
+
+      assert output =~ "timed out"
+      assert output =~ "detached"
+      ref = make_ref()
+      Process.send_after(self(), {:checked, ref}, 2_500)
+      assert_receive {:checked, ^ref}, 3_000
+      refute File.exists?(marker)
     end
   end
 end

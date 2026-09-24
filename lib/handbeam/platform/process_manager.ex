@@ -146,6 +146,29 @@ defmodule Handbeam.Platform.ProcessManager do
 
   def kill_process_tree(_invalid), do: :ok
 
+  @doc """
+  Stops and kills an independent Unix process group after verifying that the
+  supplied PID is still its leader. Falls back to tree cleanup on uncertainty;
+  it never signals an unverified negative PID.
+  """
+  @spec kill_process_group(integer() | nil) :: :ok
+  def kill_process_group(os_pid) when is_integer(os_pid) and os_pid > 1 do
+    case unix_process_group(os_pid) do
+      {:ok, ^os_pid} ->
+        group = "-#{os_pid}"
+        _ = System.cmd("kill", ["-STOP", "--", group], stderr_to_stdout: true)
+        _ = System.cmd("kill", ["-KILL", "--", group], stderr_to_stdout: true)
+        :ok
+
+      _ ->
+        kill_process_tree(os_pid)
+    end
+  rescue
+    _ -> kill_process_tree(os_pid)
+  end
+
+  def kill_process_group(os_pid), do: kill_process_tree(os_pid)
+
   @doc "Kills only the named process, without process-group signalling."
   @spec kill_process(integer() | nil) :: :ok
   def kill_process(nil), do: :ok
@@ -173,6 +196,19 @@ defmodule Handbeam.Platform.ProcessManager do
     _ = System.cmd("kill", ["-STOP" | pids], stderr_to_stdout: true)
     _ = System.cmd("kill", ["-9" | pids], stderr_to_stdout: true)
     :ok
+  end
+
+  defp unix_process_group(pid) do
+    case System.cmd("ps", ["-o", "pgid=", "-p", Integer.to_string(pid)], stderr_to_stdout: true) do
+      {output, 0} ->
+        case Integer.parse(String.trim(output)) do
+          {group, ""} -> {:ok, group}
+          _ -> {:error, :invalid_group}
+        end
+
+      _ ->
+        {:error, :not_found}
+    end
   end
 
   # Kill an explicit descendant snapshot instead of signalling `-pid`. A Port

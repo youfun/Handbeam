@@ -22,6 +22,14 @@ defmodule Handbeam.Platform.ProcessManagerTest do
     end
   end
 
+  describe "kill_process_group/1" do
+    test "does not signal an unverified process group" do
+      assert :ok = ProcessManager.kill_process_group(nil)
+      assert :ok = ProcessManager.kill_process_group(-1)
+      assert :ok = ProcessManager.kill_process_group(999_999_999)
+    end
+  end
+
   defp port_info_os_pid(port) do
     case Port.info(port, :os_pid) do
       {:os_pid, pid} -> pid
