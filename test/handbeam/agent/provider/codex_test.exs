@@ -74,12 +74,17 @@ defmodule Handbeam.Agent.Provider.CodexTest do
       assert conn.request_path == "/backend-api/codex/responses"
       assert get_req_header(conn, "chatgpt-account-id") == ["account-a"]
       assert get_req_header(conn, "authorization") == ["Bearer " <> token()]
+      assert get_req_header(conn, "originator") == ["pi"]
+      assert get_req_header(conn, "session-id") == ["session-a"]
       {:ok, body, conn} = read_body(conn)
       body = Jason.decode!(body)
       assert body["instructions"] == "Work carefully"
       assert body["store"] == false
       assert body["stream"] == true
-      assert body["reasoning"] == %{"effort" => "high"}
+      assert body["text"] == %{"verbosity" => "low"}
+      assert body["prompt_cache_key"] == "session-a"
+      assert body["reasoning"] == %{"effort" => "high", "summary" => "auto"}
+      refute Map.has_key?(body, "tools")
       refute Map.has_key?(body, "max_output_tokens")
       refute Map.has_key?(body, "previous_response_id")
       assert body["input"] == [%{"role" => "user", "content" => "hello"}]
@@ -102,7 +107,8 @@ defmodule Handbeam.Agent.Provider.CodexTest do
         max_tokens: 5,
         store: true,
         previous_response_id: "must-not-send",
-        reasoning: %{effort: "high"}
+        reasoning: %{effort: "high"},
+        session_id: "session-a"
       })
 
     assert {:ok, result} =
@@ -167,6 +173,7 @@ defmodule Handbeam.Agent.Provider.CodexTest do
              ] = body["input"]
 
       assert [%{"type" => "function", "name" => "probe_lookup"}] = body["tools"]
+      refute Map.has_key?(hd(body["tools"]), "strict")
       sse(conn, completed([text_item("ORCHID-5928")]))
     end)
 
@@ -255,6 +262,51 @@ defmodule Handbeam.Agent.Provider.CodexTest do
       Req.Test.stub(__MODULE__, &sse(&1, completed([item])))
       assert {:error, _} = Codex.complete([Message.user("hi")], [], config())
     end
+  end
+
+  test "a header-stage disconnect is replayed once and keeps the server reason" do
+    {:ok, attempts} = Agent.start_link(fn -> 0 end)
+    parent = self()
+
+    Req.Test.stub(__MODULE__, fn conn ->
+      send(parent, :attempt)
+
+      case Agent.get_and_update(attempts, &{&1, &1 + 1}) do
+        0 ->
+          Req.Test.transport_error(conn, :closed)
+
+        _ ->
+          {:ok, body, conn} = read_body(conn)
+          assert Jason.decode!(body)["prompt_cache_key"] == "handbeam"
+          sse(conn, completed([text_item("recovered")]))
+      end
+    end)
+
+    assert {:ok, result} = Codex.complete([Message.user("hi")], [], config())
+    assert Message.text(hd(result.messages)) == "recovered"
+    assert Agent.get(attempts, & &1) == 2
+    assert_received :attempt
+    assert_received :attempt
+  end
+
+  test "a second header-stage disconnect reports the transport reason" do
+    Req.Test.stub(__MODULE__, &Req.Test.transport_error(&1, :closed))
+    assert {:error, reason} = Codex.complete([Message.user("hi")], [], config())
+    assert reason =~ ":closed"
+    assert reason =~ "replayed once"
+    refute reason =~ "not replayed"
+  end
+
+  test "Codex error bodies are surfaced without echoing the raw payload" do
+    Req.Test.stub(__MODULE__, fn conn ->
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(400, Jason.encode!(%{error: %{message: "unsupported model"}}))
+    end)
+
+    assert {:error, reason} = Codex.complete([Message.user("hi")], [], config())
+    assert reason =~ "HTTP 400"
+    assert reason =~ "unsupported model"
   end
 
   test "subscription limits are actionable and malformed credentials cannot use API billing" do

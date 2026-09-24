@@ -14,6 +14,9 @@ defmodule Handbeam.Agent.Provider.Codex do
   alias Handbeam.Agent.Provider.{OpenAI, SSE}
 
   @endpoint "https://chatgpt.com/backend-api/codex/responses"
+  # One replay before any model output. A dropped header is not a completed
+  # response, and replaying after a tool call would execute the tool twice.
+  @transport_attempts 2
 
   @impl true
   def complete(messages, tool_defs, config),
@@ -22,59 +25,90 @@ defmodule Handbeam.Agent.Provider.Codex do
   @impl true
   def stream(messages, tool_defs, config, on_chunk) do
     with {:ok, auth} <- resolve_auth(config) do
-      initial = %{buffer: "", output: %{}, response: nil, error: nil}
       body = request_body(messages, tool_defs, config, auth)
-      req = Map.get(config, :req_module, Req)
+      request(body, auth, config, on_chunk, 1)
+    end
+  end
 
-      options =
-        Map.get(config, :req_options, [])
-        |> Keyword.merge(
-          url: @endpoint,
-          method: :post,
-          headers: headers(auth),
-          body: Handbeam.JSON.encode!(body),
-          into: stream_handler(initial, on_chunk),
-          retry: false,
-          redirect: false,
-          receive_timeout: Map.get(config, :receive_timeout, 180_000),
-          connect_options: [timeout: Map.get(config, :connect_timeout, 30_000)]
-        )
+  defp request(body, auth, config, on_chunk, attempt) do
+    state = :counters.new(1, [:atomics])
+    initial = %{buffer: "", output: %{}, response: nil, error: nil}
+    req = Map.get(config, :req_module, Req)
 
-      case req.request(options) do
-        {:ok, %{status: 200} = response} ->
-          finish(Map.get(response.private, :codex_sse, initial), auth, config)
+    options =
+      Map.get(config, :req_options, [])
+      |> Keyword.merge(
+        url: @endpoint,
+        method: :post,
+        headers: headers(auth, config),
+        body: Handbeam.JSON.encode!(body),
+        into: stream_handler(initial, on_chunk, state),
+        retry: false,
+        redirect: false,
+        receive_timeout: Map.get(config, :receive_timeout, 180_000),
+        connect_options: [timeout: Map.get(config, :connect_timeout, 30_000)]
+      )
 
-        {:ok, %{status: 401}} ->
-          {:error, "ChatGPT authorization rejected. Sign in again."}
+    case req.request(options) do
+      {:ok, %{status: 200} = response} ->
+        finish(Map.get(response.private, :codex_sse, initial), auth, config)
 
-        {:ok, %{status: 403}} ->
-          {:error, "ChatGPT account does not have access to this Codex model."}
+      {:ok, %{status: 401}} ->
+        {:error, "ChatGPT authorization rejected. Sign in again."}
 
-        {:ok, %{status: 429}} ->
-          {:error,
-           "ChatGPT Codex usage limit reached. Check your subscription usage and retry later."}
+      {:ok, %{status: 403}} ->
+        {:error, "ChatGPT account does not have access to this Codex model."}
 
-        {:ok, %{status: status}} ->
-          {:error, "Codex request failed (HTTP #{status})."}
+      {:ok, %{status: 429}} ->
+        {:error,
+         "ChatGPT Codex usage limit reached. Check your subscription usage and retry later."}
 
-        {:error, _} ->
-          {:error,
-           "Codex connection ended without a complete response. Request was not replayed."}
-      end
+      {:ok, %{status: status} = response} ->
+        {:error, http_error(status, response_error(response))}
+
+      {:error, exception} ->
+        replay_or_fail(state, exception, body, auth, config, on_chunk, attempt)
+    end
+  end
+
+  # A failure before the first SSE byte is not a completed response. Once any
+  # event has been emitted the request is not idempotent, so it is not replayed.
+  defp replay_or_fail(state, exception, body, auth, config, on_chunk, attempt) do
+    if attempt < @transport_attempts and :counters.get(state, 1) == 0 do
+      request(body, auth, config, on_chunk, attempt + 1)
+    else
+      {:error,
+       "Codex connection ended without a complete response (#{transport_reason(exception)}). Request was replayed once."}
     end
   end
 
   @doc false
-  def headers(auth) do
+  def headers(auth, config \\ %{}) do
+    session_id = session_id(config)
+
     [
       {"authorization", "Bearer #{auth.api_key}"},
       {"chatgpt-account-id", auth.account_id},
-      {"originator", "handbeam"},
-      {"user-agent", "handbeam/0.1.0"},
+      {"originator", "pi"},
+      {"user-agent", user_agent()},
       {"openai-beta", "responses=experimental"},
       {"content-type", "application/json"},
-      {"accept", "text/event-stream"}
+      {"accept", "text/event-stream"},
+      {"session-id", session_id},
+      {"x-client-request-id", session_id}
     ]
+  end
+
+  defp session_id(config) do
+    case config[:session_id] do
+      id when is_binary(id) and id != "" -> id
+      _ -> "handbeam"
+    end
+  end
+
+  defp user_agent do
+    os = :os.type() |> elem(1) |> to_string()
+    "pi (#{os})"
   end
 
   defp resolve_auth(%{auth_type: :oauth} = config) do
@@ -99,21 +133,82 @@ defmodule Handbeam.Agent.Provider.Codex do
       "model" => config.model,
       "instructions" => config[:system_prompt] || "You are a helpful coding assistant.",
       "input" => Enum.flat_map(messages, &input_items(&1, auth.account_id, config.model)),
-      "tools" => Enum.map(tool_defs, &OpenAI.format_tool_def/1),
+      "tools" => Enum.map(tool_defs, &format_tool_def/1),
       "store" => false,
       "stream" => true,
+      "text" => %{"verbosity" => "low"},
       "include" => ["reasoning.encrypted_content"],
+      "prompt_cache_key" => session_id(config),
       "tool_choice" => "auto",
       "parallel_tool_calls" => true
     }
 
-    case config[:reasoning] do
-      reasoning when is_map(reasoning) ->
-        Map.put(body, "reasoning", Handbeam.Agent.Provider.stringify_keys(reasoning))
+    body =
+      case config[:reasoning] do
+        reasoning when is_map(reasoning) ->
+          Map.put(body, "reasoning", reasoning_options(reasoning))
 
-      _ ->
-        body
+        _ ->
+          body
+      end
+
+    if body["tools"] == [], do: Map.delete(body, "tools"), else: body
+  end
+
+  # Pi sends strict: null. A missing field matches that; `false` is rejected by
+  # newer Codex models and closes the stream before any event.
+  defp format_tool_def(tool) do
+    tool
+    |> OpenAI.format_tool_def()
+    |> Map.delete("strict")
+  end
+
+  defp reasoning_options(reasoning) do
+    reasoning
+    |> Handbeam.Agent.Provider.stringify_keys()
+    |> Map.put_new("summary", "auto")
+  end
+
+  defp http_error(status, nil), do: "Codex request failed (HTTP #{status})."
+
+  defp http_error(status, message),
+    do: "Codex request failed (HTTP #{status}): #{sanitize_error(message)}"
+
+  defp response_error(%{body: body}) when is_binary(body) and body != "", do: error_message(body)
+  defp response_error(%{body: body}) when is_map(body) and body != %{}, do: error_message(body)
+
+  defp response_error(%{private: private}) when is_map(private) do
+    case private[:codex_sse] do
+      %{buffer: buffer} when is_binary(buffer) -> error_message(buffer)
+      _ -> nil
     end
+  end
+
+  defp response_error(_), do: nil
+
+  defp error_message(body) when is_binary(body) do
+    case Handbeam.JSON.decode(body) do
+      {:ok, decoded} -> error_message(decoded)
+      _ -> nil
+    end
+  end
+
+  defp error_message(%{"error" => %{"message" => message}}) when is_binary(message), do: message
+  defp error_message(_), do: nil
+
+  defp sanitize_error(message) do
+    message
+    |> String.replace(~r/\s+/, " ")
+    |> String.slice(0, 180)
+  end
+
+  defp transport_reason(%{reason: reason}), do: transport_reason(reason)
+
+  defp transport_reason(reason) do
+    reason
+    |> inspect()
+    |> sanitize_error()
+    |> String.slice(0, 80)
   end
 
   defp input_items(%Message{role: :assistant, content: blocks} = message, account_id, model)
@@ -127,16 +222,19 @@ defmodule Handbeam.Agent.Provider.Codex do
 
   defp input_items(message, _account_id, _model), do: OpenAI.build_input_items([message], %{})
 
-  defp stream_handler(initial, on_chunk) do
+  defp stream_handler(initial, on_chunk, state) do
     fn {:data, chunk}, {req, response} ->
       if response.status == 200 do
+        :counters.add(state, 1, 1)
         acc = Map.get(response.private, :codex_sse, initial)
         {events, buffer} = SSE.process_chunk(acc.buffer, chunk)
         acc = Enum.reduce(events, %{acc | buffer: buffer}, &handle_event(&1, &2, on_chunk))
         {:cont, {req, put_in(response.private[:codex_sse], acc)}}
       else
-        # Do not retain response bodies that could echo authorization data.
-        {:cont, {req, response}}
+        # Keep only the bounded error body. Authorization echoes must not survive.
+        acc = Map.get(response.private, :codex_sse, initial)
+        buffer = String.slice(acc.buffer <> to_string(chunk), 0, 2048)
+        {:cont, {req, put_in(response.private[:codex_sse], %{acc | buffer: buffer})}}
       end
     end
   end
