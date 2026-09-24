@@ -23,7 +23,8 @@ defmodule Handbeam.Platform.ProcessSandbox do
           args: [String.t()],
           cwd: Path.t() | nil,
           env: [{String.t(), String.t()}],
-          pid_namespace?: boolean()
+          pid_namespace?: boolean(),
+          process_group?: boolean()
         }
 
   @spec wrap(map(), String.t(), Path.t() | nil, keyword()) ::
@@ -37,7 +38,8 @@ defmodule Handbeam.Platform.ProcessSandbox do
            args: shell.args ++ [command],
            cwd: cwd,
            env: [],
-           pid_namespace?: false
+           pid_namespace?: false,
+           process_group?: false
          }}
 
       workspace ->
@@ -139,7 +141,8 @@ defmodule Handbeam.Platform.ProcessSandbox do
              args: bwrap_args(shell, command, cwd, workspace, writable),
              cwd: nil,
              env: [],
-             pid_namespace?: true
+             pid_namespace?: true,
+             process_group?: false
            }}
         end
     end
@@ -155,7 +158,8 @@ defmodule Handbeam.Platform.ProcessSandbox do
          args: seatbelt_args(shell, command, workspace, tmp_dir, writable),
          cwd: cwd,
          env: [{"TMPDIR", tmp_dir}],
-         pid_namespace?: false
+         pid_namespace?: false,
+         process_group?: true
        }}
     end
   end

@@ -94,7 +94,7 @@ defmodule Handbeam.Platform.ProcessRunner do
           )
 
         os_pid = get_os_pid(port)
-        collect_output(port, os_pid, timeout_ms, invocation.pid_namespace?)
+        collect_output(port, os_pid, timeout_ms, invocation)
       rescue
         e -> {:error, "Failed to spawn: #{Exception.message(e)}"}
       end
@@ -120,21 +120,19 @@ defmodule Handbeam.Platform.ProcessRunner do
       else: options
   end
 
-  # With a PID namespace, killing its init (bwrap child) takes every descendant
-  # with it; without one (Seatbelt, plain shell) the whole tree must be killed.
-  defp collect_output(port, os_pid, timeout_ms, pid_namespace?) do
+  # Linux kills the PID namespace init. macOS verifies and kills the independent
+  # process group established before Seatbelt. Unconfined shells use a tree snapshot.
+  defp collect_output(port, os_pid, timeout_ms, invocation) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
     state = %{chunks: [], buf_bytes: 0, total_bytes: 0}
-    do_collect(port, os_pid, deadline, state, timeout_ms, pid_namespace?)
+    do_collect(port, os_pid, deadline, state, timeout_ms, invocation)
   end
 
-  defp do_collect(port, os_pid, deadline, state, original_timeout, pid_namespace?) do
+  defp do_collect(port, os_pid, deadline, state, original_timeout, invocation) do
     remaining = deadline - System.monotonic_time(:millisecond)
 
     if remaining <= 0 do
-      if pid_namespace?,
-        do: ProcessManager.kill_process(os_pid),
-        else: ProcessManager.kill_process_tree(os_pid)
+      cleanup_timeout(os_pid, invocation)
 
       safe_close_port(port)
       output = build_output(state)
@@ -145,7 +143,7 @@ defmodule Handbeam.Platform.ProcessRunner do
       receive do
         {^port, {:data, data}} ->
           state = ingest_chunk(state, data)
-          do_collect(port, os_pid, deadline, state, original_timeout, pid_namespace?)
+          do_collect(port, os_pid, deadline, state, original_timeout, invocation)
 
         {^port, {:exit_status, exit_code}} ->
           output = build_output(state)
@@ -160,10 +158,19 @@ defmodule Handbeam.Platform.ProcessRunner do
           end
       after
         min(remaining, 200) ->
-          do_collect(port, os_pid, deadline, state, original_timeout, pid_namespace?)
+          do_collect(port, os_pid, deadline, state, original_timeout, invocation)
       end
     end
   end
+
+  defp cleanup_timeout(os_pid, %{pid_namespace?: true}),
+    do: ProcessManager.kill_process(os_pid)
+
+  defp cleanup_timeout(os_pid, %{process_group?: true}),
+    do: ProcessManager.kill_process_group(os_pid)
+
+  defp cleanup_timeout(os_pid, _invocation),
+    do: ProcessManager.kill_process_tree(os_pid)
 
   # ── Buffer management ──
 
