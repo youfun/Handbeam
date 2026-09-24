@@ -2850,6 +2850,10 @@ input:checked + .settings-toggle-track .settings-toggle-thumb {
   gap: 10px;
 }
 
+.settings-detail-row-oauth {
+  flex-wrap: nowrap;
+}
+
 .settings-detail-label {
   width: 100px;
   font-size: 11px;
@@ -2884,9 +2888,15 @@ input:checked + .settings-toggle-track .settings-toggle-thumb {
 }
 
 .settings-detail-value.settings-oauth-link {
-  min-width: 0;
-  white-space: normal;
-  overflow-wrap: anywhere;
+  display: block;
+  flex: 0 0 auto;
+  width: max-content;
+  max-width: none;
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+  overflow-wrap: normal;
+  word-break: keep-all;
 }
 
 .settings-detail-actions {
@@ -3101,6 +3111,13 @@ body > .settings-overlay,
 
 .settings-dialog-md {
   width: min(520px, calc(100vw - 2rem));
+}
+
+.settings-dialog-oauth {
+  flex: 0 0 auto;
+  width: max-content;
+  min-width: 340px;
+  max-width: calc(100vw - 2rem);
 }
 
 .settings-dialog-title {

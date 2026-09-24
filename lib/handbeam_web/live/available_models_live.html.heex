@@ -779,7 +779,7 @@
 
 <!-- ── Subscription OAuth Overlay ── -->
 <div :if={@subscription_oauth} class="settings-overlay">
-  <div class="settings-dialog settings-dialog-sm">
+  <div class="settings-dialog settings-dialog-oauth">
     <h2 class="settings-dialog-title">
       {@subscription_oauth.login_label}
     </h2>
@@ -793,12 +793,13 @@
           {@subscription_oauth.device.user_code}
         </span>
       </div>
-      <div class="settings-detail-row">
+      <div class="settings-detail-row settings-detail-row-oauth">
         <span class="settings-detail-label">{gettext("验证地址")}</span>
         <a
           href={@subscription_oauth.verification_uri}
           target="_blank"
           rel="noopener noreferrer"
+          title={@subscription_oauth.verification_uri}
           class="settings-detail-value settings-oauth-link font-mono text-accent"
         >
           {@subscription_oauth.verification_uri}
