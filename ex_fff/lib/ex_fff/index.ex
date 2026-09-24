@@ -406,13 +406,10 @@ defmodule ExFff.Index do
 
     task =
       Task.async(fn ->
-        case ExFff.Scanner.scan_and_prepare(root, config) do
-          {:ok, count, files_entries, trig_entries} ->
-            {:ok, generation, count, files_entries, trig_entries}
+        {:ok, count, files_entries, trig_entries} =
+          ExFff.Scanner.scan_and_prepare(root, config)
 
-          {:error, reason} ->
-            {:error, generation, reason}
-        end
+        {:ok, generation, count, files_entries, trig_entries}
       end)
 
     %{
