@@ -43,6 +43,20 @@ defmodule Handbeam.Platform.ProcessRunnerTest do
       assert meta.exit_code == 0
     end
 
+    test "does not leak release launcher variables into child tools" do
+      old_root = System.get_env("ROOTDIR")
+      System.put_env("ROOTDIR", "/incomplete/release")
+
+      try do
+        assert {:ok, "unset", %{exit_code: 0}} =
+                 ProcessRunner.run_bash("printf %s \"${ROOTDIR-unset}\"", nil, 5_000)
+      after
+        if old_root,
+          do: System.put_env("ROOTDIR", old_root),
+          else: System.delete_env("ROOTDIR")
+      end
+    end
+
     test "fails closed when a workspace sandbox is unavailable" do
       workspace = File.cwd!()
 

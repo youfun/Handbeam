@@ -11,6 +11,7 @@ defmodule Handbeam.Platform.ProcessRunner do
   @max_output_bytes 50_000
   @max_output_lines 2_000
   @buffer_limit 102_400
+  @release_env ~w(BINDIR EMU PROGNAME RELEASE_NAME RELEASE_ROOT RELEASE_VSN ROOTDIR)
 
   @doc """
   Opens a gated shell using the same shell resolution and Port transport as synchronous Bash.
@@ -106,14 +107,13 @@ defmodule Handbeam.Platform.ProcessRunner do
   defp port_options(invocation) do
     options = [:binary, :exit_status, :use_stdio, :stderr_to_stdout, :hide]
 
-    options =
-      case invocation.env do
-        [] ->
-          options
+    env =
+      Enum.map(@release_env, &{String.to_charlist(&1), false}) ++
+        Enum.map(invocation.env, fn {key, value} ->
+          {String.to_charlist(key), String.to_charlist(value)}
+        end)
 
-        env ->
-          [{:env, Enum.map(env, fn {k, v} -> {~c"#{k}", ~c"#{v}"} end)} | options]
-      end
+    options = [{:env, env} | options]
 
     if invocation.cwd,
       do: [{:cd, String.to_charlist(invocation.cwd)} | options],
