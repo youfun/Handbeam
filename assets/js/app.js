@@ -1,0 +1,51 @@
+import { Socket } from "phoenix";
+import { LiveSocket } from "phoenix_live_view";
+import { StreamingMarkdown } from "./hooks/streaming_markdown.js";
+import { ChatScroll } from "./hooks/chat_scroll.js";
+import { ConversationNav } from "./hooks/conversation_nav.js";
+import { ComposerPasteUpload } from "./hooks/composer_paste_upload.js";
+import { WorkspacePanel } from "./hooks/workspace_panel.js";
+import { CopyText } from "./hooks/copy_text.js";
+import { ConversationContextMenu } from "./hooks/conversation_context_menu.js";
+import { GhosttyTerminal } from "../vendor/ghostty.js";
+import { installImageLightbox } from "./image_lightbox.js";
+
+// Theme initialization
+let theme = 'light';
+try {
+  theme = localStorage.getItem('handbeam-theme') || 'light';
+} catch (_) {}
+
+document.documentElement.setAttribute('data-theme', theme);
+installImageLightbox();
+
+// MobHook — Mob LiveView bridge. Native WebView injects window.mob pointing
+// at the NIF. In LiveView mode this hook replaces it so handle_event/3 in
+// LiveView receives JS messages. Requires #mob-bridge in root.html.heex.
+const MobHook = {
+  mounted() {
+    window.mob = {
+      send: (data) => this.pushEvent("mob_message", data),
+      onMessage: (handler) => this.handleEvent("mob_push", handler),
+      _dispatch: () => {}
+    }
+  }
+}
+
+let csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content");
+let Hooks = { StreamingMarkdown, ChatScroll, ConversationNav, ComposerPasteUpload, WorkspacePanel, CopyText, ConversationContextMenu, GhosttyTerminal, MobHook };
+
+try {
+  let liveSocket = new LiveSocket("/live", Socket, {
+    hooks: Hooks,
+    params: {_csrf_token: csrfToken},
+    longPollFallbackMs: 2500
+  });
+
+  // LiveView turns on diff logging for localhost. Keep the console quiet.
+  liveSocket.disableDebug();
+  liveSocket.connect();
+  window.liveSocket = liveSocket;
+} catch (error) {
+  console.error("Handbeam LiveSocket failed to start", error);
+}

@@ -1,0 +1,15 @@
+{
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node assets/test/smooth_stream_controller_test.mjs && node assets/test/patch_streaming_markdown_test.mjs && node assets/test/render_markdown_test.mjs && node assets/test/code_block_copy_test.mjs && node assets/test/mermaid_blocks_test.mjs && node assets/test/streaming_markdown_hook_test.mjs && node assets/test/composer_paste_upload_test.mjs && node assets/test/streaming_markdown_followup_test.mjs && node assets/test/conversation_nav_test.mjs"
+  },
+  "dependencies": {
+    "dompurify": "^3.2.6",
+    "markdown-it": "^14.1.0",
+    "mermaid": "11.12.0"
+  },
+  "devDependencies": {
+    "jsdom": "^26.1.0"
+  }
+}
