@@ -18,6 +18,18 @@
           {if(@chat_scope == :free, do: gettext("对话"), else: @workspace_label)}
         </span>
       </div>
+      <span
+        id="mobile-workspace-count"
+        class="mobile-workspace-count"
+        title={gettext("会话数量")}
+      >
+        {scoped_conversation_count(
+          @conversations_by_workspace,
+          @chat_scope,
+          @current_workspace_id,
+          @workspaces
+        )}
+      </span>
       <svg
         class="mobile-chevron"
         width="10"
@@ -26,6 +38,7 @@
         fill="none"
         stroke="currentColor"
         stroke-width="3"
+        aria-hidden="true"
       >
         <polyline points="6 9 12 15 18 9" />
       </svg>
@@ -135,23 +148,38 @@
       </div>
       <div class="flex-1 overflow-y-auto">
         <!-- Workspace headers (outside stream, fixed) -->
-        <div :for={ws <- @workspaces} class="workspace-group">
-          <div class="workspace-title-row">
+        <div
+          :for={ws <- @workspaces}
+          id={"workspace-group-#{ws["id"]}"}
+          class={[
+            "workspace-group",
+            workspace_group_collapsed?(@collapsed_workspace_ids, ws["id"]) && "is-collapsed"
+          ]}
+        >
+          <div class={[
+            "workspace-title-row",
+            @current_workspace_id == ws["id"] && @chat_scope != :free && "is-active"
+          ]}>
             <button
               phx-click="select_workspace"
               phx-value-id={ws["id"]}
               class={[
-                "workspace-header w-full text-left px-3 py-1.5 text-xs flex items-center gap-1.5 transition-colors",
+                "workspace-header flex-1 min-w-0 text-left px-3 py-1.5 text-xs flex items-center gap-1.5 transition-colors",
                 if(@current_workspace_id == ws["id"],
                   do: "workspace-header-active",
                   else: "hover:bg-surface-hover"
                 )
               ]}
             >
-              <span class="workspace-chevron">▾</span>
+              <span class="workspace-icon" aria-hidden="true">
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                </svg>
+              </span>
               <span class="truncate flex-1">{ws["name"]}</span>
               <span :if={ws["default"]} class="text-tertiary text-[0.6rem]">default</span>
             </button>
+            <div class="workspace-row-actions">
             <button
               phx-click="new_conversation_in_workspace"
               phx-value-ws_id={ws["id"]}
@@ -210,9 +238,58 @@
                 </button>
               </div>
             </div>
+            </div>
+            <button
+              type="button"
+              id={"workspace-toggle-#{ws["id"]}"}
+              phx-click="toggle_workspace_group"
+              phx-value-id={ws["id"]}
+              class="workspace-count-toggle"
+              aria-expanded={to_string(not workspace_group_collapsed?(@collapsed_workspace_ids, ws["id"]))}
+              aria-controls={"workspace-conversations-#{ws["id"]}"}
+              title={
+                if(workspace_group_collapsed?(@collapsed_workspace_ids, ws["id"]),
+                  do: gettext("展开"),
+                  else: gettext("收起")
+                )
+              }
+              aria-label={
+                if(workspace_group_collapsed?(@collapsed_workspace_ids, ws["id"]),
+                  do: gettext("展开"),
+                  else: gettext("收起")
+                )
+              }
+            >
+              <span
+                id={"workspace-count-#{ws["id"]}"}
+                class="workspace-conv-count"
+                title={gettext("会话数量")}
+              >
+                {active_conversation_count(@conversations_by_workspace, ws["id"], @workspaces)}
+              </span>
+              <svg
+                class={[
+                  "workspace-chevron-icon",
+                  workspace_group_collapsed?(@collapsed_workspace_ids, ws["id"]) && "is-collapsed"
+                ]}
+                width="10"
+                height="10"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                aria-hidden="true"
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
           </div>
 
-          <div class="conversations-list">
+          <div
+            :if={not workspace_group_collapsed?(@collapsed_workspace_ids, ws["id"])}
+            id={"workspace-conversations-#{ws["id"]}"}
+            class="conversations-list"
+          >
             <div
               :for={
                 conv <-
@@ -333,15 +410,24 @@
           </div>
         </div>
 
-        <div id="free-chats" class="workspace-group mt-2 border-t pt-2">
-          <div class="workspace-title-row">
-            <div class="workspace-header w-full text-left px-3 py-1.5 text-xs flex items-center gap-1.5">
+        <div
+          id="free-chats"
+          class={[
+            "workspace-group mt-2 border-t pt-2",
+            workspace_group_collapsed?(@collapsed_workspace_ids, "free") && "is-collapsed"
+          ]}
+        >
+          <div class={[
+            "workspace-title-row",
+            @chat_scope == :free && "is-active"
+          ]}>
+            <div class="workspace-header flex-1 min-w-0 text-left px-3 py-1.5 text-xs flex items-center gap-1.5">
               <span class="truncate flex-1">{gettext("对话")}</span>
             </div>
             <button
               id="new-free-conversation"
               phx-click="new_free_conversation"
-              class="workspace-add-btn flex-shrink-0 w-5 h-5 flex items-center justify-center rounded text-tertiary hover:text-primary hover:bg-surface-hover transition-colors mr-1"
+              class="workspace-add-btn flex-shrink-0 w-5 h-5 flex items-center justify-center rounded text-tertiary hover:text-primary hover:bg-surface-hover transition-colors"
               title={gettext("新建自由对话")}
             >
               <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
@@ -353,8 +439,52 @@
                 />
               </svg>
             </button>
+            <button
+              type="button"
+              id="free-workspace-toggle"
+              phx-click="toggle_workspace_group"
+              phx-value-id="free"
+              class="workspace-count-toggle"
+              aria-expanded={to_string(not workspace_group_collapsed?(@collapsed_workspace_ids, "free"))}
+              aria-controls="free-conversations"
+              title={
+                if(workspace_group_collapsed?(@collapsed_workspace_ids, "free"),
+                  do: gettext("展开"),
+                  else: gettext("收起")
+                )
+              }
+              aria-label={
+                if(workspace_group_collapsed?(@collapsed_workspace_ids, "free"),
+                  do: gettext("展开"),
+                  else: gettext("收起")
+                )
+              }
+            >
+              <span id="free-workspace-count" class="workspace-conv-count" title={gettext("会话数量")}>
+                {free_conversation_count(@conversations_by_workspace)}
+              </span>
+              <svg
+                class={[
+                  "workspace-chevron-icon",
+                  workspace_group_collapsed?(@collapsed_workspace_ids, "free") && "is-collapsed"
+                ]}
+                width="10"
+                height="10"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                aria-hidden="true"
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
           </div>
-          <div class="conversations-list">
+          <div
+            :if={not workspace_group_collapsed?(@collapsed_workspace_ids, "free")}
+            id="free-conversations"
+            class="conversations-list"
+          >
             <div
               :for={conv <- free_conversations(@conversations_by_workspace)}
               id={"free-conversation-#{conv.id}"}
@@ -1581,11 +1711,43 @@
       <div class="sheet-handle"></div>
       <div class="bottom-sheet-inner">
         <%= for ws <- @workspaces do %>
+          <% collapsed? = workspace_group_collapsed?(@collapsed_workspace_ids, ws["id"]) %>
           <div class="sheet-section-title sheet-section-header">
-            <div class="sheet-section-name">
-              <span class="truncate">{ws["name"]}</span>
+            <button
+              type="button"
+              id={"sheet-workspace-toggle-#{ws["id"]}"}
+              phx-click="toggle_workspace_group"
+              phx-value-id={ws["id"]}
+              class="sheet-section-toggle"
+              aria-expanded={to_string(not collapsed?)}
+            >
+              <span class="workspace-icon" aria-hidden="true">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                </svg>
+              </span>
+              <span class="truncate flex-1 min-w-0">{ws["name"]}</span>
               <span :if={ws["default"]} class="sheet-section-sub">default</span>
-            </div>
+              <span
+                id={"sheet-workspace-count-#{ws["id"]}"}
+                class="sheet-conv-count"
+                title={gettext("会话数量")}
+              >
+                {active_conversation_count(@conversations_by_workspace, ws["id"], @workspaces)}
+              </span>
+              <svg
+                class={["workspace-chevron-icon", collapsed? && "is-collapsed"]}
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                aria-hidden="true"
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
             <button
               :if={!ws["default"]}
               phx-click="open_remove_workspace"
@@ -1617,35 +1779,99 @@
               </svg>
             </button>
           </div>
-          <%= for conv <- workspace_conversations(@conversations_by_workspace, ws["id"], @workspaces) |> Enum.reject(& &1[:archived]) do %>
-            <button
-              phx-click="select_conversation"
-              phx-value-id={conv.id}
-              phx-value-ws_id={conv.workspace_id}
-              class={[
-                "sheet-conv-row",
-                if(
-                  @current_conversation_id == conv.id and
-                    @current_workspace_id == conv.workspace_id,
-                  do: "active",
-                  else: ""
-                )
-              ]}
-            >
-              <span class={[
-                "sheet-conv-dot",
-                if(
-                  @current_conversation_id == conv.id and
-                    @current_workspace_id == conv.workspace_id,
-                  do: "active",
-                  else: ""
-                )
-              ]}></span>
-              <span class="truncate flex-1">{conv.title}</span>
-              <span class="sheet-conv-time">{relative_time(conv)}</span>
-            </button>
+          <%= if not workspace_group_collapsed?(@collapsed_workspace_ids, ws["id"]) do %>
+            <%= for conv <- workspace_conversations(@conversations_by_workspace, ws["id"], @workspaces) |> Enum.reject(& &1[:archived]) do %>
+              <button
+                phx-click="select_conversation"
+                phx-value-id={conv.id}
+                phx-value-ws_id={conv.workspace_id}
+                class={[
+                  "sheet-conv-row",
+                  if(
+                    @current_conversation_id == conv.id and
+                      @current_workspace_id == conv.workspace_id,
+                    do: "active",
+                    else: ""
+                  )
+                ]}
+              >
+                <span class={[
+                  "sheet-conv-dot",
+                  if(
+                    @current_conversation_id == conv.id and
+                      @current_workspace_id == conv.workspace_id,
+                    do: "active",
+                    else: ""
+                  )
+                ]}></span>
+                <span class="truncate flex-1">{conv.title}</span>
+                <span class="sheet-conv-time">{relative_time(conv)}</span>
+              </button>
+            <% end %>
           <% end %>
         <% end %>
+        <% free_collapsed? = workspace_group_collapsed?(@collapsed_workspace_ids, "free") %>
+        <div class="sheet-section-title sheet-section-header">
+          <button
+            type="button"
+            id="sheet-free-toggle"
+            phx-click="toggle_workspace_group"
+            phx-value-id="free"
+            class="sheet-section-toggle"
+            aria-expanded={to_string(not free_collapsed?)}
+            aria-controls="sheet-free-conversations"
+          >
+            <span class="truncate flex-1 min-w-0">{gettext("对话")}</span>
+            <span id="sheet-free-count" class="sheet-conv-count" title={gettext("会话数量")}>
+              {free_conversation_count(@conversations_by_workspace)}
+            </span>
+            <svg
+              class={["workspace-chevron-icon", free_collapsed? && "is-collapsed"]}
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+              aria-hidden="true"
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+          <button
+            id="sheet-new-free-conversation"
+            phx-click="new_free_conversation"
+            class="sheet-new-conv-btn"
+            title={gettext("新建自由对话")}
+            aria-label={gettext("新建自由对话")}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+              stroke-linecap="round"
+            >
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+        </div>
+        <div :if={not free_collapsed?} id="sheet-free-conversations">
+          <button
+            :for={conv <- free_conversations(@conversations_by_workspace)}
+            phx-click="select_free_conversation"
+            phx-value-id={conv.id}
+            class={[
+              "sheet-conv-row",
+              @current_conversation_id == conv.id && @chat_scope == :free && "active"
+            ]}
+          >
+            <span class="truncate flex-1">{conv.title}</span>
+          </button>
+        </div>
         <button phx-click="open_add_project" class="sheet-add-row">
           <svg
             width="16"

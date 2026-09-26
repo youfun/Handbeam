@@ -141,6 +141,7 @@ defmodule HandbeamWeb.WorkspaceLive do
       |> assign(:tools_active, %{})
       |> assign(:expanded_tool_groups, MapSet.new())
       |> assign(:show_archive, false)
+      |> assign(:collapsed_workspace_ids, MapSet.new())
       |> assign(:workspace_menu_id, nil)
       |> assign(:remove_workspace, nil)
       |> assign(:conversation_menu_id, nil)
@@ -717,6 +718,7 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   @impl true
   def handle_event("select_workspace", %{"id" => ws_id}, socket) do
+    socket = expand_workspace_group(socket, ws_id)
     {socket, conv_id} = ConversationSwitching.select_workspace(socket, ws_id)
 
     socket =
@@ -886,6 +888,11 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   @impl true
+  def handle_event("toggle_workspace_group", %{"id" => id}, socket) when is_binary(id) do
+    {:noreply, toggle_workspace_group(socket, id)}
+  end
+
+  @impl true
   def handle_event("toggle_workspace_menu", %{"id" => ws_id}, socket) do
     menu_id = if socket.assigns.workspace_menu_id == ws_id, do: nil, else: ws_id
     {:noreply, assign(socket, :workspace_menu_id, menu_id)}
@@ -956,7 +963,10 @@ defmodule HandbeamWeb.WorkspaceLive do
     {socket, conv_id} =
       ConversationSwitching.new_conversation(socket, ws_id, conversation_switching_opts())
 
-    socket = subscribe_to_session(socket)
+    socket =
+      socket
+      |> expand_workspace_group(ws_id)
+      |> subscribe_to_session()
 
     {:noreply, push_patch(socket, to: "/w/#{ws_id}/c/#{conv_id}")}
   end
@@ -968,6 +978,7 @@ defmodule HandbeamWeb.WorkspaceLive do
 
     socket =
       socket
+      |> expand_workspace_group("free")
       |> enter_free_chat()
       |> subscribe_to_session()
       |> close_mobile_sheets()
@@ -1225,6 +1236,7 @@ defmodule HandbeamWeb.WorkspaceLive do
 
     socket =
       socket
+      |> expand_workspace_group(ws_id)
       |> handle_workspace_switch()
       |> subscribe_to_session()
 
@@ -3037,6 +3049,52 @@ defmodule HandbeamWeb.WorkspaceLive do
   def workspace_conversations(conversations_by_workspace, ws_id, workspaces),
     do:
       ConversationSwitching.workspace_conversations(conversations_by_workspace, ws_id, workspaces)
+
+  def workspace_group_collapsed?(collapsed, id) when is_struct(collapsed, MapSet) do
+    MapSet.member?(collapsed, to_string(id))
+  end
+
+  def workspace_group_collapsed?(_, _), do: false
+
+  def active_conversation_count(conversations_by_workspace, ws_id, workspaces) do
+    conversations_by_workspace
+    |> workspace_conversations(ws_id, workspaces)
+    |> length()
+  end
+
+  def free_conversation_count(conversations_by_workspace) do
+    conversations_by_workspace
+    |> free_conversations()
+    |> length()
+  end
+
+  def scoped_conversation_count(conversations_by_workspace, :free, _ws_id, _workspaces) do
+    free_conversation_count(conversations_by_workspace)
+  end
+
+  def scoped_conversation_count(conversations_by_workspace, _scope, ws_id, workspaces) do
+    active_conversation_count(conversations_by_workspace, ws_id, workspaces)
+  end
+
+  defp toggle_workspace_group(socket, id) do
+    id = to_string(id)
+
+    update(socket, :collapsed_workspace_ids, fn collapsed ->
+      collapsed = collapsed || MapSet.new()
+
+      if MapSet.member?(collapsed, id),
+        do: MapSet.delete(collapsed, id),
+        else: MapSet.put(collapsed, id)
+    end)
+  end
+
+  defp expand_workspace_group(socket, id) do
+    id = to_string(id)
+
+    update(socket, :collapsed_workspace_ids, fn collapsed ->
+      MapSet.delete(collapsed || MapSet.new(), id)
+    end)
+  end
 
   defp log_workspace_boot(default_ws, workspaces, conversations_by_ws) do
     dev_log(

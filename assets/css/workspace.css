@@ -1589,12 +1589,46 @@ button.workspace-file-row:hover,
   display: flex;
   align-items: center;
   min-width: 0;
+  border-radius: 8px;
+}
+
+.workspace-title-row.is-active {
+  background: var(--sig-bg-surface-active);
+}
+
+.workspace-title-row.is-active .workspace-header,
+.workspace-title-row.is-active .workspace-header:hover {
+  background: transparent;
+}
+
+.workspace-title-row.is-active .workspace-header-active::before {
+  display: none;
+}
+
+.workspace-row-actions {
+  display: flex;
+  align-items: center;
+  flex: 0 0 0;
+  width: 0;
+  min-width: 0;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.workspace-title-row:hover .workspace-row-actions,
+.workspace-title-row:focus-within .workspace-row-actions,
+.workspace-row-actions:has(.is-open) {
+  flex: 0 0 auto;
+  width: auto;
+  overflow: visible;
+  opacity: 1;
+  pointer-events: auto;
 }
 
 .workspace-menu {
   position: relative;
   flex-shrink: 0;
-  margin-right: 0.15rem;
 }
 
 .workspace-action {
@@ -1690,7 +1724,52 @@ button.workspace-file-row:hover,
   transition: transform 0.2s ease;
 }
 
+.workspace-count-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+  height: 1.5rem;
+  margin-left: auto;
+  margin-right: 0.35rem;
+  padding: 0 0.1rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.workspace-count-toggle:hover {
+  color: var(--color-text-primary);
+  background: var(--color-surface-hover);
+}
+
+.workspace-chevron-icon {
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+
+.workspace-chevron-icon.is-collapsed {
+  transform: rotate(-90deg);
+}
+
+.workspace-conv-count {
+  flex-shrink: 0;
+  min-width: 0.75rem;
+  color: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  line-height: 1;
+  text-align: right;
+}
+
 .workspace-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--color-text-tertiary);
   font-size: 0.78rem;
   flex-shrink: 0;
   opacity: 0.85;
@@ -1699,24 +1778,8 @@ button.workspace-file-row:hover,
 /* ── Conversations list ── */
 .conversations-list {
   position: relative;
-  margin: 0.15rem 0 0.1rem 1.3rem;
-  padding-left: 0.45rem;
-}
-
-.conversations-list::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0.2rem;
-  bottom: 0.25rem;
-  width: 1px;
-  background: linear-gradient(
-    to bottom,
-    transparent,
-    var(--color-border) 12%,
-    var(--color-border) 88%,
-    transparent
-  );
+  margin: 0.1rem 0.25rem 0.2rem 0.85rem;
+  padding-left: 0.15rem;
 }
 
 /* ── Conversation row (item + inline action) ── */
@@ -2429,6 +2492,14 @@ button.workspace-file-row:hover,
     font-size: 11px;
     line-height: 1;
     color: var(--color-text-tertiary);
+  }
+
+  .mobile-workspace-count {
+    flex-shrink: 0;
+    margin-left: 2px;
+    color: var(--color-text-tertiary);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
   }
 
   .mobile-header-actions {

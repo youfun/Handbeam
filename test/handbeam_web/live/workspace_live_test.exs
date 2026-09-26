@@ -3618,6 +3618,43 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       end
     end
 
+    test "workspace group shows conversation count and collapses", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+      {:ok, workspace} = Handbeam.WorkspaceStore.ensure_default!()
+      ws_id = workspace["id"]
+
+      html = render(view)
+      assert html =~ ~r/id="workspace-count-#{ws_id}"[^>]*>\s*\d+\s*</
+      assert html =~ ~r/id="free-workspace-count"[^>]*>\s*\d+\s*</
+      assert html =~ ~r/id="mobile-workspace-count"[^>]*>\s*\d+\s*</
+      assert has_element?(view, "#workspace-toggle-#{ws_id}[aria-expanded='true']")
+      assert has_element?(view, "#workspace-conversations-#{ws_id}")
+      assert has_element?(view, "#sheet-workspace-count-#{ws_id}")
+      assert has_element?(view, "#sheet-free-count")
+      assert has_element?(view, "#sheet-free-toggle[aria-expanded='true']")
+      assert has_element?(view, "#sheet-free-conversations")
+      assert has_element?(view, "#free-workspace-toggle[aria-expanded='true']")
+      assert has_element?(view, "#free-conversations")
+
+      view |> element("#workspace-toggle-#{ws_id}") |> render_click()
+
+      refute has_element?(view, "#workspace-conversations-#{ws_id}")
+      assert has_element?(view, "#workspace-count-#{ws_id}")
+      assert has_element?(view, "#workspace-toggle-#{ws_id}[aria-expanded='false']")
+
+      view |> element("#workspace-toggle-#{ws_id}") |> render_click()
+
+      assert has_element?(view, "#workspace-conversations-#{ws_id}")
+      assert has_element?(view, "#workspace-toggle-#{ws_id}[aria-expanded='true']")
+
+      view |> element("#free-workspace-toggle") |> render_click()
+      refute has_element?(view, "#free-conversations")
+      refute has_element?(view, "#sheet-free-conversations")
+      assert has_element?(view, "#free-workspace-count")
+      assert has_element?(view, "#sheet-free-count")
+      assert has_element?(view, "#sheet-free-toggle[aria-expanded='false']")
+    end
+
     test "mount renders the active workspace panel", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/")
 
