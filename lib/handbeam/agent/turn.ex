@@ -823,7 +823,7 @@ defmodule Handbeam.Agent.Turn do
         end
 
       {:error, reason} ->
-        error_msg = format_error(reason)
+        error_msg = format_provider_error(provider_config, reason)
 
         if not Keyword.get(opts, :prompt_too_long_retried, false) and prompt_too_long?(error_msg) do
           Logger.info("[Turn] Prompt too long — forcing compaction and retrying")
@@ -1558,6 +1558,62 @@ defmodule Handbeam.Agent.Turn do
   defp format_error(reason) when is_atom(reason), do: Atom.to_string(reason)
   defp format_error(reason) when is_exception(reason), do: Exception.message(reason)
   defp format_error(reason), do: inspect(reason)
+
+  # Auth failures otherwise look like the conversation model failed. Name the
+  # provider, subscription, and model that actually made the request.
+  defp format_provider_error(provider_config, reason) do
+    message = format_error(reason)
+
+    if auth_failure?(message) do
+      prefix = auth_failure_prefix(provider_config)
+      if prefix == "", do: message, else: "#{prefix}: #{message}"
+    else
+      message
+    end
+  end
+
+  defp auth_failure?(message) when is_binary(message) do
+    downcased = String.downcase(message)
+
+    String.contains?(downcased, "oauth") or
+      String.contains?(downcased, "access token") or
+      String.contains?(downcased, "authorization") or
+      String.contains?(downcased, "unauthor") or
+      String.contains?(downcased, "sign in") or
+      String.contains?(message, "订阅") or
+      String.contains?(message, "授权") or
+      String.contains?(message, "重新登录") or
+      String.contains?(message, "重新连接")
+  end
+
+  defp auth_failure?(_), do: false
+
+  defp auth_failure_prefix(provider_config) when is_map(provider_config) do
+    provider_id = provider_config[:provider_key] || provider_config[:provider]
+    model = provider_config[:model]
+
+    [subscription_label(provider_id), model_label(provider_id, model)]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join(" ")
+  end
+
+  defp auth_failure_prefix(_), do: ""
+
+  defp subscription_label(provider_id) when is_binary(provider_id) do
+    case Handbeam.Agent.Auth.Subscriptions.get(provider_id) do
+      {:ok, %{login_label: label}} when is_binary(label) and label != "" -> label
+      _ -> provider_id
+    end
+  end
+
+  defp subscription_label(provider_id) when is_atom(provider_id) and not is_nil(provider_id) do
+    subscription_label(Atom.to_string(provider_id))
+  end
+
+  defp subscription_label(_), do: nil
+
+  defp model_label(_provider_id, model) when is_binary(model) and model != "", do: model
+  defp model_label(_provider_id, _), do: nil
 
   defp redact_tool_input("browser", input) when is_map(input) do
     input = Handbeam.Log.Redactor.redact(input)

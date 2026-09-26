@@ -34,6 +34,18 @@ defmodule Handbeam.Agent.TurnTest do
     :ok
   end
 
+  defmodule AuthFailureProvider do
+    @behaviour Handbeam.Agent.Provider
+
+    @impl true
+    def complete(_messages, _tools, _config) do
+      {:error, "invalid_request_error: The OAuth2 access token could not be validated."}
+    end
+
+    @impl true
+    def stream(messages, tools, config, _on_chunk), do: complete(messages, tools, config)
+  end
+
   defmodule SensitiveInputProvider do
     @behaviour Handbeam.Agent.Provider
 
@@ -536,6 +548,35 @@ defmodule Handbeam.Agent.TurnTest do
   end
 
   describe "error handling" do
+    test "names the subscription and model on an auth failure" do
+      config = %Config{
+        provider: AuthFailureProvider,
+        model: "gpt-6-sol",
+        max_turns: 1,
+        provider_config: %{provider_key: "openai_codex", provider: "openai_codex"}
+      }
+
+      result = Turn.run_loop(State.init(config, "Trigger auth error"), [])
+
+      assert result.status == :error
+      assert result.error =~ "ChatGPT (Codex subscription)"
+      assert result.error =~ "gpt-6-sol"
+      assert result.error =~ "The OAuth2 access token could not be validated."
+    end
+
+    test "leaves non-auth provider errors unchanged" do
+      config = %Config{
+        provider: FakeProvider,
+        model: "fake",
+        max_turns: 50,
+        provider_config: %{scenario: :error_response, provider_key: "openai_codex"}
+      }
+
+      result = Turn.run_loop(State.init(config, "Trigger error"), [])
+
+      assert result.error == "Fake provider simulated error"
+    end
+
     test "returns error state on provider error" do
       config = %Config{
         provider: FakeProvider,
