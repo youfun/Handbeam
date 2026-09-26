@@ -47,7 +47,9 @@
 
 .markdown-body {
   line-height: 1.6;
-  overflow-wrap: anywhere;
+  max-width: none;
+  overflow-wrap: break-word;
+  word-break: normal;
 }
 
 .markdown-body > :first-child {

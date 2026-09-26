@@ -756,7 +756,7 @@ textarea::placeholder {
   flex-direction: column;
   align-items: flex-end;
   gap: 6px;
-  max-width: min(72%, 36rem);
+  max-width: 100%;
   min-width: 0;
 }
 
@@ -899,7 +899,7 @@ textarea::placeholder {
 
 #ai-messages .msg-bubble.msg-user {
   width: fit-content;
-  max-width: min(72%, 36rem);
+  max-width: 100%;
   padding: 0.4rem 0.95rem;
   border-radius: 1.15rem;
   background-color: var(--sig-bg-surface-active);
@@ -909,7 +909,7 @@ textarea::placeholder {
 
 #ai-messages .msg-bubble.msg-assistant {
   width: 100%;
-  max-width: 46rem;
+  max-width: none;
   background: transparent;
   border: none;
   border-radius: 0;
@@ -919,7 +919,7 @@ textarea::placeholder {
 
 #ai-messages .msg-bubble.msg-system {
   width: 100%;
-  max-width: 46rem;
+  max-width: none;
   font-size: var(--font-size-xs);
   color: var(--color-error);
   background-color: var(--color-error-bg);
@@ -1663,6 +1663,9 @@ button.workspace-file-row:hover,
 .workspace-title-row {
   display: flex;
   align-items: center;
+  align-self: flex-start;
+  width: fit-content;
+  max-width: 100%;
   min-width: 0;
   border-radius: 8px;
 }
@@ -1760,6 +1763,8 @@ button.workspace-file-row:hover,
 
 .workspace-header {
   position: relative;
+  flex: 0 1 auto;
+  min-width: 0;
   min-height: 2rem;
   color: var(--color-text-secondary);
   font-weight: var(--font-weight-semibold);
@@ -1805,8 +1810,8 @@ button.workspace-file-row:hover,
   justify-content: flex-end;
   gap: 3px;
   height: 1.5rem;
-  margin-left: auto;
-  margin-right: 0.35rem;
+  margin-left: 0.1rem;
+  margin-right: 0.15rem;
   padding: 0 0.1rem;
   border: none;
   border-radius: var(--radius-sm);
