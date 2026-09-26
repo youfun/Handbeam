@@ -37,7 +37,7 @@ defmodule HandbeamWeb.Live.TerminalPanel do
     socket =
       socket
       |> reset_if_workspace_changed(workspace_id)
-      |> assign(Map.drop(clean_assigns, [:id]))
+      |> assign(clean_assigns)
       |> assign_new(:create_error, fn -> nil end)
       |> assign_new(:confirm_close, fn -> nil end)
       |> assign_new(:restart_target, fn -> nil end)
