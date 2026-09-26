@@ -24,9 +24,11 @@ if ($cachedErl -and (Test-Path "$ElixirRoot\bin\elixir.bat")) {
 }
 
 Write-Host "Installing WSL Ubuntu for the OTP ARM64 build"
+wsl --status
 wsl --install -d Ubuntu --no-launch
 if ($LASTEXITCODE -ne 0) {
-  throw "WSL Ubuntu is required to build native Windows ARM64 OTP, and it could not be installed on this runner."
+  Write-Host "wsl --install failed with exit $LASTEXITCODE"
+  throw "WSL Ubuntu is required to build native Windows ARM64 OTP, and it could not be installed on this runner. GitHub-hosted ARM runners cannot reboot to finish enabling WSL, and OTP publishes no Windows ARM64 installer."
 }
 wsl -d Ubuntu -e true
 if ($LASTEXITCODE -ne 0) {

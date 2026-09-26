@@ -19,6 +19,7 @@ jobs:
     name: Web (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.timeout }}
+    continue-on-error: ${{ matrix.continue_on_error || false }}
     strategy:
       fail-fast: false
       matrix:
@@ -32,6 +33,10 @@ jobs:
           - os: windows-11-arm
             target: windows-arm64
             timeout: 180
+            # OTP has no Windows ARM64 installer, and this runner cannot
+            # install WSL without a reboot. Keep trying, but do not fail the
+            # release when the other packages built.
+            continue_on_error: true
           - os: macos-15
             target: macos-arm64
             timeout: 50
@@ -124,6 +129,9 @@ jobs:
             echo "Default URL: http://localhost:5008"
             echo
             echo "Windows packages do not include the in-browser terminal. Ghostty has no Windows NIF."
+            if ! compgen -G "dist/handbeam-web-windows-arm64*" >/dev/null; then
+              echo "Windows ARM64 is omitted: OTP publishes no ARM64 installer, and GitHub-hosted ARM runners cannot install WSL."
+            fi
             echo
             echo "Assets:"
             find dist -type f -printf '%f\n' | sort
@@ -135,14 +143,26 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: gh release delete web-latest --yes --cleanup-tag || true
 
-      - uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'web-latest' }}
-          name: Web UI
-          body_path: notes.md
-          prerelease: true
-          make_latest: false
-          files: dist/handbeam-web-*
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            tag="${GITHUB_REF_NAME}"
+          else
+            tag="web-latest"
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/handbeam-web-* --clobber
+            gh release edit "$tag" --title "Web UI" --notes-file notes.md --prerelease
+          else
+            gh release create "$tag" dist/handbeam-web-* \
+              --title "Web UI" \
+              --notes-file notes.md \
+              --prerelease \
+              --latest=false
+          fi
 
   android:
     name: Android APK
@@ -204,7 +224,7 @@ jobs:
             "cmake;3.22.1"
 
       - name: Host packages
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends zip
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends zip libgit2-dev pkg-config
 
       - uses: actions/cache@v4
         with:
