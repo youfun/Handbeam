@@ -162,6 +162,16 @@ defmodule Handbeam.Tool.Extension.BeamIntrospectionTest do
       assert reason =~ "not found" or reason =~ "could not" or reason =~ "error"
     end
 
+    test "resolves a nested module function instead of treating the first segment as the module" do
+      {:ok, output} =
+        Handbeam.Tool.Extension.Beam.Docs.execute(
+          %{"reference" => "Handbeam.ConversationTitleGenerator.maybe_generate/3"},
+          build_context()
+        )
+
+      assert output =~ "maybe_generate"
+    end
+
     test "reference is required" do
       {:error, reason} =
         Handbeam.Tool.Extension.Beam.Docs.execute(
@@ -209,6 +219,27 @@ defmodule Handbeam.Tool.Extension.BeamIntrospectionTest do
 
       assert reason =~ "reference"
     end
+
+    test "returns an error instead of crashing on a truncated function reference" do
+      {:error, reason} =
+        Handbeam.Tool.Extension.Beam.Source.execute(
+          %{"reference" => "Handbeam.ConversationTitleGenerator.maybe_"},
+          build_context()
+        )
+
+      assert reason =~ "not found" or reason =~ "Cannot parse"
+    end
+
+    test "locates a nested module function without arity" do
+      {:ok, output} =
+        Handbeam.Tool.Extension.Beam.Source.execute(
+          %{"reference" => "Handbeam.ConversationTitleGenerator.maybe_generate"},
+          build_context()
+        )
+
+      assert output =~ "maybe_generate"
+      assert output =~ "conversation_title_generator.ex"
+    end
   end
 
   describe "ext__beam__sql" do
@@ -253,6 +284,16 @@ defmodule Handbeam.Tool.Extension.BeamIntrospectionTest do
       result = Handbeam.Tool.Extension.Beam.SupTree.execute(%{}, build_context())
       assert match?({:ok, _}, result)
     end
+
+    test "returns an error for an unknown root instead of crashing" do
+      assert {:error, reason} =
+               Handbeam.Tool.Extension.Beam.SupTree.execute(
+                 %{"root" => "Not.A.Real.Supervisor"},
+                 build_context()
+               )
+
+      assert reason =~ "not found"
+    end
   end
 
   describe "ext__beam__top" do
@@ -294,6 +335,16 @@ defmodule Handbeam.Tool.Extension.BeamIntrospectionTest do
       assert reason =~ "process"
     end
 
+    test "returns an error for a malformed process name instead of crashing" do
+      {:error, reason} =
+        Handbeam.Tool.Extension.Beam.ProcessInfo.execute(
+          %{"process" => "Not a module!!"},
+          build_context()
+        )
+
+      assert reason =~ "Cannot parse"
+    end
+
     test "returns error for nonexistent process" do
       {:error, reason} =
         Handbeam.Tool.Extension.Beam.ProcessInfo.execute(
@@ -301,7 +352,7 @@ defmodule Handbeam.Tool.Extension.BeamIntrospectionTest do
           build_context()
         )
 
-      assert reason =~ "Cannot resolve" or reason =~ "error"
+      assert reason =~ "No process registered" or reason =~ "Cannot parse"
     end
   end
 end

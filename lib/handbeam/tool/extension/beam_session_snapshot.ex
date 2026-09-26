@@ -175,7 +175,22 @@ defmodule Handbeam.Tool.Extension.Beam.SessionSnapshot do
   # ── Struct-agnostic field access (events may be maps or structs) ──
 
   defp get_kind(%{kind: kind}), do: kind
-  defp get_kind(%{"kind" => kind}), do: String.to_existing_atom(kind)
+
+  defp get_kind(%{"kind" => kind}) when is_binary(kind) do
+    case kind do
+      "run_start" -> :run_start
+      "user_message" -> :user_message
+      "assistant_message" -> :assistant_message
+      "tool_start" -> :tool_start
+      "tool_end" -> :tool_end
+      "message_delta" -> :message_delta
+      "run_end" -> :run_end
+      "interrupted" -> :interrupted
+      other -> other
+    end
+  end
+
+  defp get_kind(%{"kind" => kind}) when is_atom(kind), do: kind
   defp get_kind(_), do: :unknown
 
   defp get_payload(%{payload: p}), do: p

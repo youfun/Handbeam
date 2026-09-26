@@ -93,7 +93,7 @@ defmodule HandbeamWeb.SettingsLive do
 
   @impl true
   def handle_event("select_tab", %{"tab" => tab_str}, socket) do
-    tab = String.to_existing_atom(tab_str)
+    tab = tab_from_params(%{"tab" => tab_str})
     ws_id = socket.assigns.workspace["id"]
     conv_id = socket.assigns.conversation_id
 
