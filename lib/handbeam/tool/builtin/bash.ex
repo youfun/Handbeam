@@ -4,6 +4,12 @@ defmodule Handbeam.Tool.Builtin.Bash do
 
   Uses Port-based execution with scroll buffer, output truncation (tail strategy),
   and process group killing on timeout.
+
+  Before a process starts, a best-effort precheck rejects commands that name
+  sensitive credential paths. The OS sandbox leaves the host filesystem readable,
+  so this precheck closes that hole. It is not a shell policy engine: quotes,
+  variable expansion, globs, and encoded payloads are not fully solved.
+  `unsandboxed=true` does not skip the precheck and does not grant those reads.
   """
 
   @behaviour Handbeam.Agent.Tool
@@ -24,7 +30,9 @@ defmodule Handbeam.Tool.Builtin.Bash do
       "is readable, writes are allowed only in the workspace and $TMPDIR, network is not " <>
       "restricted. Writes elsewhere fail with 'Operation not permitted' or 'Read-only file " <>
       "system'. Only after such a sandbox denial, retry with unsandboxed=true; that always " <>
-      "asks the user for approval. " <>
+      "asks the user for approval. Commands that name sensitive credential paths are " <>
+      "rejected before execution; unsandboxed=true does not bypass that, and the " <>
+      "precheck is not a complete shell parser. " <>
       "Set job=true for a run-scoped job (Linux only). Query job_status until finished before " <>
       "ending this run: run completion cancels unfinished jobs. Not a detached dev server; " <>
       "descendants that escape the process group are not contained."
@@ -61,7 +69,8 @@ defmodule Handbeam.Tool.Builtin.Bash do
           default: false,
           description:
             "Run outside the OS sandbox. Use only after the sandbox denied a needed write; " <>
-              "always requires user approval. Not available for job=true."
+              "always requires user approval. Does not permit sensitive credential paths. " <>
+              "Not available for job=true."
         }
       },
       required: ["command"]
@@ -80,6 +89,8 @@ defmodule Handbeam.Tool.Builtin.Bash do
     working_directory = context[:working_directory]
 
     with :ok <- validate_command(command),
+         :ok <- preflight_sensitive(command, working_directory),
+         :ok <- preflight_cwd(Map.get(input, "cwd"), working_directory),
          {:ok, cwd} <- resolve_cwd(Map.get(input, "cwd"), working_directory) do
       unsandboxed? = Map.get(input, "unsandboxed") == true
 
@@ -120,6 +131,21 @@ defmodule Handbeam.Tool.Builtin.Bash do
   end
 
   defp validate_command(_), do: :ok
+
+  @doc false
+  @spec preflight_sensitive(String.t(), String.t() | nil) :: :ok | {:error, String.t()}
+  def preflight_sensitive(command, cwd \\ nil) do
+    Handbeam.Security.PathValidator.reject_sensitive_command(command, cwd)
+  end
+
+  defp preflight_cwd(nil, _working_directory), do: :ok
+
+  defp preflight_cwd(path, working_directory) when is_binary(path) do
+    base = working_directory || File.cwd!()
+    Handbeam.Security.PathValidator.reject_sensitive_command(path, base)
+  end
+
+  defp preflight_cwd(_path, _working_directory), do: :ok
 
   defp resolve_cwd(nil, working_directory), do: {:ok, working_directory}
 

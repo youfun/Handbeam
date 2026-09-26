@@ -33,7 +33,7 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
         guarded = %{
           state
           | tool_guard_denied_calls: denied,
-            tool_guard_result_blocks: Enum.map(denied, &denied_result_block/1)
+            tool_guard_result_blocks: Enum.map(denied, &denied_result_block(&1, policy))
         }
 
         {:tool_guard_denied, guarded}
@@ -89,10 +89,17 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
     end)
   end
 
-  defp denied_result_block(call) do
+  defp denied_result_block(call, policy) do
+    reason =
+      if ToolPolicy.sensitive_call?(policy, call) do
+        Handbeam.Security.PathValidator.sensitive_reason()
+      else
+        "Tool call denied by workspace permissions"
+      end
+
     Message.tool_result_block(
       call[:id] || call["id"],
-      "Tool call denied by workspace permissions",
+      reason,
       true,
       %{permission: :denied, tool: call[:name] || call["name"]}
     )

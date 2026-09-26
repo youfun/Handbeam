@@ -401,4 +401,35 @@ defmodule Handbeam.Permissions.ToolPolicyTest do
       assert ToolPolicy.decision(policy, call("bash", %{"command" => "ls"})) == :auto
     end
   end
+
+  describe "sensitive paths" do
+    test "allow, session allow, and unsandboxed cannot turn a credential path into prompt or auto" do
+      policy =
+        ToolPolicy.from_settings(
+          %{
+            "tools" => %{
+              "default_mode" => "auto",
+              "allow" => ["read", "bash"],
+              "per_tool" => %{"read" => "auto", "bash" => "auto"}
+            }
+          },
+          %{"read" => :auto, "bash" => :auto},
+          ["read", "bash"]
+        )
+
+      for call <- [
+            call("read", %{"file_path" => ".env"}),
+            call("read", %{"file_path" => "~/.ssh/id_rsa"}),
+            call("bash", %{"command" => "cat ~/.ssh/id_rsa"}),
+            call("bash", %{"command" => "cat ~/.ssh/id_rsa", "unsandboxed" => true})
+          ] do
+        decision = ToolPolicy.decision(policy, call)
+        assert decision == :deny
+        refute decision in [:prompt, :auto]
+      end
+
+      assert ToolPolicy.decision(policy, call("read", %{"file_path" => "lib/app.ex"})) == :auto
+      assert ToolPolicy.decision(policy, call("bash", %{"command" => "ls lib"})) == :auto
+    end
+  end
 end

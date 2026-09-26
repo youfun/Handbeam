@@ -406,6 +406,66 @@ defmodule Handbeam.Tool.Builtin.ReadTest do
     end
   end
 
+  describe "sensitive and unreadable paths" do
+    test "rejects a sensitive path without returning file contents" do
+      dir = Path.join(System.tmp_dir!(), "read_sensitive_#{System.unique_integer([:positive])}")
+      File.mkdir_p!(dir)
+      secret = "SECRET_MARKER_DO_NOT_LEAK"
+      File.write!(Path.join(dir, ".env"), secret)
+      on_exit(fn -> File.rm_rf(dir) end)
+
+      result = Read.execute(%{"file_path" => ".env"}, %{working_directory: dir})
+      assert {:error, "sensitive path blocked"} = result
+      refute inspect(result) =~ secret
+
+      home = Read.execute(%{"file_path" => "~/.ssh/id_rsa"}, %{working_directory: dir})
+      assert {:error, "sensitive path blocked"} = home
+      refute inspect(home) =~ secret
+    end
+
+    test "rejects a workspace symlink to an outside key without reading it" do
+      dir = Path.join(System.tmp_dir!(), "read_link_#{System.unique_integer([:positive])}")
+
+      outside =
+        Path.join(System.tmp_dir!(), "read_key_#{System.unique_integer([:positive])}/.ssh")
+
+      File.mkdir_p!(dir)
+      File.mkdir_p!(outside)
+      secret = "SECRET_KEY_DO_NOT_LEAK"
+      File.write!(Path.join(outside, "id_rsa"), secret)
+      File.ln_s!(Path.join(outside, "id_rsa"), Path.join(dir, "link"))
+
+      on_exit(fn ->
+        File.rm_rf(dir)
+        File.rm_rf(Path.dirname(outside))
+      end)
+
+      result = Read.execute(%{"file_path" => "link"}, %{working_directory: dir})
+      assert {:error, "sensitive path blocked"} = result
+      refute inspect(result) =~ secret
+    end
+
+    test "returns the validate_readable error for an unreadable file" do
+      dir = Path.join(System.tmp_dir!(), "read_unreadable_#{System.unique_integer([:positive])}")
+      File.mkdir_p!(dir)
+      path = Path.join(dir, "locked.txt")
+      secret = "UNREADABLE_MARKER_DO_NOT_LEAK"
+      File.write!(path, secret)
+      File.chmod!(path, 0o000)
+
+      on_exit(fn ->
+        File.chmod(path, 0o644)
+        File.rm_rf(dir)
+      end)
+
+      result = Read.execute(%{"file_path" => path}, %{working_directory: dir})
+      assert {:error, reason} = result
+      assert reason =~ "Permission denied"
+      refute reason =~ secret
+      refute inspect(result) =~ secret
+    end
+  end
+
   describe "tool metadata" do
     test "has correct name" do
       assert Read.name() == "read"

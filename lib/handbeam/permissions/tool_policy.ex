@@ -12,7 +12,8 @@ defmodule Handbeam.Permissions.ToolPolicy do
             per_tool: %{},
             mcp: %{},
             overrides: %{},
-            session_allow: []
+            session_allow: [],
+            workspace_root: nil
 
   @type t :: %__MODULE__{
           default_mode: ApprovalMode.t(),
@@ -21,7 +22,8 @@ defmodule Handbeam.Permissions.ToolPolicy do
           per_tool: %{String.t() => ApprovalMode.t()},
           mcp: %{String.t() => ApprovalMode.t()},
           overrides: %{String.t() => ApprovalMode.t()},
-          session_allow: [String.t()]
+          session_allow: [String.t()],
+          workspace_root: String.t() | nil
         }
 
   @spec from_workspace(Path.t() | nil, map(), [String.t()]) :: t()
@@ -36,6 +38,7 @@ defmodule Handbeam.Permissions.ToolPolicy do
       end
 
     from_settings(settings, overrides, session_allow)
+    |> Map.put(:workspace_root, workspace_root)
   end
 
   def from_workspace(_workspace_root, overrides, session_allow) do
@@ -75,6 +78,12 @@ defmodule Handbeam.Permissions.ToolPolicy do
         :deny
 
       Enum.any?(policy.deny, &Matcher.match?(&1, call)) ->
+        :deny
+
+      # Credential paths are a hard reject. Allow rules, session grants,
+      # per-tool auto, and unsandboxed approval cannot release them, and they
+      # are not sent to auto-review.
+      sensitive_call?(policy, call) ->
         :deny
 
       # Allow rules and session grants were given for sandboxed execution;
@@ -165,6 +174,87 @@ defmodule Handbeam.Permissions.ToolPolicy do
   end
 
   defp unsandboxed_bash?(_name, _call), do: false
+
+  @doc false
+  @spec sensitive_call?(t(), map()) :: boolean()
+  def sensitive_call?(%__MODULE__{} = policy, call) when is_map(call) do
+    name = to_string(call[:name] || call["name"] || "")
+    input = call[:input] || call["input"] || %{}
+    root = policy.workspace_root
+
+    case name do
+      name when name in ["read", "write", "edit"] ->
+        sensitive_input_path?(input, ["file_path"], root)
+
+      "grep" ->
+        path = input_value(input, "path") || input_value(input, "file_path") || root
+        is_binary(path) and path != "" and sensitive_path?(path, root)
+
+      "code_search" ->
+        case input_value(input, "path") do
+          path when is_binary(path) and path != "" -> sensitive_path?(path, root)
+          _ -> false
+        end
+
+      "bash" ->
+        command = input_value(input, "command") || ""
+        cwd = input_value(input, "cwd")
+        base = if is_binary(cwd) and cwd != "", do: cwd, else: root
+        Handbeam.Security.PathValidator.reject_sensitive_command(to_string(command), base) != :ok
+
+      _ ->
+        false
+    end
+  end
+
+  def sensitive_call?(_policy, _call), do: false
+
+  defp sensitive_input_path?(input, keys, root) do
+    Enum.any?(keys, fn key ->
+      case input_value(input, key) do
+        path when is_binary(path) and path != "" -> sensitive_path?(path, root)
+        _ -> false
+      end
+    end)
+  end
+
+  defp sensitive_path?(path, root) do
+    expanded = Handbeam.Agent.Tool.Helpers.expand_tilde(path)
+
+    lexical =
+      if Path.type(expanded) == :absolute do
+        expanded
+      else
+        path
+      end
+
+    resolved =
+      cond do
+        Path.type(expanded) == :absolute ->
+          Path.expand(expanded)
+
+        is_binary(root) and root != "" ->
+          Path.expand(expanded, root)
+
+        true ->
+          nil
+      end
+
+    Handbeam.Security.PathValidator.reject_sensitive(lexical) != :ok or
+      (is_binary(resolved) and Handbeam.Security.PathValidator.reject_resolved(resolved) != :ok)
+  end
+
+  defp input_value(input, "file_path"), do: map_value(input, "file_path", :file_path)
+  defp input_value(input, "path"), do: map_value(input, "path", :path)
+  defp input_value(input, "command"), do: map_value(input, "command", :command)
+  defp input_value(input, "cwd"), do: map_value(input, "cwd", :cwd)
+  defp input_value(_input, _key), do: nil
+
+  defp map_value(input, string_key, atom_key) when is_map(input) do
+    Map.get(input, string_key) || Map.get(input, atom_key)
+  end
+
+  defp map_value(_input, _string_key, _atom_key), do: nil
 
   defp worktree_apply?("task_status", call) do
     input = call[:input] || call["input"] || %{}

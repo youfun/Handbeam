@@ -55,7 +55,7 @@ Intent Layer (LiveView / CLI / SNS / Webhook)
 | Memory Tools | `lib/handbeam/tool/memory/` | mem_recall / mem_learn / mem_reinforce / mem_associate |
 | MCP Runtime | `lib/handbeam/mcp/` | Protocol / ServerRuntime / ToolBridge / Config / Diagnostic |
 | Extension System | `lib/handbeam/extension/` | Loader / Registry / Manifest / HookRunner / ExtensionBridge / HotReloader |
-| Security | `lib/handbeam/security/` | PathValidator / ShellPathGuard / Redactor |
+| Security | `lib/handbeam/security/` | PathValidator |
 | Memory Schema | `lib/handbeam/memory/` | Engram / Synapse (Ecto) |
 | PubSub & Session | `lib/handbeam/pubsub/` | AgentEvent / Session (seq + snapshot) |
 | Session Store | `lib/handbeam/session_store/` | Runtime session snapshot 持久化 |

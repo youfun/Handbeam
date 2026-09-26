@@ -84,7 +84,7 @@ defmodule Handbeam.Tool.Builtin.Read do
   end
 
   defp validate_readable(path) do
-    _ = Handbeam.Security.PathValidator.validate_readable(path)
+    Handbeam.Security.PathValidator.validate_readable(path)
   end
 
   # ── Binary detection ──

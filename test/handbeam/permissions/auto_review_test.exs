@@ -297,7 +297,7 @@ defmodule Handbeam.Permissions.AutoReviewTest do
       type: "tool_use",
       id: "u1",
       name: "bash",
-      input: %{"command" => "cat ~/.ssh/id_rsa", "unsandboxed" => true}
+      input: %{"command" => "mkdir /tmp/hb-unsandboxed-marker", "unsandboxed" => true}
     }
 
     policy = Handbeam.Permissions.ToolPolicy.from_settings(settings)
@@ -307,7 +307,7 @@ defmodule Handbeam.Permissions.AutoReviewTest do
 
     Process.put(AutoReview.transport_key(), fn request ->
       send(parent, {:reviewed, Enum.map(request.action_requests, & &1.tool_call_id)})
-      {:ok, ~s({"decision":"deny","rationale":"credential file"})}
+      {:ok, ~s({"decision":"deny","rationale":"outside sandbox"})}
     end)
 
     assert {:tool_guard_denied, guarded} =
@@ -316,8 +316,40 @@ defmodule Handbeam.Permissions.AutoReviewTest do
     assert_received {:reviewed, ["u1"]}
     assert guarded.tool_guard_overrides == %{}
     assert [block] = guarded.tool_guard_result_blocks
-    assert block.content =~ "credential file"
+    assert block.content =~ "outside sandbox"
     assert block.content =~ AutoReview.no_workaround()
+  end
+
+  test "sensitive credential paths are denied and not sent to auto-review" do
+    settings = %{
+      "tools" => %{
+        "default_mode" => "auto",
+        "approvals_reviewer" => "auto_review",
+        "allow" => ["bash", "read"]
+      }
+    }
+
+    call = %{
+      type: "tool_use",
+      id: "secret-1",
+      name: "bash",
+      input: %{"command" => "cat ~/.ssh/id_rsa", "unsandboxed" => true}
+    }
+
+    parent = self()
+
+    Process.put(AutoReview.transport_key(), fn _request ->
+      send(parent, :reviewed_sensitive)
+      {:ok, ~s({"decision":"approve","rationale":"no"})}
+    end)
+
+    assert {:tool_guard_denied, guarded} =
+             ToolGuard.call(:after_tool_request, guard_state(settings, [call]))
+
+    refute_received :reviewed_sensitive
+    assert [block] = guarded.tool_guard_result_blocks
+    assert block.content == "sensitive path blocked"
+    refute block.content =~ ".ssh"
   end
 
   test "task_status apply stays :prompt and is reviewed; allow does not enter review" do
@@ -523,6 +555,7 @@ defmodule Handbeam.Permissions.AutoReviewTest do
       )
 
     assert result.status == :halted
+
     assert {:run_end, %{status: :halted}} =
              event_log
              |> Agent.get(& &1)

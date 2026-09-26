@@ -227,4 +227,112 @@ defmodule Handbeam.Security.PathValidator.Test do
       assert {:error, _} = PathValidator.validate_under_root(@allowed_root, a)
     end
   end
+
+  # Failure list for the fixed credential denylist:
+  #   - ~/.ssh/id_rsa, workspace .env, and a workspace symlink to an outside key are rejected
+  #     with "sensitive path blocked" and without the file contents or the full path
+  #   - workspace lib/app.ex and README.md are allowed
+  #   - .env.local is rejected; .environment and not_id_rsa_notes.md are not
+  #   - .gitconfig, .bashrc, .profile, .cer, .crt, and config/*.exs are not rejected
+  #   - .config alone is allowed; .config/gcloud is rejected
+  #   - cat ~/.ssh/id_rsa is rejected before a process starts; ls of a normal subdirectory is not
+  describe "reject_sensitive/1" do
+    test "rejects home ssh keys, workspace env files, and symlink escapes" do
+      home_key = Path.join(Handbeam.Home.path(), ".ssh/id_rsa")
+      assert PathValidator.reject_sensitive(home_key) == {:error, "sensitive path blocked"}
+      assert PathValidator.reject_resolved("~/.ssh/id_rsa") == {:error, "sensitive path blocked"}
+
+      env = Path.join(@sandbox_dir, ".env")
+      File.write!(env, "SECRET_MARKER_DO_NOT_LEAK")
+      assert PathValidator.reject_resolved(env) == {:error, "sensitive path blocked"}
+
+      outside =
+        Path.join(System.tmp_dir!(), "sigil_sec_key_#{System.unique_integer([:positive])}/.ssh")
+
+      File.mkdir_p!(outside)
+      key = Path.join(outside, "id_rsa")
+      File.write!(key, "SECRET_KEY_DO_NOT_LEAK")
+      link = Path.join(@sandbox_dir, "link")
+      File.ln_s!(key, link)
+      on_exit(fn -> File.rm_rf!(Path.dirname(outside)) end)
+
+      assert PathValidator.reject_resolved(link) == {:error, "sensitive path blocked"}
+
+      assert {:error, "sensitive path blocked"} =
+               Handbeam.Agent.Tool.resolve_path("link", %{working_directory: @sandbox_dir})
+
+      assert {:error, "sensitive path blocked"} =
+               Handbeam.Agent.Tool.resolve_path(".env", %{working_directory: @sandbox_dir})
+
+      assert {:error, reason} =
+               Handbeam.Agent.Tool.resolve_path("~/.ssh/id_rsa", %{
+                 working_directory: @sandbox_dir
+               })
+
+      assert reason == "sensitive path blocked"
+      refute reason =~ "SECRET"
+      refute reason =~ home_key
+    end
+
+    test "allows ordinary workspace sources and the narrowed config names" do
+      app = Path.join(@sandbox_dir, "lib/app.ex")
+      readme = Path.join(@sandbox_dir, "README.md")
+      File.mkdir_p!(Path.dirname(app))
+      File.write!(app, "defmodule App do\nend\n")
+      File.write!(readme, "docs")
+
+      assert PathValidator.reject_resolved(app) == :ok
+      assert PathValidator.reject_resolved(readme) == :ok
+
+      assert {:ok, _} =
+               Handbeam.Agent.Tool.resolve_path("lib/app.ex", %{working_directory: @sandbox_dir})
+
+      assert {:ok, _} =
+               Handbeam.Agent.Tool.resolve_path("README.md", %{working_directory: @sandbox_dir})
+
+      for name <-
+            ~w(.environment not_id_rsa_notes.md .gitconfig .bashrc .profile server.cer server.crt models.example.json) do
+        path = Path.join(@sandbox_dir, name)
+        assert PathValidator.reject_sensitive(path) == :ok
+        assert PathValidator.reject_resolved(path) == :ok
+      end
+
+      config = Path.join(@sandbox_dir, "config/dev.exs")
+      assert PathValidator.reject_sensitive(config) == :ok
+      assert PathValidator.reject_sensitive(Path.join(@sandbox_dir, ".config/other.json")) == :ok
+
+      assert PathValidator.reject_sensitive(Path.join(@sandbox_dir, ".config/gcloud/adc.json")) ==
+               {:error, "sensitive path blocked"}
+    end
+
+    test "matches env prefixes, extensions, and names exactly and case-insensitively" do
+      assert PathValidator.reject_sensitive(Path.join(@sandbox_dir, ".env.local")) ==
+               {:error, "sensitive path blocked"}
+
+      assert PathValidator.reject_sensitive(Path.join(@sandbox_dir, ".ENV.production")) ==
+               {:error, "sensitive path blocked"}
+
+      assert PathValidator.reject_sensitive(Path.join(@sandbox_dir, ".environment")) == :ok
+      assert PathValidator.reject_sensitive(Path.join(@sandbox_dir, "not_id_rsa_notes.md")) == :ok
+
+      assert PathValidator.reject_sensitive(Path.join(@sandbox_dir, ".SSH/ID_RSA")) ==
+               {:error, "sensitive path blocked"}
+
+      assert PathValidator.reject_sensitive(Path.join(@sandbox_dir, "certs/server.pem")) ==
+               {:error, "sensitive path blocked"}
+    end
+  end
+
+  describe "reject_sensitive_command/2" do
+    test "rejects cat ~/.ssh/id_rsa before execution and allows ls of a normal subdirectory" do
+      sub = Path.join(@sandbox_dir, "subdir")
+      File.mkdir_p!(sub)
+
+      assert PathValidator.reject_sensitive_command("cat ~/.ssh/id_rsa", @sandbox_dir) ==
+               {:error, "sensitive path blocked"}
+
+      assert PathValidator.reject_sensitive_command("ls #{sub}", @sandbox_dir) == :ok
+      assert PathValidator.reject_sensitive_command("ls subdir", @sandbox_dir) == :ok
+    end
+  end
 end

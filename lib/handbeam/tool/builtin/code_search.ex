@@ -60,8 +60,12 @@ defmodule Handbeam.Tool.Builtin.CodeSearch do
       parent = self()
 
       case CodeIndex.search(root, id, query, search_opts(input, context, parent)) do
-        {:ok, payload} -> {:ok, format(payload, input), details(payload)}
-        {:error, reason} -> {:error, format_error(reason)}
+        {:ok, payload} ->
+          payload = drop_sensitive_hits(payload, root)
+          {:ok, format(payload, input), details(payload)}
+
+        {:error, reason} ->
+          {:error, format_error(reason)}
       end
     end
   end
@@ -209,4 +213,14 @@ defmodule Handbeam.Tool.Builtin.CodeSearch do
 
   defp format_error(reason) when is_binary(reason), do: reason
   defp format_error(reason), do: "code_search failed: #{inspect(reason)}"
+
+  defp drop_sensitive_hits(%{hits: hits} = payload, root) do
+    %{
+      payload
+      | hits:
+          Enum.filter(hits, fn hit ->
+            Handbeam.Security.PathValidator.allowed_result?(root, hit.path)
+          end)
+    }
+  end
 end
