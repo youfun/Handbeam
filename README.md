@@ -27,6 +27,17 @@ On a phone, chat with the agent to create, edit, and run Elixir/Mix projects in 
 
 Requires Elixir 1.20, OTP 28+, and Node.
 
+## Web UI packages
+
+GitHub Releases tag `web-latest` (and `v*` tags) includes a self-contained OTP package. Unpack it and start the Web UI without installing Elixir:
+
+- `handbeam-web-linux-x86_64.tar.gz`
+- `handbeam-web-windows-amd64.zip`
+- `handbeam-web-windows-arm64.zip`
+- `handbeam-web-macos-arm64.tar.gz`
+
+On Linux and macOS run `./start.sh`. On Windows run `start.bat`. The default URL is `http://localhost:5008`. Windows packages do not include the in-browser terminal; Ghostty has no Windows NIF.
+
 ## Inspect effective host configuration
 
 `mix handbeam.inspect_config --workspace /path/to/workspace` prints a redacted

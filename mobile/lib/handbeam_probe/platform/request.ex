@@ -26,6 +26,9 @@ defmodule HandbeamProbe.Platform.Request do
     platform_share_discard
     platform_open_url
     platform_share_text
+    platform_device_calendar
+    platform_device_alarm
+    platform_app_settings
   )
 
   def ops, do: @ops

@@ -62,7 +62,24 @@ defmodule HandbeamProbe.HomeScreen.Chat do
   def handle({:tap, :new_chat}, socket) do
     socket = Nav.blank(socket) |> Nav.reset_composer()
     a = socket.assigns
-    assign(socket, :draft, NativeWorkspaces.get_draft(a.drafts, a.workspace, nil))
+
+    assign(socket,
+      draft: NativeWorkspaces.get_draft(a.drafts, a.workspace, nil),
+      free_draft: false
+    )
+  end
+
+  def handle({:tap, :new_free_chat}, socket) do
+    socket = Nav.blank(socket) |> Nav.reset_composer()
+    a = socket.assigns
+
+    socket
+    |> assign(
+      draft: NativeWorkspaces.get_draft(a.drafts, nil, nil),
+      free_draft: true,
+      page: :chat,
+      workspace_tree: HandbeamProbe.NativeWorkspaceTree.idle()
+    )
   end
 
   def handle({:tap, {action, id}}, socket) when action in @toggles do
@@ -416,7 +433,11 @@ defmodule HandbeamProbe.HomeScreen.Chat do
     deliver_as = item[:deliver_as] || :steer
     inbound_id = Ecto.UUID.generate()
 
-    chat = %{chat | pending: Handbeam.Agent.PendingMessages.put_status(chat.pending, id, :resending)}
+    chat = %{
+      chat
+      | pending: Handbeam.Agent.PendingMessages.put_status(chat.pending, id, :resending)
+    }
+
     socket = assign(socket, :chat, chat)
 
     case NativeChat.send_message(a.workspace, conv, content, attachments,
@@ -496,7 +517,7 @@ defmodule HandbeamProbe.HomeScreen.Chat do
     a = socket.assigns
     cleared = %{chat | pending_approval: nil, approval_seq: nil}
 
-    case NativeApproval.decide(chat, a.workspace, action, scope, a.approval_snapshots) do
+    case NativeApproval.decide(chat, approval_workspace(a), action, scope, a.approval_snapshots) do
       :ok ->
         socket
         |> then(
@@ -521,6 +542,10 @@ defmodule HandbeamProbe.HomeScreen.Chat do
   end
 
   # ── helpers ──
+
+  defp approval_workspace(assigns) do
+    if Nav.free_chat?(assigns), do: nil, else: assigns.workspace
+  end
 
   defp current?(socket, conversation_id) do
     match?(%{conversation: %{"id" => ^conversation_id}}, socket.assigns.chat)

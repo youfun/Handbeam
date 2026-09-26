@@ -129,7 +129,11 @@ defmodule HandbeamWeb.AvailableModelsLiveTest do
 
     html = render(view)
     assert html =~ "custom-reasoner"
-    assert Regex.match?(~r/Off\s*\/\s*Minimal\s*\/\s*Low\s*\/\s*Medium\s*\/\s*High\s*\/\s*X-High/, html)
+
+    assert Regex.match?(
+             ~r/Off\s*\/\s*Minimal\s*\/\s*Low\s*\/\s*Medium\s*\/\s*High\s*\/\s*X-High/,
+             html
+           )
   end
 
   test "adding a grok model stores only the selected reasoning levels", %{conn: conn} do
@@ -362,6 +366,127 @@ defmodule HandbeamWeb.AvailableModelsLiveTest do
     assert provider["api"] == "stepfun-step-plan"
     assert provider["baseUrl"] == "https://api.stepfun.com/step_plan/v1"
     assert provider["apiKey"] == "env:OPENAI_API_KEY"
+  end
+
+  test "model toggle hides a model from the picker and keeps the row", %{conn: conn} do
+    {:ok, view, _html} =
+      live_isolated(conn, HandbeamWeb.AvailableModelsLive, session: %{"embedded" => "true"})
+
+    view
+    |> element(~s|button[phx-click="select_provider"][phx-value-id="stepfun"]|)
+    |> render_click()
+
+    view
+    |> element(~s|input[phx-click="toggle_model_enabled"][phx-value-id="step-router-v1"]|)
+    |> render_click()
+
+    html = render(view)
+    assert html =~ "step-router-v1"
+    assert html =~ "is-disabled"
+
+    {:ok, stored} = ModelConfig.config_file_path() |> File.read!() |> Jason.decode()
+    model = get_in(stored, ["providers", "stepfun", "models", Access.at(0)])
+    assert model["enabled"] == false
+
+    view
+    |> element(~s|input[phx-click="toggle_model_enabled"][phx-value-id="step-router-v1"]|)
+    |> render_click()
+
+    {:ok, stored} = ModelConfig.config_file_path() |> File.read!() |> Jason.decode()
+    model = get_in(stored, ["providers", "stepfun", "models", Access.at(0)])
+    assert model["enabled"] == true
+
+    view
+    |> element(~s|input[phx-click="toggle_model_enabled"][phx-value-id="step-5-preview"]|)
+    |> render_click(%{"id" => "step-5-preview"})
+
+    html = render(view)
+    assert html =~ "step-5-preview"
+    assert html =~ "stepfun"
+    refute html =~ "选择左侧供应商查看详情"
+  end
+
+  test "disable all turns off every model for the selected provider and keeps the rows", %{
+    conn: conn
+  } do
+    {:ok, view, _html} =
+      live_isolated(conn, HandbeamWeb.AvailableModelsLive, session: %{"embedded" => "true"})
+
+    view
+    |> element(~s|button[phx-click="select_provider"][phx-value-id="stepfun"]|)
+    |> render_click()
+
+    assert has_element?(view, ~s|button[phx-click="disable_all_models"]|)
+
+    view
+    |> element(~s|button[phx-click="disable_all_models"]|)
+    |> render_click()
+
+    html = render(view)
+    assert html =~ "step-router-v1"
+    assert html =~ "step-5-preview"
+    refute has_element?(view, ~s|button[phx-click="disable_all_models"]|)
+
+    {:ok, stored} = ModelConfig.config_file_path() |> File.read!() |> Jason.decode()
+    models = get_in(stored, ["providers", "stepfun", "models"])
+    assert Enum.all?(models, &(&1["enabled"] == false))
+
+    view
+    |> element(~s|input[phx-click="toggle_model_enabled"][phx-value-id="step-5-preview"]|)
+    |> render_click(%{"id" => "step-5-preview"})
+
+    {:ok, stored} = ModelConfig.config_file_path() |> File.read!() |> Jason.decode()
+
+    enabled =
+      get_in(stored, ["providers", "stepfun", "models"]) |> Enum.filter(&(&1["enabled"] != false))
+
+    assert Enum.map(enabled, & &1["id"]) == ["step-5-preview"]
+  end
+
+  test "catalog prices fill unpriced rows without another model refresh", %{conn: conn} do
+    path = ModelConfig.config_file_path()
+
+    File.write!(
+      path,
+      Jason.encode!(%{
+        "defaultProvider" => "cursor",
+        "providers" => %{
+          "cursor" => %{
+            "name" => "Cursor",
+            "api" => "cursor-agent",
+            "models" => [
+              %{
+                "id" => "gpt-5.3-codex-low-fast",
+                "name" => "Codex 5.3 Low Fast",
+                "input" => ["text"]
+              },
+              %{"id" => "claude-opus-4.6", "name" => "Claude Opus 4.6", "input" => ["text"]},
+              %{"id" => "composer-2.5", "name" => "Composer 2.5", "input" => ["text"]}
+            ]
+          }
+        }
+      })
+    )
+
+    {:ok, view, _html} =
+      live_isolated(conn, HandbeamWeb.AvailableModelsLive, session: %{"embedded" => "true"})
+
+    view
+    |> element(~s|button[phx-click="select_provider"][phx-value-id="cursor"]|)
+    |> render_click()
+
+    send(view.pid, {
+      :catalog_prices,
+      %{
+        "gpt-5.3-codex-low-fast" => %{"input" => 1.75, "output" => 14},
+        "claude-opus-4.6" => %{"input" => 5, "output" => 25}
+      }
+    })
+
+    html = render(view)
+    assert html =~ "in 1.75 / out 14"
+    assert html =~ "in 5 / out 25"
+    assert html =~ "composer-2.5"
   end
 
   defp isolate_sigil_home! do

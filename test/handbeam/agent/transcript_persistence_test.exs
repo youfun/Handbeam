@@ -74,6 +74,51 @@ defmodule Handbeam.Agent.TranscriptPersistenceTest do
     :ok
   end
 
+  test "codex commentary and final_answer persist as separate assistant messages" do
+    {:ok, conversation} = Handbeam.ConversationStore.create("default", timeline: [])
+    id = conversation["id"]
+
+    :ok = TranscriptPersistence.handle_event(id, {:run_start, %{}}, [])
+
+    :ok =
+      TranscriptPersistence.handle_event(
+        id,
+        {:message_delta, %{chunk: "Hello! ", phase: "commentary", output_index: 0}},
+        []
+      )
+
+    :ok =
+      TranscriptPersistence.handle_event(
+        id,
+        {:message_delta,
+         %{chunk: "What can I help you with?", phase: "commentary", output_index: 0}},
+        []
+      )
+
+    :ok =
+      TranscriptPersistence.handle_event(
+        id,
+        {:message_delta,
+         %{chunk: "Hello! How can I help?", phase: "final_answer", output_index: 1}},
+        []
+      )
+
+    assert :ok = TranscriptPersistence.handle_event(id, {:run_end, %{status: :completed}}, [])
+
+    assert [
+             %{
+               "content" => "Hello! What can I help you with?",
+               "phase" => "commentary",
+               "status" => "completed"
+             },
+             %{
+               "content" => "Hello! How can I help?",
+               "phase" => "final_answer",
+               "status" => "completed"
+             }
+           ] = Handbeam.ConversationStore.load_messages(id)
+  end
+
   test "approval resume finalizes durable assistant and automatically collapses preceding work" do
     alias Handbeam.Agent.{Config, Message, State, Turn}
 

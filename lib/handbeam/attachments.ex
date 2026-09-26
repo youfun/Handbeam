@@ -125,9 +125,15 @@ defmodule Handbeam.Attachments do
     conversation_id = Keyword.get(opts, :conversation_id)
     relative = map[:relative_path] || map["relative_path"]
 
-    case {workspace, conversation_id, relative} do
-      {ws, cid, rel} when is_binary(ws) and is_binary(cid) and is_binary(rel) ->
+    case {workspace, conversation_id, relative, Keyword.get(opts, :chat_scope)} do
+      {ws, cid, rel, _} when is_binary(ws) and is_binary(cid) and is_binary(rel) ->
         case Access.resolve_upload(ws, cid, rel) do
+          {:ok, path} -> path
+          _ -> nil
+        end
+
+      {_, cid, rel, :free} when is_binary(cid) and is_binary(rel) ->
+        case Access.resolve_free_upload(cid, rel) do
           {:ok, path} -> path
           _ -> nil
         end

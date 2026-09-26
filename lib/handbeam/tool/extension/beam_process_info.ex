@@ -65,16 +65,12 @@ defmodule Handbeam.Tool.Extension.Beam.ProcessInfo do
         {:ok, pid}
 
       # Try as registered atom name
-      String.match?(str, ~r/^[A-Z]/) ->
-        try do
-          atom = String.to_existing_atom("Elixir.#{str}")
+      String.match?(str, ~r/^[A-Z][A-Za-z0-9]*(\.[A-Z][A-Za-z0-9]*)*$/) ->
+        atom = Module.concat(["Elixir" | String.split(str, ".")])
 
-          case Process.whereis(atom) do
-            nil -> {:error, "No process registered as #{str}"}
-            pid -> {:ok, pid}
-          end
-        rescue
-          _ -> {:error, "Cannot resolve process: #{str}"}
+        case Process.whereis(atom) do
+          nil -> {:error, "No process registered as #{str}"}
+          pid -> {:ok, pid}
         end
 
       true ->

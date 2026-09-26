@@ -12,6 +12,7 @@ defmodule HandbeamProbe.HomeScreen.Nav do
   alias HandbeamProbe.Bridge.Inbound
 
   alias HandbeamProbe.HomeScreen.{
+    AppSettings,
     GitSettings,
     MCPSettings,
     Notice,
@@ -37,13 +38,16 @@ defmodule HandbeamProbe.HomeScreen.Nav do
   # ── dispatch ──
 
   def handle({:tap, {:conversation, id}}, socket) do
-    with {:ok, conversation} <- ConversationStore.get(id),
-         {:ok, workspace} <- WorkspaceStore.get(conversation["workspace_id"]) do
-      if socket.assigns.workspace && socket.assigns.workspace["id"] == workspace["id"],
-        do: open(socket, conversation),
-        else: apply_workspace(socket, workspace, conversation)
-    else
-      _ -> Notice.put_error(socket, gettext("Conversation not found"))
+    case ConversationStore.get(id) do
+      {:ok, conversation} ->
+        if ConversationStore.free?(conversation) do
+          open_free(socket, conversation)
+        else
+          open_workspace_conversation(socket, conversation)
+        end
+
+      _ ->
+        Notice.put_error(socket, gettext("Conversation not found"))
     end
   end
 
@@ -56,14 +60,35 @@ defmodule HandbeamProbe.HomeScreen.Nav do
     workspace = socket.assigns.workspace
 
     cond do
-      is_nil(workspace) -> socket
-      page == :history -> assign(socket, :history, HandbeamProbe.NativeHistory.load())
-      page == :mcp -> MCPSettings.load(socket)
-      page == :git -> GitSettings.load(socket)
-      Settings.settings_page?(page) -> Settings.load_models(socket)
-      page == :workspace -> assign(socket, :workspaces, NativeWorkspaces.load(workspace))
-      page == :files -> NativeWorkspaceTree.ensure(socket)
-      true -> socket
+      is_nil(workspace) ->
+        socket
+
+      page == :history ->
+        assign(socket, :history, HandbeamProbe.NativeHistory.load())
+
+      page == :mcp ->
+        MCPSettings.load(socket)
+
+      page == :git ->
+        GitSettings.load(socket)
+
+      page == :app ->
+        AppSettings.load(socket)
+
+      Settings.settings_page?(page) ->
+        Settings.load_models(socket)
+
+      page == :workspace ->
+        assign(socket, :workspaces, NativeWorkspaces.load(workspace))
+
+      page == :files and free_chat?(socket) ->
+        assign(socket, page: :chat)
+
+      page == :files ->
+        NativeWorkspaceTree.ensure(socket)
+
+      true ->
+        socket
     end
   end
 
@@ -80,26 +105,58 @@ defmodule HandbeamProbe.HomeScreen.Nav do
   def handle({:notification, %Inbound.Notification{} = notification}, socket) do
     %{conversation_id: id, workspace_id: workspace_id} = notification
 
-    with true <- is_binary(id) and is_binary(workspace_id),
-         {:ok, conversation} <- ConversationStore.get(id),
-         true <- conversation["workspace_id"] == workspace_id,
-         {:ok, workspace} <- WorkspaceStore.get(workspace_id) do
-      apply_workspace(socket, workspace, conversation)
+    with true <- is_binary(id),
+         {:ok, conversation} <- ConversationStore.get(id) do
+      open_notification(socket, conversation, workspace_id)
     else
       _ ->
-        Notice.put_error(
-          socket,
-          gettext("The conversation in the notification is unavailable")
-        )
+        unavailable_notification(socket)
     end
   end
 
   # ── transitions ──
 
+  defp open_workspace_conversation(socket, conversation) do
+    case WorkspaceStore.get(conversation["workspace_id"]) do
+      {:ok, workspace} ->
+        if same_workspace?(socket, workspace) and not free_chat?(socket),
+          do: open(socket, conversation),
+          else: apply_workspace(socket, workspace, conversation)
+
+      _ ->
+        Notice.put_error(socket, gettext("Conversation not found"))
+    end
+  end
+
+  defp same_workspace?(socket, workspace) do
+    socket.assigns.workspace && socket.assigns.workspace["id"] == workspace["id"]
+  end
+
+  defp open_notification(socket, conversation, workspace_id) do
+    cond do
+      ConversationStore.free?(conversation) and not is_binary(workspace_id) ->
+        open_free(socket, conversation)
+
+      is_binary(workspace_id) and conversation["workspace_id"] == workspace_id ->
+        case WorkspaceStore.get(workspace_id) do
+          {:ok, workspace} -> apply_workspace(socket, workspace, conversation)
+          _ -> unavailable_notification(socket)
+        end
+
+      true ->
+        unavailable_notification(socket)
+    end
+  end
+
+  defp unavailable_notification(socket) do
+    Notice.put_error(socket, gettext("The conversation in the notification is unavailable"))
+  end
+
   @doc "Show `conversation` in the current workspace. `keep_draft?` is the send path."
   def open(socket, conversation, keep_draft? \\ false) do
     a = socket.assigns
-    drafts = NativeWorkspaces.put_draft(a.drafts, a.workspace, a.chat, a.draft)
+    drafts = NativeWorkspaces.put_draft(a.drafts, draft_workspace(socket), a.chat, a.draft)
+    socket = assign(socket, :free_draft, false)
 
     unsubscribe(a.chat)
     Handbeam.PubSub.Session.subscribe(conversation["id"])
@@ -134,7 +191,7 @@ defmodule HandbeamProbe.HomeScreen.Nav do
   @doc "Switch to `workspace`, showing `conversation` (or an empty chat)."
   def apply_workspace(socket, workspace, conversation) do
     a = socket.assigns
-    drafts = NativeWorkspaces.put_draft(a.drafts, a.workspace, a.chat, a.draft)
+    drafts = NativeWorkspaces.put_draft(a.drafts, draft_workspace(socket), a.chat, a.draft)
     {_generation, socket} = Requests.bump(socket, :mcp_settings)
     {_generation, socket} = Requests.bump(socket, :git_settings)
 
@@ -145,6 +202,7 @@ defmodule HandbeamProbe.HomeScreen.Nav do
 
     socket =
       socket
+      |> assign(:free_draft, false)
       |> assign(
         [
           workspace: selected.workspace,
@@ -177,18 +235,62 @@ defmodule HandbeamProbe.HomeScreen.Nav do
     end
   end
 
+  @doc "Show a workspace-independent chat without switching the current workspace."
+  def open_free(socket, conversation, keep_draft? \\ false) do
+    a = socket.assigns
+    drafts = NativeWorkspaces.put_draft(a.drafts, draft_workspace(socket), a.chat, a.draft)
+
+    unsubscribe(a.chat)
+    Handbeam.PubSub.Session.subscribe(conversation["id"])
+
+    draft =
+      if keep_draft?,
+        do: a.draft,
+        else: NativeWorkspaces.get_draft(drafts, nil, conversation)
+
+    socket = if keep_draft?, do: socket, else: reset_composer(socket)
+
+    drafts =
+      if keep_draft?,
+        do: NativeWorkspaces.clear_draft(drafts, nil, nil),
+        else: drafts
+
+    socket
+    |> assign(
+      [
+        chat: NativeChat.load(conversation),
+        permission_mode: :prompt,
+        draft: draft,
+        drafts: drafts,
+        free_draft: false,
+        page: :chat,
+        file_viewer: NativeFileViewer.new(),
+        workspace_tree: NativeWorkspaceTree.idle()
+      ] ++ State.chat_reset()
+    )
+    |> bump_workspace_open()
+    |> Settings.load_models()
+  end
+
   @doc "Leave the current conversation for an empty chat without touching the composer."
   def blank(socket) do
     a = socket.assigns
-    drafts = NativeWorkspaces.put_draft(a.drafts, a.workspace, a.chat, a.draft)
+    drafts = NativeWorkspaces.put_draft(a.drafts, draft_workspace(socket), a.chat, a.draft)
 
     unsubscribe(a.chat)
-    NativeWorkspaces.persist(a.workspace, nil)
+    if a.workspace && not free_chat?(socket), do: NativeWorkspaces.persist(a.workspace, nil)
 
     assign(socket, [chat: nil, drafts: drafts, draft: ""] ++ State.chat_reset())
   end
 
   @doc "Create the conversation for a first send when none is open."
+  def ensure_conversation(%{assigns: %{chat: nil, free_draft: true}} = socket) do
+    case ConversationStore.create_free(title: conversation_title(socket)) do
+      {:ok, conversation} -> {:ok, open_free(socket, conversation, true)}
+      error -> error
+    end
+  end
+
   def ensure_conversation(%{assigns: %{chat: nil}} = socket) do
     case ConversationStore.create(socket.assigns.workspace["id"],
            title: conversation_title(socket)
@@ -245,6 +347,19 @@ defmodule HandbeamProbe.HomeScreen.Nav do
   end
 
   def conversations(workspace), do: ConversationStore.list_for_workspace(workspace["id"])
+
+  defp draft_workspace(socket) do
+    if free_chat?(socket), do: nil, else: socket.assigns.workspace
+  end
+
+  def free_chat?(%{assigns: assigns}), do: free_chat?(assigns)
+
+  def free_chat?(assigns) when is_map(assigns) do
+    case assigns[:chat] do
+      %{conversation: conversation} -> ConversationStore.free?(conversation)
+      _ -> assigns[:free_draft] == true
+    end
+  end
 
   # Every in-flight request bound to the composer (platform requests keyed by
   # request id, `:share_send_marked` tasks) is dropped from the table and the

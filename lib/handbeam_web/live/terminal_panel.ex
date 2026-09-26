@@ -2,25 +2,24 @@ defmodule HandbeamWeb.Live.TerminalPanel do
   @moduledoc """
   Terminal panel LiveView component.
 
-  Manages terminal sessions for the current workspace.
-  Shows terminal tabs with activity indicators, active terminal view,
-  create/close/restart controls, and preset command buttons.
-  Uses Ghostty.LiveTerminal.Component for terminal rendering.
+  Opens an interactive shell for the current workspace. Click the screen to
+  type freely (including Ctrl-C, Tab, and arrows). The line below sends a
+  command on Enter. Preset buttons start or focus a dedicated session.
   """
 
   use HandbeamWeb, :live_component
 
-  alias Handbeam.Terminal.{Supervisor, Registry}
+  alias Handbeam.Terminal.{Registry, Session, Supervisor}
 
   @session_call_timeout 2_000
 
   @preset_commands [
-    %{label: "mix phx.server", name: "dev-server", cmd: "mix", args: "phx.server"},
-    %{label: "mix test", name: "tests", cmd: "mix", args: "test"},
-    %{label: "mix compile", name: "compile", cmd: "mix", args: "compile"},
-    %{label: "iex -S mix", name: "iex", cmd: "iex", args: "-S mix"},
-    %{label: "npm run dev", name: "npm-dev", cmd: "npm", args: "run dev"},
-    %{label: "git log", name: "git-log", cmd: "git", args: "log --oneline"}
+    %{label: "mix phx.server", name: "dev-server", cmd: "mix", args: ["phx.server"]},
+    %{label: "mix test", name: "tests", cmd: "mix", args: ["test"]},
+    %{label: "mix compile", name: "compile", cmd: "mix", args: ["compile"]},
+    %{label: "iex -S mix", name: "iex", cmd: "iex", args: ["-S", "mix"]},
+    %{label: "npm run dev", name: "npm-dev", cmd: "npm", args: ["run", "dev"]},
+    %{label: "git log", name: "git-log", cmd: "git", args: ["log", "--oneline"]}
   ]
 
   @impl true
@@ -30,42 +29,48 @@ defmodule HandbeamWeb.Live.TerminalPanel do
 
   @impl true
   def update(assigns, socket) do
-    workspace_id = assigns.workspace_id
-
-    # Extract forwarded action before passing all assigns to the socket
     {action, clean_assigns} = Map.pop(assigns, :action)
+    # send_update from the parent only includes the new keys. A refresh must
+    # not require workspace_id to be passed again.
+    workspace_id = clean_assigns[:workspace_id] || socket.assigns[:workspace_id]
 
     socket =
       socket
+      |> reset_if_workspace_changed(workspace_id)
       |> assign(clean_assigns)
-      |> assign(:show_create_form, false)
-      |> assign(:new_terminal_name, "")
-      |> assign(:new_terminal_cmd, "")
-      |> assign(:new_terminal_args, "")
-      |> assign(:create_error, nil)
-      |> assign(:confirm_close, nil)
-      |> assign(:restart_target, nil)
-      |> assign(:active_terminal_name, socket.assigns[:active_terminal_name])
-      |> assign(:activity, socket.assigns[:activity] || %{})
+      |> assign_new(:create_error, fn -> nil end)
+      |> assign_new(:confirm_close, fn -> nil end)
+      |> assign_new(:restart_target, fn -> nil end)
+      |> assign_new(:active_terminal_name, fn -> nil end)
+      |> assign_new(:active_term_pid, fn -> nil end)
+      |> assign_new(:active_pty_pid, fn -> nil end)
+      |> assign_new(:activity, fn -> %{} end)
+      |> assign_new(:bootstrapped, fn -> false end)
+      |> assign_new(:command_nonce, fn -> 0 end)
       |> assign(:preset_commands, @preset_commands)
-      |> assign_terminals(workspace_id)
+      |> then(fn sock ->
+        if workspace_id, do: assign_terminals(sock, workspace_id), else: sock
+      end)
+      |> maybe_bootstrap_shell()
 
-    # Handle forwarded PubSub actions from WorkspaceLive
-    socket = handle_action(action, socket)
-
-    if connected?(socket) do
-      # Subscriptions handled by parent WorkspaceLive;
-      # LiveComponents share the parent process.
-    end
-
-    {:ok, socket}
+    {:ok, handle_action(action, socket)}
   end
 
   @impl true
   def render(assigns) do
     ~H"""
-    <div id={@id} class="terminal-panel flex flex-col h-full bg-main">
-      <!-- Terminal tabs bar -->
+    <div id={@id} class="terminal-panel flex flex-col h-full min-h-0 bg-main">
+      <style>
+        #terminal-panel { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+        #terminal-panel .terminal-presets { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--color-border, #333); }
+        #terminal-panel .terminal-preset { border: 1px solid var(--color-border, #333); border-radius: 4px; background: transparent; color: var(--color-text-tertiary, #888); font-family: ui-monospace, monospace; font-size: 10px; padding: 2px 8px; cursor: pointer; }
+        #terminal-panel .terminal-viewport { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: #1e1e2e; }
+        #terminal-panel .terminal-screen { flex: 1 1 auto; min-height: 0; width: 100%; height: 100%; }
+        #terminal-panel .terminal-command-bar { display: flex; align-items: center; gap: 6px; min-height: 34px; padding: 4px 8px; border-top: 1px solid var(--color-border, #333); background: var(--color-surface, #111); }
+        #terminal-panel .terminal-command-input { flex: 1 1 auto; min-width: 0; border: 0; background: transparent; color: var(--color-text-primary, #eee); font-family: ui-monospace, monospace; font-size: 12px; outline: none; }
+        #terminal-panel .terminal-command-input:disabled { opacity: 0.5; }
+        #terminal-panel .terminal-interrupt { border: 0; background: transparent; color: var(--color-text-tertiary, #888); font-family: ui-monospace, monospace; font-size: 11px; cursor: pointer; padding: 2px 6px; }
+      </style>
       <div class="flex items-center border-b bg-surface px-2 h-9 gap-1">
         <div class="flex items-center overflow-x-auto flex-1 gap-0.5">
           <button
@@ -86,7 +91,7 @@ defmodule HandbeamWeb.Live.TerminalPanel do
             <span class="truncate max-w-[120px]">{t.name}</span>
           </button>
           <div :if={@terminals == []} class="px-3 py-1 text-xs text-tertiary italic">
-            no terminals
+            starting shell…
           </div>
         </div>
 
@@ -101,10 +106,10 @@ defmodule HandbeamWeb.Live.TerminalPanel do
             ↻
           </button>
           <button
-            phx-click="toggle_create_form"
+            phx-click="new_shell"
             phx-target={@myself}
             class="terminal-action-btn"
-            title="New terminal"
+            title="New shell"
           >
             +
           </button>
@@ -120,76 +125,19 @@ defmodule HandbeamWeb.Live.TerminalPanel do
         </div>
       </div>
 
-      <!-- Create terminal form -->
-      <div :if={@show_create_form} class="border-b bg-surface p-3 space-y-2">
-        <!-- Preset quick-start buttons -->
-        <div class="flex flex-wrap gap-1">
-          <button
-            :for={preset <- @preset_commands}
-            phx-click="apply_preset"
-            phx-value-label={preset.label}
-            phx-value-name={preset.name}
-            phx-value-cmd={preset.cmd}
-            phx-value-args={preset.args}
-            phx-target={@myself}
-            class="text-[10px] px-2 py-0.5 rounded bg-main border text-tertiary hover:text-primary hover:border-accent transition-colors"
-          >
-            {preset.label}
-          </button>
-        </div>
-
-        <div class="flex gap-2">
-          <input
-            type="text"
-            name="term_name"
-            value={@new_terminal_name}
-            placeholder="name (e.g. dev-server)"
-            phx-keyup="update_create_field"
-            phx-value-field="name"
-            phx-target={@myself}
-            class="flex-1 bg-main border rounded px-2 py-1 text-xs text-primary focus:outline-none focus:border-accent"
-          />
-          <input
-            type="text"
-            name="term_cmd"
-            value={@new_terminal_cmd}
-            placeholder="command (e.g. mix phx.server)"
-            phx-keyup="update_create_field"
-            phx-value-field="cmd"
-            phx-target={@myself}
-            class="flex-1 bg-main border rounded px-2 py-1 text-xs text-primary font-mono focus:outline-none focus:border-accent"
-          />
-        </div>
-        <div class="flex gap-2 items-center">
-          <input
-            type="text"
-            name="term_args"
-            value={@new_terminal_args}
-            placeholder="args (space-separated)"
-            phx-keyup="update_create_field"
-            phx-value-field="args"
-            phx-target={@myself}
-            class="flex-1 bg-main border rounded px-2 py-1 text-xs text-primary font-mono focus:outline-none focus:border-accent"
-          />
-          <button
-            phx-click="create_terminal"
-            phx-target={@myself}
-            class="bg-accent text-white text-xs px-3 py-1 rounded hover:opacity-90 transition-opacity"
-          >
-            Create
-          </button>
-          <button
-            phx-click="toggle_create_form"
-            phx-target={@myself}
-            class="text-xs text-tertiary hover:text-primary px-2 py-1"
-          >
-            Cancel
-          </button>
-        </div>
-        <div :if={@create_error} class="text-xs text-error">{@create_error}</div>
+      <div class="terminal-presets">
+        <button
+          :for={preset <- @preset_commands}
+          phx-click="run_preset"
+          phx-value-name={preset.name}
+          phx-target={@myself}
+          class="terminal-preset"
+          title={"Open #{preset.label}"}
+        >
+          {preset.label}
+        </button>
       </div>
 
-      <!-- Confirm close dialog -->
       <div :if={@confirm_close} class="border-b bg-surface p-3">
         <p class="text-xs text-primary mb-2">
           Close terminal "<span class="font-semibold">{@confirm_close}</span>"?
@@ -213,7 +161,6 @@ defmodule HandbeamWeb.Live.TerminalPanel do
         </div>
       </div>
 
-      <!-- Confirm restart dialog -->
       <div :if={@restart_target} class="border-b bg-surface p-3">
         <p class="text-xs text-primary mb-2">
           Restart terminal "<span class="font-semibold">{@restart_target}</span>"?
@@ -236,8 +183,18 @@ defmodule HandbeamWeb.Live.TerminalPanel do
         </div>
       </div>
 
-      <!-- Active terminal view -->
-      <div class="flex-1 overflow-hidden">
+      <div :if={@create_error} class="border-b bg-surface px-3 py-2 flex items-center gap-2">
+        <span class="text-xs text-error flex-1">{@create_error}</span>
+        <button
+          phx-click="retry_shell"
+          phx-target={@myself}
+          class="text-xs text-accent hover:underline"
+        >
+          Retry
+        </button>
+      </div>
+
+      <div class="terminal-viewport">
         <%= if @active_terminal_name && @active_term_pid && @active_pty_pid do %>
           <.live_component
             module={Ghostty.LiveTerminal.Component}
@@ -245,117 +202,99 @@ defmodule HandbeamWeb.Live.TerminalPanel do
             term={@active_term_pid}
             pty={@active_pty_pid}
             fit={true}
-            autofocus={true}
+            autofocus={false}
+            class="terminal-screen"
           />
         <% else %>
           <div class="flex items-center justify-center h-full text-tertiary text-xs">
-            <div :if={@terminals == []} class="text-center space-y-2">
+            <div class="text-center space-y-2">
               <div class="text-2xl opacity-30">▸_</div>
-              <p>No terminals. Create one to run commands.</p>
-              <button
-                phx-click="toggle_create_form"
-                phx-target={@myself}
-                class="text-accent hover:underline text-xs mt-2"
-              >
-                + New Terminal
-              </button>
-            </div>
-            <div :if={@terminals != [] && !@active_terminal_name} class="text-center space-y-2">
-              <div class="text-2xl opacity-30">▸_</div>
-              <p>Select a terminal to view its output.</p>
+              <p>Opening a shell…</p>
             </div>
           </div>
         <% end %>
       </div>
+
+      <form
+        id="terminal-command-form"
+        phx-submit="send_line"
+        phx-target={@myself}
+        class="terminal-command-bar"
+      >
+        <span class="terminal-prompt" aria-hidden="true">❯</span>
+        <input
+          id={"terminal-command-input-#{@command_nonce}"}
+          name="line"
+          type="text"
+          placeholder={if @active_pty_pid, do: "Type a command and press Enter", else: "Starting shell…"}
+          autocomplete="off"
+          autocapitalize="off"
+          autocorrect="off"
+          spellcheck="false"
+          enterkeyhint="send"
+          class="terminal-command-input"
+          disabled={!@active_pty_pid}
+          phx-mounted={JS.focus()}
+        />
+        <button
+          type="button"
+          phx-click="interrupt"
+          phx-target={@myself}
+          class="terminal-interrupt"
+          title="Send Ctrl-C"
+          disabled={!@active_pty_pid}
+        >
+          ^C
+        </button>
+      </form>
     </div>
     """
   end
 
-  # ── Event handlers ──
-
   @impl true
   def handle_event("select_terminal", %{"name" => name}, socket) do
-    socket =
-      socket
-      |> activate_terminal(name)
-      |> clear_activity(name)
-
-    {:noreply, socket}
-  end
-
-  def handle_event("toggle_create_form", _params, socket) do
     {:noreply,
      socket
-     |> assign(:show_create_form, !socket.assigns.show_create_form)
-     |> assign(:create_error, nil)}
+     |> activate_terminal(name)
+     |> clear_activity(name)}
   end
 
-  def handle_event("apply_preset", params, socket) do
-    {:noreply,
-     socket
-     |> assign(:new_terminal_name, params["name"] || "")
-     |> assign(:new_terminal_cmd, params["cmd"] || "")
-     |> assign(:new_terminal_args, params["args"] || "")
-     |> assign(:create_error, nil)}
+  def handle_event("new_shell", _params, socket) do
+    {:noreply, start_shell(socket)}
   end
 
-  def handle_event("update_create_field", %{"field" => field} = params, socket) do
-    value = params["value"] || ""
+  def handle_event("retry_shell", _params, socket) do
+    {:noreply, start_shell(socket)}
+  end
+
+  def handle_event("run_preset", %{"name" => name}, socket) do
+    preset = Enum.find(@preset_commands, &(&1.name == name))
 
     socket =
-      case field do
-        "name" -> assign(socket, :new_terminal_name, value)
-        "cmd" -> assign(socket, :new_terminal_cmd, value)
-        "args" -> assign(socket, :new_terminal_args, value)
-        _ -> socket
+      cond do
+        is_nil(preset) ->
+          socket
+
+        terminal_running?(socket.assigns.terminals, name) ->
+          activate_terminal(socket, name)
+
+        terminal_known?(socket.assigns.terminals, name) ->
+          restart_named(socket, name, preset.cmd, preset.args)
+
+        true ->
+          start_named(socket, name, preset.cmd, preset.args)
       end
 
-    {:noreply, socket}
+    {:noreply, clear_activity(socket, name)}
   end
 
-  def handle_event("create_terminal", _params, socket) do
-    name = String.trim(socket.assigns.new_terminal_name)
-    cmd = String.trim(socket.assigns.new_terminal_cmd)
-    args_str = String.trim(socket.assigns.new_terminal_args)
+  def handle_event("send_line", params, socket) do
+    line = params["line"] || ""
+    {:noreply, deliver_input(socket, to_string(line) <> "\n")}
+  end
 
-    cond do
-      name == "" ->
-        {:noreply, assign(socket, :create_error, "Name is required")}
-
-      cmd == "" ->
-        {:noreply, assign(socket, :create_error, "Command is required")}
-
-      true ->
-        args = if args_str == "", do: [], else: String.split(args_str, ~r/\s+/)
-        workspace_id = socket.assigns.workspace_id
-        workspace_path = socket.assigns.workspace_path
-
-        case Supervisor.start_terminal(workspace_id, name,
-               cmd: cmd,
-               args: args,
-               workspace_path: workspace_path
-             ) do
-          {:ok, _pid} ->
-            socket =
-              socket
-              |> assign(:show_create_form, false)
-              |> assign(:new_terminal_name, "")
-              |> assign(:new_terminal_cmd, "")
-              |> assign(:new_terminal_args, "")
-              |> assign(:create_error, nil)
-              |> assign_terminals(workspace_id)
-              |> activate_terminal(name)
-              |> clear_activity(name)
-
-            {:noreply, socket}
-
-          {:error, :already_exists} ->
-            {:noreply, assign(socket, :create_error, "Terminal '#{name}' already exists")}
-
-          {:error, reason} ->
-            {:noreply, assign(socket, :create_error, "Failed: #{inspect(reason)}")}
-        end
-    end
+  def handle_event("interrupt", _params, socket) do
+    {:noreply, deliver_input(socket, <<3>>)}
   end
 
   def handle_event("confirm_close_terminal", _params, socket) do
@@ -380,7 +319,14 @@ defmodule HandbeamWeb.Live.TerminalPanel do
     socket =
       if socket.assigns.active_terminal_name == name do
         next = List.first(socket.assigns.terminals)
-        activate_terminal(socket, (next && next.name) || nil)
+
+        socket
+        |> assign(:active_terminal_name, nil)
+        |> assign(:active_term_pid, nil)
+        |> assign(:active_pty_pid, nil)
+        |> then(fn sock ->
+          if next, do: activate_terminal(sock, next.name), else: start_shell(sock)
+        end)
       else
         socket
       end
@@ -398,41 +344,21 @@ defmodule HandbeamWeb.Live.TerminalPanel do
 
   def handle_event("do_restart_terminal", _params, socket) do
     name = socket.assigns.restart_target
-    workspace_id = socket.assigns.workspace_id
-
-    # Close old session first
-    Supervisor.stop_terminal(workspace_id, name)
-
-    # Get the original command from the current terminal list
     old = Enum.find(socket.assigns.terminals, &(&1.name == name))
 
-    opts =
-      if old do
-        [cmd: old.cmd, args: old.args, workspace_path: socket.assigns.workspace_path]
-      else
-        [workspace_path: socket.assigns.workspace_path]
-      end
+    socket =
+      socket
+      |> assign(:restart_target, nil)
+      |> then(fn sock ->
+        if old do
+          restart_named(sock, name, old.cmd, old.args || [])
+        else
+          start_shell(sock)
+        end
+      end)
 
-    case Supervisor.start_terminal(workspace_id, name, opts) do
-      {:ok, _pid} ->
-        socket =
-          socket
-          |> assign(:restart_target, nil)
-          |> assign_terminals(workspace_id)
-          |> activate_terminal(name)
-          |> clear_activity(name)
-
-        {:noreply, socket}
-
-      {:error, reason} ->
-        {:noreply,
-         socket
-         |> assign(:restart_target, nil)
-         |> assign(:create_error, "Restart failed: #{inspect(reason)}")}
-    end
+    {:noreply, socket}
   end
-
-  # ── PubSub forwarding (received via send_update from WorkspaceLive) ──
 
   defp handle_action({:terminal_refresh, term_name}, socket) do
     socket =
@@ -454,13 +380,140 @@ defmodule HandbeamWeb.Live.TerminalPanel do
     assign_terminals(socket, socket.assigns.workspace_id)
   end
 
-  defp handle_action(nil, socket), do: socket
+  defp handle_action({:terminal_ready, "term-" <> name, cols, rows}, socket) do
+    with cols when is_integer(cols) <- normalize_dim(cols),
+         rows when is_integer(rows) <- normalize_dim(rows),
+         {:ok, pid} <- Registry.lookup(socket.assigns.workspace_id, name) do
+      Session.resize(pid, cols, rows)
+    end
 
-  # ── Helpers ──
+    socket
+  end
+
+  defp handle_action(_action, socket), do: socket
+
+  defp reset_if_workspace_changed(socket, workspace_id) do
+    prev = socket.assigns[:workspace_id]
+
+    if prev && prev != workspace_id do
+      socket
+      |> assign(:bootstrapped, false)
+      |> assign(:active_terminal_name, nil)
+      |> assign(:active_term_pid, nil)
+      |> assign(:active_pty_pid, nil)
+      |> assign(:activity, %{})
+      |> assign(:create_error, nil)
+      |> assign(:confirm_close, nil)
+      |> assign(:restart_target, nil)
+      |> assign(:command_nonce, 0)
+    else
+      socket
+    end
+  end
+
+  defp maybe_bootstrap_shell(socket) do
+    cond do
+      not connected?(socket) ->
+        socket
+
+      socket.assigns.bootstrapped ->
+        ensure_active(socket)
+
+      not is_binary(socket.assigns[:workspace_path]) or socket.assigns.workspace_path == "" ->
+        assign(socket, :bootstrapped, true)
+
+      Enum.any?(socket.assigns.terminals, &shell_session?/1) ->
+        socket
+        |> assign(:bootstrapped, true)
+        |> ensure_active()
+
+      true ->
+        socket
+        |> assign(:bootstrapped, true)
+        |> start_shell()
+    end
+  end
+
+  defp ensure_active(socket) do
+    name = socket.assigns.active_terminal_name
+    terminals = socket.assigns.terminals
+
+    cond do
+      name && terminal_known?(terminals, name) && socket.assigns.active_pty_pid ->
+        socket
+
+      name && terminal_known?(terminals, name) ->
+        activate_terminal(socket, name)
+
+      terminals != [] ->
+        preferred =
+          Enum.find(terminals, &shell_session?/1) ||
+            Enum.find(terminals, &(&1.status == :running)) ||
+            List.first(terminals)
+
+        activate_terminal(socket, preferred.name)
+
+      true ->
+        socket
+    end
+  end
+
+  defp start_shell(socket) do
+    {cmd, args} = Session.interactive_shell()
+    start_named(socket, next_shell_name(socket.assigns.terminals), cmd, args)
+  end
+
+  defp start_named(socket, name, cmd, args) do
+    workspace_id = socket.assigns.workspace_id
+
+    case Supervisor.start_terminal(workspace_id, name,
+           cmd: cmd,
+           args: args,
+           workspace_path: socket.assigns.workspace_path
+         ) do
+      {:ok, _pid} ->
+        socket
+        |> assign(:create_error, nil)
+        |> assign_terminals(workspace_id)
+        |> activate_terminal(name)
+        |> clear_activity(name)
+
+      {:error, :already_exists} ->
+        socket
+        |> assign_terminals(workspace_id)
+        |> activate_terminal(name)
+
+      {:error, reason} ->
+        assign(socket, :create_error, "Failed to start #{name}: #{inspect(reason)}")
+    end
+  end
+
+  defp restart_named(socket, name, cmd, args) do
+    Supervisor.stop_terminal(socket.assigns.workspace_id, name)
+    start_named(socket, name, cmd, args)
+  end
+
+  defp deliver_input(socket, input) do
+    name = socket.assigns.active_terminal_name
+
+    socket =
+      with true <- is_binary(name),
+           {:ok, pid} <- Registry.lookup(socket.assigns.workspace_id, name),
+           :ok <- Session.send_input(pid, input) do
+        assign(socket, :create_error, nil)
+      else
+        false -> assign(socket, :create_error, "No terminal is open")
+        {:error, :not_running} -> assign(socket, :create_error, "Terminal is not running")
+        {:error, :not_found} -> assign(socket, :create_error, "Terminal is gone")
+        {:error, reason} -> assign(socket, :create_error, "Send failed: #{inspect(reason)}")
+      end
+
+    # New input id so the line field remounts empty after Enter or Ctrl-C.
+    update(socket, :command_nonce, &((&1 || 0) + 1))
+  end
 
   defp assign_terminals(socket, workspace_id) do
-    terminals = Supervisor.list_terminals(workspace_id)
-    assign(socket, :terminals, terminals)
+    assign(socket, :terminals, Supervisor.list_terminals(workspace_id))
   end
 
   defp activate_terminal(socket, nil) do
@@ -471,9 +524,7 @@ defmodule HandbeamWeb.Live.TerminalPanel do
   end
 
   defp activate_terminal(socket, name) do
-    workspace_id = socket.assigns.workspace_id
-
-    case Registry.lookup(workspace_id, name) do
+    case Registry.lookup(socket.assigns.workspace_id, name) do
       {:ok, session_pid} ->
         case safe_session_info(session_pid) do
           {:ok, info} ->
@@ -499,29 +550,62 @@ defmodule HandbeamWeb.Live.TerminalPanel do
 
   defp safe_session_info(pid) do
     try do
-      info = GenServer.call(pid, :info, @session_call_timeout)
-      {:ok, info}
+      {:ok, GenServer.call(pid, :info, @session_call_timeout)}
     catch
       :exit, {:timeout, _} -> {:error, :timeout}
       :exit, _ -> {:error, :dead}
     end
   end
 
+  defp next_shell_name(terminals) do
+    names = MapSet.new(Enum.map(terminals, & &1.name))
+
+    Stream.iterate(1, &(&1 + 1))
+    |> Enum.find_value(fn
+      1 -> if MapSet.member?(names, "shell"), do: nil, else: "shell"
+      n -> if MapSet.member?(names, "shell-#{n}"), do: nil, else: "shell-#{n}"
+    end)
+  end
+
+  defp shell_session?(%{cmd: cmd, status: :running}), do: shell_cmd?(cmd)
+  defp shell_session?(_), do: false
+
+  defp shell_cmd?(cmd) when is_binary(cmd) do
+    cmd |> Path.basename() |> String.downcase() |> Kernel.in(~w(zsh bash sh fish dash ksh nu))
+  end
+
+  defp shell_cmd?(_), do: false
+
+  defp terminal_known?(terminals, name), do: Enum.any?(terminals, &(&1.name == name))
+
+  defp terminal_running?(terminals, name) do
+    Enum.any?(terminals, &(&1.name == name && &1.status == :running))
+  end
+
+  defp terminal_exited?(terminals, name) do
+    Enum.any?(terminals, &(&1.name == name && &1.status == :exited))
+  end
+
   defp mark_activity(socket, term_name) do
-    activity = Map.put(socket.assigns.activity, term_name, true)
-    assign(socket, :activity, activity)
+    assign(socket, :activity, Map.put(socket.assigns.activity, term_name, true))
   end
 
   defp clear_activity(socket, term_name) do
-    activity = Map.put(socket.assigns.activity, term_name, false)
-    assign(socket, :activity, activity)
+    assign(socket, :activity, Map.put(socket.assigns.activity, term_name, false))
   end
 
   defp show_activity?(activity, term_name, active_name) do
     term_name != active_name && Map.get(activity, term_name, false)
   end
 
-  defp terminal_exited?(terminals, name) do
-    Enum.any?(terminals, &(&1.name == name && &1.status == :exited))
+  defp normalize_dim(n) when is_integer(n) and n > 0, do: n
+
+  defp normalize_dim(n) when is_binary(n) do
+    case Integer.parse(n) do
+      {parsed, ""} when parsed > 0 -> parsed
+      _ -> nil
+    end
   end
+
+  defp normalize_dim(_), do: nil
 end

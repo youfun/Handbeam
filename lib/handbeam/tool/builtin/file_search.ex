@@ -53,7 +53,12 @@ defmodule Handbeam.Tool.Builtin.FileSearch do
     with {:ok, root} <- resolve_root(working_directory),
          {:ok, pid} <- ExFff.Index.ensure_started(root),
          {:ok, result} <- ExFff.Index.search(pid, query, limit: limit) do
-      {:ok, format_results(result)}
+      paths =
+        Enum.filter(result.paths, fn %{path: path} ->
+          Handbeam.Security.PathValidator.allowed_result?(root, path)
+        end)
+
+      {:ok, format_results(%{result | paths: paths})}
     end
   end
 

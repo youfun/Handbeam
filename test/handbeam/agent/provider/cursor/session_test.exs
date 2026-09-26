@@ -129,6 +129,95 @@ defmodule Handbeam.Agent.Provider.Cursor.SessionTest do
     assert Message.text(hd(final.messages)) == "done"
   end
 
+  test "tool continuation gets a fresh timeout generation" do
+    id = Ecto.UUID.generate()
+    config = config(%{receive_timeout: 10_000})
+
+    task =
+      Task.async(fn ->
+        Session.complete(id, [Message.user("lookup")], tool_defs(), config, fn _ -> :ok end)
+      end)
+
+    pid = wait_running(id)
+    initial_generation = :sys.get_state(pid).generation
+    send(pid, {:cursor_frames, [{:message, mcp_exec(1, "call-1", "probe_lookup", "a")}]})
+    assert {:ok, first} = Task.await(task)
+    assert :sys.get_state(pid).timeout_ref == nil
+
+    task2 =
+      Task.async(fn ->
+        Session.complete(
+          id,
+          [
+            Message.user("lookup"),
+            Message.assistant_blocks(hd(first.messages).content),
+            Message.tool_result(%{type: "tool_result", tool_use_id: "call-1", content: "A"})
+          ],
+          tool_defs(),
+          config,
+          fn _ -> :ok end
+        )
+      end)
+
+    pid = wait_running(id)
+    state = :sys.get_state(pid)
+    assert state.generation == initial_generation + 1
+    assert is_reference(state.timeout_ref)
+
+    send(pid, {:run_timeout, initial_generation})
+    send(pid, {:cursor_frames, [{:message, text_delta("done")}, {:message, turn_ended()}]})
+
+    assert {:ok, final} = Task.await(task2)
+    assert Message.text(hd(final.messages)) == "done"
+  end
+
+  test "stream close after final text completes the turn" do
+    id = Ecto.UUID.generate()
+
+    task =
+      Task.async(fn ->
+        Session.complete(id, [Message.user("answer")], [], config(), fn _ -> :ok end)
+      end)
+
+    pid = wait_running(id)
+    send(pid, {:cursor_frames, [{:message, text_delta("final")}, :done]})
+
+    assert {:ok, response} = Task.await(task)
+    assert response.stop_reason == :end_turn
+    assert Message.text(hd(response.messages)) == "final"
+  end
+
+  test "web search interaction query sends a matching approval response" do
+    id = Ecto.UUID.generate()
+
+    task =
+      Task.async(fn ->
+        Session.complete(id, [Message.user("search")], [], config(), fn _ -> :ok end)
+      end)
+
+    pid = wait_running(id)
+    sent_before = :sys.get_state(pid).transport.sent
+
+    query = IndependentProto.encode_uint32(1, 42) <> IndependentProto.encode_message(2, <<>>)
+    send(pid, {:cursor_frames, [{:message, IndependentProto.encode_message(7, query)}]})
+    assert_receive {:cursor_transport, :sent, ^pid}, 1_000
+
+    [approval] = :sys.get_state(pid).transport.sent -- sent_before
+    client_fields = IndependentProto.decode_fields(approval)
+
+    response_fields =
+      client_fields |> IndependentProto.field(6) |> IndependentProto.decode_fields()
+
+    approved = response_fields |> IndependentProto.field(2) |> IndependentProto.decode_fields()
+
+    assert IndependentProto.field(response_fields, 1) == 42
+    assert IndependentProto.field(approved, 1) == <<>>
+
+    send(pid, {:cursor_frames, [{:message, text_delta("done")}, {:message, turn_ended()}]})
+    assert {:ok, response} = Task.await(task)
+    assert Message.text(hd(response.messages)) == "done"
+  end
+
   test "late second exec after first batch is held until results return" do
     id = Ecto.UUID.generate()
     config = config()

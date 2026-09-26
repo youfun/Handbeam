@@ -113,7 +113,7 @@ defmodule Handbeam.Agent.Config do
       skill_paths: List.wrap(Keyword.get(opts, :skill_paths, [])),
       delegated?: Keyword.get(opts, :delegated?, false),
       system_prompt: build_system_prompt(opts),
-      working_directory: Keyword.get(opts, :working_directory, File.cwd!()),
+      working_directory: working_directory(opts),
       model: Keyword.get(opts, :model, @default_model),
       max_turns: Keyword.get(opts, :max_turns, channel_max_turns(opts)),
       max_budget_cents: Keyword.get(opts, :max_budget_cents),
@@ -217,10 +217,19 @@ defmodule Handbeam.Agent.Config do
 
   defp om_value(om, key), do: Map.get(om, key, Map.get(om, Atom.to_string(key)))
 
+  defp working_directory(opts) do
+    case Keyword.get(opts, :working_directory) do
+      path when is_binary(path) and path != "" -> path
+      _ -> if Keyword.get(opts, :chat_scope) == :free, do: nil, else: File.cwd!()
+    end
+  end
+
   defp build_system_prompt(opts) do
     base =
       Keyword.get_lazy(opts, :system_prompt, fn ->
-        default_system_prompt()
+        if Keyword.get(opts, :chat_scope) == :free,
+          do: free_chat_system_prompt(),
+          else: default_system_prompt()
       end)
 
     base
@@ -230,6 +239,18 @@ defmodule Handbeam.Agent.Config do
     |> maybe_inject_skills(opts)
     |> maybe_append_task_instructions(opts)
     |> append_prompt_section(Handbeam.Agent.HostEnvironment.describe())
+  end
+
+  defp free_chat_system_prompt do
+    """
+    You are Handbeam, a conversational assistant. This chat is not bound to a project.
+
+    Answer from the conversation. You do not have a workspace, shell, or file tools.
+    Do not claim to have read, edited, or executed anything on the user's machine.
+    If device_calendar or device_alarm is exposed, use it when the user asks about
+    their calendar or a clock alarm. Do not claim an event was saved or an alarm
+    was set unless the tool result says so.
+    """
   end
 
   defp maybe_inject_advisor(system_prompt, opts) do
@@ -263,21 +284,30 @@ defmodule Handbeam.Agent.Config do
   end
 
   defp maybe_inject_workspace_contract(system_prompt, opts) do
-    if Keyword.has_key?(opts, :system_prompt) do
-      system_prompt
-    else
-      working_directory = Keyword.get(opts, :working_directory, File.cwd!())
+    cond do
+      Keyword.get(opts, :chat_scope) == :free ->
+        system_prompt
 
-      system_prompt <>
-        """
+      Keyword.has_key?(opts, :system_prompt) ->
+        system_prompt
 
-        ## Current Workspace
-
-        Current workspace: #{working_directory}
-
-        #{workspace_tool_contract(working_directory)}
-        """
+      true ->
+        inject_workspace_contract(system_prompt, opts)
     end
+  end
+
+  defp inject_workspace_contract(system_prompt, opts) do
+    working_directory = Keyword.get(opts, :working_directory, File.cwd!())
+
+    system_prompt <>
+      """
+
+      ## Current Workspace
+
+      Current workspace: #{working_directory}
+
+      #{workspace_tool_contract(working_directory)}
+      """
   end
 
   defp workspace_tool_contract(working_directory) do
@@ -312,7 +342,8 @@ defmodule Handbeam.Agent.Config do
   defp maybe_inject_project_context(system_prompt, opts) do
     # If the user explicitly provided a system_prompt, skip context injection
     # (host execution facts are still appended). Otherwise, inject AGENTS.md context.
-    if Keyword.has_key?(opts, :system_prompt) do
+    # Free chats have no project root, so they never load workspace context.
+    if Keyword.has_key?(opts, :system_prompt) or Keyword.get(opts, :chat_scope) == :free do
       system_prompt
     else
       paths = ContextLoader.discover(Keyword.get(opts, :working_directory, File.cwd!()))

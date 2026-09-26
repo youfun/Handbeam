@@ -54,28 +54,34 @@ defmodule Handbeam.Tool.Extension.Beam.Source do
 
   # ── Reference parsing ──
 
-  defp resolve_reference(ref) do
+  defp resolve_reference(ref) when is_binary(ref) do
     ref = String.trim(ref)
 
     cond do
-      String.match?(ref, ~r/^[A-Z][\w.]+\.[a-z_!?]+\/\d+$/) ->
-        [mod_str, func_arity] = String.split(ref, ".", parts: 2)
-        [func_str, arity_str] = String.split(func_arity, "/")
-        mod = to_module(mod_str)
-        func = String.to_existing_atom(func_str)
-        arity = String.to_integer(arity_str)
+      String.match?(ref, ~r/^[A-Z][\w.]*\.[a-z_][a-zA-Z0-9_!?]*\/\d+$/) ->
+        {mod_str, func_arity} = split_module_and_rest(ref)
+        [func_str, arity_str] = String.split(func_arity, "/", parts: 2)
 
-        case ensure_module(mod) do
-          {:ok, _} -> {:function, mod, func, arity}
-          error -> error
+        with {:ok, mod} <- module_from_string(mod_str),
+             {:ok, _} <- ensure_module(mod),
+             {:ok, func} <- function_from_string(func_str),
+             {:ok, arity} <- arity_from_string(arity_str) do
+          {:function, mod, func, arity}
+        end
+
+      String.match?(ref, ~r/^[A-Z][\w.]*\.[a-z_][a-zA-Z0-9_!?]*$/) ->
+        {mod_str, func_str} = split_module_and_rest(ref)
+
+        with {:ok, mod} <- module_from_string(mod_str),
+             {:ok, _} <- ensure_module(mod),
+             {:ok, func} <- function_from_string(func_str) do
+          {:function, mod, func, nil}
         end
 
       String.match?(ref, ~r/^[A-Z][\w.]*$/) ->
-        mod = to_module(ref)
-
-        case ensure_module(mod) do
-          {:ok, _} -> {:module, mod}
-          error -> error
+        with {:ok, mod} <- module_from_string(ref),
+             {:ok, _} <- ensure_module(mod) do
+          {:module, mod}
         end
 
       true ->
@@ -84,7 +90,41 @@ defmodule Handbeam.Tool.Extension.Beam.Source do
     end
   end
 
-  defp to_module(str), do: Module.concat(["Elixir" | String.split(str, ".")])
+  defp resolve_reference(_ref) do
+    {:error, "reference must be a string"}
+  end
+
+  defp split_module_and_rest(ref) do
+    {rest, [func]} = Enum.split(String.split(ref, "."), -1)
+    {Enum.join(rest, "."), func}
+  end
+
+  defp module_from_string(str) do
+    if valid_module_name?(str) do
+      {:ok, Module.concat(["Elixir" | String.split(str, ".")])}
+    else
+      {:error, "Module #{str} not found"}
+    end
+  end
+
+  defp valid_module_name?(str) do
+    String.match?(str, ~r/^[A-Z][A-Za-z0-9]*(\.[A-Z][A-Za-z0-9]*)*$/)
+  end
+
+  defp function_from_string(str) do
+    case :erlang.binary_to_existing_atom(str, :utf8) do
+      func when is_atom(func) -> {:ok, func}
+    end
+  catch
+    :error, :badarg -> {:error, "Function #{str} not found"}
+  end
+
+  defp arity_from_string(str) do
+    case Integer.parse(str) do
+      {arity, ""} when arity >= 0 -> {:ok, arity}
+      _ -> {:error, "Invalid arity: #{str}"}
+    end
+  end
 
   defp ensure_module(mod) do
     case Code.ensure_compiled(mod) do
@@ -104,6 +144,35 @@ defmodule Handbeam.Tool.Extension.Beam.Source do
 
       :error ->
         {:ok, "#{inspect(mod)}\n  BEAM: #{beam_path}\n  (source file could not be determined)"}
+    end
+  end
+
+  defp get_function_source(mod, func, nil) do
+    beam_path = :code.which(mod)
+
+    case extract_debug_info(beam_path, mod) do
+      {:ok, file, line_map} ->
+        matches =
+          line_map
+          |> Enum.filter(fn {{name, _arity}, _line} -> name == func end)
+          |> Enum.sort_by(fn {{_name, arity}, _line} -> arity end)
+
+        lines =
+          case matches do
+            [] ->
+              ["  (no matching function in debug info)"]
+
+            matches ->
+              Enum.map(matches, fn {{name, arity}, line} ->
+                "  #{name}/#{arity}  #{file}:#{line}"
+              end)
+          end
+
+        {:ok, Enum.join(["#{inspect(mod)}.#{func}", "  Source: #{file}" | lines], "\n")}
+
+      :error ->
+        {:ok,
+         "#{inspect(mod)}.#{func}\n  BEAM: #{beam_path}\n  (source info could not be determined)"}
     end
   end
 

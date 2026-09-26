@@ -187,7 +187,7 @@ defmodule Handbeam.Agent.ModelConfig do
     api = Map.get(provider_config, "api")
     normalized_url = normalize_base_url(base_url, api)
 
-    provider_models = Map.get(provider_config, "models", [])
+    provider_models = enabled_models(Map.get(provider_config, "models", []))
     default_model = resolve_default_model(json, default_provider_key, provider_models)
 
     model_meta = find_model_meta(provider_models, default_model)
@@ -264,6 +264,13 @@ defmodule Handbeam.Agent.ModelConfig do
   defp find_model_meta(provider_models, model_id) do
     Enum.find(provider_models, fn m -> Map.get(m, "id") == model_id end) || %{}
   end
+
+  # Missing `enabled` stays on so existing catalogs keep working.
+  defp model_enabled?(%{"enabled" => false}), do: false
+  defp model_enabled?(_model), do: true
+
+  defp enabled_models(models) when is_list(models), do: Enum.filter(models, &model_enabled?/1)
+  defp enabled_models(_), do: []
 
   defp model_summary(model) do
     %{
@@ -649,17 +656,21 @@ defmodule Handbeam.Agent.ModelConfig do
           provider_models = Map.get(provider_config, "models", [])
           model_meta = find_model_meta(provider_models, model_id)
 
-          case assemble_provider_config(
-                 provider_id,
-                 provider_config,
-                 model_id,
-                 normalized_url,
-                 api,
-                 provider,
-                 model_meta
-               ) do
-            {:ok, config} -> {:ok, config}
-            {:error, _} = error -> error
+          if model_id && not model_enabled?(model_meta) do
+            {:error, "Model #{model_id} is disabled"}
+          else
+            case assemble_provider_config(
+                   provider_id,
+                   provider_config,
+                   model_id,
+                   normalized_url,
+                   api,
+                   provider,
+                   model_meta
+                 ) do
+              {:ok, config} -> {:ok, config}
+              {:error, _} = error -> error
+            end
           end
       end
     else
@@ -676,6 +687,31 @@ defmodule Handbeam.Agent.ModelConfig do
   @spec all_global_models() :: [map()]
   def all_global_models do
     load_raw_global_config() |> extract_all_models()
+  end
+
+  @doc """
+  Whether a composite or bare model id is still in the global catalog.
+
+  Disabled entries count. A deleted provider does not. Callers use this to
+  tell a removed reference apart from a model the workspace allowlist rejects.
+  """
+  @spec model_in_catalog?(String.t()) :: boolean()
+  def model_in_catalog?(model_id) when is_binary(model_id) do
+    Enum.any?(catalog_models(), &model_matches?(&1, model_id))
+  end
+
+  def model_in_catalog?(_), do: false
+
+  @doc """
+  Every catalog model, including ones with `"enabled" => false`.
+
+  Chat and workspace choices use `all_global_models/0`, which drops disabled
+  entries. Settings rows use this list so a disabled model can be turned back on.
+  Missing `enabled` is treated as on.
+  """
+  @spec catalog_models() :: [map()]
+  def catalog_models do
+    load_raw_global_config() |> extract_catalog_models()
   end
 
   @doc """
@@ -733,29 +769,40 @@ defmodule Handbeam.Agent.ModelConfig do
   defp extract_all_models(nil), do: []
 
   defp extract_all_models(json) do
+    json
+    |> extract_catalog_models()
+    |> Enum.filter(& &1.enabled)
+  end
+
+  defp extract_catalog_models(nil), do: []
+
+  defp extract_catalog_models(json) do
     providers = Map.get(json, "providers", %{})
 
     Enum.flat_map(providers, fn {provider_id, provider_config} ->
-      models = Map.get(provider_config, "models", [])
-
-      Enum.map(models, fn model ->
-        model_id = Map.get(model, "id")
-
-        %{
-          id: "#{provider_id}/#{model_id}",
-          name: Map.get(model, "name", model_id),
-          provider_id: provider_id,
-          model_id: model_id,
-          input: Map.get(model, "input", []),
-          reasoning: Map.get(model, "reasoning"),
-          default_reasoning: Map.get(model, "defaultReasoning"),
-          thinking_level_map: Map.get(model, "thinkingLevelMap", %{}),
-          context_window: Map.get(model, "contextWindow"),
-          max_tokens: Map.get(model, "maxTokens"),
-          cost: Map.get(model, "cost", %{})
-        }
-      end)
+      provider_config
+      |> Map.get("models", [])
+      |> Enum.map(&catalog_model_summary(provider_id, &1))
     end)
+  end
+
+  defp catalog_model_summary(provider_id, model) do
+    model_id = Map.get(model, "id")
+
+    %{
+      id: "#{provider_id}/#{model_id}",
+      name: Map.get(model, "name", model_id),
+      provider_id: provider_id,
+      model_id: model_id,
+      input: Map.get(model, "input", []),
+      reasoning: Map.get(model, "reasoning"),
+      default_reasoning: Map.get(model, "defaultReasoning"),
+      thinking_level_map: Map.get(model, "thinkingLevelMap", %{}),
+      context_window: Map.get(model, "contextWindow"),
+      max_tokens: Map.get(model, "maxTokens"),
+      cost: Map.get(model, "cost", %{}),
+      enabled: model_enabled?(model)
+    }
   end
 
   defp filter_models_by_policy(all_models, policy) do
@@ -1214,6 +1261,30 @@ defmodule Handbeam.Agent.ModelConfig do
   end
 
   @doc """
+  Turn off every model for one provider, keeping the rows so they can be
+  turned back on individually.
+  """
+  @spec disable_provider_models(String.t()) :: :ok | {:error, String.t()}
+  def disable_provider_models(provider_id) when is_binary(provider_id) do
+    with {:ok, config} <- load_or_default_config(),
+         :ok <- ensure_provider_exists(config, provider_id) do
+      provider = config["providers"][provider_id]
+
+      models =
+        provider
+        |> Map.get("models", [])
+        |> Enum.map(fn
+          model when is_map(model) -> Map.put(model, "enabled", false)
+          other -> other
+        end)
+
+      updated_provider = Map.put(provider, "models", models)
+      updated_providers = Map.put(config["providers"], provider_id, updated_provider)
+      write_config(Map.put(config, "providers", updated_providers))
+    end
+  end
+
+  @doc """
   Update model-level settings (non-destructive merge).
   """
   @spec update_model(String.t(), String.t(), map()) :: :ok | {:error, String.t()}
@@ -1578,6 +1649,7 @@ defmodule Handbeam.Agent.ModelConfig do
       new_model =
         default_provider
         |> Map.get("models", [])
+        |> enabled_models()
         |> Enum.map(& &1["id"])
         |> List.first()
 

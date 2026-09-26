@@ -244,6 +244,50 @@ defmodule Handbeam.ConversationTitleGeneratorTest do
       assert updated["title_source"] == "auto"
     end
 
+    test "title request drops reasoning and uses a short timeout" do
+      config =
+        ConversationTitleGenerator.title_provider_config(%{
+          api_key: "mock-key",
+          model: "slow-thinker",
+          reasoning: %{effort: "high"},
+          reasoning_effort: "high",
+          thinking: %{type: "enabled"},
+          conversation_id: "conv-1",
+          provider_state: %{cursor_session_id: "busy"},
+          receive_timeout: 180_000,
+          notify_pid: self(),
+          req_options: [receive_timeout: 180_000]
+        })
+
+      refute Map.has_key?(config, :reasoning)
+      refute Map.has_key?(config, :thinking)
+      refute Map.has_key?(config, :conversation_id)
+      refute Map.has_key?(config, :provider_state)
+      assert config.receive_timeout == 20_000
+      assert config.max_tokens == 64
+      assert config.max_retries == 0
+      assert config.retry_count == 0
+      assert config.notify_pid == self()
+      assert Keyword.get(config.req_options, :receive_timeout) == 20_000
+    end
+
+    test "notifies the caller when a title is saved", %{conv: conv} do
+      config = %{
+        api_key: "mock-key",
+        model: "test-model",
+        base_url: "http://localhost",
+        api: :openai,
+        mock_title: "模型列表展示不一致",
+        provider_module: MockProvider,
+        notify_pid: self()
+      }
+
+      conv_id = conv["id"]
+      ConversationTitleGenerator.do_generate(conv_id, "模型列表怎么不一致", config)
+
+      assert_receive {:conversation_title_ready, ^conv_id, "模型列表展示不一致"}, 500
+    end
+
     test "broadcasts conversation_updated after successful generation", %{conv: conv} do
       topic = "conversation:updated"
       Phoenix.PubSub.subscribe(Handbeam.PubSub, topic)
@@ -325,6 +369,100 @@ defmodule Handbeam.ConversationTitleGeneratorTest do
       {:ok, updated} = Handbeam.ConversationStore.get(conv["id"])
       assert updated["title"] == "Hello, how do I setup Phoen..."
       assert updated["title_source"] == "auto"
+    end
+
+    test "falls back when the provider hangs past the deadline", %{conv: conv} do
+      defmodule HangProvider do
+        @behaviour Handbeam.Agent.Provider
+
+        def complete(_messages, _tool_defs, _config) do
+          Process.sleep(5_000)
+          {:error, :too_late}
+        end
+      end
+
+      config = %{
+        api_key: "mock-key",
+        model: "slow-thinker",
+        base_url: "http://localhost",
+        api: :openai,
+        provider_module: HangProvider,
+        title_timeout_ms: 50
+      }
+
+      started = System.monotonic_time(:millisecond)
+
+      ConversationTitleGenerator.do_generate(
+        conv["id"],
+        "Hello, how do I setup Phoenix project?",
+        config
+      )
+
+      elapsed = System.monotonic_time(:millisecond) - started
+      assert elapsed < 1_000
+
+      {:ok, updated} = Handbeam.ConversationStore.get(conv["id"])
+      assert updated["title"] == "Hello, how do I setup Phoen..."
+    end
+  end
+
+  describe "publish_provisional/2" do
+    setup do
+      isolate_conversation_home!()
+      :ok
+    end
+
+    test "writes a summary before the model returns" do
+      {:ok, conv} =
+        Handbeam.ConversationStore.create("ws_auto",
+          id: "conv-provisional",
+          title: "New chat",
+          title_source: "manual"
+        )
+
+      Phoenix.PubSub.subscribe(Handbeam.PubSub, "conversation:updated")
+
+      assert {:ok, "模型列表怎么不一致"} =
+               ConversationTitleGenerator.publish_provisional(conv["id"], "模型列表怎么不一致")
+
+      {:ok, updated} = Handbeam.ConversationStore.get(conv["id"])
+      assert updated["title"] == "模型列表怎么不一致"
+      assert updated["title_source"] == "fallback"
+      assert_receive {:conversation_title_ready, "conv-provisional", "模型列表怎么不一致"}, 500
+    end
+
+    test "does not replace a manual title" do
+      {:ok, conv} =
+        Handbeam.ConversationStore.create("ws_auto",
+          id: "conv-provisional-manual",
+          title: "Keep me",
+          title_source: "manual"
+        )
+
+      assert :skip =
+               ConversationTitleGenerator.publish_provisional(conv["id"], "something else")
+
+      {:ok, updated} = Handbeam.ConversationStore.get(conv["id"])
+      assert updated["title"] == "Keep me"
+    end
+
+    test "still generates a model title after a provisional summary" do
+      {:ok, conv} =
+        Handbeam.ConversationStore.create("ws_auto",
+          id: "conv-after-fallback",
+          title: "模型列表怎么不一致",
+          title_source: "fallback"
+        )
+
+      result =
+        ConversationTitleGenerator.maybe_generate(conv["id"], "模型列表怎么不一致", %{
+          api_key: "mock-key",
+          provider_module: MockProvider
+        })
+
+      assert {:ok, pid} = result
+      ref = Process.monitor(pid)
+      assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 1_000
     end
   end
 

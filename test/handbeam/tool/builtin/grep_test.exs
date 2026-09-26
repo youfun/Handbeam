@@ -195,4 +195,26 @@ defmodule Handbeam.Tool.Builtin.GrepTest do
       if original_path, do: System.put_env("PATH", original_path)
     end
   end
+
+  test "rejects a sensitive search root and does not return workspace secret files" do
+    File.write!(Path.join(@work_dir, ".env"), "SECRET_MARKER_DO_NOT_LEAK\n")
+    File.write!(Path.join(@work_dir, "app.ex"), "visible_marker\n")
+    ssh = Path.join(@work_dir, ".ssh")
+    File.mkdir_p!(ssh)
+    File.write!(Path.join(ssh, "id_rsa"), "SECRET_KEY_DO_NOT_LEAK\n")
+
+    assert {:error, "sensitive path blocked"} =
+             Grep.execute(%{"pattern" => "SECRET", "path" => ".ssh"}, %{
+               working_directory: @work_dir
+             })
+
+    {:ok, visible} =
+      Grep.execute(%{"pattern" => "visible_marker", "path" => "."}, %{working_directory: @work_dir})
+
+    assert visible =~ "visible_marker"
+    refute visible =~ "SECRET_MARKER_DO_NOT_LEAK"
+
+    assert {:ok, "No matches found"} =
+             Grep.execute(%{"pattern" => "SECRET_", "path" => "."}, %{working_directory: @work_dir})
+  end
 end

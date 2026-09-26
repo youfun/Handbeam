@@ -3,14 +3,18 @@ defmodule Handbeam.ConversationTitleGenerator do
   Auto-generates conversation titles using the current LLM.
 
   Follows the Qwen Code session-title design pattern:
-  - Fire-and-forget async after the first assistant turn
+  - Fire-and-forget async as soon as the first user message is known
   - Never overwrites a manually-set title
   - 3-7 word, sentence-case title, like a git commit subject
 
   ## Integration
 
-  Call `maybe_generate/3` after the first assistant message for a
-  conversation that still has the default "New chat" title.
+  Call `publish_provisional/2` and `maybe_generate/3` as soon as the first
+  user message is known for a conversation that still has the default
+  "New chat" title. The provisional title is the message summary and is
+  written immediately, so the sidebar does not wait on the model. The model
+  call has a hard deadline and may replace that summary; it must not wait for
+  the agent run to finish.
   """
 
   require Logger
@@ -68,19 +72,22 @@ defmodule Handbeam.ConversationTitleGenerator do
     )
 
     case Handbeam.ConversationStore.get(conversation_id) do
-      {:ok, %{"title" => title}} when is_binary(title) ->
-        if not String.starts_with?(title, "New chat") do
-          Logger.debug(
-            "[TitleGenerator] Skipping — title already set for #{conversation_id}: #{title}"
-          )
+      {:ok, meta} when is_map(meta) ->
+        title = meta["title"]
+        source = meta["title_source"]
 
-          :skip
-        else
+        if generatable_title?(title, source) do
           Logger.debug(
-            "[TitleGenerator] Title is 'New chat', starting async generation conv_id=#{conversation_id}"
+            "[TitleGenerator] Starting async generation conv_id=#{conversation_id} title=#{inspect(title)} source=#{inspect(source)}"
           )
 
           start_async_generate(conversation_id, first_user_message, provider_config)
+        else
+          Logger.debug(
+            "[TitleGenerator] Skipping — title already set for #{conversation_id}: #{inspect(title)}"
+          )
+
+          :skip
         end
 
       {:error, :not_found} ->
@@ -130,8 +137,79 @@ defmodule Handbeam.ConversationTitleGenerator do
 
   # ── Private ──
 
-  defp broadcast_title_updated(conversation_id) do
-    Handbeam.ConversationStore.broadcast_title_updated(conversation_id)
+  @title_timeout_ms 20_000
+
+  @doc """
+  Write a message-summary title immediately when the conversation is still
+  "New chat".
+
+  This is what the sidebar should show before the model responds. A later
+  model title may replace it. A manual or already generated title is left
+  alone.
+  """
+  @spec publish_provisional(String.t(), String.t()) :: {:ok, String.t()} | :skip
+  def publish_provisional(conversation_id, first_user_message)
+      when is_binary(conversation_id) and is_binary(first_user_message) do
+    title = fallback_title(first_user_message)
+
+    if title == "" do
+      :skip
+    else
+      case Handbeam.ConversationStore.get_meta(conversation_id) do
+        {:ok, %{"title" => current}} ->
+          if default_title?(current) do
+            write_title(conversation_id, title, "fallback")
+            {:ok, title}
+          else
+            :skip
+          end
+
+        {:ok, %{}} ->
+          write_title(conversation_id, title, "fallback")
+          {:ok, title}
+
+        _ ->
+          :skip
+      end
+    end
+  end
+
+  @doc false
+  @spec default_title?(term()) :: boolean()
+  def default_title?(title) when is_binary(title), do: String.starts_with?(title, "New chat")
+  def default_title?(_title), do: true
+
+  defp broadcast_title_updated(conversation_id, title) do
+    Handbeam.ConversationStore.broadcast_title_updated(conversation_id, title)
+  end
+
+  @doc false
+  @spec title_provider_config(map()) :: map()
+  def title_provider_config(provider_config) when is_map(provider_config) do
+    # Title calls must not inherit the chat turn's reasoning budget, session,
+    # or multi-minute receive timeout. A thinking model otherwise spends the
+    # whole agent run (or its own long timeout) before the sidebar can update.
+    provider_config
+    |> Map.drop([
+      :reasoning,
+      :reasoning_effort,
+      :thinking,
+      :output_config,
+      :extended_thinking,
+      :conversation_id,
+      :provider_state,
+      :include
+    ])
+    |> Map.put(:max_tokens, 64)
+    |> Map.put(:temperature, 0.3)
+    |> Map.put(:stream, false)
+    |> Map.put(:max_retries, 0)
+    |> Map.put(:retry_count, 0)
+    |> Map.put(:receive_timeout, @title_timeout_ms)
+    |> Map.update(:req_options, [receive_timeout: @title_timeout_ms], fn
+      opts when is_list(opts) -> Keyword.put(opts, :receive_timeout, @title_timeout_ms)
+      _ -> [receive_timeout: @title_timeout_ms]
+    end)
   end
 
   defp start_async_generate(conversation_id, first_user_message, provider_config) do
@@ -143,23 +221,45 @@ defmodule Handbeam.ConversationTitleGenerator do
     else
       config =
         provider_config
+        |> title_provider_config()
         |> Map.put(:api_key, api_key)
-        |> Map.put(:max_tokens, 20)
-        |> Map.put(:temperature, 0.3)
 
       Logger.debug(
         "[TitleGenerator] Starting async task conv_id=#{conversation_id} api=#{inspect(Map.get(config, :api))} provider=#{inspect(Map.get(config, :provider))} model=#{inspect(Map.get(config, :model))}"
       )
 
       Task.Supervisor.start_child(Handbeam.AgentRunTaskSupervisor, fn ->
-        do_generate(conversation_id, first_user_message, config)
+        run_exclusive(conversation_id, fn ->
+          do_generate(conversation_id, first_user_message, config)
+        end)
       end)
+    end
+  end
+
+  defp run_exclusive(conversation_id, fun) do
+    name = {:handbeam_title_gen, conversation_id}
+
+    case :global.register_name(name, self()) do
+      :yes ->
+        try do
+          fun.()
+        after
+          :global.unregister_name(name)
+        end
+
+      :no ->
+        Logger.debug(
+          "[TitleGenerator] Skipping — generation already in flight conv_id=#{conversation_id}"
+        )
+
+        :skip
     end
   end
 
   @doc false
   @spec do_generate(String.t(), String.t(), map()) :: :ok | no_return()
   def do_generate(conversation_id, first_user_message, config) do
+    Process.put(:title_notify_pid, Map.get(config, :notify_pid))
     prompt = build_title_prompt(first_user_message)
 
     Logger.debug(
@@ -174,7 +274,9 @@ defmodule Handbeam.ConversationTitleGenerator do
 
     Logger.debug("[TitleGenerator] resolved provider module=#{inspect(provider)}")
 
-    case provider.complete(messages, [], Map.put(config, :stream, false)) do
+    result = complete_within(provider, messages, config)
+
+    case result do
       {:ok, %{stop_reason: :end_turn, messages: [%Message{content: title_text}]}}
       when is_binary(title_text) ->
         Logger.debug(
@@ -246,13 +348,18 @@ defmodule Handbeam.ConversationTitleGenerator do
   end
 
   defp write_auto_title(conversation_id, title) do
+    write_title(conversation_id, title, "auto")
+  end
+
+  defp write_title(conversation_id, title, source) do
     case Handbeam.ConversationStore.update_meta(conversation_id,
            title: title,
-           title_source: "auto"
+           title_source: source
          ) do
       {:ok, _meta} ->
         Logger.debug("[TitleGenerator] Set auto-title: #{title}")
-        broadcast_title_updated(conversation_id)
+        broadcast_title_updated(conversation_id, title)
+        notify_title_ready(conversation_id, title)
 
       {:error, :not_found} ->
         :ok
@@ -262,9 +369,59 @@ defmodule Handbeam.ConversationTitleGenerator do
     end
   end
 
+  defp notify_title_ready(conversation_id, title) do
+    case Process.get(:title_notify_pid) do
+      pid when is_pid(pid) -> send(pid, {:conversation_title_ready, conversation_id, title})
+      _ -> :ok
+    end
+  end
+
   defp apply_fallback_title(conversation_id, first_user_message) do
     title = fallback_title(first_user_message)
     save_title(conversation_id, title)
+  end
+
+  defp complete_within(provider, messages, config) do
+    timeout = title_timeout(config)
+    parent = self()
+    ref = make_ref()
+
+    pid =
+      spawn(fn ->
+        result =
+          try do
+            provider.complete(messages, [], Map.put(config, :stream, false))
+          catch
+            kind, reason -> {:error, {kind, reason}}
+          end
+
+        send(parent, {ref, result})
+      end)
+
+    receive do
+      {^ref, result} ->
+        result
+    after
+      timeout ->
+        Process.exit(pid, :kill)
+
+        Logger.warning(fn ->
+          "[TitleGenerator] Title request exceeded #{timeout}ms, using message summary"
+        end)
+
+        {:error, :timeout}
+    end
+  end
+
+  defp title_timeout(config) do
+    case Map.get(config, :title_timeout_ms) do
+      timeout when is_integer(timeout) and timeout > 0 -> timeout
+      _ -> @title_timeout_ms
+    end
+  end
+
+  defp generatable_title?(title, source) do
+    default_title?(title) or source == "fallback"
   end
 
   @doc false

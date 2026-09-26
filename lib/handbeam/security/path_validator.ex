@@ -3,7 +3,13 @@ defmodule Handbeam.Security.PathValidator do
   Path security validation — prevent path traversal and ensure safe file access.
 
   Validates that resolved paths stay within the workspace and checks file
-  accessibility.
+  accessibility. Sensitive credential paths are a fixed code denylist, not a
+  workspace setting.
+
+  `reject_sensitive_command/2` is a best-effort scan of path-like tokens. It
+  closes the sandbox hole where the host filesystem is readable by default. It
+  is not a shell parser and does not expand variables, command substitutions,
+  globs, or encoded payloads.
   """
 
   @doc """
@@ -103,6 +109,250 @@ defmodule Handbeam.Security.PathValidator do
       {:ok, resolved} -> resolved
       {:error, _} -> Path.expand(path)
     end
+  end
+
+  @sensitive_reason "sensitive path blocked"
+
+  @sensitive_dirs MapSet.new(~w(
+    .ssh .aws .gcloud .gnupg .gpg .docker .kube
+  ))
+
+  @sensitive_files MapSet.new(~w(
+    id_rsa id_rsa.pub
+    id_dsa id_dsa.pub
+    id_ecdsa id_ecdsa.pub
+    id_ed25519 id_ed25519.pub
+    authorized_keys known_hosts ssh_config
+    ssh_host_rsa_key ssh_host_rsa_key.pub
+    ssh_host_ed25519_key ssh_host_ed25519_key.pub
+    .bash_history .zsh_history .zhistory .sh_history
+    .netrc .git-credentials
+  ))
+
+  @sensitive_exts ~w(.pem .key .p12 .pfx)
+
+  @doc "Stable short reason for a sensitive-path rejection. Does not include the path."
+  @spec sensitive_reason() :: String.t()
+  def sensitive_reason, do: @sensitive_reason
+
+  @doc """
+  Reject a credential path.
+
+  `path` should already be a canonical absolute path. Matching is case-insensitive
+  against any path component. Returns `{:error, #{inspect(@sensitive_reason)}}` or `:ok`.
+  The error never includes the path or file contents.
+  """
+  @spec reject_sensitive(String.t()) :: :ok | {:error, String.t()}
+  def reject_sensitive(path) when is_binary(path) do
+    parts = sensitive_parts(path)
+
+    if sensitive_parts?(parts) do
+      {:error, @sensitive_reason}
+    else
+      :ok
+    end
+  end
+
+  def reject_sensitive(_path), do: :ok
+
+  @doc """
+  Canonicalize `path` when possible, then `reject_sensitive/1`.
+
+  Missing tails are still matched lexically. A symlink to a credential file is
+  rejected without reading it.
+  """
+  @spec reject_resolved(String.t()) :: :ok | {:error, String.t()}
+  def reject_resolved(path) when is_binary(path) do
+    expanded = expand_home(path)
+
+    canonical =
+      case canonicalize(expanded) do
+        {:ok, resolved} -> resolved
+        {:error, _} -> Path.expand(expanded)
+      end
+
+    case reject_sensitive(canonical) do
+      :ok -> reject_sensitive(expanded)
+      error -> error
+    end
+  end
+
+  def reject_resolved(_path), do: :ok
+
+  @doc false
+  @spec allowed_result?(String.t(), String.t()) :: boolean()
+  def allowed_result?(root, relative) when is_binary(root) and is_binary(relative) do
+    expanded =
+      if Path.type(relative) == :absolute do
+        Path.expand(relative)
+      else
+        Path.expand(relative, root)
+      end
+
+    reject_sensitive(relative) == :ok and reject_resolved(expanded) == :ok
+  end
+
+  def allowed_result?(_root, _relative), do: false
+
+  @doc false
+  @spec rg_exclude_globs() :: [String.t()]
+  def rg_exclude_globs do
+    dirs =
+      Enum.flat_map(@sensitive_dirs, fn dir ->
+        ["!**/#{dir}/**", "!**/#{dir}"]
+      end)
+
+    files = Enum.map(@sensitive_files, &"!**/#{&1}")
+    exts = Enum.map(@sensitive_exts, &"!**/*#{&1}")
+
+    dirs ++
+      files ++
+      exts ++
+      ["!**/.env", "!**/.env.*", "!**/.config/gcloud/**", "!**/.config/gcloud"]
+  end
+
+  @doc """
+  Best-effort rejection of a shell command that names a sensitive path.
+
+  Extracts absolute paths, `~/` paths, and relative tokens that contain a denied
+  component or that exist under `cwd`. Expands `~`, canonicalizes, then calls
+  `reject_sensitive/1`. Does not evaluate the shell. Quotes, variable expansion,
+  globs, and payloads such as a dynamically built `base64` of a credential file
+  are not fully solved.
+  """
+  @spec reject_sensitive_command(String.t(), String.t() | nil) :: :ok | {:error, String.t()}
+  def reject_sensitive_command(command, cwd \\ nil)
+
+  def reject_sensitive_command(command, cwd) when is_binary(command) do
+    with :ok <- reject_cwd(cwd) do
+      command
+      |> command_tokens()
+      |> Enum.reduce_while(:ok, fn token, :ok ->
+        case reject_token(token, cwd) do
+          :ok -> {:cont, :ok}
+          {:error, reason} -> {:halt, {:error, reason}}
+        end
+      end)
+    end
+  end
+
+  def reject_sensitive_command(_command, _cwd), do: :ok
+
+  defp reject_cwd(cwd) when is_binary(cwd) and cwd != "" do
+    case reject_resolved(cwd) do
+      :ok -> reject_sensitive(cwd)
+      error -> error
+    end
+  end
+
+  defp reject_cwd(_cwd), do: :ok
+
+  defp command_tokens(command) do
+    command
+    |> String.split(~r/[[:space:]|&;<>()`$'"#\\=]+/u, trim: true)
+    |> Enum.map(&clean_token/1)
+    |> Enum.reject(&(&1 == ""))
+  end
+
+  defp clean_token(token) do
+    token
+    |> String.trim()
+    |> String.trim("\"'")
+    |> String.trim_trailing(",")
+  end
+
+  defp reject_token(token, cwd) do
+    cond do
+      skip_token?(token) ->
+        :ok
+
+      lexical_sensitive?(token) ->
+        {:error, @sensitive_reason}
+
+      path_like?(token) or existing_relative?(token, cwd) ->
+        check_token_path(token, cwd)
+
+      true ->
+        :ok
+    end
+  end
+
+  defp skip_token?(token) do
+    String.contains?(token, "://") or
+      (String.starts_with?(token, "-") and not String.contains?(token, "/") and
+         not lexical_sensitive?(token))
+  end
+
+  defp path_like?(token) do
+    String.starts_with?(token, ["~", "/", "./", "../"]) or String.contains?(token, "/")
+  end
+
+  defp lexical_sensitive?(token) do
+    reject_sensitive(token) != :ok or
+      reject_sensitive(String.replace(token, ":", "/")) != :ok
+  end
+
+  defp existing_relative?(token, cwd) do
+    base = cwd_base(cwd)
+    expanded = expand_home(token)
+
+    path =
+      if Path.type(expanded) == :absolute do
+        Path.expand(expanded)
+      else
+        Path.expand(expanded, base)
+      end
+
+    File.exists?(path)
+  end
+
+  defp check_token_path(token, cwd) do
+    expanded = expand_home(token)
+
+    absolute =
+      if Path.type(expanded) == :absolute do
+        Path.expand(expanded)
+      else
+        Path.expand(expanded, cwd_base(cwd))
+      end
+
+    reject_resolved(absolute)
+  end
+
+  defp cwd_base(cwd) when is_binary(cwd) and cwd != "", do: expand_home(cwd)
+  defp cwd_base(_cwd), do: File.cwd!()
+
+  defp expand_home("~"), do: Handbeam.Home.path()
+  defp expand_home("~/" <> rest), do: Path.join(Handbeam.Home.path(), rest)
+  defp expand_home("~" <> rest), do: Path.join(Handbeam.Home.path(), rest)
+  defp expand_home(path), do: path
+
+  defp sensitive_parts(path) do
+    path
+    |> Path.split()
+    |> Enum.map(&String.downcase/1)
+    |> Enum.reject(&(&1 in ["", "/"]))
+  end
+
+  defp sensitive_parts?(parts) do
+    Enum.any?(parts, &sensitive_part?/1) or config_gcloud?(parts)
+  end
+
+  defp sensitive_part?(part) do
+    MapSet.member?(@sensitive_dirs, part) or
+      MapSet.member?(@sensitive_files, part) or
+      part == ".env" or
+      String.starts_with?(part, ".env.") or
+      Enum.any?(@sensitive_exts, &String.ends_with?(part, &1))
+  end
+
+  defp config_gcloud?(parts) do
+    parts
+    |> Enum.chunk_every(2, 1, :discard)
+    |> Enum.any?(fn
+      [".config", "gcloud"] -> true
+      _ -> false
+    end)
   end
 
   defp walk_parts([], acc, _stack, _cache) do

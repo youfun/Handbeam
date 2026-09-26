@@ -20,6 +20,52 @@ defmodule Handbeam.Agent.Middleware.ToolGuardTest do
     |> State.append_messages([Message.tool_use(tool_calls)])
   end
 
+  test "after_tool_request allows memory tools and denies workspace tools without a workspace" do
+    config = %Config{working_directory: nil, model: "fake", middleware: []}
+
+    memory =
+      %State{State.init(config, "hi") | tool_guard_overrides: %{}}
+      |> State.append_messages([
+        Message.tool_use([%{type: "tool_use", id: "m1", name: "mem_recall", input: %{}}])
+      ])
+
+    assert ToolGuard.call(:after_tool_request, memory) == memory
+
+    web =
+      %State{State.init(config, "hi") | tool_guard_overrides: %{}}
+      |> State.append_messages([
+        Message.tool_use([
+          %{
+            type: "tool_use",
+            id: "w1",
+            name: "web_fetch",
+            input: %{"url" => "https://example.com"}
+          }
+        ])
+      ])
+
+    assert ToolGuard.call(:after_tool_request, web) == web
+
+    open =
+      %State{State.init(config, "hi") | tool_guard_overrides: %{}}
+      |> State.append_messages([
+        Message.tool_use([
+          %{type: "tool_use", id: "o1", name: "open_url", input: %{"url" => "https://example.com"}}
+        ])
+      ])
+
+    assert ToolGuard.call(:after_tool_request, open) == open
+
+    file =
+      %State{State.init(config, "hi") | tool_guard_overrides: %{}}
+      |> State.append_messages([
+        Message.tool_use([%{type: "tool_use", id: "r1", name: "read", input: %{}}])
+      ])
+
+    assert {:tool_guard_denied, guarded} = ToolGuard.call(:after_tool_request, file)
+    assert [%{id: "r1"}] = guarded.tool_guard_denied_calls
+  end
+
   test "after_tool_request passes through when all tools are auto approved" do
     settings = %{"tools" => %{"per_tool" => %{"read" => "auto"}}}
     state = state(settings, [%{type: "tool_use", id: "r1", name: "read", input: %{}}])

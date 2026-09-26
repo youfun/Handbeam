@@ -78,7 +78,7 @@ defmodule Handbeam.Jobs do
   def cancel(_, _), do: {:error, "job_id is required"}
 
   def format({:ok, result}) do
-    header = Jason.encode!(Map.drop(result, [:output, :result]))
+    header = Handbeam.JSON.encode!(Map.drop(result, [:output, :result]))
     text = if result[:output], do: header <> "\n\n" <> result.output, else: header
     text = if result[:result], do: text <> "\n\nresult:\n" <> result.result, else: text
     {:ok, text, %{job: result}}

@@ -115,13 +115,19 @@ pub fn build(b: *std.Build) void {
         "-import-objc-header",
     });
     swift_run.addArg(b.fmt("{s}/ios/MobDemo-Bridging-Header.h", .{mob_dir}));
+    // Patched MobNode.h must win over the hex copy so `markdown` is visible to Swift.
+    const markdown_overlay = addMarkdownOverlay(b, mob_dir, project_ios_dir);
+    swift_run.addPrefixedDirectoryArg("-I", markdown_overlay.header.dirname());
     swift_run.addArg("-I");
     swift_run.addArg(b.fmt("{s}/ios", .{mob_dir}));
     swift_run.addArgs(&.{ "-parse-as-library", "-wmo" });
     // Explicit list: zig 0.17-dev.2131 dropped std.fs.cwd / Build.graph.io globbing.
-    inline for (.{ "MobRootView.swift", "MobViewModel.swift", "MobGpuView.swift" }) |name| {
+    // MobRootView is the patched copy; the other two stay stock.
+    swift_run.addFileArg(markdown_overlay.root);
+    inline for (.{ "MobViewModel.swift", "MobGpuView.swift" }) |name| {
         swift_run.addFileArg(.{ .cwd_relative = b.fmt("{s}/ios/{s}", .{ mob_dir, name }) });
     }
+    swift_run.addFileArg(.{ .cwd_relative = b.fmt("{s}/HandbeamMarkdown.swift", .{project_ios_dir}) });
     if (project_swift_sources.len > 0) {
         var swift_it = std.mem.splitScalar(u8, project_swift_sources, ',');
         while (swift_it.next()) |source| {
@@ -246,12 +252,19 @@ pub fn build(b: *std.Build) void {
     };
 
     const objc_specs = [_]ObjcSpec{
-        .{ .name = "MobNode", .source = b.fmt("{s}/ios/MobNode.m", .{mob_dir}) },
+        .{
+            .name = "MobNode",
+            .source = b.fmt("{s}/ios/MobNode.m", .{mob_dir}),
+            .source_file = markdown_overlay.impl,
+            .prepend_include = markdown_overlay.header.dirname(),
+        },
         .{
             .name = "mob_nif",
             .source = b.fmt("{s}/ios/mob_nif.m", .{mob_dir}),
             .extra_flags = &.{"-DSTATIC_ERLANG_NIF"},
             .swift_header = swift_header,
+            .source_file = markdown_overlay.nif,
+            .prepend_include = markdown_overlay.header.dirname(),
         },
         .{
             .name = "mob_beam",
@@ -270,6 +283,8 @@ pub fn build(b: *std.Build) void {
         installAndCollect(b, objects_step, &objs, addObjcObject(b, .{
             .name = spec.name,
             .source = spec.source,
+            .source_file = spec.source_file,
+            .prepend_include = spec.prepend_include,
             .extra_flags = spec.extra_flags,
             .swift_header = spec.swift_header,
             .mob_dir = mob_dir,
@@ -452,6 +467,8 @@ const CObjectSpec = struct {
 const ObjcSpec = struct {
     name: []const u8,
     source: []const u8,
+    source_file: ?std.Build.LazyPath = null,
+    prepend_include: ?std.Build.LazyPath = null,
     extra_flags: []const []const u8 = &.{},
     swift_header: ?std.Build.LazyPath = null,
 };
@@ -536,9 +553,33 @@ fn addCObject(b: *std.Build, opts: CObjectOptions) std.Build.LazyPath {
     return obj.getEmittedBin();
 }
 
+const MarkdownOverlay = struct {
+    header: std.Build.LazyPath,
+    impl: std.Build.LazyPath,
+    nif: std.Build.LazyPath,
+    root: std.Build.LazyPath,
+};
+
+fn addMarkdownOverlay(b: *std.Build, mob_dir: []const u8, project_ios_dir: []const u8) MarkdownOverlay {
+    const run = b.addSystemCommand(&.{"bash"});
+    run.addFileArg(.{ .cwd_relative = b.fmt("{s}/patch_markdown_host.sh", .{project_ios_dir}) });
+    run.addArg(b.fmt("{s}/ios", .{mob_dir}));
+    inline for (.{ "MobNode.h", "MobNode.m", "mob_nif.m", "MobRootView.swift" }) |name| {
+        run.addFileInput(.{ .cwd_relative = b.fmt("{s}/ios/{s}", .{ mob_dir, name }) });
+    }
+    return .{
+        .header = run.addOutputFileArg("MobNode.h"),
+        .impl = run.addOutputFileArg("MobNode.m"),
+        .nif = run.addOutputFileArg("mob_nif.m"),
+        .root = run.addOutputFileArg("MobRootView.swift"),
+    };
+}
+
 const ObjcObjectOptions = struct {
     name: []const u8,
     source: []const u8,
+    source_file: ?std.Build.LazyPath = null,
+    prepend_include: ?std.Build.LazyPath = null,
     extra_flags: []const []const u8 = &.{},
     swift_header: ?std.Build.LazyPath = null,
     mob_dir: []const u8,
@@ -564,6 +605,9 @@ fn addObjcObject(b: *std.Build, opts: ObjcObjectOptions) std.Build.LazyPath {
     });
     run.addArg(b.fmt("-I{s}/{s}/include", .{ opts.otp_root, opts.erts_vsn }));
     run.addArg(b.fmt("-I{s}/{s}/include/internal", .{ opts.otp_root, opts.erts_vsn }));
+    if (opts.prepend_include) |inc| {
+        run.addPrefixedDirectoryArg("-I", inc);
+    }
     run.addArg(b.fmt("-I{s}/ios", .{opts.mob_dir}));
     run.addArg(b.fmt("-isysroot{s}", .{opts.sdkroot}));
 
@@ -573,7 +617,11 @@ fn addObjcObject(b: *std.Build, opts: ObjcObjectOptions) std.Build.LazyPath {
 
     for (opts.extra_flags) |flag| run.addArg(flag);
     run.addArg("-c");
-    run.addFileArg(.{ .cwd_relative = opts.source });
+    if (opts.source_file) |source| {
+        run.addFileArg(source);
+    } else {
+        run.addFileArg(.{ .cwd_relative = opts.source });
+    }
     run.addArg("-o");
     return run.addOutputFileArg(b.fmt("{s}.o", .{opts.name}));
 }

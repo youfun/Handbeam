@@ -265,4 +265,23 @@ defmodule Handbeam.Settings.ModelAISettingsTest do
                {:error, "om_privacy_mode must be 'standard' or 'local_only'"}
     end
   end
+
+  describe "drop_unknown_memory_model/3" do
+    test "clears a model the catalog no longer has and keeps a known one" do
+      settings = %ModelAISettings{
+        om_observer_model: "xai/grok-4.7",
+        om_reflector_model: "openai_codex/gpt-6-sol"
+      }
+
+      known? = &(&1 == "openai_codex/gpt-6-sol")
+
+      updated =
+        settings
+        |> ModelAISettings.drop_unknown_memory_model(:om_observer_model, known?)
+        |> ModelAISettings.drop_unknown_memory_model(:om_reflector_model, known?)
+
+      assert updated.om_observer_model == nil
+      assert updated.om_reflector_model == "openai_codex/gpt-6-sol"
+    end
+  end
 end

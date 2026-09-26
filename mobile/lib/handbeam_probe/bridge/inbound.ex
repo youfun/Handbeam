@@ -74,7 +74,15 @@ defmodule HandbeamProbe.Bridge.Inbound do
       :state,
       :outcome,
       :url,
-      :action
+      :action,
+      :event_id,
+      :calendar_id,
+      :hour,
+      :minute,
+      :calendars,
+      :events,
+      :calendar_read,
+      :calendar_write
     ]
 
     @type t :: %__MODULE__{}
@@ -128,7 +136,15 @@ defmodule HandbeamProbe.Bridge.Inbound do
     "state" => :state,
     "outcome" => :outcome,
     "url" => :url,
-    "action" => :action
+    "action" => :action,
+    "event_id" => :event_id,
+    "calendar_id" => :calendar_id,
+    "hour" => :hour,
+    "minute" => :minute,
+    "calendars" => :calendars,
+    "events" => :events,
+    "calendar_read" => :calendar_read,
+    "calendar_write" => :calendar_write
   }
 
   @doc "Wire keys `engine_result/1` accepts, in the order C writes them."
@@ -262,7 +278,7 @@ defmodule HandbeamProbe.Bridge.Inbound do
   defp body(_error, _), do: {:error, :invalid_platform_result}
 
   defp decode_json(json) do
-    case Jason.decode(json) do
+    case Handbeam.JSON.decode(json) do
       {:ok, %{"cancelled" => true}} ->
         :cancelled
 

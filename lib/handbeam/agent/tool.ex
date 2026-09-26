@@ -52,28 +52,48 @@ defmodule Handbeam.Agent.Tool do
   Returns `{:ok, path}` or `{:error, reason}`.
   """
   @spec resolve_path(String.t(), map()) :: {:ok, String.t()} | {:error, String.t()}
-  def resolve_path(file_path, context) do
-    working_directory = Map.get(context, :working_directory)
+  def resolve_path(file_path, context) when is_binary(file_path) do
+    file_path = Handbeam.Agent.Tool.Helpers.expand_tilde(file_path)
+    working_directory = working_directory(context)
 
     resolved =
       if Path.type(file_path) == :absolute do
         Path.expand(file_path)
       else
         case working_directory do
-          nil -> Path.expand(file_path)
-          wd -> Path.expand(Path.join(wd, file_path))
+          wd when is_binary(wd) and wd != "" -> Path.expand(file_path, wd)
+          _ -> Path.expand(file_path)
         end
       end
 
-    case working_directory do
-      nil ->
-        {:ok, resolved}
-
-      wd ->
-        case Handbeam.Security.PathValidator.validate_within_workspace(resolved, wd) do
-          :ok -> {:ok, resolved}
-          {:error, reason} -> {:error, reason}
+    with :ok <- within_workspace(resolved, working_directory),
+         :ok <- Handbeam.Security.PathValidator.reject_resolved(resolved) do
+      {:ok, resolved}
+    else
+      {:error, reason} ->
+        if sensitive_resolved?(resolved, file_path) do
+          {:error, Handbeam.Security.PathValidator.sensitive_reason()}
+        else
+          {:error, reason}
         end
     end
+  end
+
+  defp working_directory(context) when is_map(context) do
+    Map.get(context, :working_directory) || Map.get(context, "working_directory")
+  end
+
+  defp working_directory(_context), do: nil
+
+  defp within_workspace(_resolved, wd) when not is_binary(wd) or wd == "", do: :ok
+
+  defp within_workspace(resolved, wd) do
+    Handbeam.Security.PathValidator.validate_within_workspace(resolved, wd)
+  end
+
+  defp sensitive_resolved?(resolved, original) do
+    Handbeam.Security.PathValidator.reject_resolved(resolved) != :ok or
+      Handbeam.Security.PathValidator.reject_sensitive(original) != :ok or
+      Handbeam.Security.PathValidator.reject_sensitive(resolved) != :ok
   end
 end

@@ -30,7 +30,7 @@ defmodule Handbeam.Runtime.AndroidNotify do
   def apply({:in_app_ended, _task, _reason}), do: :ok
 
   defp encode_running(%{running_count: running, waiting_count: waiting, tasks: tasks}) do
-    Jason.encode!(%{
+    Handbeam.JSON.encode!(%{
       "running_count" => running,
       "waiting_count" => waiting,
       "tasks" => Enum.map(tasks, &encode_task/1)
@@ -38,7 +38,7 @@ defmodule Handbeam.Runtime.AndroidNotify do
   end
 
   defp encode_ended(task, reason) do
-    Jason.encode!(%{
+    Handbeam.JSON.encode!(%{
       "reason" => Atom.to_string(reason),
       "task" => encode_task(task)
     })

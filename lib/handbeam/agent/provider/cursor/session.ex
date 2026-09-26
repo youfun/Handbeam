@@ -342,6 +342,8 @@ defmodule Handbeam.Agent.Provider.Cursor.Session do
       end)
       |> case do
         {:ok, state} ->
+          generation = state.generation + 1
+
           state = %{
             state
             | phase: :running,
@@ -351,10 +353,16 @@ defmodule Handbeam.Agent.Provider.Cursor.Session do
               tool_defs: tool_defs,
               on_chunk: on_chunk,
               on_event: Map.get(config, :on_event),
-              acc: %{state.acc | tool_calls: []}
+              acc: %{state.acc | tool_calls: []},
+              generation: generation
           }
 
-          state = send_new_user_actions(state, messages)
+          timeout = Map.get(config, :receive_timeout, @default_timeout)
+
+          state =
+            state
+            |> send_new_user_actions(messages)
+            |> arm_timeout(timeout, generation)
 
           {:noreply, maybe_deliver_held(state)}
 
@@ -433,6 +441,7 @@ defmodule Handbeam.Agent.Provider.Cursor.Session do
     })
   end
 
+  defp handle_frame(:done, %{acc: %{text: text}} = state) when text != "", do: maybe_finish(state)
   defp handle_frame(:done, state), do: fail_or_finish(state, "Cursor stream closed")
 
   defp handle_frame({:end_stream, payload}, state) do
@@ -444,11 +453,26 @@ defmodule Handbeam.Agent.Provider.Cursor.Session do
 
   defp handle_frame({:message, payload}, state) do
     case Proto.decode_server(payload) do
-      {:interaction, event} -> handle_interaction(event, state)
-      {:exec, exec} -> handle_exec(exec, state)
-      {:checkpoint, bin} -> handle_checkpoint(bin, state)
-      {:kv, kv} -> handle_kv(kv, state)
-      {:unknown, _} -> state
+      {:interaction, event} ->
+        handle_interaction(event, state)
+
+      {:exec, exec} ->
+        handle_exec(exec, state)
+
+      {:checkpoint, bin} ->
+        handle_checkpoint(bin, state)
+
+      {:kv, kv} ->
+        handle_kv(kv, state)
+
+      {:interaction_query, query} ->
+        handle_interaction_query(query, state)
+
+      {:unknown, fields} ->
+        fail_running(
+          state,
+          "Cursor sent unsupported server fields: #{inspect(Enum.map(fields, &elem(&1, 0)))}"
+        )
     end
   end
 
@@ -470,6 +494,23 @@ defmodule Handbeam.Agent.Provider.Cursor.Session do
   defp handle_interaction(:heartbeat, state), do: state
   defp handle_interaction(:other, state), do: state
 
+  defp handle_interaction_query(
+         %{kind: kind, response_field: field} = query,
+         state
+       )
+       when kind in [:web_search, :exa_search, :exa_fetch] do
+    response = Proto.encode_interaction_approval(query.id, field)
+
+    case send_proto(state, Proto.encode_client(%{interaction_response: response})) do
+      {:ok, state} -> state
+      {:error, state, reason} -> fail_running(state, reason)
+    end
+  end
+
+  defp handle_interaction_query(%{kind: kind}, state) do
+    fail_running(state, "Cursor sent an unsupported interaction query: #{kind}")
+  end
+
   defp handle_exec(%{kind: :request_context} = exec, state) do
     tools = Enum.map(state.tool_defs, &tool_def/1)
     payload = Proto.encode_request_context(tools, state.system_prompt)
@@ -479,6 +520,20 @@ defmodule Handbeam.Agent.Provider.Cursor.Session do
       {:ok, state} -> state
       {:error, state, reason} -> fail_running(state, reason)
     end
+  end
+
+  defp handle_exec(%{kind: :start_grind_planning} = exec, state) do
+    payload = Proto.encode_start_grind_planning_success()
+    msg = Proto.encode_exec_client(exec.id, exec.exec_id, 36, payload)
+
+    case send_proto(state, Proto.encode_client(%{exec_client: msg})) do
+      {:ok, state} -> state
+      {:error, state, reason} -> fail_running(state, reason)
+    end
+  end
+
+  defp handle_exec(%{kind: :unknown}, state) do
+    fail_running(state, "Cursor sent an unsupported exec request")
   end
 
   defp handle_exec(exec, state) do
@@ -609,7 +664,7 @@ defmodule Handbeam.Agent.Provider.Cursor.Session do
     }
 
     if state.caller, do: GenServer.reply(state.caller, {:ok, response})
-    state = drop_caller(state)
+    state = state |> drop_caller() |> clear_timeout()
 
     %{
       state
@@ -738,14 +793,23 @@ defmodule Handbeam.Agent.Provider.Cursor.Session do
       Proto.encode_run_request(
         conversation_state: conversation_state,
         action: action,
-        model_details: Proto.encode_model_details(model),
         conversation_id: state.cursor_conversation_id,
-        requested_model: Proto.encode_requested_model(model)
+        requested_model: encode_requested_model(model, config)
       )
 
     consumed_messages = history ++ [first]
     {ids, nils} = consumed_sets(consumed_messages)
     {Proto.encode_client(%{run_request: run}), blobs, ids, nils, extra_users}
+  end
+
+  defp encode_requested_model(model, config) do
+    routing = get_in(config, [:model_meta, "cursorRequestedModel"]) || %{}
+
+    Proto.encode_requested_model(
+      routing["modelId"] || model,
+      max_mode: routing["maxMode"] == true,
+      parameters: routing["parameters"] || []
+    )
   end
 
   defp split_action_users(messages) do
@@ -1152,6 +1216,11 @@ defmodule Handbeam.Agent.Provider.Cursor.Session do
 
   defp cancel_timeout(%{timeout_ref: ref}) when is_reference(ref), do: Process.cancel_timer(ref)
   defp cancel_timeout(_), do: false
+
+  defp clear_timeout(state) do
+    cancel_timeout(state)
+    %{state | timeout_ref: nil}
+  end
 
   defp monitor_from({pid, _}), do: Process.monitor(pid)
 

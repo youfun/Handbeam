@@ -14,6 +14,9 @@ defmodule Handbeam.Agent.Provider.Codex do
   alias Handbeam.Agent.Provider.{OpenAI, SSE}
 
   @endpoint "https://chatgpt.com/backend-api/codex/responses"
+  # One replay before any model output. A dropped header is not a completed
+  # response, and replaying after a tool call would execute the tool twice.
+  @transport_attempts 2
 
   @impl true
   def complete(messages, tool_defs, config),
@@ -22,59 +25,90 @@ defmodule Handbeam.Agent.Provider.Codex do
   @impl true
   def stream(messages, tool_defs, config, on_chunk) do
     with {:ok, auth} <- resolve_auth(config) do
-      initial = %{buffer: "", output: %{}, response: nil, error: nil}
       body = request_body(messages, tool_defs, config, auth)
-      req = Map.get(config, :req_module, Req)
+      request(body, auth, config, on_chunk, 1)
+    end
+  end
 
-      options =
-        Map.get(config, :req_options, [])
-        |> Keyword.merge(
-          url: @endpoint,
-          method: :post,
-          headers: headers(auth),
-          body: Handbeam.JSON.encode!(body),
-          into: stream_handler(initial, on_chunk),
-          retry: false,
-          redirect: false,
-          receive_timeout: Map.get(config, :receive_timeout, 180_000),
-          connect_options: [timeout: Map.get(config, :connect_timeout, 30_000)]
-        )
+  defp request(body, auth, config, on_chunk, attempt) do
+    state = :counters.new(1, [:atomics])
+    initial = %{buffer: "", output: %{}, phases: %{}, response: nil, error: nil}
+    req = Map.get(config, :req_module, Req)
 
-      case req.request(options) do
-        {:ok, %{status: 200} = response} ->
-          finish(Map.get(response.private, :codex_sse, initial), auth, config)
+    options =
+      Map.get(config, :req_options, [])
+      |> Keyword.merge(
+        url: @endpoint,
+        method: :post,
+        headers: headers(auth, config),
+        body: Handbeam.JSON.encode!(body),
+        into: stream_handler(initial, on_chunk, state),
+        retry: false,
+        redirect: false,
+        receive_timeout: Map.get(config, :receive_timeout, 180_000),
+        connect_options: [timeout: Map.get(config, :connect_timeout, 30_000)]
+      )
 
-        {:ok, %{status: 401}} ->
-          {:error, "ChatGPT authorization rejected. Sign in again."}
+    case req.request(options) do
+      {:ok, %{status: 200} = response} ->
+        finish(Map.get(response.private, :codex_sse, initial), auth, config)
 
-        {:ok, %{status: 403}} ->
-          {:error, "ChatGPT account does not have access to this Codex model."}
+      {:ok, %{status: 401}} ->
+        {:error, "ChatGPT authorization rejected. Sign in again."}
 
-        {:ok, %{status: 429}} ->
-          {:error,
-           "ChatGPT Codex usage limit reached. Check your subscription usage and retry later."}
+      {:ok, %{status: 403}} ->
+        {:error, "ChatGPT account does not have access to this Codex model."}
 
-        {:ok, %{status: status}} ->
-          {:error, "Codex request failed (HTTP #{status})."}
+      {:ok, %{status: 429}} ->
+        {:error,
+         "ChatGPT Codex usage limit reached. Check your subscription usage and retry later."}
 
-        {:error, _} ->
-          {:error,
-           "Codex connection ended without a complete response. Request was not replayed."}
-      end
+      {:ok, %{status: status} = response} ->
+        {:error, http_error(status, response_error(response))}
+
+      {:error, exception} ->
+        replay_or_fail(state, exception, body, auth, config, on_chunk, attempt)
+    end
+  end
+
+  # A failure before the first SSE byte is not a completed response. Once any
+  # event has been emitted the request is not idempotent, so it is not replayed.
+  defp replay_or_fail(state, exception, body, auth, config, on_chunk, attempt) do
+    if attempt < @transport_attempts and :counters.get(state, 1) == 0 do
+      request(body, auth, config, on_chunk, attempt + 1)
+    else
+      {:error,
+       "Codex connection ended without a complete response (#{transport_reason(exception)}). Request was replayed once."}
     end
   end
 
   @doc false
-  def headers(auth) do
+  def headers(auth, config \\ %{}) do
+    session_id = session_id(config)
+
     [
       {"authorization", "Bearer #{auth.api_key}"},
       {"chatgpt-account-id", auth.account_id},
-      {"originator", "handbeam"},
-      {"user-agent", "handbeam/0.1.0"},
+      {"originator", "pi"},
+      {"user-agent", user_agent()},
       {"openai-beta", "responses=experimental"},
       {"content-type", "application/json"},
-      {"accept", "text/event-stream"}
+      {"accept", "text/event-stream"},
+      {"session-id", session_id},
+      {"x-client-request-id", session_id}
     ]
+  end
+
+  defp session_id(config) do
+    case config[:session_id] do
+      id when is_binary(id) and id != "" -> id
+      _ -> "handbeam"
+    end
+  end
+
+  defp user_agent do
+    os = :os.type() |> elem(1) |> to_string()
+    "pi (#{os})"
   end
 
   defp resolve_auth(%{auth_type: :oauth} = config) do
@@ -99,44 +133,153 @@ defmodule Handbeam.Agent.Provider.Codex do
       "model" => config.model,
       "instructions" => config[:system_prompt] || "You are a helpful coding assistant.",
       "input" => Enum.flat_map(messages, &input_items(&1, auth.account_id, config.model)),
-      "tools" => Enum.map(tool_defs, &OpenAI.format_tool_def/1),
+      "tools" => Enum.map(tool_defs, &format_tool_def/1),
       "store" => false,
       "stream" => true,
+      "text" => %{"verbosity" => "low"},
       "include" => ["reasoning.encrypted_content"],
+      "prompt_cache_key" => session_id(config),
       "tool_choice" => "auto",
       "parallel_tool_calls" => true
     }
 
-    case config[:reasoning] do
-      reasoning when is_map(reasoning) ->
-        Map.put(body, "reasoning", Handbeam.Agent.Provider.stringify_keys(reasoning))
+    body =
+      case config[:reasoning] do
+        reasoning when is_map(reasoning) ->
+          Map.put(body, "reasoning", reasoning_options(reasoning))
 
-      _ ->
-        body
+        _ ->
+          body
+      end
+
+    if body["tools"] == [], do: Map.delete(body, "tools"), else: body
+  end
+
+  # Pi sends strict: null. A missing field matches that; `false` is rejected by
+  # newer Codex models and closes the stream before any event.
+  defp format_tool_def(tool) do
+    tool
+    |> OpenAI.format_tool_def()
+    |> Map.delete("strict")
+  end
+
+  defp reasoning_options(reasoning) do
+    reasoning
+    |> Handbeam.Agent.Provider.stringify_keys()
+    |> Map.put_new("summary", "auto")
+  end
+
+  defp http_error(status, nil), do: "Codex request failed (HTTP #{status})."
+
+  defp http_error(status, message),
+    do: "Codex request failed (HTTP #{status}): #{sanitize_error(message)}"
+
+  defp response_error(%{body: body}) when is_binary(body) and body != "", do: error_message(body)
+  defp response_error(%{body: body}) when is_map(body) and body != %{}, do: error_message(body)
+
+  defp response_error(%{private: private}) when is_map(private) do
+    case private[:codex_sse] do
+      %{buffer: buffer} when is_binary(buffer) -> error_message(buffer)
+      _ -> nil
     end
+  end
+
+  defp response_error(_), do: nil
+
+  defp error_message(body) when is_binary(body) do
+    case Handbeam.JSON.decode(body) do
+      {:ok, decoded} -> error_message(decoded)
+      _ -> nil
+    end
+  end
+
+  defp error_message(%{"error" => %{"message" => message}}) when is_binary(message), do: message
+  defp error_message(_), do: nil
+
+  defp sanitize_error(message) do
+    message
+    |> String.replace(~r/\s+/, " ")
+    |> String.slice(0, 180)
+  end
+
+  defp transport_reason(%{reason: reason}), do: transport_reason(reason)
+
+  defp transport_reason(reason) do
+    reason
+    |> inspect()
+    |> sanitize_error()
+    |> String.slice(0, 80)
   end
 
   defp input_items(%Message{role: :assistant, content: blocks} = message, account_id, model)
        when is_list(blocks) do
     Enum.flat_map(blocks, fn
-      %{type: "codex_reasoning", account_id: ^account_id, model: ^model, item: item} -> [item]
-      %{type: "codex_reasoning"} -> []
-      block -> OpenAI.build_input_items([%{message | content: [block]}], %{})
+      %{type: type, account_id: ^account_id, model: ^model, item: item}
+      when type in ["codex_reasoning", "responses_reasoning"] ->
+        [item]
+
+      %{type: type} when type in ["codex_reasoning", "responses_reasoning"] ->
+        []
+
+      %{type: "text"} = block ->
+        [assistant_message_item(block)]
+
+      block ->
+        OpenAI.build_input_items([%{message | content: [block]}], %{})
     end)
   end
 
   defp input_items(message, _account_id, _model), do: OpenAI.build_input_items([message], %{})
 
-  defp stream_handler(initial, on_chunk) do
+  # Pi replays each assistant message as a completed output item, including
+  # phase. A bare `{role, content}` string is not a Codex message item and is
+  # dropped by newer subscription models, so the next turn looks empty.
+  defp assistant_message_item(%{type: "text", text: text} = block) do
+    item = %{
+      "type" => "message",
+      "role" => "assistant",
+      "content" => [%{"type" => "output_text", "text" => text, "annotations" => []}],
+      "status" => "completed",
+      "id" => message_item_id(block)
+    }
+
+    case block[:phase] do
+      phase when phase in ["commentary", "final_answer"] -> Map.put(item, "phase", phase)
+      _ -> item
+    end
+  end
+
+  defp message_item_id(%{id: id}) when is_binary(id) and id != "" do
+    if byte_size(id) <= 64, do: id, else: "msg_" <> short_hash(id)
+  end
+
+  defp message_item_id(_block),
+    do: "msg_" <> short_hash(Base.encode16(:crypto.strong_rand_bytes(8)))
+
+  defp short_hash(value) do
+    :crypto.hash(:sha256, value) |> Base.encode16(case: :lower) |> binary_part(0, 16)
+  end
+
+  defp streamed_phase(acc, index) do
+    case acc.phases[index] do
+      %{"phase" => "final_answer"} -> "final_answer"
+      _ -> "commentary"
+    end
+  end
+
+  defp stream_handler(initial, on_chunk, state) do
     fn {:data, chunk}, {req, response} ->
       if response.status == 200 do
+        :counters.add(state, 1, 1)
         acc = Map.get(response.private, :codex_sse, initial)
         {events, buffer} = SSE.process_chunk(acc.buffer, chunk)
         acc = Enum.reduce(events, %{acc | buffer: buffer}, &handle_event(&1, &2, on_chunk))
         {:cont, {req, put_in(response.private[:codex_sse], acc)}}
       else
-        # Do not retain response bodies that could echo authorization data.
-        {:cont, {req, response}}
+        # Keep only the bounded error body. Authorization echoes must not survive.
+        acc = Map.get(response.private, :codex_sse, initial)
+        buffer = String.slice(acc.buffer <> to_string(chunk), 0, 2048)
+        {:cont, {req, put_in(response.private[:codex_sse], %{acc | buffer: buffer})}}
       end
     end
   end
@@ -151,6 +294,20 @@ defmodule Handbeam.Agent.Provider.Codex do
     end
   end
 
+  # Live chunks are commentary until a message item is known to be the final
+  # answer. Replaying the terminal item would append the same text twice.
+  defp process_event(
+         "response.output_text.delta",
+         %{"delta" => text, "output_index" => index},
+         acc,
+         on_chunk
+       )
+       when is_binary(text) and is_integer(index) do
+    phase = streamed_phase(acc, index)
+    on_chunk.(%{text: text, phase: phase, output_index: index})
+    acc
+  end
+
   defp process_event("response.output_text.delta", %{"delta" => text}, acc, on_chunk)
        when is_binary(text) do
     on_chunk.(text)
@@ -158,13 +315,23 @@ defmodule Handbeam.Agent.Provider.Codex do
   end
 
   defp process_event(
-         "response.output_item.done",
+         "response.output_item.added",
          %{"output_index" => index, "item" => item},
          acc,
          _
        )
        when is_integer(index) and is_map(item),
-       do: %{acc | output: Map.put(acc.output, index, item)}
+       do: %{acc | phases: Map.put(acc.phases, index, item)}
+
+  defp process_event(
+         "response.output_item.done",
+         %{"output_index" => index, "item" => item},
+         acc,
+         _
+       )
+       when is_integer(index) and is_map(item) do
+    %{acc | output: Map.put(acc.output, index, item), phases: Map.put(acc.phases, index, item)}
+  end
 
   defp process_event(type, %{"response" => response}, acc, _)
        when type in ["response.completed", "response.done"] and is_map(response),
@@ -184,8 +351,16 @@ defmodule Handbeam.Agent.Provider.Codex do
     do: {:error, "Codex stream ended before its terminal response. No tools were executed."}
 
   defp finish(%{response: response, output: streamed}, auth, config) do
+    # Codex can complete with output: [] after delivering full output_item.done
+    # events. An empty list is truthy in Elixir, so `||` would discard those items.
     output =
-      response["output"] || streamed |> Enum.sort_by(&elem(&1, 0)) |> Enum.map(&elem(&1, 1))
+      case response["output"] do
+        empty when empty in [nil, []] ->
+          streamed |> Enum.sort_by(&elem(&1, 0)) |> Enum.map(&elem(&1, 1))
+
+        output ->
+          output
+      end
 
     with :ok <- validate_output(response, output),
          {:ok, parsed} <- OpenAI.parse_response(Map.put(response, "output", output)),
@@ -242,13 +417,19 @@ defmodule Handbeam.Agent.Provider.Codex do
         %{"type" => "reasoning", "encrypted_content" => encrypted} = item, {:ok, acc}
         when is_binary(encrypted) ->
           block = %{
-            type: "codex_reasoning",
+            type: "responses_reasoning",
             account_id: account_id,
             model: model,
             item: Map.take(item, ["type", "id", "summary", "encrypted_content"])
           }
 
           {:cont, {:ok, [[block] | acc]}}
+
+        %{"type" => "message"} = item, {:ok, acc} ->
+          case message_blocks(item) do
+            {:ok, blocks} -> {:cont, {:ok, [blocks | acc]}}
+            error -> {:halt, error}
+          end
 
         item, {:ok, acc} ->
           case OpenAI.parse_response(%{"output" => [item]}) do
@@ -262,4 +443,25 @@ defmodule Handbeam.Agent.Provider.Codex do
       error -> error
     end
   end
+
+  defp message_blocks(%{"type" => "message"} = item) do
+    case OpenAI.parse_response(%{"output" => [item]}) do
+      {:ok, %{messages: [message]}} ->
+        {:ok, Enum.map(message.content, &put_message_identity(&1, item))}
+
+      error ->
+        error
+    end
+  end
+
+  defp put_message_identity(%{type: "text"} = block, item) do
+    block
+    |> maybe_put_block(:id, item["id"])
+    |> maybe_put_block(:phase, item["phase"])
+  end
+
+  defp put_message_identity(block, _item), do: block
+
+  defp maybe_put_block(block, _key, value) when value in [nil, ""], do: block
+  defp maybe_put_block(block, key, value), do: Map.put(block, key, value)
 end

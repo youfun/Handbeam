@@ -37,9 +37,14 @@ defmodule Handbeam.Attachments.MessageBuilder do
   end
 
   defp promote(%Imported{} = imported, opts) do
-    workspace = Keyword.fetch!(opts, :workspace_path)
     conversation_id = Keyword.fetch!(opts, :conversation_id)
-    Uploads.promote_imported(workspace, conversation_id, imported, opts)
+
+    if Keyword.get(opts, :chat_scope) == :free do
+      promote_free(conversation_id, imported)
+    else
+      workspace = Keyword.fetch!(opts, :workspace_path)
+      Uploads.promote_imported(workspace, conversation_id, imported, opts)
+    end
   end
 
   defp promote(map, opts) when is_map(map) do
@@ -50,6 +55,13 @@ defmodule Handbeam.Attachments.MessageBuilder do
     controlled = map[:controlled_path] || map["controlled_path"]
 
     cond do
+      Keyword.get(opts, :chat_scope) == :free and is_binary(relative) and
+          is_binary(conversation_id) ->
+        with {:ok, path} <- Access.resolve_free_upload(conversation_id, Path.basename(relative)),
+             :ok <- Access.verify_canonical(path, map[:mime_type] || map["mime_type"]) do
+          {:ok, promoted_map(map, path, Path.basename(relative))}
+        end
+
       is_binary(relative) and is_binary(workspace) and is_binary(conversation_id) ->
         with {:ok, path} <- Access.resolve_upload(workspace, conversation_id, relative),
              :ok <- Access.verify_canonical(path, map[:mime_type] || map["mime_type"]) do
@@ -75,6 +87,27 @@ defmodule Handbeam.Attachments.MessageBuilder do
 
       true ->
         {:error, :missing_attachment_path}
+    end
+  end
+
+  defp promote_free(conversation_id, %Imported{} = imported) do
+    dest_dir = Uploads.ensure_free_upload_dir!(conversation_id)
+    ext = Uploads.allowed_ext(imported.canonical_type) || "bin"
+    dest = Path.join(dest_dir, "#{imported.attachment_id}.#{ext}")
+
+    with :ok <- File.cp(imported.controlled_path, dest),
+         {:ok, path} <- Access.resolve_free_upload(conversation_id, Path.basename(dest)) do
+      {:ok,
+       %{
+         id: imported.attachment_id,
+         kind: if(Attachments.image?(imported.canonical_type), do: "image", else: "text"),
+         mime_type: imported.canonical_type,
+         filename: imported.display_name,
+         size_bytes: imported.size_bytes,
+         storage_path: path,
+         relative_path: Path.basename(dest),
+         source: imported.source
+       }}
     end
   end
 

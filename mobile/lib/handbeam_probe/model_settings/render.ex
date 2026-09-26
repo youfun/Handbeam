@@ -10,7 +10,7 @@ defmodule HandbeamProbe.ModelSettings.Render do
   use Gettext, backend: HandbeamProbe.Gettext
   import HandbeamProbe.NativeUI
   alias Handbeam.Agent.Reasoning
-  alias HandbeamProbe.ModelSettings.{Labels, Providers, RenderForms}
+  alias HandbeamProbe.ModelSettings.{Labels, Providers, RenderForms, SubscriptionRender}
 
   def render(state) do
     Process.put({__MODULE__, :select_open}, state.select_open)
@@ -58,6 +58,7 @@ defmodule HandbeamProbe.ModelSettings.Render do
     defaults_card(state) ++
       memory_card(state) ++
       policy_card(state) ++
+      SubscriptionRender.section(state) ++
       catalog_header(state) ++
       catalog_rows(state)
   end
@@ -387,12 +388,30 @@ defmodule HandbeamProbe.ModelSettings.Render do
   end
 
   defp model_row(model) do
+    enabled? = Map.get(model, :enabled, true)
+
     card([
       row([
         text(model.name, text_size: 15, weight: 1),
         secondary_button(gettext("Edit model"), {:edit_model, model.provider_id, model.model_id})
       ]),
       text(model.id, text_size: 12, text_color: color(:hint), padding_top: 6, padding_bottom: 8),
+      row([
+        text(
+          if(enabled?, do: gettext("Model on"), else: gettext("Model off")),
+          text_size: 13,
+          text_color: color(:muted),
+          weight: 1
+        ),
+        node(
+          :toggle,
+          value: enabled?,
+          label: gettext("Show in model choices"),
+          on_change:
+            {self(), {:toggle_model_enabled, model.provider_id, model.model_id, not enabled?}},
+          id: "toggle-model-#{model.provider_id}-#{model.model_id}"
+        )
+      ]),
       danger_button(
         gettext("Delete model"),
         {:ask_delete_model, model.provider_id, model.model_id}

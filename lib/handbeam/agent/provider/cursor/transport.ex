@@ -15,6 +15,7 @@ defmodule Handbeam.Agent.Provider.Cursor.Transport do
   @client_version "cli-2026.01.09-231024f"
   @run_path "/agent.v1.AgentService/Run"
   @models_path "/agent.v1.AgentService/GetUsableModels"
+  @available_models_path "/aiserver.v1.AiService/AvailableModels"
 
   defstruct [
     :conn,
@@ -71,6 +72,16 @@ defmodule Handbeam.Agent.Provider.Cursor.Transport do
 
   def get_usable_models(transport, token, opts \\ []) do
     unary_proto(transport, @models_path, <<>>, token, opts)
+  end
+
+  def available_models(transport, token, opts \\ []) do
+    unary_proto(
+      transport,
+      @available_models_path,
+      Handbeam.Agent.Provider.Cursor.Proto.encode_available_models_request(),
+      token,
+      opts
+    )
   end
 
   def open_run(%__MODULE__{} = transport, token, opts \\ []) do
@@ -130,14 +141,20 @@ defmodule Handbeam.Agent.Provider.Cursor.Transport do
             other
         end
 
-      {:error, conn, reason, _responses} ->
-        {:error,
-         %{
-           transport
-           | conn: conn,
-             open?: false,
-             send_queue: FlowControl.cancel(transport.send_queue)
-         }, inspect(reason)}
+      {:error, conn, reason, responses} ->
+        transport = %{transport | conn: conn}
+
+        case consume_responses(transport, responses, []) do
+          {:ok, transport, frames} ->
+            if terminal_frames?(frames) do
+              {:ok, transport, frames}
+            else
+              transport_error(transport, reason)
+            end
+
+          {:error, transport, response_reason} ->
+            transport_error(transport, response_reason)
+        end
     end
   end
 
@@ -254,6 +271,23 @@ defmodule Handbeam.Agent.Provider.Cursor.Transport do
 
   defp consume_responses(transport, [_other | rest], frames) do
     consume_responses(transport, rest, frames)
+  end
+
+  defp terminal_frames?(frames) do
+    Enum.any?(frames, fn
+      :done -> true
+      {:end_stream, _payload} -> true
+      _ -> false
+    end)
+  end
+
+  defp transport_error(transport, reason) do
+    {:error,
+     %{
+       transport
+       | open?: false,
+         send_queue: FlowControl.cancel(transport.send_queue)
+     }, inspect(reason)}
   end
 
   defp await_unary(transport, opts, acc \\ <<>>) do

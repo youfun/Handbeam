@@ -62,10 +62,16 @@ else
     File.write!(Path.join(ebin, Atom.to_string(module) <> ".beam"), binary)
   end
 
-  File.write!(Path.join(root, "probe-lock.json"), Jason.encode!(%{
-    package: "bimap", version: "1.3.0", sha256: expected,
-    elixir: System.version(), otp: to_string(:erlang.system_info(:otp_release))
-  }))
+  File.write!(
+    Path.join(root, "probe-lock.json"),
+    Handbeam.JSON.encode!(%{
+      package: "bimap",
+      version: "1.3.0",
+      sha256: expected,
+      elixir: System.version(),
+      otp: to_string(:erlang.system_info(:otp_release))
+    })
+  )
 end
 
 {{:ok, 42}, {:ok, "phone"}} = result = apply(HandbeamWorkspaceProbe.Demo, :run, [])

@@ -342,8 +342,22 @@ defmodule Handbeam.Workspace.MixCompat do
     end
   end
 
-  defp owner_app("dependency " <> app), do: String.to_existing_atom(app)
+  defp owner_app("dependency " <> app) when is_binary(app) do
+    case existing_app(app) do
+      {:ok, app_atom} -> app_atom
+      :error -> nil
+    end
+  end
+
   defp owner_app(_), do: nil
+
+  defp existing_app(app) do
+    case :erlang.binary_to_existing_atom(app, :utf8) do
+      app_atom when is_atom(app_atom) -> {:ok, app_atom}
+    end
+  catch
+    :error, :badarg -> :error
+  end
 
   defp project_modules(dest, opts \\ []) do
     patterns = [Path.join(dest, "{lib,src}/**/*.{ex,erl}")]

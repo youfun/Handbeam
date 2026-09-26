@@ -202,9 +202,19 @@
         <div class="settings-detail-section">
           <div class="flex items-center justify-between mb-3">
             <h3 class="settings-detail-heading !mb-0">{gettext("模型")}</h3>
-            <button phx-click="open_add_model" class="settings-btn settings-btn-accent">
-              {gettext("+ 添加模型")}
-            </button>
+            <div class="flex items-center gap-2">
+              <button
+                :if={Enum.any?(@selected_provider.models, & &1.enabled)}
+                type="button"
+                phx-click="disable_all_models"
+                class="settings-btn"
+              >
+                {gettext("全部关闭")}
+              </button>
+              <button phx-click="open_add_model" class="settings-btn settings-btn-accent">
+                {gettext("+ 添加模型")}
+              </button>
+            </div>
           </div>
 
           <%= if @selected_provider.models == [] do %>
@@ -215,6 +225,7 @@
             <table class="settings-model-table">
               <thead>
                 <tr>
+                  <th>{gettext("启用")}</th>
                   <th>{gettext("模型 ID")}</th>
                   <th>{gettext("名称")}</th>
                   <th>{gettext("类型")}</th>
@@ -225,13 +236,31 @@
                 </tr>
               </thead>
               <tbody>
-                <tr :for={model <- @selected_provider.models}>
+                <tr
+                  :for={model <- @selected_provider.models}
+                  class={unless model.enabled, do: "is-disabled"}
+                >
+                  <td>
+                    <label class="settings-toggle" title={gettext("启用后出现在模型选择中")}>
+                      <input
+                        type="checkbox"
+                        checked={model.enabled}
+                        phx-click="toggle_model_enabled"
+                        phx-value-id={model.id}
+                      />
+                      <span class="settings-toggle-slider"></span>
+                    </label>
+                  </td>
                   <td class="font-mono text-[11px] text-tertiary">{model.id}</td>
                   <td class="font-medium">{model.name}</td>
                   <td><span class="settings-badge">{model.type}</span></td>
                   <td>
                     <span :if={model.reasoning} class="settings-badge">
-                      {Enum.map_join(reasoning_levels_for(@selected_provider.id, model), " / ", &reasoning_level_label/1)}
+                      {Enum.map_join(
+                        reasoning_levels_for(@selected_provider.id, model),
+                        " / ",
+                        &reasoning_level_label/1
+                      )}
                     </span>
                     <span :if={!model.reasoning} class="text-tertiary">—</span>
                   </td>
@@ -797,7 +826,12 @@
         <input type="hidden" name="add_model[reasoning_levels]" value="" />
         <div class="flex flex-wrap gap-2">
           <label
-            :for={level <- configurable_reasoning_levels(Map.put(@add_model_form, "provider_id", @selected_provider.id))}
+            :for={
+              level <-
+                configurable_reasoning_levels(
+                  Map.put(@add_model_form, "provider_id", @selected_provider.id)
+                )
+            }
             class="settings-badge"
           >
             <input

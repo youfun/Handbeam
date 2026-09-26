@@ -224,7 +224,8 @@ defmodule HandbeamWeb.Live.SettingsPanel do
     errors = validate_form(form)
 
     if errors == %{} do
-      socket = assign(socket, :saving, true)
+      form = forget_unknown_memory_models(form)
+      socket = socket |> assign(:form, form) |> assign(:saving, true)
 
       case save_current_scope(socket, form) do
         :ok ->
@@ -356,6 +357,14 @@ defmodule HandbeamWeb.Live.SettingsPanel do
       "om_observation_tokens" -> struct!(form, om_observation_tokens: parse_int(value, 40_000))
       _ -> form
     end
+  end
+
+  defp forget_unknown_memory_models(form) do
+    known? = &Handbeam.Agent.ModelConfig.model_in_catalog?/1
+
+    form
+    |> ModelAISettings.drop_unknown_memory_model(:om_observer_model, known?)
+    |> ModelAISettings.drop_unknown_memory_model(:om_reflector_model, known?)
   end
 
   defp blank_to_nil(""), do: nil

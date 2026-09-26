@@ -8,6 +8,7 @@ defmodule HandbeamWeb.ChangeHelper do
   """
 
   alias Handbeam.TranscriptEntry
+  alias HandbeamWeb.FileChangeCard
 
   @doc """
   Normalizes a list of diff line maps to have string keys `"type"` and `"text"`.
@@ -103,10 +104,20 @@ defmodule HandbeamWeb.ChangeHelper do
   @doc """
   Finds a change by `change_id` in a timeline list.
 
-  Returns the change map or `nil`.
+  A Changes-panel id belongs to the session net row for that path, not to
+  an intermediate edit or write. Timeline call ids still resolve to that
+  call. Returns the change map or `nil`.
   """
-  def find_change(timeline, change_id) when is_binary(change_id) do
-    Enum.find_value(timeline, fn entry ->
+  def find_change(timeline, change_id) when is_binary(change_id) and is_list(timeline) do
+    find_net_change(timeline, change_id) || find_timeline_change(timeline, change_id)
+  end
+
+  def find_change(_timeline, _change_id), do: nil
+
+  defp find_net_change(timeline, change_id) do
+    timeline
+    |> FileChangeCard.changes()
+    |> Enum.find_value(fn entry ->
       change = change_from_entry(entry)
 
       if Map.get(change, "change_id") == change_id do
@@ -115,5 +126,13 @@ defmodule HandbeamWeb.ChangeHelper do
     end)
   end
 
-  def find_change(_timeline, _change_id), do: nil
+  defp find_timeline_change(timeline, change_id) do
+    Enum.find_value(timeline, fn entry ->
+      change = change_from_entry(entry)
+
+      if Map.get(change, "change_id") == change_id do
+        change
+      end
+    end)
+  end
 end

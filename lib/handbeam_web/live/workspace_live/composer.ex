@@ -28,9 +28,10 @@ defmodule HandbeamWeb.WorkspaceLive.Composer do
   def prepare(socket, message, workspace_path) do
     {socket, attachments} = consume_images(socket, workspace_path)
 
-    case Handbeam.Attachments.MessageBuilder.build(message, attachments,
-           workspace_path: workspace_path,
-           conversation_id: socket.assigns.current_conversation_id
+    case Handbeam.Attachments.MessageBuilder.build(
+           message,
+           attachments,
+           build_opts(socket, workspace_path)
          ) do
       {:ok, content, persistable} ->
         persistable = merge_upload_urls(attachments, persistable)
@@ -96,8 +97,23 @@ defmodule HandbeamWeb.WorkspaceLive.Composer do
   def attachment_filename(%{"filename" => filename}) when is_binary(filename), do: filename
   def attachment_filename(_), do: "image"
 
+  def image_attachment?(att) when is_map(att) do
+    to_string(att["kind"] || att[:kind] || "") != "text"
+  end
+
+  def image_attachment?(_), do: false
+
+  def build_opts(socket, workspace_path) do
+    if socket.assigns[:chat_scope] == :free do
+      [chat_scope: :free, conversation_id: socket.assigns.current_conversation_id]
+    else
+      [workspace_path: workspace_path, conversation_id: socket.assigns.current_conversation_id]
+    end
+  end
+
   defp consume_images(socket, workspace_path) do
     conversation_id = socket.assigns.current_conversation_id
+    free? = socket.assigns[:chat_scope] == :free
     workspace_id = socket.assigns.current_workspace_id
 
     new =
@@ -106,7 +122,7 @@ defmodule HandbeamWeb.WorkspaceLive.Composer do
           {:postpone, nil}
         else
           id = Ecto.UUID.generate()
-          directory = Handbeam.Uploads.ensure_conversation_dir!(workspace_path, conversation_id)
+          directory = upload_directory!(free?, workspace_path, conversation_id)
           filename = "#{id}.#{extension(entry)}"
           path = Path.join(directory, filename)
           File.cp!(meta.path, path)
@@ -119,8 +135,8 @@ defmodule HandbeamWeb.WorkspaceLive.Composer do
              size_bytes: entry.client_size,
              filename: entry.client_name,
              storage_path: path,
-             relative_path: Path.relative_to(path, workspace_path),
-             url: "/uploads/#{conversation_id}/#{filename}?ws_id=#{workspace_id}"
+             relative_path: upload_relative(free?, path, workspace_path),
+             url: upload_url(free?, conversation_id, filename, workspace_id)
            }}
         end
       end)
@@ -133,6 +149,21 @@ defmodule HandbeamWeb.WorkspaceLive.Composer do
       socket = assign(socket, :composer_error, Exception.message(error))
       {socket, socket.assigns.pending_attachments}
   end
+
+  defp upload_directory!(true, _workspace_path, conversation_id),
+    do: Handbeam.Uploads.ensure_free_upload_dir!(conversation_id)
+
+  defp upload_directory!(false, workspace_path, conversation_id),
+    do: Handbeam.Uploads.ensure_conversation_dir!(workspace_path, conversation_id)
+
+  defp upload_relative(true, path, _workspace_path), do: Path.basename(path)
+  defp upload_relative(false, path, workspace_path), do: Path.relative_to(path, workspace_path)
+
+  defp upload_url(true, conversation_id, filename, _workspace_id),
+    do: "/uploads/#{conversation_id}/#{filename}"
+
+  defp upload_url(false, conversation_id, filename, workspace_id),
+    do: "/uploads/#{conversation_id}/#{filename}?ws_id=#{workspace_id}"
 
   defp extension(entry) do
     case String.downcase(entry.client_type || "") do

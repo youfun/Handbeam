@@ -30,7 +30,7 @@ defmodule HandbeamProbe.Platform.Nif do
       request_id: req.request_id,
       generation: req.generation,
       caller: req.caller,
-      payload: Jason.encode!(Map.put(req.payload, "op", req.op))
+      payload: Handbeam.JSON.encode!(Map.put(req.payload, "op", req.op))
     }
   end
 

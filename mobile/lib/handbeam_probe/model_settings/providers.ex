@@ -152,6 +152,16 @@ defmodule HandbeamProbe.ModelSettings.Providers do
     end
   end
 
+  def toggle_enabled(state, provider_id, model_id, enabled, workspace) when is_boolean(enabled) do
+    case ModelConfig.update_model(provider_id, model_id, %{"enabled" => enabled}) do
+      :ok ->
+        ModelSettings.reload(state, workspace, nil)
+
+      {:error, reason} ->
+        %{state | notice: to_string(reason)}
+    end
+  end
+
   def save_provider(state, workspace) do
     case persist_provider(state) do
       {:ok, provider_id} ->

@@ -26,6 +26,13 @@ defmodule Handbeam.WorkspaceSettings do
     // Example: "per_tool": { "bash": "prompt", "edit": "prompt" }
     "tools": {
       "default_mode": "auto",
+      // "user" asks a person. "auto_review" only re-reviews calls that would
+      // already prompt. It does not widen sandbox, allow, or unsandboxed gates.
+      "approvals_reviewer": "user",
+      "auto_review": {
+        "model": null,
+        "timeout_ms": 30000
+      },
       "allow": [],
       "deny": [],
       "per_tool": {},
@@ -110,10 +117,141 @@ defmodule Handbeam.WorkspaceSettings do
   defp normalize_string_list(list) when is_list(list), do: Enum.filter(list, &is_binary/1)
   defp normalize_string_list(_), do: []
 
+  @reviewers [:user, :auto_review]
+  @default_review_timeout_ms 30_000
+
   @doc """
-  Update default tool mode in workspace settings file.
+  Who reviews calls that `ToolPolicy` has already marked `:prompt`.
+
+  Only `"user"` and `"auto_review"` are accepted. Anything else, including a
+  missing key, stays `:user`.
   """
-  @spec update_default_mode(Path.t(), :auto | :prompt | :deny) :: :ok | {:error, any()}
+  @spec approvals_reviewer(Path.t()) :: :user | :auto_review
+  def approvals_reviewer(workspace_root) do
+    case load(workspace_root) do
+      {:ok, settings} -> approvals_reviewer_from_settings(settings)
+      {:error, _reason} -> :user
+    end
+  end
+
+  @spec approvals_reviewer_from_settings(map()) :: :user | :auto_review
+  def approvals_reviewer_from_settings(settings) when is_map(settings) do
+    case get_in(settings, ["tools", "approvals_reviewer"]) do
+      "auto_review" -> :auto_review
+      _ -> :user
+    end
+  end
+
+  def approvals_reviewer_from_settings(_settings), do: :user
+
+  @doc """
+  Optional reviewer model and hard deadline. `model: nil` means the workspace
+  default model. This does not introduce a provider.
+  """
+  @spec auto_review_config(map()) :: %{model: String.t() | nil, timeout_ms: pos_integer()}
+  def auto_review_config(settings) when is_map(settings) do
+    auto = get_in(settings, ["tools", "auto_review"])
+    auto = if is_map(auto), do: auto, else: %{}
+
+    %{
+      model: blank_to_nil(Map.get(auto, "model")),
+      timeout_ms: positive_timeout(Map.get(auto, "timeout_ms"))
+    }
+  end
+
+  def auto_review_config(_settings) do
+    %{model: nil, timeout_ms: @default_review_timeout_ms}
+  end
+
+  @doc """
+  Set `tools.approvals_reviewer` without rewriting the settings file.
+
+  Existing JSONC comments and sibling fields, including `default_mode`, stay
+  in place. The key is inserted when missing.
+  """
+  @spec update_approvals_reviewer(Path.t(), :user | :auto_review) :: :ok | {:error, term()}
+  def update_approvals_reviewer(workspace_root, reviewer) when reviewer in @reviewers do
+    settings_path = path(workspace_root)
+
+    case File.read(settings_path) do
+      {:ok, content} ->
+        case put_approvals_reviewer(content, Atom.to_string(reviewer)) do
+          {:ok, updated} ->
+            case File.write(settings_path, updated) do
+              :ok -> :ok
+              {:error, reason} -> {:error, "Failed to write workspace settings: #{inspect(reason)}"}
+            end
+
+          {:error, reason} ->
+            {:error, reason}
+        end
+
+      {:error, :enoent} ->
+        with :ok <- ensure_file(workspace_root) do
+          update_approvals_reviewer(workspace_root, reviewer)
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp blank_to_nil(value) when is_binary(value) do
+    case String.trim(value) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp blank_to_nil(_value), do: nil
+
+  defp positive_timeout(value) when is_integer(value) and value > 0, do: value
+
+  defp positive_timeout(value) when is_binary(value) do
+    case Integer.parse(String.trim(value)) do
+      {parsed, ""} when parsed > 0 -> parsed
+      _ -> @default_review_timeout_ms
+    end
+  end
+
+  defp positive_timeout(_value), do: @default_review_timeout_ms
+
+  defp put_approvals_reviewer(content, value) when value in ["user", "auto_review"] do
+    line = "\"approvals_reviewer\": \"#{value}\""
+
+    cond do
+      Regex.match?(~r/"approvals_reviewer"\s*:\s*"[^"]*"/, content) ->
+        {:ok, Regex.replace(~r/"approvals_reviewer"\s*:\s*"[^"]*"/, content, line, global: false)}
+
+      Regex.match?(~r/"approvals_reviewer"\s*:\s*null/, content) ->
+        {:ok, Regex.replace(~r/"approvals_reviewer"\s*:\s*null/, content, line, global: false)}
+
+      Regex.match?(~r/"default_mode"\s*:/, content) ->
+        {:ok,
+         Regex.replace(~r/("default_mode"\s*:)/, content, line <> ",\n        \\1", global: false)}
+
+      Regex.match?(~r/"tools"\s*:\s*\{/, content) ->
+        {:ok,
+         Regex.replace(~r/"tools"\s*:\s*\{/, content, "\"tools\": {\n        " <> line <> ",",
+           global: false
+         )}
+
+      Regex.match?(~r/\}\s*\z/, content) ->
+        insertion = """
+        ,
+          "tools": {
+            "approvals_reviewer": "#{value}"
+          }
+        }\
+        """
+
+        {:ok, Regex.replace(~r/\}\s*\z/, content, insertion)}
+
+      true ->
+        {:error, "workspace settings have no JSON object to update"}
+    end
+  end
+
   def update_default_mode(workspace_root, mode) when mode in [:auto, :prompt, :deny] do
     mode_str = Atom.to_string(mode)
     settings_path = path(workspace_root)

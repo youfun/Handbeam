@@ -35,7 +35,14 @@ defmodule HandbeamProbe.NativeLocalImage do
   def upload_src(workspace_path, conversation_id, att) do
     relative = Payload.attachment(att)["relative_path"]
 
-    case Access.resolve_upload(workspace_path, conversation_id, relative) do
+    resolved =
+      if Handbeam.ConversationStore.free?(conversation_id) do
+        Access.resolve_free_upload(conversation_id, Path.basename(relative || ""))
+      else
+        Access.resolve_upload(workspace_path, conversation_id, relative)
+      end
+
+    case resolved do
       {:ok, path} -> path
       _ -> nil
     end

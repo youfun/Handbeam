@@ -31,12 +31,12 @@ defmodule Handbeam.Agent do
           {:ok, State.t()} | {:error, term()}
   def resume_after_tool_approval(%State{} = interrupted_state, decisions, opts) do
     # Register tools (same as run)
-    working_dir = Keyword.get(opts, :working_directory, File.cwd!())
+    working_dir = Keyword.get(opts, :working_directory)
     tools = Keyword.get(opts, :tools, default_tools())
-    tools = tools ++ beam_tools_for_workspace(working_dir)
+    tools = maybe_append_beam_tools(tools, working_dir)
     Enum.each(tools, &Handbeam.Tool.Registry.register/1)
 
-    if Handbeam.Host.terminal?() do
+    if Handbeam.Terminal.available?() do
       Handbeam.Tool.Extension.Terminal.register()
     end
 
@@ -100,17 +100,16 @@ defmodule Handbeam.Agent do
   def run(prompt, opts \\ []) do
     # Register tools with the central registry.
     # Default: all built-in + memory tools.
-    working_dir = Keyword.get(opts, :working_directory, File.cwd!())
+    working_dir = Keyword.get(opts, :working_directory)
     tools = Keyword.get(opts, :tools, default_tools())
-    tools = tools ++ beam_tools_for_workspace(working_dir)
+    tools = maybe_append_beam_tools(tools, working_dir)
     Enum.each(tools, &Handbeam.Tool.Registry.register/1)
 
-    if Handbeam.Host.terminal?() do
+    if Handbeam.Terminal.available?() do
       Handbeam.Tool.Extension.Terminal.register()
     end
 
     opts = maybe_bootstrap_mcp(opts)
-
     config = Config.from_opts(opts)
 
     {state, opts, session_id, queue_pid} =
@@ -227,6 +226,38 @@ defmodule Handbeam.Agent do
   @spec default_tools() :: [module()]
   def default_tools, do: Handbeam.Tool.Registry.host_tool_modules()
 
+  @doc """
+  Tools for a workspace-independent chat.
+
+  Memory, public page fetch, the in-app browser, opening a page in the system
+  browser, and device calendar/alarm when the host has an artifact-delivery
+  backend. File, shell, search, MCP, and skill tools stay off so a chat without
+  a project root cannot fall through to the process working directory. Web and
+  system-browser tools do not need workspace approval. Calendar and alarm still
+  ask before they touch the device.
+  """
+  def free_chat_tools do
+    base = [
+      Handbeam.Tool.Builtin.WebFetch,
+      Handbeam.Tool.Builtin.Browser,
+      Handbeam.Tool.Builtin.OpenUrl,
+      Handbeam.Tool.Memory.MemAssociate,
+      Handbeam.Tool.Memory.MemLearn,
+      Handbeam.Tool.Memory.MemRecall,
+      Handbeam.Tool.Memory.MemReinforce
+    ]
+
+    if Handbeam.Host.artifact_delivery_backend() do
+      base ++
+        [
+          Handbeam.Tool.Builtin.DeviceCalendar,
+          Handbeam.Tool.Builtin.DeviceAlarm
+        ]
+    else
+      base
+    end
+  end
+
   # ── BEAM tools auto-detection ──
 
   @beam_tools [
@@ -236,6 +267,13 @@ defmodule Handbeam.Agent do
   ]
 
   @beam_eval_tool Handbeam.Tool.Extension.Beam.Eval
+
+  defp maybe_append_beam_tools(tools, working_dir)
+       when is_binary(working_dir) and working_dir != "" do
+    tools ++ beam_tools_for_workspace(working_dir)
+  end
+
+  defp maybe_append_beam_tools(tools, _), do: tools
 
   defp beam_tools_for_workspace(working_dir) do
     config = Handbeam.WorkspaceSettings.beam_tools_config(working_dir)
@@ -265,7 +303,7 @@ defmodule Handbeam.Agent do
     enabled? =
       case Keyword.fetch(opts, :mcp) do
         {:ok, value} -> value
-        :error -> Handbeam.Host.mcp?()
+        :error -> Handbeam.Host.mcp?() and Keyword.get(opts, :chat_scope) != :free
       end
 
     if enabled? do

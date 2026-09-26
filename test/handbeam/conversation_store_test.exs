@@ -452,6 +452,21 @@ defmodule Handbeam.ConversationStoreTest do
       assert msg_content =~ "keep me"
     end
 
+    test "archive_for_workspace archives active conversations and leaves archived ones" do
+      {:ok, active} = ConversationStore.create("ws_remove", title: "Active")
+      {:ok, already} = ConversationStore.create("ws_remove", title: "Already")
+      {:ok, _} = ConversationStore.archive(already["id"])
+      {:ok, other} = ConversationStore.create("ws_other", title: "Other")
+
+      assert {:ok, [archived]} = ConversationStore.archive_for_workspace("ws_remove")
+      assert archived["id"] == active["id"]
+      assert is_binary(archived["archived_at"])
+
+      assert ConversationStore.list_for_workspace("ws_remove") == []
+      assert [still_active] = ConversationStore.list_for_workspace("ws_other")
+      assert still_active["id"] == other["id"]
+    end
+
     test "unarchive restores conversation" do
       {:ok, conversation} = ConversationStore.create("ws_1", title: "ToRestore")
       ConversationStore.archive(conversation["id"])

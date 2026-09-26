@@ -44,6 +44,32 @@ defmodule Handbeam.Permissions.ToolPolicyTest do
       assert ToolPolicy.decision(policy, unsandboxed()) == :prompt
     end
 
+    test "session pattern grants do not cover unsandboxed or unrelated prompts" do
+      policy =
+        ToolPolicy.from_settings(
+          %{"tools" => %{"default_mode" => "prompt"}},
+          %{},
+          ["bash(mix test*)"]
+        )
+
+      assert ToolPolicy.decision(policy, call("bash", %{"command" => "mix test"})) == :auto
+      assert ToolPolicy.decision(policy, call("bash", %{"command" => "rm -rf tmp"})) == :prompt
+      assert ToolPolicy.decision(policy, unsandboxed("mix test")) == :prompt
+    end
+
+    test "auto_review config does not skip the unsandboxed prompt" do
+      policy =
+        ToolPolicy.from_settings(%{
+          "tools" => %{
+            "default_mode" => "auto",
+            "approvals_reviewer" => "auto_review",
+            "allow" => ["bash"]
+          }
+        })
+
+      assert ToolPolicy.decision(policy, unsandboxed()) == :prompt
+    end
+
     test "only the boolean true escalates" do
       policy = ToolPolicy.from_settings(%{})
 
@@ -222,6 +248,15 @@ defmodule Handbeam.Permissions.ToolPolicyTest do
       assert ToolPolicy.decision(auto, call("share_file", %{"path" => "a.pdf"})) ==
                :prompt
 
+      assert ToolPolicy.decision(
+               auto,
+               call("device_calendar", %{"calendar_action" => "list_events"})
+             ) ==
+               :prompt
+
+      assert ToolPolicy.decision(auto, call("device_alarm", %{"hour" => 7, "minute" => 30})) ==
+               :prompt
+
       # "Always allow" appends to the workspace allow list; only that tool changes.
       always =
         ToolPolicy.from_settings(%{
@@ -364,6 +399,37 @@ defmodule Handbeam.Permissions.ToolPolicyTest do
              ) == :deny
 
       assert ToolPolicy.decision(policy, call("bash", %{"command" => "ls"})) == :auto
+    end
+  end
+
+  describe "sensitive paths" do
+    test "allow, session allow, and unsandboxed cannot turn a credential path into prompt or auto" do
+      policy =
+        ToolPolicy.from_settings(
+          %{
+            "tools" => %{
+              "default_mode" => "auto",
+              "allow" => ["read", "bash"],
+              "per_tool" => %{"read" => "auto", "bash" => "auto"}
+            }
+          },
+          %{"read" => :auto, "bash" => :auto},
+          ["read", "bash"]
+        )
+
+      for call <- [
+            call("read", %{"file_path" => ".env"}),
+            call("read", %{"file_path" => "~/.ssh/id_rsa"}),
+            call("bash", %{"command" => "cat ~/.ssh/id_rsa"}),
+            call("bash", %{"command" => "cat ~/.ssh/id_rsa", "unsandboxed" => true})
+          ] do
+        decision = ToolPolicy.decision(policy, call)
+        assert decision == :deny
+        refute decision in [:prompt, :auto]
+      end
+
+      assert ToolPolicy.decision(policy, call("read", %{"file_path" => "lib/app.ex"})) == :auto
+      assert ToolPolicy.decision(policy, call("bash", %{"command" => "ls lib"})) == :auto
     end
   end
 end

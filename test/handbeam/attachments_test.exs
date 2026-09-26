@@ -277,6 +277,59 @@ defmodule Handbeam.AttachmentsTest do
     assert Enum.any?(missing_blocks, &(is_binary(&1.text) and &1.text =~ "missing"))
   end
 
+  test "history drops failed assistant loops and replays encrypted reasoning" do
+    loop = %{
+      "role" => "assistant",
+      "content" => String.duplicate("same phrase ", 8),
+      "status" => "error"
+    }
+
+    assert History.to_messages(loop, nil) == []
+
+    item = %{
+      "type" => "reasoning",
+      "id" => "rs_hist",
+      "encrypted_content" => "enc-hist"
+    }
+
+    [restored] =
+      History.to_messages(
+        %{
+          "role" => "assistant",
+          "content" => "visible",
+          "status" => "completed",
+          "content_blocks" => [%{"type" => "responses_reasoning", "item" => item}]
+        },
+        nil
+      )
+
+    assert restored.content == [
+             %{"type" => "responses_reasoning", "item" => item},
+             %{type: "text", text: "visible"}
+           ]
+
+    [phased] =
+      History.to_messages(
+        %{
+          "id" => "msg_final",
+          "role" => "assistant",
+          "content" => "Hello! How can I help?",
+          "status" => "completed",
+          "phase" => "final_answer"
+        },
+        nil
+      )
+
+    assert phased.content == [
+             %{
+               type: "text",
+               text: "Hello! How can I help?",
+               phase: "final_answer",
+               id: "msg_final"
+             }
+           ]
+  end
+
   test "history restore is what Coordinator uses for later turns", %{dir: dir} do
     workspace = Path.join(dir, "ws")
     File.mkdir_p!(workspace)

@@ -1448,6 +1448,13 @@ defmodule Handbeam.Agent.ModelConfigTest do
       refute ModelConfig.model_allowed_for_workspace?(ws, "nonexistent/model")
     end
 
+    test "model_in_catalog? ignores workspace policy and disabled flag" do
+      assert ModelConfig.model_in_catalog?("cloud-provider/cloud-model-v1")
+      assert ModelConfig.model_in_catalog?("cloud-model-v1")
+      refute ModelConfig.model_in_catalog?("xai/grok-4.7")
+      refute ModelConfig.model_in_catalog?(nil)
+    end
+
     test "model_allowed_for_workspace? returns true for all when unrestricted" do
       ws = tmp_workspace()
 

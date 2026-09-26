@@ -37,10 +37,14 @@ object BridgeIds {
         const val PICK_PHOTOS = "platform_pick_photos"
         const val SHARE_DISCARD = "platform_share_discard"
         const val SHARE_TEXT = "platform_share_text"
+        const val DEVICE_CALENDAR = "platform_device_calendar"
+        const val DEVICE_ALARM = "platform_device_alarm"
+        const val APP_SETTINGS = "platform_app_settings"
 
         val all: Set<String> = setOf(
             IMPORT, EXPORT, SHARE_SNAPSHOT, OPEN_SNAPSHOT, OPEN_URL,
             SAVE_SNAPSHOT, CLEANUP, CANCEL, PICK_PHOTOS, SHARE_DISCARD, SHARE_TEXT,
+            DEVICE_CALENDAR, DEVICE_ALARM, APP_SETTINGS,
         )
     }
 

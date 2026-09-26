@@ -41,6 +41,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
   def handle_event(conversation_id, {:run_start, payload}, opts)
       when is_binary(conversation_id) do
     Process.put(assistant_key(conversation_id), nil)
+    Process.delete(assistant_segments_key(conversation_id))
     clear_buffer(conversation_id)
     clear_thinking_buffer(conversation_id)
     Process.put(run_opts_key(conversation_id), opts)
@@ -59,13 +60,14 @@ defmodule Handbeam.Agent.TranscriptPersistence do
     :ok
   end
 
-  def handle_event(conversation_id, {:message_delta, %{chunk: chunk}}, opts)
+  def handle_event(conversation_id, {:message_delta, %{chunk: chunk} = payload}, opts)
       when is_binary(conversation_id) and is_binary(chunk) and chunk != "" do
     {thinking_text, clean_chunk, new_buffer} =
       Handbeam.Agent.ThinkingFilter.strip(thinking_buffer(conversation_id), chunk)
 
     put_thinking_buffer(conversation_id, new_buffer)
     append_thinking(conversation_id, thinking_text)
+    open_segment(conversation_id, payload, opts)
     append_to_buffer(conversation_id, clean_chunk)
     # The journal syncs the delta before the runtime broadcasts it. The task
     # process is no longer the only owner of an acknowledged visible reply.
@@ -80,6 +82,12 @@ defmodule Handbeam.Agent.TranscriptPersistence do
   # text and is flushed at the next message boundary.
   def handle_event(conversation_id, {:thinking_delta, _payload}, _opts)
       when is_binary(conversation_id) do
+    :ok
+  end
+
+  def handle_event(conversation_id, {:provider_items, %{items: items}}, _opts)
+      when is_binary(conversation_id) and is_list(items) do
+    remember_provider_items(conversation_id, items)
     :ok
   end
 
@@ -199,6 +207,8 @@ defmodule Handbeam.Agent.TranscriptPersistence do
 
     with :ok <- result do
       Process.put(assistant_key(conversation_id), nil)
+      Process.delete(assistant_segments_key(conversation_id))
+      Process.delete(segment_phases_key(conversation_id))
       clear_buffer(conversation_id)
       clear_thinking_buffer(conversation_id)
       Process.delete(run_opts_key(conversation_id))
@@ -469,7 +479,11 @@ defmodule Handbeam.Agent.TranscriptPersistence do
               }
 
             entry["role"] == "assistant" and entry["status"] == "streaming" ->
-              %{"status" => status, "phase" => "final", "error" => error}
+              %{
+                "status" => status,
+                "phase" => settled_phase(entry, status),
+                "error" => error
+              }
 
             true ->
               nil
@@ -554,6 +568,41 @@ defmodule Handbeam.Agent.TranscriptPersistence do
     :ok
   end
 
+  defp open_segment(conversation_id, payload, opts) do
+    phase = stream_phase(payload)
+    index = stream_index(payload)
+    segments = Process.get(assistant_segments_key(conversation_id), %{})
+    current = Process.get(assistant_key(conversation_id))
+
+    cond do
+      is_nil(index) ->
+        :ok
+
+      segments[index] == current and not is_nil(current) ->
+        :ok
+
+      true ->
+        flush!(conversation_id, opts)
+        entry_id = unique_id("msg-assistant")
+        Process.put(assistant_key(conversation_id), entry_id)
+        Process.put(assistant_phase_key(conversation_id), phase)
+        remember_segment_phase(conversation_id, entry_id, phase)
+
+        Process.put(
+          assistant_segments_key(conversation_id),
+          Map.put(segments, index, entry_id)
+        )
+    end
+  end
+
+  defp stream_phase(%{phase: phase}) when phase in ["commentary", "final_answer"], do: phase
+  defp stream_phase(%{"phase" => phase}) when phase in ["commentary", "final_answer"], do: phase
+  defp stream_phase(_), do: nil
+
+  defp stream_index(%{output_index: index}) when is_integer(index), do: index
+  defp stream_index(%{"output_index" => index}) when is_integer(index), do: index
+  defp stream_index(_), do: nil
+
   defp flush!(conversation_id, opts) do
     case buffered_text(conversation_id) do
       "" ->
@@ -562,6 +611,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
       buffered ->
         entry_id = Process.get(assistant_key(conversation_id)) || unique_id("msg-assistant")
         Process.put(assistant_key(conversation_id), entry_id)
+        phase = Process.get(assistant_phase_key(conversation_id))
 
         entry =
           base_entry(conversation_id, opts)
@@ -574,8 +624,10 @@ defmodule Handbeam.Agent.TranscriptPersistence do
             "content" => buffered,
             "status" => "streaming"
           })
+          |> maybe_put_stream_phase(phase)
+          |> maybe_put_provider_items(conversation_id)
 
-        case persist_assistant_delta(conversation_id, entry_id, entry, buffered, opts) do
+        case persist_assistant_delta(conversation_id, entry_id, entry, opts) do
           {:ok, saved} ->
             Process.delete(buffer_key(conversation_id))
             deliver_delta(saved, buffered, opts)
@@ -599,14 +651,71 @@ defmodule Handbeam.Agent.TranscriptPersistence do
     end
   end
 
+  defp maybe_put_stream_phase(entry, phase) when phase in ["commentary", "final_answer"],
+    do: Map.put(entry, "phase", phase)
+
+  defp maybe_put_stream_phase(entry, _phase), do: entry
+
+  defp maybe_put_provider_items(entry, conversation_id) do
+    case take_provider_items(conversation_id) do
+      [] -> entry
+      items -> Map.put(entry, "content_blocks", items)
+    end
+  end
+
   defp append_patch(buffered), do: %{"$append" => buffered}
 
-  defp persist_assistant_delta(conversation_id, entry_id, entry, buffered, opts) do
+  defp assistant_segments_key(conversation_id),
+    do: {:handbeam_transcript_assistant_segments, conversation_id}
+
+  defp assistant_phase_key(conversation_id),
+    do: {:handbeam_transcript_assistant_phase, conversation_id}
+
+  defp segment_phases_key(conversation_id),
+    do: {:handbeam_transcript_segment_phases, conversation_id}
+
+  defp remember_segment_phase(conversation_id, entry_id, phase)
+       when phase in ["commentary", "final_answer"] do
+    phases = Process.get(segment_phases_key(conversation_id), %{})
+    Process.put(segment_phases_key(conversation_id), Map.put(phases, entry_id, phase))
+  end
+
+  defp remember_segment_phase(_conversation_id, _entry_id, _phase), do: :ok
+
+  defp recorded_phase?(conversation_id, entry_id) do
+    phases = Process.get(segment_phases_key(conversation_id), %{})
+    phases[entry_id] in ["commentary", "final_answer"]
+  end
+
+  defp provider_items_key(conversation_id),
+    do: {:handbeam_transcript_provider_items, conversation_id}
+
+  defp remember_provider_items(conversation_id, items) do
+    kept = Enum.filter(items, &provider_item?/1)
+    current = Process.get(provider_items_key(conversation_id), [])
+    Process.put(provider_items_key(conversation_id), current ++ kept)
+    :ok
+  end
+
+  defp take_provider_items(conversation_id) do
+    items = Process.get(provider_items_key(conversation_id), [])
+    Process.delete(provider_items_key(conversation_id))
+    items
+  end
+
+  defp provider_item?(%{type: "responses_reasoning", item: item}) when is_map(item), do: true
+
+  defp provider_item?(%{"type" => "responses_reasoning", "item" => item}) when is_map(item),
+    do: true
+
+  defp provider_item?(_), do: false
+
+  defp persist_assistant_delta(conversation_id, entry_id, entry, opts) do
     case Handbeam.ConversationTranscriptStore.update(
            conversation_id,
            entry_id,
            %{
-             "content" => append_patch(buffered),
+             "content" => append_patch(entry["content"]),
              "status" => "streaming"
            },
            opts
@@ -658,19 +767,46 @@ defmodule Handbeam.Agent.TranscriptPersistence do
     end
   end
 
+  defp settled_phase(%{"phase" => phase}, _status) when phase in ["commentary", "final_answer"],
+    do: phase
+
+  defp settled_phase(_entry, _status), do: "final"
+
+  defp completion_patch(id, current, "commentary" = phase) when id == current do
+    Map.put(@assistant_completed_patch, "phase", phase)
+  end
+
+  defp completion_patch(id, current, phase) when id == current and is_binary(phase) do
+    if phase == "final_answer",
+      do: @assistant_completed_patch,
+      else: Map.put(@assistant_completed_patch, "phase", phase)
+  end
+
+  defp completion_patch(_id, _current, _phase), do: @assistant_completed_patch
+
   defp finalize_assistant(conversation_id, phase, opts) do
-    if assistant_id = Process.get(assistant_key(conversation_id)) do
-      case Handbeam.ConversationTranscriptStore.update(
-             conversation_id,
-             assistant_id,
-             Map.put(@assistant_completed_patch, "phase", phase),
-             opts
-           ) do
-        {:ok, _} -> :ok
-        {:error, reason} -> {:error, reason}
-      end
-    else
+    segments = Process.get(assistant_segments_key(conversation_id), %{})
+    current = Process.get(assistant_key(conversation_id))
+    ids = segments |> Map.values() |> Enum.reject(&is_nil/1)
+    ids = if current && current not in ids, do: [current | ids], else: ids
+
+    if ids == [] do
       :ok
+    else
+      Enum.reduce_while(ids, :ok, fn id, :ok ->
+        patch =
+          if recorded_phase?(conversation_id, id) do
+            @assistant_completed_patch
+          else
+            completion_patch(id, current, phase)
+          end
+
+        case Handbeam.ConversationTranscriptStore.update(conversation_id, id, patch, opts) do
+          {:ok, _} -> {:cont, :ok}
+          {:error, :not_found} -> {:cont, :ok}
+          {:error, reason} -> {:halt, {:error, reason}}
+        end
+      end)
     end
   end
 
@@ -684,7 +820,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
 
   defp transcript_metadata(opts) do
     opts
-    |> Keyword.take([:workspace_id, :model, :source])
+    |> Keyword.take([:workspace_id, :model, :source, :chat_scope])
     |> Map.new(fn {key, value} -> {to_string(key), stringify_value(value)} end)
   end
 

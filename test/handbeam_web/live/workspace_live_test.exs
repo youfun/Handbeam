@@ -84,6 +84,37 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
   end
 
   # ── Helper: build an AgentEvent for tests ──
+  defp send_recorded_edit(view, tool_use_id, file_path, change) do
+    send(
+      view.pid,
+      {:agent_event,
+       agent_event(:tool_start, %{
+         tool_use_id: tool_use_id,
+         tool: "edit",
+         input: %{file_path: file_path}
+       })}
+    )
+
+    send(
+      view.pid,
+      {:agent_event,
+       agent_event(
+         :tool_end,
+         %{
+           tool_use_id: tool_use_id,
+           tool: "edit",
+           duration_ms: 42,
+           details: %{
+             file_path: file_path,
+             diff_lines: change.diff_lines,
+             change: change
+           }
+         },
+         2
+       )}
+    )
+  end
+
   defp agent_event(kind, payload, seq \\ 1) do
     agent_event(kind, payload, seq, "s:1")
   end
@@ -428,6 +459,27 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       refute html =~ ~r/<textarea[^>]*id=\"ai-input\"[^>]*>\s+\n\s*<\/textarea>/
     end
 
+    test "model picker distinguishes stored variants that share a display name" do
+      models = [
+        %{id: "cursor/composer-2.5", model_id: "composer-2.5", name: "Composer 2.5"},
+        %{id: "cursor/composer-2.5-fast", model_id: "composer-2.5-fast", name: "Composer 2.5"},
+        %{
+          id: "cursor/grok-4.7-high-fast",
+          model_id: "grok-4.7-high-fast",
+          name: "Grok 4.7 High Fast"
+        }
+      ]
+
+      assert HandbeamWeb.WorkspaceLive.model_option_label(Enum.at(models, 0), models) ==
+               "Composer 2.5"
+
+      assert HandbeamWeb.WorkspaceLive.model_option_label(Enum.at(models, 1), models) ==
+               "Composer 2.5 Fast"
+
+      assert HandbeamWeb.WorkspaceLive.model_option_label(Enum.at(models, 2), models) ==
+               "Grok 4.7 High Fast"
+    end
+
     test "renders empty state when no messages are present", %{conn: conn} do
       {:ok, _view, html} = live(conn, "/")
 
@@ -485,6 +537,58 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       |> render_submit(%{"message" => ""})
 
       refute render(view) =~ ~s(class="msg-bubble msg-user")
+    end
+  end
+
+  describe "auto title sidebar" do
+    test "a generated title replaces New chat without a reload", %{conn: conn} do
+      isolate_conversation_home!()
+
+      {:ok, conversation} =
+        Handbeam.ConversationStore.create("default",
+          id: "conv-title-delay",
+          title: "New chat",
+          title_source: "manual",
+          timeline: [
+            %{
+              "id" => "title-user-1",
+              "content_type" => "user_msg",
+              "role" => "user",
+              "content" => "模型列表怎么不一致"
+            }
+          ]
+        )
+
+      {:ok, view, html} = live(conn, "/")
+      assert html =~ "New chat"
+
+      send(view.pid, {:conversation_title_ready, conversation["id"], "模型列表展示不一致"})
+
+      assert has_element?(view, "#conversation-conv-title-delay", "模型列表展示不一致")
+      refute has_element?(view, "#conversation-conv-title-delay", "New chat")
+    end
+
+    test "a provisional title replaces New chat before the model returns", %{conn: conn} do
+      isolate_conversation_home!()
+
+      {:ok, conversation} =
+        Handbeam.ConversationStore.create("default",
+          id: "conv-title-now",
+          title: "New chat",
+          title_source: "manual"
+        )
+
+      {:ok, view, html} = live(conn, "/")
+      assert html =~ "New chat"
+
+      assert {:ok, "模型列表怎么不一致"} =
+               Handbeam.ConversationTitleGenerator.publish_provisional(
+                 conversation["id"],
+                 "模型列表怎么不一致"
+               )
+
+      assert has_element?(view, "#conversation-conv-title-now", "模型列表怎么不一致")
+      refute has_element?(view, "#conversation-conv-title-now", "New chat")
     end
   end
 
@@ -1265,6 +1369,9 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
 
       assert rendered =~ "see image"
       assert rendered =~ "/uploads/"
+      assert rendered =~ "msg-shot"
+      assert rendered =~ "data-shot-open"
+      refute rendered =~ "w-16 h-16"
     end
 
     test "completed uploaded image renders a composer attachment preview before send", %{
@@ -1741,6 +1848,10 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       |> render_click()
 
       assert has_element?(view, "#workspace-panel #terminal-panel")
+      assert has_element?(view, "#terminal-command-form input[name='line']")
+      refute has_element?(view, "button", "+ New Terminal")
+      refute render(view) =~ "args (space-separated)"
+      refute render(view) =~ "no terminals"
       refute has_element?(view, "#terminal-dock")
       refute has_element?(view, "#status-bar button[phx-click='toggle_terminal']")
     end
@@ -2311,8 +2422,8 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
 
       rendered = render(view)
       assert rendered =~ "preview-card"
-      assert rendered =~ "打开预览"
-      assert rendered =~ "用浏览器打开"
+      assert rendered =~ "Open preview"
+      assert rendered =~ "Open in browser"
       assert rendered =~ "Demo site"
       assert rendered =~ ~s(id="composer") or rendered =~ "phx-submit=\"send_message\""
     end
@@ -2335,7 +2446,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       )
 
       rendered = render(view)
-      assert rendered =~ "接管浏览器"
+      assert rendered =~ "Take over browser"
       assert rendered =~ "captcha"
       refute rendered =~ "Mob.UI.webview"
     end
@@ -2495,10 +2606,22 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         assert rendered =~ "+1"
         assert rendered =~ "diff-lineno"
 
-        view |> element("button[phx-value-view='changes']") |> render_click()
+        view
+        |> element("button[phx-click='select_right_panel_view'][phx-value-view='changes']")
+        |> render_click()
+
         changes = render(view)
-        assert changes =~ "id=\"changes-file-tool-tu_edit_1-diff\""
-        assert changes =~ "&lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;"
+        assert changes =~ "id=\"changes-file-net-"
+        refute changes =~ "id=\"changes-file-tool-tu_edit_1\""
+
+        view
+        |> element("#workspace-changes [id^='changes-file-net-'][id$='-toggle']")
+        |> render_click()
+
+        opened = render(view)
+        assert opened =~ "id=\"changes-file-net-"
+        assert opened =~ "-diff\""
+        assert opened =~ "safe"
       after
         File.rm(file_path)
       end
@@ -2704,6 +2827,50 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         assert File.read!(file_path) == before
         assert rendered =~ "Reverted file to the recorded before state"
         assert rendered =~ "reverted"
+      after
+        File.rm(file_path)
+      end
+    end
+
+    test "changes panel revert restores the session baseline, not the latest call", %{conn: conn} do
+      ws = Handbeam.Workspace.ensure_root!()
+      file_path = Path.join(ws, "revert_net_test.ex")
+      first = "value = 1\n"
+      middle = "value = 2\n"
+      latest = "value = 3\n"
+      File.write!(file_path, latest)
+
+      first_change = Handbeam.ChangeSnapshot.build_edit_snapshot(file_path, first, middle)
+      second_change = Handbeam.ChangeSnapshot.build_edit_snapshot(file_path, middle, latest)
+
+      {:ok, view, _html} = live(conn, "/")
+
+      try do
+        send_recorded_edit(view, "tu_net_1", file_path, first_change)
+        send_recorded_edit(view, "tu_net_2", file_path, second_change)
+
+        view
+        |> element("button[phx-click='select_right_panel_view'][phx-value-view='changes']")
+        |> render_click()
+
+        rendered = render(view)
+        assert rendered =~ "id=\"changes-file-net-"
+        refute rendered =~ "id=\"changes-file-tool-tu_net_2\""
+
+        view
+        |> element("#workspace-changes [id^='changes-file-net-'][id$='-toggle']")
+        |> render_click()
+
+        view
+        |> element("#workspace-changes [id^='changes-file-net-'][id$='-revert']")
+        |> render_click()
+
+        view
+        |> element("#workspace-changes button", "Confirm revert")
+        |> render_click()
+
+        assert File.read!(file_path) == first
+        assert render(view) =~ "Reverted file to the recorded before state"
       after
         File.rm(file_path)
       end
@@ -3008,7 +3175,8 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         |> render_click()
 
         rendered = render(view)
-        refute rendered =~ "Hello"
+        assert has_element?(view, "#no-messages")
+        refute has_element?(view, "#timeline-stream .msg-user", "Hello")
         assert rendered =~ "No messages yet"
         assert rendered =~ "idle"
         assert rendered =~ "step-router-v1"
@@ -3080,6 +3248,57 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       end
     end
 
+    test "removing a workspace archives its conversations and keeps the directory", %{conn: conn} do
+      project_dir =
+        Path.join(
+          System.tmp_dir!(),
+          "sigil_removed_project_#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(project_dir)
+      File.write!(Path.join(project_dir, "keep.txt"), "still here")
+
+      try do
+        {:ok, added} = Handbeam.WorkspaceStore.add(project_dir, name: "To Remove")
+
+        {:ok, conversation} =
+          Handbeam.ConversationStore.create(added["id"],
+            title: "Kept chat",
+            timeline: [%{"id" => "kept-1", "role" => "user", "content" => "do not delete"}]
+          )
+
+        {:ok, view, _html} = live(conn, "/")
+
+        view
+        |> element("#workspace-menu-#{added["id"]}")
+        |> render_click()
+
+        view
+        |> element("#workspace-action-remove-#{added["id"]}")
+        |> render_click()
+
+        dialog = render(view)
+        assert dialog =~ "Remove workspace"
+        assert dialog =~ "archives its conversations"
+
+        view |> element("#confirm-remove-workspace") |> render_click()
+
+        rendered = render(view)
+        refute rendered =~ "To Remove"
+        assert rendered =~ "Archived"
+        assert rendered =~ "Kept chat"
+        assert File.read!(Path.join(project_dir, "keep.txt")) == "still here"
+        assert {:error, :not_found} = Handbeam.WorkspaceStore.get(added["id"])
+
+        assert {:ok, archived} =
+                 Handbeam.ConversationStore.get(conversation["id"], include_timeline?: false)
+
+        assert is_binary(archived["archived_at"])
+      after
+        File.rm_rf!(project_dir)
+      end
+    end
+
     test "sandbox host imports a copied directory as the workspace", %{conn: conn} do
       previous = Application.get_env(:handbeam, :host)
 
@@ -3101,7 +3320,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         {:ok, view, _html} = live(conn, "/")
 
         view |> element("#activity-bar button[phx-click='open_add_project']") |> render_click()
-        assert render(view) =~ "从下载导入"
+        assert render(view) =~ "Import from Downloads"
 
         send(view.pid, {:workspace_imported, %{path: imported, name: "Downloads Project"}})
         rendered = render(view)
@@ -3489,6 +3708,43 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       end
     end
 
+    test "workspace group shows conversation count and collapses", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+      {:ok, workspace} = Handbeam.WorkspaceStore.ensure_default!()
+      ws_id = workspace["id"]
+
+      html = render(view)
+      assert html =~ ~r/id="workspace-count-#{ws_id}"[^>]*>\s*\d+\s*</
+      assert html =~ ~r/id="free-workspace-count"[^>]*>\s*\d+\s*</
+      assert html =~ ~r/id="mobile-workspace-count"[^>]*>\s*\d+\s*</
+      assert has_element?(view, "#workspace-toggle-#{ws_id}[aria-expanded='true']")
+      assert has_element?(view, "#workspace-conversations-#{ws_id}")
+      assert has_element?(view, "#sheet-workspace-count-#{ws_id}")
+      assert has_element?(view, "#sheet-free-count")
+      assert has_element?(view, "#sheet-free-toggle[aria-expanded='true']")
+      assert has_element?(view, "#sheet-free-conversations")
+      assert has_element?(view, "#free-workspace-toggle[aria-expanded='true']")
+      assert has_element?(view, "#free-conversations")
+
+      view |> element("#workspace-toggle-#{ws_id}") |> render_click()
+
+      refute has_element?(view, "#workspace-conversations-#{ws_id}")
+      assert has_element?(view, "#workspace-count-#{ws_id}")
+      assert has_element?(view, "#workspace-toggle-#{ws_id}[aria-expanded='false']")
+
+      view |> element("#workspace-toggle-#{ws_id}") |> render_click()
+
+      assert has_element?(view, "#workspace-conversations-#{ws_id}")
+      assert has_element?(view, "#workspace-toggle-#{ws_id}[aria-expanded='true']")
+
+      view |> element("#free-workspace-toggle") |> render_click()
+      refute has_element?(view, "#free-conversations")
+      refute has_element?(view, "#sheet-free-conversations")
+      assert has_element?(view, "#free-workspace-count")
+      assert has_element?(view, "#sheet-free-count")
+      assert has_element?(view, "#sheet-free-toggle[aria-expanded='false']")
+    end
+
     test "mount renders the active workspace panel", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/")
 
@@ -3778,15 +4034,15 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       refute html =~ ~s(id="workspace-sheet" class="bottom-sheet open")
     end
 
-    test "recycle bin toggle shows archived conversations in stream", %{conn: conn} do
+    test "archive toggle shows archived conversations in stream", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/")
 
-      # Recycle bin starts collapsed
       html = render(view)
+      assert html =~ "Archived"
+      refute html =~ "Trash"
       assert html =~ "▸"
 
-      # Toggle recycle bin
-      view |> element("button[phx-click='toggle_recycle_bin']") |> render_click()
+      view |> element("button[phx-click='toggle_archive']") |> render_click()
 
       html = render(view)
       assert html =~ "▾"
@@ -4456,7 +4712,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         if File.exists?(models_path), do: File.rm!(models_path)
       end)
 
-      {:ok, view, html} = live(conn, "/")
+      {:ok, view, _html} = live(conn, "/")
       render_change(view, "select_model", %{"model" => "stepfun/step-router-v1"})
       html = render(view)
 
@@ -4496,6 +4752,71 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       # Verify settings.jsonc on disk is updated
       assert {:ok, settings} = Handbeam.WorkspaceSettings.load(workspace_root)
       assert get_in(settings, ["tools", "default_mode"]) == "auto"
+    end
+
+    test "smart approval writes approvals_reviewer and leaves default_mode", %{conn: conn} do
+      {:ok, default_ws} = Handbeam.WorkspaceStore.ensure_default!()
+      workspace_root = default_ws["path"]
+      settings_path = Handbeam.WorkspaceSettings.path(workspace_root)
+      original = if File.exists?(settings_path), do: File.read!(settings_path), else: nil
+
+      on_exit(fn ->
+        if is_binary(original), do: File.write!(settings_path, original)
+      end)
+
+      File.mkdir_p!(Path.dirname(settings_path))
+
+      File.write!(settings_path, """
+      {
+        // keep me
+        "tools": {
+          "default_mode": "prompt",
+          "allow": ["read"]
+        }
+      }
+      """)
+
+      {:ok, view, _html} = live(conn, "/")
+      create_default_conversation(view)
+
+      view |> element("button[phx-click='toggle_permission_menu']") |> render_click()
+
+      view
+      |> element("button[phx-click='select_permission_mode'][phx-value-mode='auto_review']")
+      |> render_click()
+
+      html = render(view)
+      assert html =~ "智能审批"
+      assert html =~ "只自动复审本来要问的操作，不扩大权限。"
+      refute html =~ "permission-dropdown-menu"
+
+      content = File.read!(settings_path)
+      assert content =~ "// keep me"
+      assert content =~ "\"default_mode\": \"prompt\""
+      assert content =~ "\"allow\": [\"read\"]"
+      assert content =~ "\"approvals_reviewer\": \"auto_review\""
+
+      {:ok, settings} = Handbeam.WorkspaceSettings.load(workspace_root)
+      assert get_in(settings, ["tools", "default_mode"]) == "prompt"
+      assert get_in(settings, ["tools", "approvals_reviewer"]) == "auto_review"
+
+      view |> element("button[phx-click='toggle_permission_menu']") |> render_click()
+
+      view
+      |> element("button[phx-click='select_permission_mode'][phx-value-mode='prompt']")
+      |> render_click()
+
+      html = render(view)
+      assert html =~ "安全模式" or html =~ "Safe Mode"
+      refute html =~ "智能审批"
+
+      content = File.read!(settings_path)
+      assert content =~ "// keep me"
+      assert content =~ "\"default_mode\": \"prompt\""
+      {:ok, settings} = Handbeam.WorkspaceSettings.load(workspace_root)
+      assert get_in(settings, ["tools", "default_mode"]) == "prompt"
+      assert get_in(settings, ["tools", "approvals_reviewer"]) == "user"
+      assert get_in(settings, ["tools", "allow"]) == ["read"]
     end
 
     for action <- ["approve_all_tools", "deny_all_tools"] do
@@ -4907,6 +5228,27 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert html =~ ~s(id="mobile-fab")
       refute html =~ ~s(data-conversation-nav-toggle)
       refute html =~ ~s(data-target-id="nav-only-user")
+    end
+  end
+
+  describe "free chat send" do
+    test "sending in a new free chat replies before the run starts", %{conn: conn} do
+      isolate_conversation_home!()
+
+      {:ok, view, _html} = live(conn, "/")
+
+      view |> element("#new-free-conversation") |> render_click()
+
+      assert render(view) =~ "Chats"
+
+      html =
+        view
+        |> form("#composer", %{message: "hello free chat"})
+        |> render_submit()
+
+      assert html =~ "hello free chat"
+      assert render(view) =~ "hello free chat"
+      refute render(view) =~ "Message not delivered"
     end
   end
 end

@@ -14,7 +14,7 @@ defmodule Handbeam.Agent.Coordinator do
   @type action :: :started | :enqueued
   @type ack :: %{action: action(), run_id: String.t() | nil, run_pid: pid() | nil}
 
-  @required_opts [:workspace_path, :model, :provider_config, :tools, :source]
+  @required_opts [:model, :provider_config, :tools, :source]
 
   @spec add_message(String.t(), String.t() | Handbeam.Agent.Message.t(), keyword()) ::
           {:ok, ack()} | {:error, term()}
@@ -156,10 +156,26 @@ defmodule Handbeam.Agent.Coordinator do
   defp validate_required_opts(opts) do
     missing = Enum.reject(@required_opts, &Keyword.has_key?(opts, &1))
 
+    missing =
+      if free_chat?(opts) or present_workspace_path?(opts) do
+        missing
+      else
+        [:workspace_path | missing]
+      end
+
     if missing == [] do
       :ok
     else
       {:error, {:missing_opts, missing}}
+    end
+  end
+
+  defp free_chat?(opts), do: Keyword.get(opts, :chat_scope) == :free
+
+  defp present_workspace_path?(opts) do
+    case Keyword.get(opts, :workspace_path) do
+      path when is_binary(path) and path != "" -> true
+      _ -> false
     end
   end
 
@@ -174,10 +190,10 @@ defmodule Handbeam.Agent.Coordinator do
   end
 
   defp validate_model_policy(opts) do
-    if explicit_provider_with_raw_model?(opts) do
-      :ok
-    else
-      validate_workspace_model_policy(opts)
+    cond do
+      explicit_provider_with_raw_model?(opts) -> :ok
+      free_chat?(opts) -> :ok
+      true -> validate_workspace_model_policy(opts)
     end
   end
 
@@ -210,46 +226,60 @@ defmodule Handbeam.Agent.Coordinator do
     workspace_path = Keyword.fetch!(opts, :workspace_path)
     om = Keyword.get(opts, :om, %{})
 
-    observer_model = om[:observer_model]
-    reflector_model = om[:reflector_model]
+    with :ok <- memory_model_allowed(workspace_path, om[:observer_model], :observer),
+         :ok <- memory_model_allowed(workspace_path, om[:reflector_model], :reflector) do
+      :ok
+    end
+  end
 
+  # A removed catalog entry is not a workspace restriction. "Unrestricted" and
+  # an allowlist that simply does not name the model both mean "do not use it
+  # for memory", so the chat model can still start. An explicit allowlist that
+  # excludes a model still present in the catalog remains a hard error.
+  defp memory_model_allowed(_workspace_path, model, _role)
+       when model in [nil, ""],
+       do: :ok
+
+  defp memory_model_allowed(workspace_path, model, role) do
     cond do
-      observer_model &&
-          not Handbeam.Agent.ModelConfig.model_allowed_for_workspace?(
-            workspace_path,
-            observer_model
-          ) ->
-        {:error,
-         Gettext.dgettext(
-           HandbeamWeb.Gettext,
-           "errors",
-           "Observational Memory observer model (%{model}) is not allowed in this workspace. Check Settings → Model / AI → Observational Memory → Observer model.",
-           model: observer_model
-         )}
+      Handbeam.Agent.ModelConfig.model_allowed_for_workspace?(workspace_path, model) ->
+        :ok
 
-      reflector_model &&
-          not Handbeam.Agent.ModelConfig.model_allowed_for_workspace?(
-            workspace_path,
-            reflector_model
-          ) ->
-        {:error,
-         Gettext.dgettext(
-           HandbeamWeb.Gettext,
-           "errors",
-           "Observational Memory reflector model (%{model}) is not allowed in this workspace. Check Settings → Model / AI → Observational Memory → Reflector model.",
-           model: reflector_model
-         )}
+      Handbeam.Agent.ModelConfig.model_in_catalog?(model) ->
+        {:error, memory_model_rejected(role, model)}
 
       true ->
         :ok
     end
   end
 
-  defp validate_advisor_policy(opts) do
-    {:ok, _pin} =
-      Handbeam.Agent.Advisor.validate_start(Keyword.fetch!(opts, :workspace_path), opts)
+  defp memory_model_rejected(:observer, model) do
+    Gettext.dgettext(
+      HandbeamWeb.Gettext,
+      "errors",
+      "Observational Memory observer model (%{model}) is not allowed in this workspace. Check Settings → Model / AI → Observational Memory → Observer model.",
+      model: model
+    )
+  end
 
-    :ok
+  defp memory_model_rejected(:reflector, model) do
+    Gettext.dgettext(
+      HandbeamWeb.Gettext,
+      "errors",
+      "Observational Memory reflector model (%{model}) is not allowed in this workspace. Check Settings → Model / AI → Observational Memory → Reflector model.",
+      model: model
+    )
+  end
+
+  defp validate_advisor_policy(opts) do
+    if free_chat?(opts) do
+      :ok
+    else
+      {:ok, _pin} =
+        Handbeam.Agent.Advisor.validate_start(Keyword.fetch!(opts, :workspace_path), opts)
+
+      :ok
+    end
   end
 
   defp maybe_resume_stall(conversation_id) do
@@ -277,16 +307,36 @@ defmodule Handbeam.Agent.Coordinator do
     |> Keyword.put(:conversation_id, conversation_id)
     |> ensure_run_id()
     |> put_transcript_history(conversation_id)
-    |> Keyword.put(:working_directory, Keyword.fetch!(opts, :workspace_path))
-    |> Keyword.put(:skills, true)
+    |> put_working_directory()
+    |> put_skills()
     |> put_advisor_pin()
   end
 
-  defp put_advisor_pin(opts) do
-    {:ok, pin} =
-      Handbeam.Agent.Advisor.validate_start(Keyword.fetch!(opts, :workspace_path), opts)
+  defp put_working_directory(opts) do
+    cond do
+      free_chat?(opts) ->
+        Keyword.delete(opts, :working_directory)
 
-    Keyword.put(opts, :advisor, pin)
+      true ->
+        Keyword.put(opts, :working_directory, Keyword.fetch!(opts, :workspace_path))
+    end
+  end
+
+  defp put_skills(opts) do
+    if free_chat?(opts),
+      do: Keyword.put(opts, :skills, false),
+      else: Keyword.put(opts, :skills, true)
+  end
+
+  defp put_advisor_pin(opts) do
+    if free_chat?(opts) do
+      Keyword.put(opts, :advisor, Handbeam.Agent.Advisor.unavailable())
+    else
+      {:ok, pin} =
+        Handbeam.Agent.Advisor.validate_start(Keyword.fetch!(opts, :workspace_path), opts)
+
+      Keyword.put(opts, :advisor, pin)
+    end
   end
 
   defp present_task_instructions?(opts) do
@@ -359,9 +409,13 @@ defmodule Handbeam.Agent.Coordinator do
       transcript_history_messages(
         conversation_id,
         Keyword.get(opts, :run_id),
-        opts[:workspace_path]
+        history_workspace_path(opts)
       )
     end)
+  end
+
+  defp history_workspace_path(opts) do
+    if free_chat?(opts), do: nil, else: opts[:workspace_path]
   end
 
   defp transcript_history_messages(conversation_id, current_run_id, workspace_path) do

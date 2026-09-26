@@ -7,6 +7,7 @@ import { ComposerPasteUpload } from "./hooks/composer_paste_upload.js";
 import { WorkspacePanel } from "./hooks/workspace_panel.js";
 import { CopyText } from "./hooks/copy_text.js";
 import { GhosttyTerminal } from "../vendor/ghostty.js";
+import { installImageLightbox } from "./image_lightbox.js";
 
 // Theme initialization
 let theme = 'light';
@@ -15,6 +16,7 @@ try {
 } catch (_) {}
 
 document.documentElement.setAttribute('data-theme', theme);
+installImageLightbox();
 
 // MobHook — Mob LiveView bridge. Native WebView injects window.mob pointing
 // at the NIF. In LiveView mode this hook replaces it so handle_event/3 in
@@ -46,10 +48,3 @@ try {
 } catch (error) {
   console.error("Handbeam LiveSocket failed to start", error);
 }
-
-// Handle flash close
-document.querySelectorAll("[role=alert][data-flash]").forEach((el) => {
-  el.addEventListener("click", () => {
-    el.setAttribute("hidden", "");
-  });
-});

@@ -122,7 +122,12 @@ defmodule Handbeam.Agent.ReasoningTest do
       config = %{api: :openai_responses, model: "gpt-5.4"}
 
       assert Reasoning.apply_provider_options(config, %{reasoning: true}, "high") ==
-               %{api: :openai_responses, model: "gpt-5.4", reasoning: %{effort: "high"}}
+               %{
+                 api: :openai_responses,
+                 model: "gpt-5.4",
+                 reasoning: %{effort: "high"},
+                 include: ["reasoning.encrypted_content"]
+               }
     end
 
     test "adds xAI Responses reasoning effort for grok" do
@@ -133,7 +138,8 @@ defmodule Handbeam.Agent.ReasoningTest do
                  api: :openai_responses,
                  provider: "openai",
                  model: "grok-4.7",
-                 reasoning: %{effort: "high"}
+                 reasoning: %{effort: "high"},
+                 include: ["reasoning.encrypted_content"]
                }
     end
 

@@ -23,6 +23,7 @@ defmodule HandbeamProbe.HomeScreen do
   require Logger
 
   alias HandbeamProbe.HomeScreen.{
+    AppSettings,
     Chat,
     Delivery,
     FileNav,
@@ -53,6 +54,7 @@ defmodule HandbeamProbe.HomeScreen do
     :send,
     :stop,
     :new_chat,
+    :new_free_chat,
     :dismiss_approval,
     :review_approval,
     :toggle_deliver_mode,
@@ -142,8 +144,16 @@ defmodule HandbeamProbe.HomeScreen do
 
   defp dispatch({@timeout_message, ref}, socket) do
     case Requests.expire(socket, ref) do
-      {:ok, entry, socket} -> Platform.handle_timeout(socket, entry)
-      :error -> socket
+      {:ok, %PendingRequests.Entry{kind: :subscription_poll_due, ctx: ctx} = entry, socket} ->
+        if Requests.current?(socket, entry.scope, entry.generation),
+          do: Settings.poll_due(socket, ctx),
+          else: socket
+
+      {:ok, entry, socket} ->
+        Platform.handle_timeout(socket, entry)
+
+      :error ->
+        socket
     end
   end
 
@@ -197,6 +207,17 @@ defmodule HandbeamProbe.HomeScreen do
   defp dispatch({:tap, {:platform, :begin, _}} = msg, socket), do: Platform.handle(msg, socket)
   defp dispatch({:platform, _, _} = msg, socket), do: Platform.handle(msg, socket)
   defp dispatch({:platform, _, _, _} = msg, socket), do: Platform.handle(msg, socket)
+
+  defp dispatch(
+         {:engine_result, %Inbound.EngineResult{request_id: request_id}} = msg,
+         %{assigns: %{page: :app}} = socket
+       ) do
+    if Requests.ctx(socket, request_id)[:kind] == :app_settings do
+      AppSettings.handle(msg, socket)
+    else
+      Platform.handle(msg, socket)
+    end
+  end
 
   defp dispatch({:engine_result, %Inbound.EngineResult{}} = msg, socket),
     do: Platform.handle(msg, socket)
@@ -260,6 +281,10 @@ defmodule HandbeamProbe.HomeScreen do
        when action in [:git_edit, :git_default],
        do: GitSettings.handle(msg, socket)
 
+  defp dispatch({:tap, action} = msg, %{assigns: %{page: :app}} = socket)
+       when action in [:request_calendar, :open_app_settings],
+       do: AppSettings.handle(msg, socket)
+
   defp dispatch({:change, {:mcp_field, _}, _} = msg, socket), do: MCPSettings.handle(msg, socket)
 
   defp dispatch({:dismiss, :mcp_dismiss_confirm} = msg, socket),
@@ -288,6 +313,10 @@ defmodule HandbeamProbe.HomeScreen do
        do: Settings.handle(msg, socket)
 
   defp dispatch({:change, {:model_field, _}, _} = msg, socket), do: Settings.handle(msg, socket)
+
+  defp dispatch({:change, {:toggle_model_enabled, _, _, _}, _} = msg, socket),
+    do: Settings.handle(msg, socket)
+
   defp dispatch({:dismiss, :cancel_confirm} = msg, socket), do: Settings.handle(msg, socket)
   defp dispatch({:models_updated} = msg, socket), do: Settings.handle(msg, socket)
 
@@ -340,6 +369,15 @@ defmodule HandbeamProbe.HomeScreen do
 
   defp async_result(:model_settings_refs, {target, result}, socket),
     do: Settings.handle_refs(socket, target, result)
+
+  defp async_result(kind, result, socket)
+       when kind in [
+              :subscription_started,
+              :subscription_polled,
+              :subscription_authorized,
+              :subscription_discovered
+            ],
+       do: Settings.handle_subscription(kind, result, socket)
 
   defp async_result(kind, result, socket)
        when kind in [:mcp_loaded, :mcp_edited, :mcp_saved, :mcp_tested, :mcp_deleted],

@@ -222,8 +222,16 @@ defmodule Handbeam.Agent.Auth.CodexTest do
       )
 
     assert config.reasoning == %{effort: "high"}
-    [model] = CodexCredential.provider_preset()["models"]
-    refute Map.has_key?(model, "cost")
+    models = CodexCredential.provider_preset()["models"]
+
+    assert Enum.map(models, & &1["id"]) |> Enum.take(3) == [
+             "gpt-6-sol",
+             "gpt-6-luna",
+             "gpt-6-astra"
+           ]
+
+    refute Enum.any?(models, &(&1["id"] == "gpt-5.4"))
+    refute Enum.any?(models, &Map.has_key?(&1, "cost"))
   end
 
   test "credential file lock protects cross-provider read-modify-write", %{opts: opts} do

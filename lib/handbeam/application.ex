@@ -84,7 +84,7 @@ defmodule Handbeam.Application do
   end
 
   defp terminal_children do
-    if Handbeam.Host.terminal?() do
+    if Handbeam.Terminal.available?() do
       [Handbeam.Terminal.Registry, Handbeam.Terminal.Supervisor]
     else
       []

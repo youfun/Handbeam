@@ -188,6 +188,9 @@ class MainActivity : ComponentActivity() {
     // ── Permission result ─────────────────────────────────────────────────
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (com.example.handbeam_probe.attachments.CalendarAccess.onRequestPermissionsResult(requestCode, grantResults)) {
+            return
+        }
         if (requestCode == 9001) {
             val granted = grantResults.isNotEmpty() &&
                 grantResults.all { it == PackageManager.PERMISSION_GRANTED }

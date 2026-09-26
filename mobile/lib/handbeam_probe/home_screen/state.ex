@@ -40,6 +40,7 @@ defmodule HandbeamProbe.HomeScreen.State do
     conversations: [],
     history: %{recent: [], inactive: [], inactive_count: 0},
     inactive_history_open: false,
+    free_draft: false,
     notice: nil,
 
     # ── chat ──
@@ -65,6 +66,7 @@ defmodule HandbeamProbe.HomeScreen.State do
     models: nil,
     mcp: nil,
     git: nil,
+    app_settings: nil,
 
     # ── platform (composer attachments / system UI requests) ──
     pending_attachments: [],

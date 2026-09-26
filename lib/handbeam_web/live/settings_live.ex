@@ -93,7 +93,7 @@ defmodule HandbeamWeb.SettingsLive do
 
   @impl true
   def handle_event("select_tab", %{"tab" => tab_str}, socket) do
-    tab = String.to_existing_atom(tab_str)
+    tab = tab_from_params(%{"tab" => tab_str})
     ws_id = socket.assigns.workspace["id"]
     conv_id = socket.assigns.conversation_id
 
@@ -123,6 +123,7 @@ defmodule HandbeamWeb.SettingsLive do
 
       # Save global Model/AI settings
       defaults = ModelAISettings.defaults()
+      form = forget_unknown_memory_models(form)
       json = ModelAISettings.snapshot_model_ai(defaults, form, :global)
       {:ok, existing} = Settings.load_global()
       current = Map.get(existing, "model_ai", %{})
@@ -245,7 +246,7 @@ defmodule HandbeamWeb.SettingsLive do
   end
 
   def handle_info({:in_app_ended, task, reason}, socket) do
-    {:noreply, put_flash(socket, :info, in_app_ended_message(task, reason))}
+    {:noreply, put_flash(socket, :info, in_app_ended_flash(task, reason))}
   end
 
   # ── Public helpers (used in template) ──
@@ -278,6 +279,21 @@ defmodule HandbeamWeb.SettingsLive do
   defp runtime_banner_text(%{running_count: running}) do
     ngettext("Running 1 task", "Running %{count} tasks", running, count: running)
   end
+
+  defp in_app_ended_flash(task, reason) do
+    %{
+      body: in_app_ended_message(task, reason),
+      navigate: in_app_ended_path(task),
+      navigate_with: :navigate
+    }
+  end
+
+  defp in_app_ended_path(%{conversation_id: conv_id, workspace_id: ws_id})
+       when is_binary(conv_id) and is_binary(ws_id) and conv_id != "" and ws_id != "" do
+    "/w/#{ws_id}/c/#{conv_id}"
+  end
+
+  defp in_app_ended_path(_task), do: nil
 
   defp in_app_ended_message(task, reason) do
     title = task[:title] || gettext("conversation")
@@ -549,4 +565,12 @@ defmodule HandbeamWeb.SettingsLive do
 
   defp format_error(reason) when is_binary(reason), do: reason
   defp format_error(reason), do: inspect(reason)
+
+  defp forget_unknown_memory_models(form) do
+    known? = &ModelConfig.model_in_catalog?/1
+
+    form
+    |> ModelAISettings.drop_unknown_memory_model(:om_observer_model, known?)
+    |> ModelAISettings.drop_unknown_memory_model(:om_reflector_model, known?)
+  end
 end

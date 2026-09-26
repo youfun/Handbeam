@@ -84,10 +84,17 @@ defmodule Handbeam.Tool.Builtin.Grep do
       args = build_rg_args(pattern, root, input)
 
       case System.cmd("rg", args, stderr_to_stdout: true) do
-        {output, 0} -> {:ok, normalize_output(output)}
-        {"", 1} -> {:ok, "No matches found"}
-        {output, 1} -> {:ok, normalize_output(output)}
-        {output, code} -> {:error, "rg exited with #{code}: #{String.trim(output)}"}
+        {output, 0} ->
+          {:ok, normalize_output(strip_sensitive_lines(output, root))}
+
+        {"", 1} ->
+          {:ok, "No matches found"}
+
+        {output, 1} ->
+          {:ok, normalize_output(strip_sensitive_lines(output, root))}
+
+        {output, code} ->
+          {:error, "rg exited with #{code}: #{String.trim(strip_sensitive_lines(output, root))}"}
       end
     else
       elixir_search(pattern, root, input)
@@ -131,6 +138,9 @@ defmodule Handbeam.Tool.Builtin.Grep do
 
   defp grep_files(root, glob) do
     cond do
+      sensitive_fs_path?(root) ->
+        {:ok, []}
+
       File.regular?(root) ->
         if safe_regular_file?(root, root) and glob_match?(root, root, glob),
           do: {:ok, [root]},
@@ -206,6 +216,14 @@ defmodule Handbeam.Tool.Builtin.Grep do
   end
 
   defp walk_files(dir, root, glob) do
+    if sensitive_fs_path?(dir) do
+      []
+    else
+      walk_files_listing(dir, root, glob)
+    end
+  end
+
+  defp walk_files_listing(dir, root, glob) do
     case File.ls(dir) do
       {:ok, names} ->
         Enum.flat_map(names, fn name ->
@@ -213,14 +231,15 @@ defmodule Handbeam.Tool.Builtin.Grep do
 
           case File.lstat(path) do
             {:ok, %{type: :directory}} ->
-              if MapSet.member?(@fallback_ignored_dirs, name),
+              if MapSet.member?(@fallback_ignored_dirs, name) or sensitive_fs_path?(path),
                 do: [],
                 else: walk_files(path, root, glob)
 
             {:ok, %{type: :regular}} ->
-              if safe_regular_file?(path, root) and glob_match?(path, root, glob),
-                do: [path],
-                else: []
+              if safe_regular_file?(path, root) and not sensitive_fs_path?(path) and
+                   glob_match?(path, root, glob),
+                 do: [path],
+                 else: []
 
             _ ->
               []
@@ -238,7 +257,7 @@ defmodule Handbeam.Tool.Builtin.Grep do
   end
 
   defp search_file(path, root, regex, before_n, after_n, remaining) do
-    if not inside_workspace?(path, root) do
+    if not inside_workspace?(path, root) or sensitive_fs_path?(path) do
       {[], 0}
     else
       read_and_search(path, root, regex, before_n, after_n, remaining)
@@ -329,6 +348,7 @@ defmodule Handbeam.Tool.Builtin.Grep do
 
   defp resolve_search_root(input, context) do
     raw_path = input["path"] || input[:path] || input["file_path"] || input[:file_path] || "."
+    raw_path = Handbeam.Agent.Tool.Helpers.expand_tilde(raw_path)
 
     working_directory =
       Map.get(context, :working_directory) || Map.get(context, "working_directory") || File.cwd!()
@@ -340,9 +360,28 @@ defmodule Handbeam.Tool.Builtin.Grep do
         Path.expand(raw_path, working_directory)
       end
 
-    with :ok <- ensure_inside_workspace(path, working_directory) do
-      {:ok, path}
+    result =
+      with :ok <- ensure_inside_workspace(path, working_directory),
+           :ok <- Handbeam.Security.PathValidator.reject_resolved(path) do
+        {:ok, path}
+      end
+
+    case result do
+      {:ok, path} ->
+        {:ok, path}
+
+      {:error, reason} ->
+        if sensitive_fs_path?(path) or
+             Handbeam.Security.PathValidator.reject_sensitive(raw_path) != :ok do
+          {:error, Handbeam.Security.PathValidator.sensitive_reason()}
+        else
+          {:error, reason}
+        end
     end
+  end
+
+  defp sensitive_fs_path?(path) do
+    Handbeam.Security.PathValidator.reject_resolved(path) != :ok
   end
 
   defp ensure_inside_workspace(path, working_directory) do
@@ -379,7 +418,13 @@ defmodule Handbeam.Tool.Builtin.Grep do
       end
 
     args = add_context_args(args, input)
-    args ++ ["--", pattern, root]
+
+    excludes =
+      Enum.flat_map(Handbeam.Security.PathValidator.rg_exclude_globs(), fn glob ->
+        ["--glob", glob]
+      end)
+
+    args ++ excludes ++ ["--", pattern, root]
   end
 
   defp add_context_args(args, input) do
@@ -437,5 +482,23 @@ defmodule Handbeam.Tool.Builtin.Grep do
   defp normalize_output(output) do
     output = String.trim_trailing(output)
     if output == "", do: "No matches found", else: output
+  end
+
+  defp strip_sensitive_lines(output, root) do
+    output
+    |> String.split("\n")
+    |> Enum.reject(&sensitive_rg_line?(&1, root))
+    |> Enum.join("\n")
+  end
+
+  defp sensitive_rg_line?(line, root) do
+    case Regex.run(~r/^(.+?)[-:]\d+[-:]/, line) do
+      [_, path] ->
+        full = if Path.type(path) == :absolute, do: path, else: Path.expand(path, root)
+        sensitive_fs_path?(full) or Handbeam.Security.PathValidator.reject_sensitive(path) != :ok
+
+      _ ->
+        false
+    end
   end
 end

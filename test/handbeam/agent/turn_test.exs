@@ -34,6 +34,18 @@ defmodule Handbeam.Agent.TurnTest do
     :ok
   end
 
+  defmodule AuthFailureProvider do
+    @behaviour Handbeam.Agent.Provider
+
+    @impl true
+    def complete(_messages, _tools, _config) do
+      {:error, "invalid_request_error: The OAuth2 access token could not be validated."}
+    end
+
+    @impl true
+    def stream(messages, tools, config, _on_chunk), do: complete(messages, tools, config)
+  end
+
   defmodule SensitiveInputProvider do
     @behaviour Handbeam.Agent.Provider
 
@@ -173,6 +185,127 @@ defmodule Handbeam.Agent.TurnTest do
       @impl true
       def stream(messages, tool_defs, config, _on_chunk),
         do: complete(messages, tool_defs, config)
+    end
+
+    defmodule CommentaryThenFinalProvider do
+      @behaviour Handbeam.Agent.Provider
+
+      alias Handbeam.Agent.Message
+
+      @impl true
+      def complete(messages, _tool_defs, _config) do
+        commentary? =
+          Enum.any?(messages, fn
+            %Message{content: blocks} when is_list(blocks) ->
+              Enum.any?(blocks, &(&1[:phase] == "commentary"))
+
+            _ ->
+              false
+          end)
+
+        if commentary? do
+          {:ok,
+           %{
+             stop_reason: :end_turn,
+             messages: [
+               Message.assistant_blocks([
+                 %{type: "text", text: "Hello! How can I help?", phase: "final_answer"}
+               ])
+             ],
+             usage: %{input_tokens: 1, output_tokens: 1}
+           }}
+        else
+          {:ok,
+           %{
+             stop_reason: :end_turn,
+             messages: [
+               Message.assistant_blocks([
+                 %{type: "text", text: "Hello! What can I help you with?", phase: "commentary"}
+               ])
+             ],
+             usage: %{input_tokens: 1, output_tokens: 1}
+           }}
+        end
+      end
+
+      @impl true
+      def stream(messages, _tool_defs, _config, on_chunk) do
+        {:ok, result} = complete(messages, [], %{})
+        text = Message.text(hd(result.messages))
+        phase = hd(result.messages).content |> hd() |> Map.fetch!(:phase)
+        on_chunk.(%{text: text, phase: phase, output_index: 0})
+        {:ok, result}
+      end
+    end
+
+    defmodule PhasedChunkProvider do
+      @behaviour Handbeam.Agent.Provider
+
+      alias Handbeam.Agent.Message
+
+      @impl true
+      def complete(_messages, _tool_defs, _config) do
+        {:ok,
+         %{
+           stop_reason: :end_turn,
+           messages: [
+             Message.assistant_blocks([
+               %{type: "text", text: "你好", phase: "final_answer", id: "msg_final"}
+             ])
+           ],
+           usage: %{input_tokens: 1, output_tokens: 1}
+         }}
+      end
+
+      @impl true
+      def stream(_messages, _tool_defs, _config, on_chunk) do
+        on_chunk.(%{text: "你", phase: "final_answer", output_index: 0})
+        on_chunk.(%{text: "好", phase: "final_answer", output_index: 0})
+        complete([], [], %{})
+      end
+    end
+
+    test "phased stream chunks do not crash the streamed-text tracker" do
+      config = %Config{
+        provider: PhasedChunkProvider,
+        model: "gpt-6-luna",
+        max_turns: 2,
+        provider_config: %{}
+      }
+
+      result = Turn.run_loop(State.init(config, "你好"), streaming: true, on_event: fn _ -> :ok end)
+
+      assert result.status == :completed
+      assert Handbeam.Agent.Message.text(List.last(result.messages)) == "你好"
+    end
+
+    test "keeps commentary and requests one final answer without replaying it" do
+      config = %Config{
+        provider: CommentaryThenFinalProvider,
+        model: "gpt-6-luna",
+        max_turns: 4,
+        provider_config: %{}
+      }
+
+      chunks = :counters.new(1, [])
+
+      result =
+        Turn.run_loop(State.init(config, "hello"),
+          streaming: true,
+          on_event: fn
+            {:message_delta, %{chunk: chunk}} -> :counters.add(chunks, 1, byte_size(chunk))
+            _ -> :ok
+          end
+        )
+
+      texts = Enum.map(result.messages, &Handbeam.Agent.Message.text/1)
+
+      assert result.status == :completed
+      assert Enum.join(texts, "\n") =~ "How can I help?"
+      refute Enum.join(texts) =~ "What can I help you with?What can I help"
+
+      assert :counters.get(chunks, 1) ==
+               byte_size("Hello! What can I help you with?Hello! How can I help?")
     end
 
     test "retries a thinking-only end_turn once" do
@@ -415,6 +548,35 @@ defmodule Handbeam.Agent.TurnTest do
   end
 
   describe "error handling" do
+    test "names the subscription and model on an auth failure" do
+      config = %Config{
+        provider: AuthFailureProvider,
+        model: "gpt-6-sol",
+        max_turns: 1,
+        provider_config: %{provider_key: "openai_codex", provider: "openai_codex"}
+      }
+
+      result = Turn.run_loop(State.init(config, "Trigger auth error"), [])
+
+      assert result.status == :error
+      assert result.error =~ "ChatGPT (Codex subscription)"
+      assert result.error =~ "gpt-6-sol"
+      assert result.error =~ "The OAuth2 access token could not be validated."
+    end
+
+    test "leaves non-auth provider errors unchanged" do
+      config = %Config{
+        provider: FakeProvider,
+        model: "fake",
+        max_turns: 50,
+        provider_config: %{scenario: :error_response, provider_key: "openai_codex"}
+      }
+
+      result = Turn.run_loop(State.init(config, "Trigger error"), [])
+
+      assert result.error == "Fake provider simulated error"
+    end
+
     test "returns error state on provider error" do
       config = %Config{
         provider: FakeProvider,

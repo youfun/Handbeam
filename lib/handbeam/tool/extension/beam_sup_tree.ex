@@ -70,12 +70,20 @@ defmodule Handbeam.Tool.Extension.Beam.SupTree do
     end
   end
 
-  defp try_module(name) do
-    mod = String.to_existing_atom("Elixir.#{name}")
-    {:ok, mod}
-  rescue
-    _ -> {:error, "Module #{name} not found"}
+  defp try_module(name) when is_binary(name) do
+    if String.match?(name, ~r/^[A-Z][A-Za-z0-9]*(\.[A-Z][A-Za-z0-9]*)*$/) do
+      mod = Module.concat(["Elixir" | String.split(name, ".")])
+
+      case Code.ensure_loaded(mod) do
+        {:module, mod} -> {:ok, mod}
+        {:error, _} -> {:error, "Module #{name} not found"}
+      end
+    else
+      {:error, "Module #{name} not found"}
+    end
   end
+
+  defp try_module(_name), do: {:error, "Module not found"}
 
   defp build_tree(mod, max_depth) do
     do_build_tree(mod, 0, max_depth)

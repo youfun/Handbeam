@@ -3,6 +3,7 @@ import { patchStreamingMarkdown } from "../streaming_markdown/patch_streaming_ma
 import { renderMarkdown } from "../streaming_markdown/render_markdown.js";
 import { injectCopyButtons } from "../streaming_markdown/code_block_copy.js";
 import { patchMarkdownDom } from "../streaming_markdown/patch_markdown_dom.js";
+import { renderMermaidBlocks } from "../streaming_markdown/mermaid_blocks.js";
 
 export const StreamingMarkdown = {
   mounted() {
@@ -96,7 +97,15 @@ export const StreamingMarkdown = {
 
     if (this.readStreaming() && !snapshot.final) {
       this.insertCursor();
+      return;
     }
+
+    this.renderMermaid();
+  },
+
+  renderMermaid() {
+    if (!this.target || this.readStreaming() || !this.readFinal()) return;
+    renderMermaidBlocks(this.target).catch(() => {});
   },
 
   insertCursor() {

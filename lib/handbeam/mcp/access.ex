@@ -8,7 +8,7 @@ defmodule Handbeam.MCP.Access do
 
     [
       project:
-        if(Handbeam.ProjectTrust.enabled?(opts),
+        if(Handbeam.ProjectTrust.enabled?(opts) and Keyword.get(opts, :chat_scope) != :free,
           do: Keyword.get(opts, :working_directory, File.cwd!())
         ),
       workspace_id: Keyword.get(opts, :workspace_id, context[:workspace_id]),

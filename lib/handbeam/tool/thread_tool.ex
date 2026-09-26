@@ -18,7 +18,7 @@ defmodule Handbeam.Tool.ThreadTool do
     end
   end
 
-  def result({:ok, value}), do: {:ok, Jason.encode!(value)}
+  def result({:ok, value}), do: {:ok, Handbeam.JSON.encode!(value)}
   def result({:error, reason}) when is_atom(reason), do: {:error, Atom.to_string(reason)}
   def result(_), do: {:error, "thread operation failed"}
 end

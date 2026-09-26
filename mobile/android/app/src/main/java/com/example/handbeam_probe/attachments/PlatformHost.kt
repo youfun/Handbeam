@@ -205,6 +205,9 @@ object PlatformHost {
                 BridgeIds.PlatformOps.OPEN_SNAPSHOT -> open(session, payload)
                 BridgeIds.PlatformOps.OPEN_URL -> openUrl(session, payload)
                 BridgeIds.PlatformOps.SHARE_TEXT -> shareText(session, payload)
+                BridgeIds.PlatformOps.DEVICE_CALENDAR -> deviceCalendar(session, payload)
+                BridgeIds.PlatformOps.DEVICE_ALARM -> deviceAlarm(session, payload)
+                BridgeIds.PlatformOps.APP_SETTINGS -> appSettings(session, payload)
                 BridgeIds.PlatformOps.SAVE_SNAPSHOT -> save(session, payload)
                 BridgeIds.PlatformOps.CLEANUP -> {
                     val snapId = payload.optString("snapshot_id")
@@ -396,6 +399,103 @@ object PlatformHost {
             launchExternal(session, payload) { activity, _ ->
                 activity.startActivity(IntentBuilder.viewHttp(payload.optString("url")))
                 """{"outcome":"ui_presented"}"""
+            }
+        }
+
+        private fun appSettings(session: HostSession, payload: JSONObject) {
+            val activity = activityRef.get()
+            if (activity == null) {
+                finish(session, """{"outcome":"needs_foreground"}""", null)
+                return
+            }
+            when (payload.optString("settings_action")) {
+                "calendar_status" -> {
+                    val read = DeviceCalendar.readGranted(activity)
+                    val write = DeviceCalendar.writeGranted(activity)
+                    finish(
+                        session,
+                        """{"outcome":"listed","calendar_read":$read,"calendar_write":$write}""",
+                        null,
+                    )
+                }
+                "request_calendar" -> {
+                    CalendarAccess.ensure(activity) { granted ->
+                        val read = DeviceCalendar.readGranted(activity)
+                        val write = DeviceCalendar.writeGranted(activity)
+                        val outcome = if (granted) "granted" else "permission_denied"
+                        finish(
+                            session,
+                            """{"outcome":"$outcome","calendar_read":$read,"calendar_write":$write}""",
+                            null,
+                        )
+                    }
+                }
+                "open_app_settings" -> {
+                    launchExternal(session, payload) { current, _ ->
+                        val intent = android.content.Intent(
+                            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            android.net.Uri.fromParts("package", current.packageName, null),
+                        )
+                        current.startActivity(intent)
+                        """{"outcome":"ui_presented"}"""
+                    }
+                }
+                else -> finish(session, """{"outcome":"invalid_input"}""", null)
+            }
+        }
+
+        private fun deviceCalendar(session: HostSession, payload: JSONObject) {
+            val activity = activityRef.get()
+            if (activity == null || activity.isFinishing) {
+                finish(session, """{"outcome":"needs_foreground"}""", null)
+                return
+            }
+            CalendarAccess.ensure(activity) { granted ->
+                if (!granted) {
+                    finish(session, """{"outcome":"permission_denied"}""", null)
+                    return@ensure
+                }
+                io.execute {
+                    if (session.cancelled.get()) {
+                        finish(session, """{"outcome":"cancelled_before_launch"}""", null)
+                        return@execute
+                    }
+                    try {
+                        val result = when (payload.optString("action")) {
+                            "list_calendars" -> DeviceCalendar.listCalendars(activity)
+                            "list_events" -> DeviceCalendar.listEvents(activity, payload)
+                            "insert_event" -> DeviceCalendar.insertEvent(activity, payload)
+                            else -> throw IllegalArgumentException("invalid_action")
+                        }
+                        finish(session, result.toString(), null)
+                    } catch (_: SecurityException) {
+                        finish(session, """{"outcome":"permission_denied"}""", null)
+                    } catch (e: IllegalArgumentException) {
+                        finish(session, outcomeJson(e.message ?: "invalid_input"), null)
+                    } catch (e: IllegalStateException) {
+                        finish(session, outcomeJson(e.message ?: "no_calendar"), null)
+                    }
+                }
+            }
+        }
+
+        private fun outcomeJson(outcome: String): String {
+            val safe = when (outcome) {
+                "invalid_time", "invalid_title", "invalid_action", "invalid_input",
+                "no_calendar", "insert_failed", "permission_denied",
+                -> outcome
+                else -> "invalid_input"
+            }
+            return """{"outcome":"$safe"}"""
+        }
+
+        private fun deviceAlarm(session: HostSession, payload: JSONObject) {
+            launchExternal(session, payload) { activity, _ ->
+                val intent = DeviceAlarm.intent(payload)
+                activity.startActivity(intent)
+                val hour = payload.optInt("hour")
+                val minute = payload.optInt("minute")
+                """{"outcome":"alarm_prefilled","hour":$hour,"minute":$minute}"""
             }
         }
 

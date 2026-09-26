@@ -32,6 +32,7 @@ defmodule HandbeamWeb.AvailableModelsLive do
 
     socket =
       socket
+      |> assign(:catalog_price_generation, 0)
       |> assign(:page_title, gettext("设置 / 可用模型"))
       |> assign(:embedded, embedded)
       |> assign(:config, config)
@@ -54,6 +55,7 @@ defmodule HandbeamWeb.AvailableModelsLive do
       |> assign(:cursor_discover_attempt, nil)
       |> assign(:show_subscription_login, false)
       |> assign(:subscription_methods, Subscriptions.methods())
+      |> schedule_catalog_prices(providers)
 
     {:ok, socket}
   end
@@ -64,12 +66,15 @@ defmodule HandbeamWeb.AvailableModelsLive do
     providers = parse_providers(config)
     selected_id = maybe_reselect(socket.assigns.selected_provider_id, providers)
 
-    {:noreply,
-     socket
-     |> assign(:config, config)
-     |> assign(:providers, providers)
-     |> assign(:selected_provider_id, selected_id)
-     |> assign(:selected_provider, find_provider(selected_id, providers))}
+    socket =
+      socket
+      |> assign(:config, config)
+      |> assign(:providers, providers)
+      |> assign(:selected_provider_id, selected_id)
+      |> assign(:selected_provider, find_provider(selected_id, providers))
+      |> schedule_catalog_prices(providers)
+
+    {:noreply, socket}
   end
 
   @impl true
@@ -95,6 +100,26 @@ defmodule HandbeamWeb.AvailableModelsLive do
 
   def handle_info({:cursor_models_discovered, attempt_id, result}, socket) do
     {:noreply, apply_cursor_models(socket, attempt_id, result)}
+  end
+
+  def handle_info({:catalog_prices, prices}, socket) do
+    handle_info({:catalog_prices, socket.assigns.catalog_price_generation, prices}, socket)
+  end
+
+  def handle_info({:catalog_prices, generation, prices}, socket) do
+    if socket.assigns.catalog_price_generation == generation do
+      providers = apply_catalog_prices(socket.assigns.providers, prices)
+
+      {:noreply,
+       socket
+       |> assign(:providers, providers)
+       |> assign(
+         :selected_provider,
+         find_provider(socket.assigns.selected_provider_id, providers)
+       )}
+    else
+      {:noreply, socket}
+    end
   end
 
   # ── Subscription OAuth ─────────────────────────────────────────────────
@@ -129,6 +154,33 @@ defmodule HandbeamWeb.AvailableModelsLive do
   def handle_event("refresh_cursor_models", _params, socket) do
     attempt_id = System.unique_integer([:positive])
     {:noreply, maybe_discover_cursor_models(socket, "cursor", attempt_id)}
+  end
+
+  def handle_event("disable_all_models", _params, socket) do
+    provider_id = socket.assigns.selected_provider_id
+
+    case ModelConfig.disable_provider_models(provider_id) do
+      :ok ->
+        {:noreply, reload_providers(socket)}
+
+      {:error, reason} ->
+        {:noreply, assign(socket, :form_error, reason)}
+    end
+  end
+
+  def handle_event("toggle_model_enabled", %{"id" => model_id}, socket) do
+    provider_id = socket.assigns.selected_provider_id
+    # Checkbox clicks drop phx-value-value after the first row. Flip the stored
+    # flag instead of requiring the browser to send the next state.
+    enabled = not model_enabled?(socket, provider_id, model_id)
+
+    case ModelConfig.update_model(provider_id, model_id, %{"enabled" => enabled}) do
+      :ok ->
+        {:noreply, reload_providers(socket)}
+
+      {:error, reason} ->
+        {:noreply, assign(socket, :form_error, reason)}
+    end
   end
 
   # ── Provider selection ─────────────────────────────────────────────────
@@ -731,8 +783,12 @@ defmodule HandbeamWeb.AvailableModelsLive do
 
       case result do
         {:ok, models} ->
-          _ = ModelConfig.update_provider("cursor", %{"models" => models})
-          reload_providers(socket)
+          models = preserve_model_enabled(models, "cursor")
+
+          case ModelConfig.update_provider("cursor", %{"models" => models}) do
+            :ok -> reload_providers(socket)
+            {:error, message} -> assign(socket, :form_error, message)
+          end
 
         {:error, message} ->
           assign(socket, :form_error, message)
@@ -797,6 +853,83 @@ defmodule HandbeamWeb.AvailableModelsLive do
     end
   end
 
+  # Catalog lookup takes a cluster-wide lock. Doing it while mounting stalls
+  # the nested LiveView long enough for the settings page to stay blank, so
+  # stored prices render immediately and missing ones fill in afterwards.
+  defp schedule_catalog_prices(socket, providers) do
+    ids = unpriced_model_ids(providers)
+    generation = socket.assigns.catalog_price_generation + 1
+    socket = assign(socket, :catalog_price_generation, generation)
+
+    cond do
+      ids == [] or not connected?(socket) ->
+        socket
+
+      true ->
+        lv = self()
+
+        Task.start(fn ->
+          send(lv, {:catalog_prices, generation, lookup_catalog_prices(ids)})
+        end)
+
+        socket
+    end
+  end
+
+  defp lookup_catalog_prices(ids), do: LlmDbDefaults.prices_for_model_ids(ids)
+
+  defp unpriced_model_ids(providers) do
+    providers
+    |> Enum.flat_map(& &1.models)
+    |> Enum.filter(&(map_size(&1.cost) == 0))
+    |> Enum.map(& &1.id)
+    |> Enum.filter(&is_binary/1)
+  end
+
+  defp apply_catalog_prices(providers, prices) do
+    Enum.map(providers, fn provider ->
+      models =
+        Enum.map(provider.models, fn model ->
+          case Map.get(prices, model.id) do
+            %{} = cost when map_size(cost) > 0 and map_size(model.cost) == 0 ->
+              %{model | cost: cost}
+
+            _ ->
+              model
+          end
+        end)
+
+      %{provider | models: models}
+    end)
+  end
+
+  defp model_enabled?(socket, provider_id, model_id) do
+    provider = find_provider(provider_id, socket.assigns.providers)
+    model = provider && Enum.find(provider.models, &(&1.id == model_id))
+    (model && model.enabled) || false
+  end
+
+  defp display_cost(%{"cost" => cost}) when is_map(cost) and map_size(cost) > 0, do: cost
+  defp display_cost(_), do: %{}
+
+  defp preserve_model_enabled(models, provider_id) do
+    previous =
+      case load_raw_config() do
+        %{"providers" => %{^provider_id => %{"models" => existing}}} when is_list(existing) ->
+          Map.new(existing, fn model -> {model["id"], model["enabled"]} end)
+
+        _ ->
+          %{}
+      end
+
+    Enum.map(models, fn model ->
+      case Map.get(previous, model["id"]) do
+        enabled when is_boolean(enabled) -> Map.put(model, "enabled", enabled)
+        _ -> model
+      end
+    end)
+  end
+
   defp reload_providers(socket) do
     config = load_raw_config()
     providers = parse_providers(config)
@@ -807,6 +940,7 @@ defmodule HandbeamWeb.AvailableModelsLive do
     |> assign(:providers, providers)
     |> assign(:selected_provider_id, selected_id)
     |> assign(:selected_provider, find_provider(selected_id, providers))
+    |> schedule_catalog_prices(providers)
   end
 
   defp load_raw_config do
@@ -851,7 +985,8 @@ defmodule HandbeamWeb.AvailableModelsLive do
               thinking_level_map: Map.get(m, "thinkingLevelMap", %{}),
               context_window: Map.get(m, "contextWindow"),
               max_tokens: Map.get(m, "maxTokens"),
-              cost: Map.get(m, "cost", %{})
+              cost: display_cost(m),
+              enabled: Map.get(m, "enabled") != false
             }
           end)
       }

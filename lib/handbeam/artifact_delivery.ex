@@ -2,14 +2,16 @@ defmodule Handbeam.ArtifactDelivery do
   @moduledoc """
   Host dispatch for typed system-UI actions.
 
-  The public tools are `open_url`, `open_file`, and `share_file`. Success means
-  the host presented system UI, not that a page loaded, a file was read, or a
-  share completed. Raw platform intent fields are rejected.
+  The public tools are `open_url`, `open_file`, `share_file`, `device_calendar`,
+  and `device_alarm`. Success of a UI launch means the host presented system UI,
+  not that a page loaded, a file was read, or a share completed. An authorized
+  calendar insert may write the system calendar without opening an app. An alarm
+  request only prefills the system clock. Raw platform intent fields are rejected.
   """
 
   alias Handbeam.Host
 
-  @tool_names ~w(open_url open_file share_file)
+  @tool_names ~w(open_url open_file share_file device_calendar device_alarm)
   @file_tools ~w(open_file share_file)
 
   @doc "Public system-UI tool names. Registration still requires an artifact delivery backend."
@@ -34,6 +36,12 @@ defmodule Handbeam.ArtifactDelivery do
   end
 
   def dispatch(_, _), do: {:error, :invalid_command}
+
+  def format_outcome("inserted"),
+    do: "已写入系统日历。事件已直接插入，没有打开日历应用。"
+
+  def format_outcome("alarm_prefilled"),
+    do: "已打开系统时钟并预填闹钟。很多机型还要用户再点一次保存。这不是静默写入。"
 
   def format_outcome("ui_presented"),
     do: "已打开系统界面。这只表示界面已出现，不表示对方已阅读或完成操作。"
@@ -62,19 +70,19 @@ defmodule Handbeam.ArtifactDelivery do
   def format_outcome("outcome_unknown"),
     do: "系统界面结果未知。未自动重试，不表示失败或已完成。"
 
-  def format_outcome(other) when is_binary(other),
+  def format_outcome(other) when is_binary(other) and other != "",
     do: "未能打开系统界面（#{other}）。"
 
   def format_outcome(_), do: "未能打开系统界面。"
 
   def presented?("ui_presented"), do: true
   def presented?("chooser_presented"), do: true
+  def presented?("alarm_prefilled"), do: true
   def presented?(_), do: false
 
+  @raw_intent_keys ~w(action component package flags extras intent)a
+
   defp raw_intent?(command) do
-    Enum.any?(
-      ~w(action component package flags extras intent),
-      &(Map.has_key?(command, &1) or Map.has_key?(command, String.to_atom(&1)))
-    )
+    Enum.any?(@raw_intent_keys, &Map.has_key?(command, &1))
   end
 end

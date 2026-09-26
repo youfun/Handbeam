@@ -208,6 +208,10 @@ defmodule Handbeam.Agent.Provider.Cursor.Proto do
     finish(encode_message(5, msg))
   end
 
+  def encode_client(%{interaction_response: msg}) do
+    finish(encode_message(6, msg))
+  end
+
   def encode_client(:heartbeat) do
     finish(encode_message(7, <<>>))
   end
@@ -216,11 +220,14 @@ defmodule Handbeam.Agent.Provider.Cursor.Proto do
     [
       encode_message(1, Keyword.fetch!(opts, :conversation_state)),
       encode_message(2, Keyword.fetch!(opts, :action)),
-      encode_message(3, Keyword.fetch!(opts, :model_details)),
       encode_string(5, Keyword.fetch!(opts, :conversation_id)),
       encode_message(9, Keyword.fetch!(opts, :requested_model))
     ]
     |> finish()
+  end
+
+  def encode_available_models_request do
+    [encode_bool(5, true), encode_bool(7, true)] |> finish()
   end
 
   def encode_user_action(user_message) do
@@ -235,18 +242,22 @@ defmodule Handbeam.Agent.Provider.Cursor.Proto do
     [encode_string(1, text), encode_string(2, message_id)] |> finish()
   end
 
-  def encode_model_details(model_id) do
+  def encode_requested_model(model_id, opts \\ []) do
+    parameters =
+      opts
+      |> Keyword.get(:parameters, [])
+      |> Enum.map(fn parameter ->
+        id = Map.get(parameter, :id) || Map.get(parameter, "id") || ""
+        value = Map.get(parameter, :value) || Map.get(parameter, "value") || ""
+        encode_message(3, encode_string(1, id) ++ encode_string(2, value))
+      end)
+
     [
       encode_string(1, model_id),
-      encode_string(3, model_id),
-      encode_string(4, model_id),
-      encode_string(5, model_id)
+      encode_bool(2, Keyword.get(opts, :max_mode, false)),
+      parameters
     ]
     |> finish()
-  end
-
-  def encode_requested_model(model_id) do
-    [encode_string(1, model_id), encode_bool(2, false)] |> finish()
   end
 
   def encode_conversation_state(root_ids, turn_ids, extra \\ %{}) do
@@ -368,6 +379,11 @@ defmodule Handbeam.Agent.Provider.Cursor.Proto do
     |> finish()
   end
 
+  def encode_interaction_approval(id, field) when field in [2, 5, 6] do
+    result = finish(encode_message(1, <<>>))
+    finish(encode_uint32(1, id) ++ encode_message(field, result))
+  end
+
   def encode_mcp_success(text, is_error \\ false) do
     item = finish(encode_message(1, encode_string(1, text || "")))
     success = [encode_message(1, item), encode_bool(2, is_error)] |> finish()
@@ -437,6 +453,10 @@ defmodule Handbeam.Agent.Provider.Cursor.Proto do
     end
   end
 
+  def encode_start_grind_planning_success do
+    finish(encode_message(1, <<>>))
+  end
+
   def encode_native_success(_field, payload) do
     finish(encode_message(1, payload))
   end
@@ -488,6 +508,7 @@ defmodule Handbeam.Agent.Provider.Cursor.Proto do
       (v = field(fields, 2)) != nil -> {:exec, decode_exec(v)}
       (v = field(fields, 3)) != nil -> {:checkpoint, v}
       (v = field(fields, 4)) != nil -> {:kv, decode_kv(v)}
+      (v = field(fields, 7)) != nil -> {:interaction_query, decode_interaction_query(v)}
       true -> {:unknown, fields}
     end
   end
@@ -496,6 +517,52 @@ defmodule Handbeam.Agent.Provider.Cursor.Proto do
     decode_fields(maybe_unwrap_connect(bin))
     |> fields(1)
     |> Enum.map(&decode_model_details/1)
+  end
+
+  def decode_available_models_response(bin) do
+    decode_fields(maybe_unwrap_connect(bin))
+    |> fields(2)
+    |> Enum.map(&decode_parameterized_model/1)
+    |> Enum.reject(&(&1.name == ""))
+  end
+
+  defp decode_parameterized_model(bin) do
+    f = nested(bin)
+
+    %{
+      name: decode_string(field(f, 1) || ""),
+      supports_images?: field(f, 10) == 1,
+      supports_max_mode?: field(f, 14) == 1,
+      context_token_limit: field(f, 15),
+      max_context_token_limit: field(f, 16),
+      client_display_name: decode_string(field(f, 17) || ""),
+      server_model_name: decode_string(field(f, 18) || ""),
+      supports_non_max_mode?: field(f, 19) == 1,
+      variants: Enum.map(fields(f, 30), &decode_model_variant/1)
+    }
+  end
+
+  defp decode_model_variant(bin) do
+    f = nested(bin)
+
+    %{
+      parameters: Enum.map(fields(f, 1), &decode_model_parameter/1),
+      display_name: decode_string(field(f, 2) || ""),
+      max_mode?: field(f, 3) == 1,
+      default_max?: field(f, 4) == 1,
+      default_non_max?: field(f, 5) == 1,
+      outside_picker_name: decode_string(field(f, 8) || ""),
+      representation: decode_string(field(f, 9) || "")
+    }
+  end
+
+  defp decode_model_parameter(bin) do
+    f = nested(bin)
+
+    %{
+      id: decode_string(field(f, 1) || ""),
+      value: decode_string(field(f, 2) || "")
+    }
   end
 
   def decode_model_details(bin) do
@@ -530,6 +597,24 @@ defmodule Handbeam.Agent.Provider.Cursor.Proto do
     end
   end
 
+  defp decode_interaction_query(bin) do
+    fields = nested(bin)
+
+    {kind, response_field} =
+      cond do
+        field(fields, 2) != nil -> {:web_search, 2}
+        field(fields, 3) != nil -> {:ask_question, 3}
+        field(fields, 4) != nil -> {:switch_mode, 4}
+        field(fields, 5) != nil -> {:exa_search, 5}
+        field(fields, 6) != nil -> {:exa_fetch, 6}
+        field(fields, 7) != nil -> {:create_plan, 7}
+        field(fields, 8) != nil -> {:setup_vm_environment, 8}
+        true -> {:unknown, 0}
+      end
+
+    %{id: field(fields, 1) || 0, kind: kind, response_field: response_field}
+  end
+
   defp decode_exec(bin) do
     f = nested(bin)
     id = field(f, 1) || 0
@@ -554,10 +639,20 @@ defmodule Handbeam.Agent.Provider.Cursor.Proto do
         field(f, 21) != nil -> {:unsupported, %{}, 21}
         field(f, 22) != nil -> {:unsupported, %{}, 22}
         field(f, 23) != nil -> {:unsupported, %{}, 23}
-        true -> {:unsupported, %{}, 2}
+        (v = field(f, 36)) != nil -> {:start_grind_planning, decode_grind_args(v), 36}
+        true -> {:unknown, %{}, 0}
       end
 
     %{id: id, exec_id: exec_id, kind: kind, payload: payload, result_field: result_field}
+  end
+
+  defp decode_grind_args(bin) do
+    f = nested(bin)
+
+    %{
+      explanation: decode_string(field(f, 1) || ""),
+      tool_call_id: decode_string(field(f, 2) || "")
+    }
   end
 
   defp decode_path_args(bin) do

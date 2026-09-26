@@ -27,6 +27,7 @@ defmodule Handbeam.WorkspaceStore do
     - `get/1` — get workspace by id
     - `get_by_path/1` — get workspace by path
     - `touch/1` — update last_opened_at
+    - `remove/1` — remove a non-default workspace from the list
     - `storage_path/0` — path to workspaces.json
   """
 
@@ -234,6 +235,34 @@ defmodule Handbeam.WorkspaceStore do
         updated_data = Map.put(data, "workspaces", updated_workspaces)
         write_storage(storage_path(), updated_data)
         {:ok, updated_ws}
+    end
+  end
+
+  @doc """
+  Remove a workspace from the list.
+
+  Does not delete the directory on disk. The default workspace cannot be
+  removed. Conversations that belonged to the workspace are left in place
+  for the caller to archive.
+  """
+  @spec remove(String.t()) :: {:ok, map()} | {:error, :not_found | :default_workspace}
+  def remove(id) when is_binary(id) do
+    data = load_storage!()
+    workspaces = Map.get(data, "workspaces", [])
+
+    case Enum.find(workspaces, &(&1["id"] == id)) do
+      nil ->
+        {:error, :not_found}
+
+      %{"default" => true} ->
+        {:error, :default_workspace}
+
+      workspace ->
+        updated_data =
+          Map.put(data, "workspaces", Enum.reject(workspaces, &(&1["id"] == id)))
+
+        write_storage(storage_path(), updated_data)
+        {:ok, workspace}
     end
   end
 

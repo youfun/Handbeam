@@ -10,7 +10,10 @@ defmodule Handbeam.Tool.Builtin.ReadThread do
       additionalProperties: false,
       required: ["thread"],
       properties: %{
-        thread: %{type: "string"},
+        thread: %{
+          type: "string",
+          description: "Conversation id in the same workspace. Not a title."
+        },
         start_message: %{type: "integer", minimum: 0},
         end_message: %{type: "integer", minimum: 0},
         max_chars: %{type: "integer", minimum: 1, maximum: 16000},

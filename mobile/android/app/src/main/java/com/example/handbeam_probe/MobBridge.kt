@@ -1569,6 +1569,10 @@ object MobBridge {
             "notifications" -> if (android.os.Build.VERSION.SDK_INT >= 33)
                 arrayOf(android.Manifest.permission.POST_NOTIFICATIONS)
             else { nativeDeliverAtom3(pid, "permission", "notifications", "granted"); return }
+            "calendar" -> arrayOf(
+                android.Manifest.permission.READ_CALENDAR,
+                android.Manifest.permission.WRITE_CALENDAR,
+            )
             // Fall through to a plugin-supplied capability (e.g. mob_location
             // once :location leaves core). Unknown -> denied.
             else -> io.mob.plugin.MobPluginBootstrap.permissionsFor(cap)

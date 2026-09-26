@@ -335,6 +335,61 @@ defmodule HandbeamProbe.HomeScreenTest do
     assert notice_text(view) =~ gettext("The conversation in the notification is unavailable")
   end
 
+  test "history starts and opens a free chat without a workspace", %{view: view} do
+    workspace_id = assigns(view).workspace["id"]
+    view = info(view, {:tap, {:page, :history}})
+    assert find(view, :icon, id: "new_free_chat")
+
+    view = info(view, {:tap, :new_free_chat})
+    assert assigns(view).chat == nil
+    assert assigns(view).free_draft
+    assert assigns(view).workspace["id"] == workspace_id
+    refute text(view) =~ gettext("Files")
+
+    view = view |> info({:change, :draft, "free hello"}) |> info({:tap, :send})
+    conversation = assigns(view).chat.conversation
+    assert Handbeam.ConversationStore.free?(conversation)
+    assert conversation["workspace_id"] == nil
+    assert assigns(view).workspace["id"] == workspace_id
+
+    id = conversation["id"]
+    view = info(view, {:tap, :new_chat})
+    assert assigns(view).chat == nil
+    refute assigns(view).free_draft
+
+    view = info(view, {:tap, {:page, :history}})
+    assert text(view) =~ "free hello"
+    view = info(view, {:tap, {:conversation, id}})
+    assert assigns(view).chat.conversation["id"] == id
+    assert assigns(view).workspace["id"] == workspace_id
+    refute text(view) =~ gettext("Files")
+    refute text(view) =~ gettext("Conversation not found")
+  end
+
+  test "a free-chat notification opens without inventing a workspace", %{view: view} do
+    {:ok, conversation} = Handbeam.ConversationStore.create_free(title: "Notify free")
+    workspace_id = assigns(view).workspace["id"]
+
+    {:ok, _} =
+      Handbeam.ConversationTranscriptStore.append(conversation["id"], %{
+        "id" => "free-note",
+        "role" => "assistant",
+        "content" => "free persisted"
+      })
+
+    view =
+      info(
+        view,
+        {:notification, %{"data" => %{"conversation_id" => conversation["id"]}}}
+      )
+
+    assert assigns(view).page == :chat
+    assert assigns(view).chat.conversation["id"] == conversation["id"]
+    assert assigns(view).workspace["id"] == workspace_id
+    assert text(view) =~ "free persisted"
+    refute text(view) =~ gettext("The conversation in the notification is unavailable")
+  end
+
   test "native send reaches Coordinator and streams from a local fixture; stop cancels the run",
        %{view: view} do
     server =

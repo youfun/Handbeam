@@ -12,6 +12,11 @@
          declared by the mob_camera plugin's manifest and merged at build. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
+    <!-- System calendar. Runtime permissions; Agent writes CalendarContract
+         only after the user grants them. Not required to prefill a clock alarm. -->
+    <uses-permission android:name="android.permission.READ_CALENDAR" />
+    <uses-permission android:name="android.permission.WRITE_CALENDAR" />
+
     <!-- USB host (Mob.Peripheral.VendorUsb). required=false so the Play Store
          doesn't filter the app off devices without USB host support; apps
          degrade via Mob.Peripheral.capabilities/0. No uses-permission needed —
@@ -57,6 +62,17 @@
         <intent>
             <action android:name="android.intent.action.VIEW" />
             <data android:scheme="tel" />
+        </intent>
+        <!-- Clock apps that handle AlarmClock.ACTION_SET_ALARM. -->
+        <intent>
+            <action android:name="android.intent.action.SET_ALARM" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SHOW_ALARMS" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.INSERT" />
+            <data android:mimeType="vnd.android.cursor.item/event" />
         </intent>
     </queries>
 

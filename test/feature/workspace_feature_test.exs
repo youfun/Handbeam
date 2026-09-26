@@ -161,6 +161,28 @@ defmodule HandbeamWeb.Feature.WorkspaceFeatureTest do
     end
   end
 
+  describe "free chat" do
+    test "new free chat is not bound to a workspace and hides the file panel", %{conn: conn} do
+      session =
+        conn
+        |> visit("/")
+        |> assert_has("#free-chats", "Chats")
+        |> assert_has("#workspace-panel")
+        |> click_button("#new-free-conversation", "")
+
+      session
+      |> assert_has("#no-messages", "No messages yet")
+      |> assert_has("#ai-input")
+      |> refute_has("#workspace-panel")
+      |> assert_path("/c/*")
+
+      "/c/" <> conv_id = session.current_path
+      {:ok, meta} = Handbeam.ConversationStore.get_metadata(conv_id)
+      assert meta["scope"] == "free"
+      assert meta["workspace_id"] in [nil, ""]
+    end
+  end
+
   describe "archive conversation" do
     setup do
       isolate_conversation_home!()
@@ -177,6 +199,25 @@ defmodule HandbeamWeb.Feature.WorkspaceFeatureTest do
       |> assert_has("button[phx-click='toggle_conversation_menu']", "More actions")
       |> click_button("button[phx-click='toggle_conversation_menu']", "More actions")
       |> assert_has(".conversation-menu-item[phx-click='archive_conversation']", "Archive")
+    end
+
+    test "conversation menu copies the id used for thread messaging", %{conn: conn} do
+      session =
+        conn
+        |> visit("/")
+        |> click_button(
+          "button[phx-click='new_conversation_in_workspace'][phx-value-ws_id='default']",
+          ""
+        )
+        |> click_button("button[phx-click='toggle_conversation_menu']", "More actions")
+
+      [conv] =
+        Handbeam.ConversationStore.storage_path()
+        |> File.read!()
+        |> Jason.decode!()
+        |> Map.fetch!("conversations")
+
+      assert_has(session, ".conversation-menu-item[data-copy='#{conv["id"]}']", "Copy ID")
     end
 
     test "archive conversation removes it from active list", %{conn: conn} do

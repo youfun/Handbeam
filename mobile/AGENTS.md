@@ -5,7 +5,11 @@
 Mob native UI experiment around **on-device Handbeam runtime**. Not a battery logger.
 `HomeScreen` renders native Compose controls via Mob (no LiveView/WebView).
 `Handbeam.Application` still owns Coordinator / Runner / Turn. Do not put the agent
-loop in the screen process. Chat/history, Model/AI settings (catalog, defaults,
+loop in the screen process. Chat is workspace-scoped by default. History also
+starts and continues a workspace-independent free chat (`scope: "free"`,
+`workspace_id` nil) without inventing a project. A free chat uses the global
+model and `Handbeam.Agent.free_chat_tools/0` (memory only); it does not pass
+`workspace_path`, register bash, or show the native file tree. Chat/history, Model/AI settings (catalog, defaults,
 memory, workspace allowlist), workspace add/switch (private folder, accessible
 directory, SAF copy import), native tool approval, and shared attachment
 foundations (composer context, controlled import descriptors, transcript refs,
@@ -31,6 +35,18 @@ conversation). The composer is chat-only. Camera/document picker/voice remain
 later work. System-browser open (`open_url`) and
 artifact open/share (`open_file` / `share_file`) are wired through
 ExportSnapshot + isolated FileProvider; they report UI presentation only.
+`device_calendar` reads and inserts through Android `CalendarContract` after
+`READ_CALENDAR` / `WRITE_CALENDAR` (the platform command requests the grant;
+an authorized insert does not open the calendar app). `device_alarm` only
+prefills the system clock via `AlarmClock.ACTION_SET_ALARM`; many devices
+still require a save tap. It is not a silent alarm write and does not use
+accessibility. Both tools are seeded with the artifact-delivery backend and
+are available in workspace chat and free chat. iOS does not implement them.
+Settings has an App tab for client-only state. The calendar card keeps its
+title; the grant is one line (`已授权读取/写入` when both are on), not separate
+read and write rows. The page can request the grant or open system app
+settings. Alarm needs no permission and is described there, not listed as a
+grant.
 Assistant long-press still offers `复制全文`. Chat bubbles do not show a
 **Share text** button. Artifact **Share file** still goes through
 ExportSnapshot / `share_snapshot` (`request_id` + generation) and only
@@ -166,7 +182,12 @@ The MCP tab uses the existing settings header/tabs. Connection tests and file IO
 run through `HomeScreen.MCPSettings`/`Async` under `:mcp_settings` generation scope.
 Git identity and named HTTPS accounts share `Handbeam.Git.Settings` (`~/.handbeam/git.json`)
 with WebUI; the Git tab uses `HomeScreen.GitSettings` under `:git_settings`. Credentials
-never appear in list/edit payloads. `bcrypt_elixir` is packed like `exqlite` (Android
+never appear in list/edit payloads. Model settings subscription sign-in (ChatGPT Codex,
+Cursor, and any later method from `Handbeam.Agent.Auth.Subscriptions.methods/0`) reuses
+the desktop device-code modules. Start, poll, and catalog discovery run under
+`:subscription_login` in `PendingRequests`; the verification page opens with
+`Platform.open_url/4`, and Copy uses `Mob.Clipboard.put/2`. Tokens stay in
+`~/.handbeam/auth.json`. `bcrypt_elixir` is packed like `exqlite` (Android
 `libbcrypt_nif.so`, iOS static NIF) so workspace Mix can reuse the host hasher.
 Workspace permissions are checked at discovery and invocation, not just in UI.
 `code_search` is the same root `Handbeam.CodeIndex` as desktop. It is an unconditional builtin seed. Keyword search does not need a shell or Git. Do not start a full index in `on_start`.
@@ -331,7 +352,10 @@ reports running / waiting / ended. The FGS copy is silent status; completion
 uses channel `handbeam_agent_ended` and a different notification id. App visible
 means the Activity is started, not that LiveView is connected. Taps carry
 `workspace_id` / `conversation_id` through `mob_notification_json` to
-`HomeScreen`, which opens the native conversation after validating its workspace.
+`HomeScreen`. A workspace notification opens the native conversation after
+validating that workspace. A free-chat notification has no `workspace_id`;
+`HomeScreen` opens that conversation without a workspace, or shows the
+unavailable notice. It does not invent a workspace.
 
 One agent drives the device. Inspection from others is fine; do not
 concurrent-tap.

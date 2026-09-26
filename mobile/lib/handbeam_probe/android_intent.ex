@@ -40,6 +40,14 @@ defmodule HandbeamProbe.AndroidIntent do
     {:ok, Platform.open_url_request(self(), Ecto.UUID.generate(), generation, url)}
   end
 
+  defp command_request(%{op: :device_calendar} = cmd, generation) do
+    Platform.device_calendar_request(self(), Ecto.UUID.generate(), generation, cmd)
+  end
+
+  defp command_request(%{op: :device_alarm} = cmd, generation) do
+    Platform.device_alarm_request(self(), Ecto.UUID.generate(), generation, cmd)
+  end
+
   defp command_request(%{op: op} = cmd, generation) when op in [:open_file, :share_file] do
     snap = Inbound.snapshot(cmd)
 
@@ -146,7 +154,13 @@ defmodule HandbeamProbe.AndroidIntent do
            snapshot_id: snap.snapshot_id,
            owner_request_id: snap.owner_request_id,
            display_name: snap.display_name,
-           url: snap.url
+           url: snap.url,
+           event_id: snap.event_id,
+           calendar_id: snap.calendar_id,
+           hour: snap.hour,
+           minute: snap.minute,
+           calendars: snap.calendars,
+           events: snap.events
          }}
 
       _ ->
@@ -162,6 +176,7 @@ defmodule HandbeamProbe.AndroidIntent do
   defp normalize(_), do: {:error, :timeout}
 
   defp map_error("activity_not_found"), do: "no_handler"
+  defp map_error("permission_denied"), do: "permission_denied"
   defp map_error("needs_foreground"), do: "needs_foreground"
   defp map_error("unknown_snapshot"), do: "file_unavailable"
   defp map_error("invalid_snapshot"), do: "file_unavailable"

@@ -206,6 +206,10 @@ defmodule Handbeam.Agent.ConfigTest do
         config = Config.from_opts(working_directory: "/tmp/mob-data/workspace")
         assert config.system_prompt =~ "There is no Unix shell on this host"
         assert config.system_prompt =~ "open_url"
+        assert config.system_prompt =~ "device_calendar"
+        assert config.system_prompt =~ "device_alarm"
+        assert config.system_prompt =~ "not a silent alarm write"
+        assert config.system_prompt =~ "iOS does not support device_calendar"
         refute config.system_prompt =~ "run_elixir_script"
         refute config.system_prompt =~ "high-privilege host BEAM code"
         refute config.system_prompt =~ "must use git"

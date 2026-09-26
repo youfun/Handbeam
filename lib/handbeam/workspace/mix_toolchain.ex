@@ -136,7 +136,10 @@ defmodule Handbeam.Workspace.MixToolchain do
       "hex_http" => "Handbeam.Workspace.HexHttp"
     }
 
-    File.write!(Path.join(dest, "manifest.json"), Jason.encode!(manifest, pretty: true) <> "\n")
+    File.write!(
+      Path.join(dest, "manifest.json"),
+      Handbeam.JSON.encode!(manifest, pretty: true) <> "\n"
+    )
     :ok
   end
 
@@ -330,7 +333,7 @@ defmodule Handbeam.Workspace.MixToolchain do
 
     case File.read(path) do
       {:ok, bytes} ->
-        case Jason.decode(bytes) do
+        case Handbeam.JSON.decode(bytes) do
           {:ok, map} when is_map(map) -> {:ok, map}
           {:error, reason} -> {:error, "invalid Mix toolchain manifest: #{inspect(reason)}"}
         end
@@ -406,13 +409,35 @@ defmodule Handbeam.Workspace.MixToolchain do
     end
   end
 
-  defp hex_archive_root do
-    home = Path.expand("~/.mix/archives")
+  defp hex_archive_in(home) do
+    direct = Path.join(home, "ebin")
 
-    Enum.find_value(Path.wildcard(Path.join(home, "hex-#{@hex_version}*")), fn dir ->
-      inner = Path.join(dir, Path.basename(dir))
-      ebin = Path.join(inner, "ebin")
-      if File.dir?(ebin), do: inner
+    nested =
+      Enum.find_value(Path.wildcard(Path.join(home, "hex-#{@hex_version}*")), fn dir ->
+        inner = Path.join(dir, Path.basename(dir))
+        ebin = Path.join(inner, "ebin")
+        if File.dir?(ebin), do: inner
+      end)
+
+    cond do
+      is_binary(nested) -> nested
+      File.dir?(direct) -> home
+      true -> nil
+    end
+  end
+
+  defp hex_archive_root do
+    homes = [
+      Path.expand("~/.mix/archives"),
+      System.get_env("HANDBEAM_HEX_ARCHIVE")
+    ]
+
+    Enum.find_value(homes, fn
+      home when is_binary(home) and home != "" ->
+        hex_archive_in(home)
+
+      _ ->
+        nil
     end)
   end
 end

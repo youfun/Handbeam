@@ -1,4 +1,7 @@
 defmodule Handbeam.Agent.Provider.CodexTest do
+  # Stream boundary failures: a terminal output: [] must not discard completed
+  # item events; absent/null output has the same fallback. A nonempty terminal
+  # output remains authoritative and must not duplicate streamed items.
   use ExUnit.Case, async: false
 
   import Plug.Conn
@@ -74,12 +77,17 @@ defmodule Handbeam.Agent.Provider.CodexTest do
       assert conn.request_path == "/backend-api/codex/responses"
       assert get_req_header(conn, "chatgpt-account-id") == ["account-a"]
       assert get_req_header(conn, "authorization") == ["Bearer " <> token()]
+      assert get_req_header(conn, "originator") == ["pi"]
+      assert get_req_header(conn, "session-id") == ["session-a"]
       {:ok, body, conn} = read_body(conn)
       body = Jason.decode!(body)
       assert body["instructions"] == "Work carefully"
       assert body["store"] == false
       assert body["stream"] == true
-      assert body["reasoning"] == %{"effort" => "high"}
+      assert body["text"] == %{"verbosity" => "low"}
+      assert body["prompt_cache_key"] == "session-a"
+      assert body["reasoning"] == %{"effort" => "high", "summary" => "auto"}
+      refute Map.has_key?(body, "tools")
       refute Map.has_key?(body, "max_output_tokens")
       refute Map.has_key?(body, "previous_response_id")
       assert body["input"] == [%{"role" => "user", "content" => "hello"}]
@@ -102,7 +110,8 @@ defmodule Handbeam.Agent.Provider.CodexTest do
         max_tokens: 5,
         store: true,
         previous_response_id: "must-not-send",
-        reasoning: %{effort: "high"}
+        reasoning: %{effort: "high"},
+        session_id: "session-a"
       })
 
     assert {:ok, result} =
@@ -167,6 +176,7 @@ defmodule Handbeam.Agent.Provider.CodexTest do
              ] = body["input"]
 
       assert [%{"type" => "function", "name" => "probe_lookup"}] = body["tools"]
+      refute Map.has_key?(hd(body["tools"]), "strict")
       sse(conn, completed([text_item("ORCHID-5928")]))
     end)
 
@@ -178,6 +188,92 @@ defmodule Handbeam.Agent.Provider.CodexTest do
     assert {:ok, final} = Codex.complete(messages, [tool], config())
     assert final.stop_reason == :end_turn
     assert Message.text(hd(final.messages)) == "ORCHID-5928"
+  end
+
+  test "commentary and final_answer stay separate and replay with phase" do
+    owner = self()
+
+    commentary = %{
+      "id" => "msg_commentary",
+      "type" => "message",
+      "role" => "assistant",
+      "phase" => "commentary",
+      "status" => "completed",
+      "content" => [%{"type" => "output_text", "text" => "Hello! What can I help you with?"}]
+    }
+
+    final_answer = %{
+      "id" => "msg_final",
+      "type" => "message",
+      "role" => "assistant",
+      "phase" => "final_answer",
+      "status" => "completed",
+      "content" => [%{"type" => "output_text", "text" => "Hello! How can I help?"}]
+    }
+
+    Req.Test.stub(__MODULE__, fn conn ->
+      sse(
+        conn,
+        event("response.output_text.delta", %{
+          "delta" => "Hello! What can I help you with?",
+          "output_index" => 0
+        }) <>
+          event("response.output_item.done", %{"output_index" => 0, "item" => commentary}) <>
+          event("response.output_item.added", %{"output_index" => 1, "item" => final_answer}) <>
+          event("response.output_text.delta", %{
+            "delta" => "Hello! How can I help?",
+            "output_index" => 1
+          }) <>
+          event("response.output_item.done", %{"output_index" => 1, "item" => final_answer}) <>
+          completed([commentary, final_answer])
+      )
+    end)
+
+    assert {:ok, result} =
+             Codex.stream([Message.user("hello")], [], config(), &send(owner, {:chunk, &1}))
+
+    assert_received {:chunk, %{text: "Hello! What can I help you with?", phase: "commentary"}}
+    assert_received {:chunk, %{text: "Hello! How can I help?", phase: "final_answer"}}
+
+    assert [
+             %{type: "text", text: "Hello! What can I help you with?", phase: "commentary"},
+             %{
+               type: "text",
+               text: "Hello! How can I help?",
+               phase: "final_answer",
+               id: "msg_final"
+             }
+           ] = Enum.filter(hd(result.messages).content, &(&1.type == "text"))
+
+    Req.Test.stub(__MODULE__, fn conn ->
+      {:ok, body, conn} = read_body(conn)
+
+      assert [
+               %{"role" => "user"},
+               %{
+                 "type" => "message",
+                 "phase" => "commentary",
+                 "id" => "msg_commentary",
+                 "content" => [%{"text" => "Hello! What can I help you with?"}]
+               },
+               %{
+                 "type" => "message",
+                 "phase" => "final_answer",
+                 "id" => "msg_final",
+                 "content" => [%{"text" => "Hello! How can I help?"}]
+               },
+               %{"role" => "user", "content" => "again"}
+             ] = Jason.decode!(body)["input"]
+
+      sse(conn, completed([text_item("done")]))
+    end)
+
+    assert {:ok, _} =
+             Codex.complete(
+               [Message.user("hello"), hd(result.messages), Message.user("again")],
+               [],
+               config()
+             )
   end
 
   test "opaque reasoning is not replayed under another model or account" do
@@ -195,7 +291,16 @@ defmodule Handbeam.Agent.Provider.CodexTest do
     Req.Test.stub(__MODULE__, fn conn ->
       {:ok, body, conn} = read_body(conn)
       refute body =~ "secret"
-      assert hd(Jason.decode!(body)["input"])["content"] == "Prior answer"
+
+      assert [
+               %{
+                 "type" => "message",
+                 "role" => "assistant",
+                 "status" => "completed",
+                 "content" => [%{"type" => "output_text", "text" => "Prior answer"}]
+               }
+             ] = Jason.decode!(body)["input"]
+
       sse(conn, completed([text_item("ok")]))
     end)
 
@@ -227,18 +332,23 @@ defmodule Handbeam.Agent.Provider.CodexTest do
   end
 
   test "out of order completed item events are reassembled by output index" do
-    Req.Test.stub(
-      __MODULE__,
-      &sse(
-        &1,
-        event("response.output_item.done", %{"output_index" => 1, "item" => text_item("second")}) <>
-          event("response.output_item.done", %{"output_index" => 0, "item" => text_item("first")}) <>
-          event("response.done", %{"response" => %{"status" => "completed"}})
+    for terminal <- [%{}, %{"output" => nil}, %{"output" => []}] do
+      Req.Test.stub(
+        __MODULE__,
+        &sse(
+          &1,
+          event("response.output_item.done", %{"output_index" => 1, "item" => text_item("second")}) <>
+            event("response.output_item.done", %{
+              "output_index" => 0,
+              "item" => text_item("first")
+            }) <>
+            event("response.done", %{"response" => Map.put(terminal, "status", "completed")})
+        )
       )
-    )
 
-    assert {:ok, result} = Codex.complete([Message.user("hi")], [], config())
-    assert Message.text(hd(result.messages)) == "first\nsecond"
+      assert {:ok, result} = Codex.complete([Message.user("hi")], [], config())
+      assert Message.text(hd(result.messages)) == "first\nsecond"
+    end
   end
 
   test "invalid function arguments, missing call ID and unknown native tools are rejected" do
@@ -255,6 +365,51 @@ defmodule Handbeam.Agent.Provider.CodexTest do
       Req.Test.stub(__MODULE__, &sse(&1, completed([item])))
       assert {:error, _} = Codex.complete([Message.user("hi")], [], config())
     end
+  end
+
+  test "a header-stage disconnect is replayed once and keeps the server reason" do
+    {:ok, attempts} = Agent.start_link(fn -> 0 end)
+    parent = self()
+
+    Req.Test.stub(__MODULE__, fn conn ->
+      send(parent, :attempt)
+
+      case Agent.get_and_update(attempts, &{&1, &1 + 1}) do
+        0 ->
+          Req.Test.transport_error(conn, :closed)
+
+        _ ->
+          {:ok, body, conn} = read_body(conn)
+          assert Jason.decode!(body)["prompt_cache_key"] == "handbeam"
+          sse(conn, completed([text_item("recovered")]))
+      end
+    end)
+
+    assert {:ok, result} = Codex.complete([Message.user("hi")], [], config())
+    assert Message.text(hd(result.messages)) == "recovered"
+    assert Agent.get(attempts, & &1) == 2
+    assert_received :attempt
+    assert_received :attempt
+  end
+
+  test "a second header-stage disconnect reports the transport reason" do
+    Req.Test.stub(__MODULE__, &Req.Test.transport_error(&1, :closed))
+    assert {:error, reason} = Codex.complete([Message.user("hi")], [], config())
+    assert reason =~ ":closed"
+    assert reason =~ "replayed once"
+    refute reason =~ "not replayed"
+  end
+
+  test "Codex error bodies are surfaced without echoing the raw payload" do
+    Req.Test.stub(__MODULE__, fn conn ->
+      conn
+      |> put_resp_content_type("application/json")
+      |> send_resp(400, Jason.encode!(%{error: %{message: "unsupported model"}}))
+    end)
+
+    assert {:error, reason} = Codex.complete([Message.user("hi")], [], config())
+    assert reason =~ "HTTP 400"
+    assert reason =~ "unsupported model"
   end
 
   test "subscription limits are actionable and malformed credentials cannot use API billing" do
@@ -329,6 +484,8 @@ defmodule Handbeam.Agent.Provider.CodexTest do
     Req.Test.stub(ReqMock, fn conn ->
       assert conn.host == "chatgpt.com"
       assert conn.request_path == "/backend-api/codex/models"
+      assert conn.query_string =~ "client_version=0.156.1"
+      refute conn.query_string =~ "client_version=0.1.0"
       assert get_req_header(conn, "chatgpt-account-id") == ["account-a"]
 
       Req.Test.json(conn, %{
@@ -338,7 +495,8 @@ defmodule Handbeam.Agent.Provider.CodexTest do
             display_name: "Visible",
             context_window: 128_000,
             input_modalities: ["text", "image"],
-            supported_reasoning_levels: [%{effort: "high"}]
+            supported_reasoning_levels: [%{effort: "low"}, %{effort: "high"}],
+            default_reasoning_level: "low"
           },
           %{slug: "model-hidden", visibility: "hide"}
         ]
@@ -349,6 +507,8 @@ defmodule Handbeam.Agent.Provider.CodexTest do
     assert model["id"] == "model-visible"
     assert model["contextWindow"] == 128_000
     assert model["reasoning"]
+    assert model["reasoningLevels"] == ["low", "high"]
+    assert model["defaultReasoning"] == "low"
     refute Map.has_key?(model, "cost")
     Req.Test.stub(ReqMock, &Req.Test.json(&1, %{models: []}))
     assert {:error, _} = Models.discover(opts)
