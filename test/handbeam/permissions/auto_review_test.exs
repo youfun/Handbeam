@@ -515,9 +515,23 @@ defmodule Handbeam.Permissions.AutoReviewTest do
       provider_config: %{}
     }
 
-    result = Turn.run_loop(State.init(config, "keep trying"), [])
+    {:ok, event_log} = Agent.start_link(fn -> [] end)
+
+    result =
+      Turn.run_loop(State.init(config, "keep trying"),
+        on_event: fn event -> Agent.update(event_log, &[event | &1]) end
+      )
 
     assert result.status == :halted
+    assert {:run_end, %{status: :halted}} =
+             event_log
+             |> Agent.get(& &1)
+             |> Enum.reverse()
+             |> Enum.find(fn
+               {:run_end, _} -> true
+               _ -> false
+             end)
+
     assert result.error =~ "超时不会被当成拒绝"
     assert Agent.get(reviews, & &1) == 3
     refute File.exists?(Path.join(dir, "should-not-run"))
@@ -529,6 +543,62 @@ defmodule Handbeam.Permissions.AutoReviewTest do
 
     assert length(denied) == 3
     assert Enum.all?(denied, &(&1.content =~ AutoReview.no_workaround()))
+  end
+
+  test "review uses the run provider instead of re-resolving a nil provider string" do
+    dir =
+      workspace(%{
+        "tools" => %{
+          "approvals_reviewer" => "auto_review",
+          "auto_review" => %{"model" => nil}
+        }
+      })
+
+    parent = self()
+
+    defmodule RunProvider do
+      def complete(_messages, _tools, config) do
+        send(config.notify_pid, {:reviewed_config, Map.drop(config, [:notify_pid])})
+
+        {:ok,
+         %{
+           messages: [
+             Handbeam.Agent.Message.assistant(~s({"decision":"deny","rationale":"from run"}))
+           ]
+         }}
+      end
+    end
+
+    config = %Config{
+      provider: RunProvider,
+      model: "cursor/grok-4.7",
+      working_directory: dir,
+      provider_config: %{
+        provider_key: "cursor",
+        notify_pid: parent,
+        model: "grok-4.7"
+      }
+    }
+
+    state =
+      State.init(config, "please check locally")
+      |> State.append_messages([
+        Message.tool_use([
+          %{type: "tool_use", id: "b1", name: "bash", input: %{"command" => "mix test"}}
+        ])
+      ])
+
+    assert {:ok, reviewed} =
+             AutoReview.review(state, [
+               %{id: "b1", name: "bash", input: %{"command" => "mix test"}}
+             ])
+
+    assert reviewed.status != :interrupted
+    assert_received {:reviewed_config, sent}
+    assert sent.model == "cursor/grok-4.7"
+    assert sent.provider_key == "cursor"
+    refute Map.has_key?(sent, :conversation_id)
+    refute Map.has_key?(sent, :provider_state)
   end
 
   test "a halt does not execute an approved sibling in the same batch" do

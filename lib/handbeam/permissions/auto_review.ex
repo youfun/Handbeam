@@ -60,7 +60,10 @@ defmodule Handbeam.Permissions.AutoReview do
       prompt: prompt,
       action_requests: requests,
       timeout_ms: timeout,
-      workspace_path: workspace
+      workspace_path: workspace,
+      run_provider: state.config.provider,
+      run_provider_config: state.config.provider_config || %{},
+      run_model: state.config.model
     }
 
     case call_reviewer(request, timeout) do
@@ -243,11 +246,9 @@ defmodule Handbeam.Permissions.AutoReview do
     end
   end
 
-  defp model_transport(%{prompt: prompt, workspace_path: workspace, timeout_ms: timeout}) do
-    with {:ok, config} <- resolve_model(workspace, timeout),
-         provider <- resolve_provider(config),
-         {:ok, response} <-
-           provider.complete([Message.user(prompt)], [], Map.put(config, :stream, false)),
+  defp model_transport(%{prompt: prompt} = request) do
+    with {:ok, provider, config} <- review_provider(request),
+         {:ok, response} <- provider.complete([Message.user(prompt)], [], config),
          text when is_binary(text) and text != "" <- response_text(response) do
       {:ok, text}
     else
@@ -257,41 +258,87 @@ defmodule Handbeam.Permissions.AutoReview do
     end
   end
 
-  defp resolve_model(workspace, timeout) do
+  # The main run already resolved the provider module, subscription, and base URL.
+  # Re-reading ModelConfig and passing only `:provider` drops `provider_key` and
+  # sends Cursor/Codex reviews to OpenAICompat's StepFun default.
+  defp review_provider(request) do
+    timeout = request.timeout_ms
+    configured = configured_model(request.workspace_path)
+
+    cond do
+      use_run_provider?(configured, request) ->
+        {:ok, request.run_provider,
+         call_config(request.run_provider_config, request.run_model, timeout, request.workspace_path)}
+
+      true ->
+        resolve_configured_model(request.workspace_path, configured, timeout)
+    end
+  end
+
+  defp use_run_provider?(configured, request) do
+    is_atom(request.run_provider) and not is_nil(request.run_provider) and
+      (blank_model?(configured) or configured == request.run_model)
+  end
+
+  defp blank_model?(model), do: not is_binary(model) or String.trim(model) == ""
+
+  defp configured_model(workspace) do
     settings =
       case WorkspaceSettings.load(workspace) do
         {:ok, settings} -> settings
         _ -> %{}
       end
 
-    configured = WorkspaceSettings.auto_review_config(settings).model
-    model = configured || ModelConfig.default_model_for_workspace(workspace)
+    WorkspaceSettings.auto_review_config(settings).model
+  end
 
-    if not is_binary(model) or model == "" do
-      {:error, :model_unavailable}
+  defp call_config(provider_config, model, timeout, workspace) do
+    provider_config
+    |> Map.drop([:provider_state, :system_prompt, :conversation_id, :run_id])
+    |> Map.put(:model, model)
+    |> Map.put(:stream, false)
+    |> Map.put(:receive_timeout, timeout)
+    |> Map.put(:max_tokens, 1500)
+    |> Map.put(:working_directory, workspace)
+  end
+
+  defp resolve_configured_model(workspace, model, timeout) do
+    model = if blank_model?(model), do: ModelConfig.default_model_for_workspace(workspace), else: model
+
+    with true <- is_binary(model) and model != "",
+         {:ok, provider_config, model_id} <-
+           ModelConfig.resolve_model_for_workspace(workspace, model),
+         {:ok, provider} <- provider_module(provider_config) do
+      {:ok, provider, call_config(provider_config, model_id, timeout, workspace)}
     else
-      case ModelConfig.resolve_model_for_workspace(workspace, model) do
-        {:ok, provider_config, model_id} ->
-          {:ok,
-           provider_config
-           |> Map.put(:model, model_id)
-           |> Map.put(:stream, false)
-           |> Map.put(:receive_timeout, timeout)
-           |> Map.put(:max_tokens, 1500)}
-
-        {:error, reason} ->
-          {:error, {:model_unavailable, reason}}
-      end
+      false -> {:error, :model_unavailable}
+      {:error, reason} -> {:error, {:model_unavailable, reason}}
+      other -> {:error, other}
     end
   end
 
-  defp resolve_provider(config) do
-    Config.resolve_provider_from_api(
-      Map.get(config, :api, :openai),
-      nil,
-      Map.get(config, :provider)
-    )
+  defp provider_module(config) do
+    name = config[:provider] || config[:provider_key]
+    module = Config.resolve_provider_from_api(config[:api], config[:model], provider_name(name))
+
+    cond do
+      module == Handbeam.Agent.Provider.OpenAICompat and subscription_key?(name) ->
+        {:error, :model_unavailable}
+
+      module == Handbeam.Agent.Provider.OpenAICompat and blank_model?(config[:base_url]) ->
+        {:error, :model_unavailable}
+
+      true ->
+        {:ok, module}
+    end
   end
+
+  defp provider_name(name) when is_atom(name) and not is_nil(name), do: Atom.to_string(name)
+  defp provider_name(name) when is_binary(name), do: name
+  defp provider_name(_name), do: nil
+
+  defp subscription_key?(name) when name in ["cursor", "openai_codex"], do: true
+  defp subscription_key?(_name), do: false
 
   defp response_text(%{messages: messages}) when is_list(messages) do
     messages

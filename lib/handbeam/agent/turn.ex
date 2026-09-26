@@ -63,7 +63,7 @@ defmodule Handbeam.Agent.Turn do
         action = decision["action"] || decision[:action] || "deny"
 
         if to_string(action) == "approve" do
-          {calls, blocks, maybe_remember_auto(overrides, decision, call), denied}
+          {calls, blocks, remember_session_grant(overrides, decision, call), denied}
         else
           tool_name =
             (call && (call[:name] || call["name"])) || decision["tool_name"] || "unknown"
@@ -89,7 +89,11 @@ defmodule Handbeam.Agent.Turn do
       end)
 
     # Merge remembered overrides with existing
+    {remembered_overrides, session_allow} = split_session_grants(remembered_overrides)
     merged_overrides = Map.merge(state.tool_guard_overrides || %{}, remembered_overrides)
+
+    session_allow =
+      Enum.uniq((state.tool_guard_session_allow || []) ++ session_allow)
 
     # Clean interrupt state, set denied blocks, set overrides
     state =
@@ -98,6 +102,7 @@ defmodule Handbeam.Agent.Turn do
       |> Map.put(:interrupt_data, nil)
       |> Map.put(:tool_guard_result_blocks, denied_blocks)
       |> Map.put(:tool_guard_overrides, merged_overrides)
+      |> Map.put(:tool_guard_session_allow, session_allow)
 
     # Execute approved + auto-approved tool calls
     if approved_calls == [] do
@@ -145,19 +150,36 @@ defmodule Handbeam.Agent.Turn do
 
   # ── Resume helpers ──
 
-  defp maybe_remember_auto(overrides, decision, call) do
+  # "This session" remembers the suggested pattern, not `bash => :auto`.
+  # A tool-name grant sits under the unsandboxed gate and would still skip every
+  # later sandboxed prompt, including ones auto-review should see.
+  defp remember_session_grant(overrides, decision, call) do
     if decision["remember"] || decision[:remember] do
-      tool_name =
-        (call && (call[:name] || call["name"])) || decision["tool_name"] || decision[:tool_name]
+      pattern =
+        (call && Handbeam.Permissions.Remember.pattern(call)) ||
+          decision["suggested_pattern"] || decision[:suggested_pattern]
 
-      if is_binary(tool_name) and tool_name != "" do
-        Map.put(overrides, tool_name, :auto)
+      if is_binary(pattern) and String.trim(pattern) != "" do
+        Map.put(overrides, {:session_allow, pattern}, :auto)
       else
         overrides
       end
     else
       overrides
     end
+  end
+
+  defp split_session_grants(overrides) do
+    {grants, rest} =
+      Enum.split_with(overrides, fn
+        {{:session_allow, _pattern}, :auto} -> true
+        _other -> false
+      end)
+
+    patterns =
+      Enum.map(grants, fn {{:session_allow, pattern}, :auto} -> pattern end)
+
+    {Map.new(rest), patterns}
   end
 
   defp last_tool_calls_from_state(%State{messages: messages}) do

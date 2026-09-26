@@ -44,6 +44,19 @@ defmodule Handbeam.Permissions.ToolPolicyTest do
       assert ToolPolicy.decision(policy, unsandboxed()) == :prompt
     end
 
+    test "session pattern grants do not cover unsandboxed or unrelated prompts" do
+      policy =
+        ToolPolicy.from_settings(
+          %{"tools" => %{"default_mode" => "prompt"}},
+          %{},
+          ["bash(mix test*)"]
+        )
+
+      assert ToolPolicy.decision(policy, call("bash", %{"command" => "mix test"})) == :auto
+      assert ToolPolicy.decision(policy, call("bash", %{"command" => "rm -rf tmp"})) == :prompt
+      assert ToolPolicy.decision(policy, unsandboxed("mix test")) == :prompt
+    end
+
     test "auto_review config does not skip the unsandboxed prompt" do
       policy =
         ToolPolicy.from_settings(%{

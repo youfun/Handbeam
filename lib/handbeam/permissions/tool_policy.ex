@@ -11,7 +11,8 @@ defmodule Handbeam.Permissions.ToolPolicy do
             deny: [],
             per_tool: %{},
             mcp: %{},
-            overrides: %{}
+            overrides: %{},
+            session_allow: []
 
   @type t :: %__MODULE__{
           default_mode: ApprovalMode.t(),
@@ -19,13 +20,14 @@ defmodule Handbeam.Permissions.ToolPolicy do
           deny: [String.t()],
           per_tool: %{String.t() => ApprovalMode.t()},
           mcp: %{String.t() => ApprovalMode.t()},
-          overrides: %{String.t() => ApprovalMode.t()}
+          overrides: %{String.t() => ApprovalMode.t()},
+          session_allow: [String.t()]
         }
 
-  @spec from_workspace(Path.t() | nil, map()) :: t()
-  def from_workspace(workspace_root, overrides \\ %{})
+  @spec from_workspace(Path.t() | nil, map(), [String.t()]) :: t()
+  def from_workspace(workspace_root, overrides \\ %{}, session_allow \\ [])
 
-  def from_workspace(workspace_root, overrides)
+  def from_workspace(workspace_root, overrides, session_allow)
       when is_binary(workspace_root) and workspace_root != "" do
     settings =
       case Handbeam.WorkspaceSettings.load(workspace_root) do
@@ -33,19 +35,20 @@ defmodule Handbeam.Permissions.ToolPolicy do
         {:error, _reason} -> %{}
       end
 
-    from_settings(settings, overrides)
+    from_settings(settings, overrides, session_allow)
   end
 
-  def from_workspace(_workspace_root, overrides) do
+  def from_workspace(_workspace_root, overrides, session_allow) do
     %__MODULE__{
       default_mode: :deny,
       allow: ["mem_*", "web_fetch", "browser", "open_url"],
-      overrides: normalize_overrides(overrides)
+      overrides: normalize_overrides(overrides),
+      session_allow: string_list(session_allow)
     }
   end
 
-  @spec from_settings(map(), map()) :: t()
-  def from_settings(settings, overrides \\ %{}) when is_map(settings) do
+  @spec from_settings(map(), map(), [String.t()]) :: t()
+  def from_settings(settings, overrides \\ %{}, session_allow \\ []) when is_map(settings) do
     tools = Map.get(settings, "tools", %{})
     tools = if is_map(tools), do: tools, else: %{}
 
@@ -55,7 +58,8 @@ defmodule Handbeam.Permissions.ToolPolicy do
       deny: string_list(Map.get(tools, "deny", [])),
       per_tool: parse_mode_map(Map.get(tools, "per_tool", %{})),
       mcp: parse_mode_map(Map.get(tools, "mcp", %{})),
-      overrides: normalize_overrides(overrides)
+      overrides: normalize_overrides(overrides),
+      session_allow: string_list(session_allow)
     }
   end
 
@@ -81,6 +85,12 @@ defmodule Handbeam.Permissions.ToolPolicy do
       # Applying a subagent worktree writes an unreviewed diff into the workspace.
       worktree_apply?(name, call) ->
         if policy.default_mode == :deny, do: :deny, else: :prompt
+
+      # Session grants remember a pattern, not the whole tool. They stay under
+      # the unsandboxed and worktree gates, so one "this session" click cannot
+      # skip later unrelated prompts or leave the sandbox.
+      Enum.any?(policy.session_allow, &Matcher.match?(&1, call)) ->
+        :auto
 
       Map.has_key?(policy.per_tool, name) ->
         Map.fetch!(policy.per_tool, name)

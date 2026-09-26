@@ -15,7 +15,10 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
 
     policy =
       state.config.working_directory
-      |> ToolPolicy.from_workspace(state.tool_guard_overrides || %{})
+      |> ToolPolicy.from_workspace(
+        state.tool_guard_overrides || %{},
+        state.tool_guard_session_allow || []
+      )
 
     {denied, rest} = Enum.split_with(tool_calls, &(ToolPolicy.decision(policy, &1) == :deny))
 

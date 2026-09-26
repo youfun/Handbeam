@@ -253,18 +253,25 @@ defmodule Handbeam.Agent.Runner do
         {:noreply,
          %{state | status: :awaiting_approval, interrupted_state: interrupted, task: nil}}
 
+      %Handbeam.Agent.State{status: :halted} = halted ->
+        finish_terminal(state, halted, :halted)
+
       _ ->
-        Handbeam.Agent.Provider.Cursor.Session.stop_for_conversation(state.conversation_id)
-        Handbeam.Agent.CandidateQueue.seal(state.queue_pid)
-        Session.mark_run_finished(state.conversation_id)
-
-        Task.Supervisor.start_child(Handbeam.AgentRunTaskSupervisor, fn ->
-          Handbeam.Threads.Collaboration.completed(state.conversation_id, result, state.opts)
-        end)
-
-        stop_run_supervisor(state)
-        {:noreply, %{state | status: :completed, result: result, task: nil}}
+        finish_terminal(state, result, :completed)
     end
+  end
+
+  defp finish_terminal(state, result, status) do
+    Handbeam.Agent.Provider.Cursor.Session.stop_for_conversation(state.conversation_id)
+    Handbeam.Agent.CandidateQueue.seal(state.queue_pid)
+    Session.mark_run_finished(state.conversation_id)
+
+    Task.Supervisor.start_child(Handbeam.AgentRunTaskSupervisor, fn ->
+      Handbeam.Threads.Collaboration.completed(state.conversation_id, result, state.opts)
+    end)
+
+    stop_run_supervisor(state)
+    {:noreply, %{state | status: status, result: result, task: nil}}
   end
 
   def handle_info({ref, {:error, reason}}, %{task: %{ref: ref}} = state) do
