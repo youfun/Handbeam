@@ -222,6 +222,15 @@ defmodule Handbeam.Permissions.ToolPolicyTest do
       assert ToolPolicy.decision(auto, call("share_file", %{"path" => "a.pdf"})) ==
                :prompt
 
+      assert ToolPolicy.decision(
+               auto,
+               call("device_calendar", %{"calendar_action" => "list_events"})
+             ) ==
+               :prompt
+
+      assert ToolPolicy.decision(auto, call("device_alarm", %{"hour" => 7, "minute" => 30})) ==
+               :prompt
+
       # "Always allow" appends to the workspace allow list; only that tool changes.
       always =
         ToolPolicy.from_settings(%{

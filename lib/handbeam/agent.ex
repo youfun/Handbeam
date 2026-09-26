@@ -229,16 +229,33 @@ defmodule Handbeam.Agent do
   @doc """
   Tools for a workspace-independent chat.
 
-  Memory only. File, shell, search, MCP, and skill tools stay off so a chat
-  without a project root cannot fall through to the process working directory.
+  Memory, public page fetch, the in-app browser, opening a page in the system
+  browser, and device calendar/alarm when the host has an artifact-delivery
+  backend. File, shell, search, MCP, and skill tools stay off so a chat without
+  a project root cannot fall through to the process working directory. Web and
+  system-browser tools do not need workspace approval. Calendar and alarm still
+  ask before they touch the device.
   """
   def free_chat_tools do
-    [
+    base = [
+      Handbeam.Tool.Builtin.WebFetch,
+      Handbeam.Tool.Builtin.Browser,
+      Handbeam.Tool.Builtin.OpenUrl,
       Handbeam.Tool.Memory.MemAssociate,
       Handbeam.Tool.Memory.MemLearn,
       Handbeam.Tool.Memory.MemRecall,
       Handbeam.Tool.Memory.MemReinforce
     ]
+
+    if Handbeam.Host.artifact_delivery_backend() do
+      base ++
+        [
+          Handbeam.Tool.Builtin.DeviceCalendar,
+          Handbeam.Tool.Builtin.DeviceAlarm
+        ]
+    else
+      base
+    end
   end
 
   # ── BEAM tools auto-detection ──

@@ -247,6 +247,9 @@ defmodule Handbeam.Agent.Config do
 
     Answer from the conversation. You do not have a workspace, shell, or file tools.
     Do not claim to have read, edited, or executed anything on the user's machine.
+    If device_calendar or device_alarm is exposed, use it when the user asks about
+    their calendar or a clock alarm. Do not claim an event was saved or an alarm
+    was set unless the tool result says so.
     """
   end
 

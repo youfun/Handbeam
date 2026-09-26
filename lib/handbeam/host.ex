@@ -19,7 +19,8 @@ defmodule Handbeam.Host do
     `Handbeam.Git.ExGit`. Desktop leaves it unset; agents use the repository
     command-line workflow through `bash`.
   * `artifact_delivery_backend` — module or `fun/2` that presents system UI for
-    `open_url`, `open_file`, and `share_file`.
+    `open_url`, `open_file`, and `share_file`, and runs `device_calendar` /
+    `device_alarm`.
   * `directory_picker` — `fun/1` or a module exporting
     `request_directory_picker/1`. Desktop never sets it.
 

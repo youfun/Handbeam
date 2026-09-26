@@ -82,7 +82,12 @@ defmodule Handbeam.Agent.HostEnvironment do
 
   defp text(:artifact_delivery) do
     "System open/share tools (`open_url`, `open_file`, `share_file`) launch native UI, not an agent browser session. " <>
-      "Success means the system UI was shown, not that a page loaded, a file was read, or a share completed."
+      "Success means the system UI was shown, not that a page loaded, a file was read, or a share completed. " <>
+      "When the user asks to check or add a calendar event, call `device_calendar`. " <>
+      "An authorized Android insert writes the system calendar directly and does not open the calendar app. " <>
+      "iOS does not support device_calendar or device_alarm. When the user asks for a clock alarm, call `device_alarm`. " <>
+      "That only prefills the system clock (`AlarmClock.ACTION_SET_ALARM`); many devices still need a save tap. " <>
+      "It is not a silent alarm write and does not use accessibility. Do not invent an event or alarm the tool did not confirm."
   end
 
   defp text(:desktop_browser),

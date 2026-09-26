@@ -3,7 +3,7 @@ defmodule Handbeam.Tool.Builtin.AndroidIntentTest do
 
   alias Handbeam.ExportSnapshot
   alias Handbeam.ExportSnapshot.Binding
-  alias Handbeam.Tool.Builtin.{OpenFile, OpenUrl, ShareFile}
+  alias Handbeam.Tool.Builtin.{DeviceAlarm, DeviceCalendar, OpenFile, OpenUrl, ShareFile}
 
   setup do
     previous = Application.get_env(:handbeam, :host)
@@ -148,6 +148,81 @@ defmodule Handbeam.Tool.Builtin.AndroidIntentTest do
              })
 
     File.rm_rf!(dir)
+  end
+
+  test "calendar insert writes through the backend and does not claim attendance" do
+    stub(fn cmd, _ctx ->
+      assert cmd.op == :device_calendar
+      assert cmd.calendar_action == "insert_event"
+      assert cmd.title == "牙医"
+      refute Map.has_key?(cmd, :intent)
+      {:ok, %{outcome: "inserted", event_id: "42", calendar_id: "1"}}
+    end)
+
+    assert {:ok, text, %{outcome: "inserted", event_id: "42"}} =
+             DeviceCalendar.execute(
+               %{
+                 "calendar_action" => "insert_event",
+                 "title" => "牙医",
+                 "start_ms" => 1_700_000_000_000,
+                 "end_ms" => 1_700_000_360_000
+               },
+               %{}
+             )
+
+    assert text =~ "已写入系统日历"
+    assert text =~ "没有打开日历应用"
+  end
+
+  test "calendar rejects raw intent fields and inverted times" do
+    stub(fn _cmd, _ctx -> flunk("must not dispatch") end)
+
+    assert {:error, "raw Intent fields are not allowed"} =
+             DeviceCalendar.execute(
+               %{"calendar_action" => "insert_event", "title" => "x", "extras" => %{}},
+               %{}
+             )
+
+    assert {:error, text} =
+             DeviceCalendar.execute(
+               %{
+                 "calendar_action" => "insert_event",
+                 "title" => "x",
+                 "start_ms" => 20,
+                 "end_ms" => 10
+               },
+               %{}
+             )
+
+    assert text =~ "时间"
+  end
+
+  test "alarm prefills the clock and does not claim the alarm was saved" do
+    stub(fn cmd, _ctx ->
+      assert cmd.op == :device_alarm
+      assert cmd.hour == 7
+      assert cmd.minute == 30
+      assert cmd.message == "起床"
+      assert cmd.skip_ui == false
+      {:ok, %{outcome: "alarm_prefilled", hour: 7, minute: 30}}
+    end)
+
+    assert {:ok, text, %{outcome: "alarm_prefilled"}} =
+             DeviceAlarm.execute(
+               %{"hour" => 7, "minute" => 30, "message" => "起床"},
+               %{}
+             )
+
+    assert text =~ "预填"
+    assert text =~ "不是静默写入"
+  end
+
+  test "alarm rejects out-of-range clock fields" do
+    stub(fn _cmd, _ctx -> flunk("must not dispatch") end)
+    assert {:error, _} = DeviceAlarm.execute(%{"hour" => 24, "minute" => 0}, %{})
+
+    assert {:error, _} =
+             DeviceAlarm.execute(%{"hour" => 7, "minute" => 0, "action" => "SET_ALARM"}, %{})
   end
 
   defp stub(fun) when is_function(fun, 2) do

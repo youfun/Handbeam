@@ -22,8 +22,11 @@ defmodule Handbeam.Permissions.ToolPolicy do
           overrides: %{String.t() => ApprovalMode.t()}
         }
 
-  @spec from_workspace(Path.t(), map()) :: t()
-  def from_workspace(workspace_root, overrides \\ %{}) do
+  @spec from_workspace(Path.t() | nil, map()) :: t()
+  def from_workspace(workspace_root, overrides \\ %{})
+
+  def from_workspace(workspace_root, overrides)
+      when is_binary(workspace_root) and workspace_root != "" do
     settings =
       case Handbeam.WorkspaceSettings.load(workspace_root) do
         {:ok, settings} -> settings
@@ -31,6 +34,14 @@ defmodule Handbeam.Permissions.ToolPolicy do
       end
 
     from_settings(settings, overrides)
+  end
+
+  def from_workspace(_workspace_root, overrides) do
+    %__MODULE__{
+      default_mode: :deny,
+      allow: ["mem_*", "web_fetch", "browser", "open_url"],
+      overrides: normalize_overrides(overrides)
+    }
   end
 
   @spec from_settings(map(), map()) :: t()

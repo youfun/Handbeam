@@ -197,6 +197,16 @@ defmodule Handbeam.Tool.Registry do
       Handbeam.Tool.Builtin.ShareFile,
       :artifact_delivery_backend
     )
+    |> host_gate(
+      not is_nil(Host.artifact_delivery_backend()),
+      Handbeam.Tool.Builtin.DeviceCalendar,
+      :artifact_delivery_backend
+    )
+    |> host_gate(
+      not is_nil(Host.artifact_delivery_backend()),
+      Handbeam.Tool.Builtin.DeviceAlarm,
+      :artifact_delivery_backend
+    )
     |> host_gate(Host.host_script?(), Handbeam.Tool.Builtin.RunElixirScript, :host_script)
     |> host_gate(Host.beam_eval?(), Handbeam.Tool.Extension.Beam.Docs, :beam_eval)
     |> host_gate(Host.beam_eval?(), Handbeam.Tool.Extension.Beam.Source, :beam_eval)
