@@ -19,7 +19,7 @@ defmodule HandbeamProbe.Platform.IOS.Adapter.Nif do
 
   @impl true
   def pick_images do
-    envelope = Jason.encode!([%{"kind" => "semantic", "value" => "images"}])
+    envelope = Handbeam.JSON.encode!([%{"kind" => "semantic", "value" => "images"}])
     nif_call(fn -> :mob_nif.files_pick(envelope) end)
   end
 

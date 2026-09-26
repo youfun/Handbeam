@@ -222,7 +222,7 @@ defmodule HandbeamProbe.Platform.IOS do
   end
 
   defp decode_payload(payload) when is_binary(payload) do
-    case Jason.decode(payload) do
+    case Handbeam.JSON.decode(payload) do
       {:ok, map} when is_map(map) -> map
       _ -> %{}
     end
@@ -252,7 +252,10 @@ defmodule HandbeamProbe.Platform.IOS do
   defp error_reason(reason), do: inspect(reason)
 
   defp reply(caller, request_id, generation, result) when is_pid(caller) do
-    send(caller, {:engine_result, envelope(request_id, generation, Jason.encode!(result))})
+    send(
+      caller,
+      {:engine_result, envelope(request_id, generation, Handbeam.JSON.encode!(result))}
+    )
     {:ok, :async}
   end
 

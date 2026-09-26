@@ -256,7 +256,7 @@ defmodule HandbeamProbe.NativeApproval do
               node(:column, [fill_width: true, padding: 10], [
                 text(req["tool_name"], font_weight: "bold"),
                 text(req["tool_call_id"], text_size: 11, selectable: true),
-                text(Jason.encode!(req["arguments"] || %{}, pretty: true),
+                text(Handbeam.JSON.encode!(req["arguments"] || %{}, pretty: true),
                   text_size: 12,
                   selectable: true,
                   padding_top: 8

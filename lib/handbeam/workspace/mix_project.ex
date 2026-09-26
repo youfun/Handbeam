@@ -438,21 +438,21 @@ defmodule Handbeam.Workspace.MixProject do
 
     case File.read(path) do
       {:ok, bytes} ->
-        case Jason.decode(bytes) do
+        case Handbeam.JSON.decode(bytes) do
           {:ok, ^stamp} ->
             :ok
 
           {:ok, _previous} ->
-            File.write!(path, Jason.encode!(stamp))
+            File.write!(path, Handbeam.JSON.encode!(stamp))
             :ok
 
           _ ->
-            File.write!(path, Jason.encode!(stamp))
+            File.write!(path, Handbeam.JSON.encode!(stamp))
             :ok
         end
 
       {:error, :enoent} ->
-        File.write!(path, Jason.encode!(stamp))
+        File.write!(path, Handbeam.JSON.encode!(stamp))
         :ok
 
       {:error, reason} ->

@@ -278,7 +278,7 @@ defmodule HandbeamProbe.Bridge.Inbound do
   defp body(_error, _), do: {:error, :invalid_platform_result}
 
   defp decode_json(json) do
-    case Jason.decode(json) do
+    case Handbeam.JSON.decode(json) do
       {:ok, %{"cancelled" => true}} ->
         :cancelled
 

@@ -78,7 +78,7 @@ defmodule HandbeamProbe.ShareIntake do
   def receipt(intake_id) when is_binary(intake_id) do
     with {:ok, id} <- cast_id(intake_id),
          {:ok, body} <- File.read(receipt_path(id)),
-         {:ok, rec} <- Jason.decode(body) do
+         {:ok, rec} <- Handbeam.JSON.decode(body) do
       {:ok, rec}
     else
       {:error, :enoent} -> {:error, :not_found}
@@ -90,7 +90,7 @@ defmodule HandbeamProbe.ShareIntake do
   def get(intake_id) when is_binary(intake_id) do
     with {:ok, id} <- cast_id(intake_id),
          {:ok, body} <- File.read(manifest_path(id)),
-         {:ok, rec} <- Jason.decode(body) do
+         {:ok, rec} <- Handbeam.JSON.decode(body) do
       {:ok, rec}
     else
       {:error, :enoent} -> {:error, :not_found}
@@ -400,7 +400,8 @@ defmodule HandbeamProbe.ShareIntake do
       dir = receipts_root()
       path = receipt_path(id)
       partial = path <> ".partial"
-      body = Jason.encode!(%{"intake_id" => id, "state" => state, "terminal" => true})
+      body =
+        Handbeam.JSON.encode!(%{"intake_id" => id, "state" => state, "terminal" => true})
 
       case File.mkdir_p(dir) do
         :ok ->
@@ -432,7 +433,8 @@ defmodule HandbeamProbe.ShareIntake do
       dir = Path.join(root(), id)
       path = Path.join(dir, "manifest.json")
       partial = path <> ".partial"
-      body = Jason.encode!(Map.put(rec, "updated_at", System.system_time(:millisecond)))
+      body =
+        Handbeam.JSON.encode!(Map.put(rec, "updated_at", System.system_time(:millisecond)))
 
       case File.mkdir_p(dir) do
         :ok ->
