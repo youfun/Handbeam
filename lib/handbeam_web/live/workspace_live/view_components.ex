@@ -140,7 +140,13 @@ defmodule HandbeamWeb.WorkspaceLive.ViewComponents do
 
   def permission_label(:deny), do: "只读"
 
+  def permission_label(:auto_review), do: "智能审批"
+
   def permission_label(_), do: "完整存取"
+
+  def permission_title(:auto_review), do: gettext("只自动复审本来要问的操作，不扩大权限。")
+
+  def permission_title(mode), do: "#{gettext("当前权限:")}#{permission_label(mode)}"
 
   attr :entries, :map, required: true
   attr :expanded, :any, required: true
@@ -1546,7 +1552,7 @@ defmodule HandbeamWeb.WorkspaceLive.ViewComponents do
                 type="button"
                 class="pill"
                 phx-click="toggle_permission_menu"
-                title={"#{gettext("当前权限:")}#{permission_label(@permission_mode)}"}
+                title={permission_title(@permission_mode)}
               >
                 {permission_label(@permission_mode)} ▾
               </button>
@@ -1587,6 +1593,17 @@ defmodule HandbeamWeb.WorkspaceLive.ViewComponents do
                   ]}
                 >
                   {gettext("只读模式")}
+                </button>
+                <button
+                  type="button"
+                  phx-click="select_permission_mode"
+                  phx-value-mode="auto_review"
+                  class={[
+                    "permission-dropdown-item",
+                    if(@permission_mode == :auto_review, do: "active")
+                  ]}
+                >
+                  {gettext("智能审批")}
                 </button>
               </div>
             </div>

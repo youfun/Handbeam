@@ -25,7 +25,8 @@ defmodule Handbeam.Agent.State do
     :tool_guard_denied_calls,
     :tool_guard_result_blocks,
     :advisor,
-    :progress
+    :progress,
+    :auto_review
   ]
 
   @type status ::
@@ -92,7 +93,8 @@ defmodule Handbeam.Agent.State do
       tool_guard_denied_calls: [],
       tool_guard_result_blocks: [],
       advisor: Handbeam.Agent.Advisor.initial_state(advisor_mode(config.advisor)),
-      progress: Handbeam.Agent.ProgressGuard.initial()
+      progress: Handbeam.Agent.ProgressGuard.initial(),
+      auto_review: Handbeam.Permissions.AutoReview.initial_ledger()
     }
   end
 

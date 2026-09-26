@@ -400,6 +400,12 @@ msgstr "Safe Mode"
 msgid "只读模式"
 msgstr "Read-only"
 
+msgid "智能审批"
+msgstr "智能审批"
+
+msgid "只自动复审本来要问的操作，不扩大权限。"
+msgstr "只自动复审本来要问的操作，不扩大权限。"
+
 #: lib/sigil_web/live/available_models_live.html.heex:188
 #: lib/sigil_web/live/workspace_live.html.heex:669
 #, elixir-autogen

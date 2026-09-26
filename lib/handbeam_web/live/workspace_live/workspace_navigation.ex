@@ -478,9 +478,13 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
   def load_permission_mode(workspace_root) do
     case Handbeam.WorkspaceSettings.load(workspace_root) do
       {:ok, settings} ->
-        tools = Map.get(settings, "tools", %{})
-        tools = if is_map(tools), do: tools, else: %{}
-        Handbeam.Permissions.ApprovalMode.parse(Map.get(tools, "default_mode"), :auto)
+        if Handbeam.WorkspaceSettings.approvals_reviewer_from_settings(settings) == :auto_review do
+          :auto_review
+        else
+          tools = Map.get(settings, "tools", %{})
+          tools = if is_map(tools), do: tools, else: %{}
+          Handbeam.Permissions.ApprovalMode.parse(Map.get(tools, "default_mode"), :auto)
+        end
 
       {:error, _} ->
         :auto

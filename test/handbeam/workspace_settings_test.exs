@@ -149,4 +149,56 @@ defmodule Handbeam.WorkspaceSettingsTest do
     assert {:ok, settings} = WorkspaceSettings.load(workspace)
     assert get_in(settings, ["tools", "default_mode"]) == "deny"
   end
+
+  test "approvals_reviewer defaults to user and rejects unknown values" do
+    assert WorkspaceSettings.approvals_reviewer_from_settings(%{}) == :user
+    assert WorkspaceSettings.approvals_reviewer_from_settings(%{"tools" => %{}}) == :user
+
+    assert WorkspaceSettings.approvals_reviewer_from_settings(%{
+             "tools" => %{"approvals_reviewer" => "yolo"}
+           }) == :user
+
+    assert WorkspaceSettings.approvals_reviewer_from_settings(%{
+             "tools" => %{"approvals_reviewer" => "auto_review"}
+           }) == :auto_review
+
+    assert WorkspaceSettings.auto_review_config(%{}) == %{model: nil, timeout_ms: 30_000}
+
+    assert WorkspaceSettings.auto_review_config(%{
+             "tools" => %{"auto_review" => %{"model" => "  ", "timeout_ms" => 1500}}
+           }) == %{model: nil, timeout_ms: 1500}
+  end
+
+  test "update_approvals_reviewer preserves comments and default_mode" do
+    workspace = tmp_workspace()
+
+    write_settings(workspace, """
+    {
+      // keep this comment
+      "tools": {
+        "default_mode": "prompt",
+        "allow": ["read"]
+      }
+    }
+    """)
+
+    assert :ok = WorkspaceSettings.update_approvals_reviewer(workspace, :auto_review)
+
+    content = File.read!(WorkspaceSettings.path(workspace))
+    assert content =~ "// keep this comment"
+    assert content =~ "\"default_mode\": \"prompt\""
+    assert content =~ "\"allow\": [\"read\"]"
+    assert content =~ "\"approvals_reviewer\": \"auto_review\""
+
+    assert {:ok, settings} = WorkspaceSettings.load(workspace)
+    assert get_in(settings, ["tools", "default_mode"]) == "prompt"
+    assert get_in(settings, ["tools", "allow"]) == ["read"]
+    assert get_in(settings, ["tools", "approvals_reviewer"]) == "auto_review"
+
+    assert :ok = WorkspaceSettings.update_approvals_reviewer(workspace, :user)
+    assert {:ok, settings} = WorkspaceSettings.load(workspace)
+    assert get_in(settings, ["tools", "approvals_reviewer"]) == "user"
+    assert get_in(settings, ["tools", "default_mode"]) == "prompt"
+    assert File.read!(WorkspaceSettings.path(workspace)) =~ "// keep this comment"
+  end
 end

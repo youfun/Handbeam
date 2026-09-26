@@ -763,12 +763,17 @@ defmodule Handbeam.Agent.Turn do
 
         state = mw_run(state, :after_tool_request)
 
-        case state.status do
-          :interrupted ->
+        cond do
+          state.status == :interrupted ->
             emit(opts, :tool_approval_requested, state.interrupt_data || %{})
             state
 
-          _ ->
+          # Auto-review can latch a stop inside this batch. Do not execute the
+          # approved siblings; the turn is already over.
+          state.status == :halted ->
+            finish_halted_tool_review(state, new_msgs, opts)
+
+          true ->
             handle_tool_use(state, new_msgs, opts)
         end
 
@@ -1308,6 +1313,47 @@ defmodule Handbeam.Agent.Turn do
 
   defp log_emit(kind, payload) do
     Logger.debug("[Turn] emit #{kind} keys=#{inspect(Map.keys(payload || %{}))}")
+  end
+
+  defp finish_halted_tool_review(%State{} = state, new_msgs, opts) do
+    tool_calls = extract_tool_calls(new_msgs)
+
+    denied_by_id =
+      Map.new(state.tool_guard_result_blocks || [], fn block ->
+        {block[:tool_use_id] || block["tool_use_id"], block}
+      end)
+
+    blocks =
+      Enum.map(tool_calls, fn call ->
+        id = call[:id] || call["id"]
+
+        Map.get(denied_by_id, id) ||
+          Message.tool_result_block(
+            id,
+            state.error || Handbeam.Permissions.AutoReview.halt_error(),
+            true,
+            %{
+              permission: :denied,
+              tool: call[:name] || call["name"],
+              reviewer: :auto_review
+            }
+          )
+      end)
+
+    Enum.each(blocks, fn block ->
+      emit(opts, :tool_end, %{
+        tool_use_id: block[:tool_use_id],
+        tool: get_in(block, [:details, :tool]) || "unknown",
+        duration_ms: 0,
+        details: block[:details] || %{},
+        error: block[:content],
+        output: bounded_tool_output(block[:content])
+      })
+    end)
+
+    state
+    |> State.append_messages([Message.tool_results(blocks)])
+    |> Map.put(:status, :halted)
   end
 
   defp handle_tool_use(%State{} = state, new_msgs, opts) do

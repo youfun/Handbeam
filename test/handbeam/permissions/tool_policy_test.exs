@@ -44,6 +44,19 @@ defmodule Handbeam.Permissions.ToolPolicyTest do
       assert ToolPolicy.decision(policy, unsandboxed()) == :prompt
     end
 
+    test "auto_review config does not skip the unsandboxed prompt" do
+      policy =
+        ToolPolicy.from_settings(%{
+          "tools" => %{
+            "default_mode" => "auto",
+            "approvals_reviewer" => "auto_review",
+            "allow" => ["bash"]
+          }
+        })
+
+      assert ToolPolicy.decision(policy, unsandboxed()) == :prompt
+    end
+
     test "only the boolean true escalates" do
       policy = ToolPolicy.from_settings(%{})
 

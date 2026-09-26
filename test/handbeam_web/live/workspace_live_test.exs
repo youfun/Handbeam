@@ -4712,7 +4712,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         if File.exists?(models_path), do: File.rm!(models_path)
       end)
 
-      {:ok, view, html} = live(conn, "/")
+      {:ok, view, _html} = live(conn, "/")
       render_change(view, "select_model", %{"model" => "stepfun/step-router-v1"})
       html = render(view)
 
@@ -4752,6 +4752,71 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       # Verify settings.jsonc on disk is updated
       assert {:ok, settings} = Handbeam.WorkspaceSettings.load(workspace_root)
       assert get_in(settings, ["tools", "default_mode"]) == "auto"
+    end
+
+    test "smart approval writes approvals_reviewer and leaves default_mode", %{conn: conn} do
+      {:ok, default_ws} = Handbeam.WorkspaceStore.ensure_default!()
+      workspace_root = default_ws["path"]
+      settings_path = Handbeam.WorkspaceSettings.path(workspace_root)
+      original = if File.exists?(settings_path), do: File.read!(settings_path), else: nil
+
+      on_exit(fn ->
+        if is_binary(original), do: File.write!(settings_path, original)
+      end)
+
+      File.mkdir_p!(Path.dirname(settings_path))
+
+      File.write!(settings_path, """
+      {
+        // keep me
+        "tools": {
+          "default_mode": "prompt",
+          "allow": ["read"]
+        }
+      }
+      """)
+
+      {:ok, view, _html} = live(conn, "/")
+      create_default_conversation(view)
+
+      view |> element("button[phx-click='toggle_permission_menu']") |> render_click()
+
+      view
+      |> element("button[phx-click='select_permission_mode'][phx-value-mode='auto_review']")
+      |> render_click()
+
+      html = render(view)
+      assert html =~ "智能审批"
+      assert html =~ "只自动复审本来要问的操作，不扩大权限。"
+      refute html =~ "permission-dropdown-menu"
+
+      content = File.read!(settings_path)
+      assert content =~ "// keep me"
+      assert content =~ "\"default_mode\": \"prompt\""
+      assert content =~ "\"allow\": [\"read\"]"
+      assert content =~ "\"approvals_reviewer\": \"auto_review\""
+
+      {:ok, settings} = Handbeam.WorkspaceSettings.load(workspace_root)
+      assert get_in(settings, ["tools", "default_mode"]) == "prompt"
+      assert get_in(settings, ["tools", "approvals_reviewer"]) == "auto_review"
+
+      view |> element("button[phx-click='toggle_permission_menu']") |> render_click()
+
+      view
+      |> element("button[phx-click='select_permission_mode'][phx-value-mode='prompt']")
+      |> render_click()
+
+      html = render(view)
+      assert html =~ "安全模式" or html =~ "Safe Mode"
+      refute html =~ "智能审批"
+
+      content = File.read!(settings_path)
+      assert content =~ "// keep me"
+      assert content =~ "\"default_mode\": \"prompt\""
+      {:ok, settings} = Handbeam.WorkspaceSettings.load(workspace_root)
+      assert get_in(settings, ["tools", "default_mode"]) == "prompt"
+      assert get_in(settings, ["tools", "approvals_reviewer"]) == "user"
+      assert get_in(settings, ["tools", "allow"]) == ["read"]
     end
 
     for action <- ["approve_all_tools", "deny_all_tools"] do
