@@ -230,7 +230,23 @@ jobs:
             "cmake;3.22.1"
 
       - name: Host packages
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends zip libgit2-dev pkg-config
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends zip libgit2-dev pkg-config
+          # Ubuntu's package has git2.h but not git2/sys/errors.h. Write it before
+          # any mix command. ci_setup compiles ex_git and looks in /usr/include.
+          if [[ ! -f /usr/include/git2/sys/errors.h ]]; then
+            sudo mkdir -p /usr/include/git2/sys
+            printf '%s\n' \
+              '#ifndef INCLUDE_git_sys_errors_h__' \
+              '#define INCLUDE_git_sys_errors_h__' \
+              '#include "git2/common.h"' \
+              'GIT_EXTERN(int) git_error_set(int error_class, const char *fmt, ...)' \
+              '    __attribute__((format(printf, 2, 3)));' \
+              'GIT_EXTERN(int) git_error_set_str(int error_class, const char *string);' \
+              '#endif' \
+              | sudo tee /usr/include/git2/sys/errors.h >/dev/null
+          fi
+          test -f /usr/include/git2/sys/errors.h && grep -q git_error_set /usr/include/git2/sys/errors.h
 
       - uses: actions/cache@v4
         with:

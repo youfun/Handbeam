@@ -64,10 +64,6 @@ for abi in "${abis[@]}"; do
   esac
 done
 
-if [[ "$skip_setup" -eq 0 ]]; then
-  bash "$PROBE_ROOT/script/ci_setup_android.sh"
-fi
-
 # Ubuntu's libgit2-dev ships git2.h but not git2/sys/errors.h. ex_git calls
 # git_error_set from that header. The symbol is still in libgit2.so.
 # elixir_make replaces the make environment, so an exported CFLAGS never
@@ -114,9 +110,18 @@ EOF
   fi
   rm -f "$tmp"
   echo "installed libgit2 compat header at $header"
+  [[ -f "$header" ]] || {
+    echo "failed to install $header" >&2
+    exit 1
+  }
 }
 
+# ci_setup runs mix, which compiles ex_git. The header must exist first.
 ensure_libgit2_sys_header
+
+if [[ "$skip_setup" -eq 0 ]]; then
+  bash "$PROBE_ROOT/script/ci_setup_android.sh"
+fi
 
 if [[ "$skip_test" -eq 0 ]]; then
   mix test
