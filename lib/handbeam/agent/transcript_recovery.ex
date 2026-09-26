@@ -14,30 +14,50 @@ defmodule Handbeam.Agent.TranscriptRecovery do
   alias Handbeam.Agent.{Runner, TranscriptPersistence}
   alias Handbeam.ConversationTranscriptStore
 
+  @startup_delay_ms 10_000
+
   def start_link(opts), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
   def run, do: GenServer.call(__MODULE__, :run, :infinity)
   def recover(id), do: GenServer.call(__MODULE__, {:recover, id}, :infinity)
 
-  @impl true
-  def init(opts) do
-    if Keyword.get(opts, :recover_on_start, true),
-      do: {:ok, nil, {:continue, :recover}},
-      else: {:ok, nil}
+  def mark(id) when is_binary(id) do
+    with {:ok, path} <- marker_path(id),
+         :ok <- File.mkdir_p(Path.dirname(path)),
+         :ok <- File.write(path, "") do
+      :ok
+    else
+      _ -> :ok
+    end
+  end
+
+  def clear(id) when is_binary(id) do
+    with {:ok, path} <- marker_path(id) do
+      case File.rm(path) do
+        :ok -> :ok
+        {:error, :enoent} -> :ok
+        {:error, _reason} -> :ok
+      end
+    else
+      _ -> :ok
+    end
   end
 
   @impl true
-  def handle_continue(:recover, state) do
-    recover_all()
+  def init(opts) do
+    if Keyword.get(opts, :recover_on_start, true) do
+      Process.send_after(self(), :recover, @startup_delay_ms)
+    end
+
+    {:ok, nil}
+  end
+
+  @impl true
+  def handle_info(:recover, state) do
+    recover_marked()
     {:noreply, state}
   end
 
-  @impl true
-  def handle_call(:run, _from, state), do: {:reply, recover_all(), state}
-
-  def handle_call({:recover, id}, _from, state), do: {:reply, recover_orphan(id), state}
-
-  @impl true
   def handle_info({:transcript_retry_persisted, id}, state) do
     case recover_orphan(id) do
       :ok ->
@@ -48,6 +68,31 @@ defmodule Handbeam.Agent.TranscriptRecovery do
     end
 
     {:noreply, state}
+  end
+
+  @impl true
+  def handle_call(:run, _from, state), do: {:reply, recover_all(), state}
+
+  def handle_call({:recover, id}, _from, state), do: {:reply, recover_orphan(id), state}
+
+  defp recover_marked do
+    case File.ls(marker_dir()) do
+      {:ok, ids} ->
+        Enum.each(ids, fn id ->
+          case recover_orphan(id) do
+            :ok -> clear(id)
+            {:error, reason} -> Logger.error("[TranscriptRecovery] #{id}: #{inspect(reason)}")
+          end
+        end)
+
+      {:error, :enoent} ->
+        :ok
+
+      {:error, reason} ->
+        Logger.error("[TranscriptRecovery] cannot scan candidates: #{inspect(reason)}")
+    end
+
+    :ok
   end
 
   defp recover_all do
@@ -111,5 +156,17 @@ defmodule Handbeam.Agent.TranscriptRecovery do
         {:error, reason} -> {:halt, {:error, reason}}
       end
     end)
+  end
+
+  defp marker_path(id) do
+    if byte_size(id) in 1..128 and Regex.match?(~r/\A[A-Za-z0-9_-]+\z/, id) do
+      {:ok, Path.join(marker_dir(), id)}
+    else
+      {:error, :invalid_conversation_id}
+    end
+  end
+
+  defp marker_dir do
+    Handbeam.Home.expand("~/.handbeam/runtime/transcript-recovery")
   end
 end

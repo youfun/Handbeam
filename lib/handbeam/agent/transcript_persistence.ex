@@ -40,6 +40,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
 
   def handle_event(conversation_id, {:run_start, payload}, opts)
       when is_binary(conversation_id) do
+    Handbeam.Agent.TranscriptRecovery.mark(conversation_id)
     Process.put(assistant_key(conversation_id), nil)
     Process.delete(assistant_segments_key(conversation_id))
     clear_buffer(conversation_id)
@@ -213,6 +214,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
       clear_thinking_buffer(conversation_id)
       Process.delete(run_opts_key(conversation_id))
       Process.delete(run_payload_key(conversation_id))
+      Handbeam.Agent.TranscriptRecovery.clear(conversation_id)
       :ok
     end
   end

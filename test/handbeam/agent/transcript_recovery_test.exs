@@ -45,7 +45,7 @@ defmodule Handbeam.Agent.TranscriptRecoveryTest do
         end
       end)
 
-    assert_receive :durable
+    assert_receive :durable, 1_000
     Process.exit(pid, :kill)
     assert_receive {:DOWN, ^ref, :process, ^pid, :killed}
 
@@ -94,6 +94,31 @@ defmodule Handbeam.Agent.TranscriptRecoveryTest do
     assert {:error, :not_found} = ConversationTranscriptStore.list(id)
     assert {:error, :not_found} = ConversationTranscriptStore.page(id)
     assert {:error, :not_found} = Handbeam.ConversationStore.get(id)
+  end
+
+  test "startup recovery reads only marked conversations", %{id: marked_id} do
+    {:ok, unmarked} = Handbeam.ConversationStore.create("default", timeline: [])
+
+    for {id, run_id} <- [{marked_id, "marked-run"}, {unmarked["id"], "unmarked-run"}] do
+      assert {:ok, _} =
+               ConversationTranscriptStore.append(id, %{
+                 "id" => "reply-#{run_id}",
+                 "run_id" => run_id,
+                 "role" => "assistant",
+                 "status" => "streaming",
+                 "content" => "partial"
+               })
+    end
+
+    assert :ok = TranscriptRecovery.mark(marked_id)
+    send(TranscriptRecovery, :recover)
+    :sys.get_state(TranscriptRecovery)
+
+    assert {:ok, [%{"status" => "error"}, %{"role" => "system"}]} =
+             ConversationTranscriptStore.list(marked_id)
+
+    assert {:ok, [%{"status" => "streaming"}]} =
+             ConversationTranscriptStore.list(unmarked["id"])
   end
 
   test "unavailable journal does not restart the recovery owner", %{id: id} do

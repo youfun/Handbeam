@@ -56,7 +56,7 @@ defmodule Handbeam.Application do
           Handbeam.Runtime.TaskTracker
         ] ++
         mcp_children() ++
-        recovery_children() ++ [HandbeamWeb.Endpoint]
+        [HandbeamWeb.Endpoint] ++ recovery_children()
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
