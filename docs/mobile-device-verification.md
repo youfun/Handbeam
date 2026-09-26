@@ -57,7 +57,7 @@ mix test --seed 48172
 
 macOS 上 `mix test` 会排除 `:linux_jobs` 与 `:linux_sandbox`（见 `test/test_helper.exs`）。这些 **bwrap / 桌面 Bash job** 测试要单列，它们不是手机验收项目。手机无 shell，不要求在设备安装 bwrap。
 
-Zig 必须是 `mobile/.tool-versions` 锁定的精确版本（当前 pin：`0.17.0-dev.2131+d08989840`）。`mix mob.doctor` 失败时先修工具链，不要用错版本的 Zig 打包后宣称 NIF 通过。
+Zig 必须是 `mobile/.tool-versions` 锁定的精确版本（当前 pin：`0.17.0-dev.269+ebff43698`）。`mix mob.doctor` 失败时先修工具链，不要用错版本的 Zig 打包后宣称 NIF 通过。
 
 打包前核对 gitignored `mobile/mob.exs` 与 `mobile/config/mob.exs.template` 的 `static_nifs` 是否一致。`mix mob.write_mob_exs` **不会覆盖**已有 `mob.exs`；陈旧文件会漏掉 `handbeam_storage` 等静态 NIF，安装后表现为 `:on_load_failure`。`--skip-setup` 不会修复该漂移。
 
