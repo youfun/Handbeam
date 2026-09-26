@@ -11,6 +11,7 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
   alias HandbeamWeb.WorkspaceLive.ConversationSwitching
   alias HandbeamWeb.WorkspaceLive.ModelSelection
   alias HandbeamWeb.WorkspaceLive.RuntimeProjection
+  alias HandbeamWeb.WorkspaceLive.WorkspaceNavigation
 
   require Logger
 
@@ -506,6 +507,7 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
     |> assign(:tools_active, %{})
     |> ConversationState.sync_conv_state(reload?: true)
     |> RuntimeProjection.restore_active_session()
+    |> WorkspaceNavigation.finish_runtime()
     |> assign(
       :composer_error,
       "The previous run is no longer accepting input. Send again to start a new run in this conversation."

@@ -121,14 +121,8 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
     update_assistant(socket, clean_chunk)
   end
 
-  def update_status(socket, overrides),
-    do: assign(socket, :status_info, Map.merge(socket.assigns.status_info, overrides))
-
-  def maybe_update_status(socket, overrides) do
-    if Map.has_key?(socket.assigns, :status_info),
-      do: update_status(socket, overrides),
-      else: socket
-  end
+  defdelegate update_status(socket, overrides), to: HandbeamWeb.WorkspaceLive.StatusProjection
+  defdelegate maybe_update_status(socket, overrides), to: HandbeamWeb.WorkspaceLive.StatusProjection
 
   def usage_tokens(usage) when is_map(usage) do
     input = Map.get(usage, :input_tokens, Map.get(usage, "input_tokens", 0)) || 0
@@ -245,7 +239,6 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
   alias HandbeamWeb.WorkspaceLive.EditorProjection
   alias HandbeamWeb.WorkspaceLive.ModelSelection
   alias HandbeamWeb.WorkspaceLive.ToolProjection
-  alias HandbeamWeb.WorkspaceLive.WorkspaceNavigation
 
   @high_freq_events [:message_delta, :thinking_delta]
 
@@ -485,9 +478,11 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
         ConversationState.current_workspace_path(socket)
       )
 
-    if updated.assigns.editor_files != socket.assigns.editor_files,
-      do: WorkspaceNavigation.refresh_loaded_tree_parent(updated, Path.expand(file_path)),
-      else: updated
+    if updated.assigns.editor_files != socket.assigns.editor_files do
+      assign(updated, :refresh_tree_parent, Path.expand(file_path))
+    else
+      updated
+    end
   end
 
   def do_handle_run_end(payload, status, socket) do

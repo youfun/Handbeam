@@ -27,19 +27,17 @@ defmodule HandbeamWeb.WorkspaceLive do
   alias HandbeamWeb.WorkspaceLive.ModelSelection
   alias HandbeamWeb.WorkspaceLive.RuntimeProjection
   alias HandbeamWeb.WorkspaceLive.Skills
+  alias HandbeamWeb.WorkspaceLive.ChatComponents
+  alias HandbeamWeb.WorkspaceLive.OverlayComponents
+  alias HandbeamWeb.WorkspaceLive.SidebarComponents
   alias HandbeamWeb.WorkspaceLive.ViewComponents
+  alias HandbeamWeb.WorkspaceLive.WorkspaceComponents
   alias HandbeamWeb.WorkspaceLive.WorkspaceNavigation
 
-  import ViewComponents,
-    only: [
-      mobile_header: 1,
-      projects_sidebar: 1,
-      chat_panel: 1,
-      workspace_panel: 1,
-      mobile_sheets: 1,
-      approval_overlay: 1,
-      status_bar: 1
-    ]
+  import SidebarComponents, only: [mobile_header: 1, projects_sidebar: 1]
+  import ChatComponents, only: [chat_panel: 1]
+  import WorkspaceComponents, only: [workspace_panel: 1]
+  import OverlayComponents, only: [mobile_sheets: 1, approval_overlay: 1, status_bar: 1]
 
   alias Handbeam.WorkspaceFiles
 
@@ -154,7 +152,7 @@ defmodule HandbeamWeb.WorkspaceLive do
       |> subscribe_to_conversation_updates()
       |> RuntimeProjection.subscribe_session()
       |> RuntimeProjection.subscribe_tasks()
-      |> RuntimeProjection.restore_active_session()
+      |> restore_session()
       |> load_available_skills()
       # Mobile mode
       |> assign(:mobile_mode, mobile_mode)
@@ -191,7 +189,7 @@ defmodule HandbeamWeb.WorkspaceLive do
           socket
           |> WorkspaceNavigation.enter_free_chat()
           |> RuntimeProjection.subscribe_session()
-          |> RuntimeProjection.restore_active_session()
+          |> restore_session()
           |> WorkspaceNavigation.close_mobile_sheets()
         end
 
@@ -219,7 +217,7 @@ defmodule HandbeamWeb.WorkspaceLive do
           |> assign(:workspace_label, ws["name"])
           |> WorkspaceNavigation.after_switch()
           |> RuntimeProjection.subscribe_session()
-          |> RuntimeProjection.restore_active_session()
+          |> restore_session()
           |> WorkspaceNavigation.close_mobile_sheets()
 
         {:noreply, socket}
@@ -550,7 +548,7 @@ defmodule HandbeamWeb.WorkspaceLive do
       socket
       |> WorkspaceNavigation.after_switch()
       |> RuntimeProjection.subscribe_session()
-      |> RuntimeProjection.restore_active_session()
+      |> restore_session()
       |> WorkspaceNavigation.close_mobile_sheets()
 
     {:noreply, push_patch(socket, to: "/w/#{ws_id}/c/#{conv_id}")}
@@ -571,7 +569,7 @@ defmodule HandbeamWeb.WorkspaceLive do
         socket
         |> WorkspaceNavigation.after_switch()
         |> RuntimeProjection.subscribe_session()
-        |> RuntimeProjection.restore_active_session()
+        |> restore_session()
         |> WorkspaceNavigation.close_mobile_sheets()
 
       {:noreply, push_patch(socket, to: "/w/#{ws_id}/c/#{conv_id}")}
@@ -591,7 +589,7 @@ defmodule HandbeamWeb.WorkspaceLive do
         socket
         |> ConversationState.sync_conv_state(reload?: true)
         |> RuntimeProjection.subscribe_session()
-        |> RuntimeProjection.restore_active_session()
+        |> restore_session()
         |> WorkspaceNavigation.close_mobile_sheets()
 
       {:noreply, push_patch(socket, to: "/w/#{ws_id}/c/#{conv_id}")}
@@ -809,7 +807,7 @@ defmodule HandbeamWeb.WorkspaceLive do
         socket
         |> WorkspaceNavigation.enter_free_chat()
         |> RuntimeProjection.subscribe_session()
-        |> RuntimeProjection.restore_active_session()
+        |> restore_session()
         |> WorkspaceNavigation.close_mobile_sheets()
 
       {:noreply, push_patch(socket, to: "/c/#{conv_id}")}
@@ -1007,11 +1005,11 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   @impl true
   def handle_info({:agent_event, event}, socket) do
-    {:noreply, RuntimeProjection.apply(socket, event)}
+    {:noreply, project_event(socket, event)}
   end
 
   def handle_info(%Handbeam.PubSub.AgentEvent{} = event, socket) do
-    {:noreply, RuntimeProjection.apply(socket, event)}
+    {:noreply, project_event(socket, event)}
   end
 
   def handle_info({:runtime_tasks, snapshot}, socket) do
@@ -1132,6 +1130,18 @@ defmodule HandbeamWeb.WorkspaceLive do
   def handle_info(msg, socket) do
     Logger.debug("[WorkspaceLive] unhandled message: #{inspect(msg)}")
     {:noreply, socket}
+  end
+
+  defp project_event(socket, event) do
+    socket
+    |> RuntimeProjection.apply(event)
+    |> WorkspaceNavigation.finish_runtime()
+  end
+
+  defp restore_session(socket) do
+    socket
+    |> RuntimeProjection.restore_active_session()
+    |> WorkspaceNavigation.finish_runtime()
   end
 
   # ── Agent event dispatch ──

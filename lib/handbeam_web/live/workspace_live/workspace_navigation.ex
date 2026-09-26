@@ -287,6 +287,7 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
           |> after_switch()
           |> RuntimeProjection.subscribe_session()
           |> RuntimeProjection.restore_active_session()
+          |> finish_runtime()
           |> close_mobile_sheets()
 
         path =
@@ -447,6 +448,18 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
   end
 
   def mobile_mode_from_ua(_), do: false
+
+  def finish_runtime(socket) do
+    case socket.assigns[:refresh_tree_parent] do
+      path when is_binary(path) ->
+        socket
+        |> assign(:refresh_tree_parent, nil)
+        |> refresh_loaded_tree_parent(path)
+
+      _ ->
+        socket
+    end
+  end
 
   def refresh_loaded_tree_parent(socket, abs_path) do
     relative = Path.relative_to(abs_path, ConversationState.current_workspace_path(socket))

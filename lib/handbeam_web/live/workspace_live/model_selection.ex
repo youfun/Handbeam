@@ -5,7 +5,7 @@ defmodule HandbeamWeb.WorkspaceLive.ModelSelection do
 
   alias Handbeam.Settings
   alias HandbeamWeb.WorkspaceLive.ConversationState
-  alias HandbeamWeb.WorkspaceLive.RuntimeProjection
+  alias HandbeamWeb.WorkspaceLive.StatusProjection
 
   require Logger
 
@@ -13,7 +13,7 @@ defmodule HandbeamWeb.WorkspaceLive.ModelSelection do
     [
       model_display_name: &model_display_name/2,
       sync_reasoning_for_conversation: &sync_reasoning_for_conversation/3,
-      update_status: &RuntimeProjection.maybe_update_status/2,
+      update_status: &StatusProjection.maybe_update_status/2,
       load_effective_settings: &load_effective_settings/1
     ]
   end
@@ -95,7 +95,7 @@ defmodule HandbeamWeb.WorkspaceLive.ModelSelection do
     socket
     |> assign(:selected_model, model)
     |> sync_reasoning_for_model(model)
-    |> RuntimeProjection.update_status(%{
+    |> StatusProjection.update_status(%{
       model: model_display_name(model, socket.assigns.available_models)
     })
   end
@@ -145,7 +145,7 @@ defmodule HandbeamWeb.WorkspaceLive.ModelSelection do
     |> assign(:selected_model, selected)
     |> assign(:effective_settings, settings)
     |> sync_reasoning_for_model(selected)
-    |> RuntimeProjection.update_status(%{model: model_display_name(selected, available)})
+    |> StatusProjection.update_status(%{model: model_display_name(selected, available)})
   end
 
   def reload_workspace_models(socket) do
@@ -178,7 +178,7 @@ defmodule HandbeamWeb.WorkspaceLive.ModelSelection do
     |> assign(:available_models, available)
     |> assign(:selected_model, selected)
     |> sync_reasoning_for_model(selected)
-    |> RuntimeProjection.update_status(%{model: model_display_name(selected, available)})
+    |> StatusProjection.update_status(%{model: model_display_name(selected, available)})
     |> maybe_sync_selected_model_to_conversation()
   end
 
@@ -451,7 +451,7 @@ defmodule HandbeamWeb.WorkspaceLive.ModelSelection do
         sync_reasoning_for_model(socket, selected_model)
       end
 
-    RuntimeProjection.update_status(socket, %{
+    StatusProjection.update_status(socket, %{
       model: model_display_name(selected_model, available)
     })
   end
