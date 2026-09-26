@@ -338,63 +338,67 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
     ~H"""
     <%= if @pending_approval do %>
       <div id="tool-approval-overlay" class="tool-approval-overlay">
-        <div class="approval-card bg-surface border rounded-xl shadow-2xl w-[480px] max-h-[80vh] overflow-y-auto p-5">
-          <h3 class="text-base font-semibold text-primary mb-3">
-            ⚠ {gettext("Tool Approval Required")}
-          </h3>
-          <p class="text-xs text-secondary mb-4">
-            {gettext("The agent wants to run the following tools. Review and approve or deny.")}
-          </p>
-
-          <div class="space-y-3 mb-4">
-            <%= for request <- approval_action_requests(@pending_approval) do %>
-              <div class="bg-main border rounded-lg p-3">
-                <div class="flex items-center gap-2 mb-2">
-                  <span class="font-mono font-bold text-xs text-accent">
-                    {request["tool_name"] || request[:tool_name]}
-                  </span>
-                  <span class="text-xs text-tertiary font-mono truncate">
-                    {request["tool_call_id"] || request[:tool_call_id]}
-                  </span>
-                </div>
-                <div class="text-xs text-secondary font-mono bg-main-darker rounded p-2 max-h-32 overflow-y-auto">
-                  <pre class="whitespace-pre-wrap break-all">{format_arguments(request["arguments"] || request[:arguments] || %{})}</pre>
-                </div>
-              </div>
-            <% end %>
+        <div class="approval-card bg-surface border rounded-xl shadow-2xl">
+          <div class="approval-card-header">
+            <h3 class="text-base font-semibold text-primary">
+              ⚠ {gettext("Tool Approval Required")}
+            </h3>
+            <p class="text-xs text-secondary">
+              {gettext("The agent wants to run the following tools. Review and approve or deny.")}
+            </p>
           </div>
 
-          <details id="approval-more-options" class="mb-4 text-xs text-secondary">
-            <summary class="cursor-pointer py-2">{gettext("More approval options")}</summary>
-            <div class="space-y-3 border rounded-lg p-3 mt-2">
-              <p>{gettext("Session approval allows these tools for the rest of this run.")}</p>
-              <button
-                phx-click="approve_all_tools"
-                phx-value-remember="session"
-                class="text-xs bg-surface text-primary border rounded px-3 py-2 transition-colors hover:bg-surface-hover"
-              >
-                {gettext("This session")}
-              </button>
-              <p>{gettext("Always allow saves these rules in this workspace:")}</p>
-              <ul class="space-y-1 font-mono break-all">
-                <%= for request <- approval_action_requests(@pending_approval) do %>
-                  <li>
-                    {request[:suggested_pattern] || request["suggested_pattern"] ||
-                      request[:tool_name] || request["tool_name"]}
-                  </li>
-                <% end %>
-              </ul>
-              <button
-                phx-click="approve_all_tools"
-                phx-value-remember="always"
-                class="text-xs bg-surface text-primary border rounded px-3 py-2 transition-colors hover:bg-surface-hover"
-              >
-                {gettext("Always allow")}
-              </button>
+          <div class="approval-card-body">
+            <div class="space-y-3">
+              <%= for request <- approval_action_requests(@pending_approval) do %>
+                <div class="bg-main border rounded-lg p-3">
+                  <div class="flex items-center gap-2 mb-2">
+                    <span class="font-mono font-bold text-xs text-accent">
+                      {request["tool_name"] || request[:tool_name]}
+                    </span>
+                    <span class="text-xs text-tertiary font-mono truncate">
+                      {request["tool_call_id"] || request[:tool_call_id]}
+                    </span>
+                  </div>
+                  <div class="approval-arguments text-xs text-secondary font-mono rounded p-2">
+                    <pre>{format_arguments(request["arguments"] || request[:arguments] || %{})}</pre>
+                  </div>
+                </div>
+              <% end %>
             </div>
-          </details>
 
-          <div class="flex flex-wrap gap-2 justify-end">
+            <details id="approval-more-options" class="text-xs text-secondary">
+              <summary class="cursor-pointer py-2">{gettext("More approval options")}</summary>
+              <div class="space-y-3 border rounded-lg p-3 mt-2">
+                <p>{gettext("Session approval allows these tools for the rest of this run.")}</p>
+                <button
+                  phx-click="approve_all_tools"
+                  phx-value-remember="session"
+                  class="text-xs bg-surface text-primary border rounded px-3 py-2 transition-colors hover:bg-surface-hover"
+                >
+                  {gettext("This session")}
+                </button>
+                <p>{gettext("Always allow saves these rules in this workspace:")}</p>
+                <ul class="approval-patterns space-y-1 font-mono">
+                  <%= for request <- approval_action_requests(@pending_approval) do %>
+                    <li>
+                      {request[:suggested_pattern] || request["suggested_pattern"] ||
+                        request[:tool_name] || request["tool_name"]}
+                    </li>
+                  <% end %>
+                </ul>
+                <button
+                  phx-click="approve_all_tools"
+                  phx-value-remember="always"
+                  class="text-xs bg-surface text-primary border rounded px-3 py-2 transition-colors hover:bg-surface-hover"
+                >
+                  {gettext("Always allow")}
+                </button>
+              </div>
+            </details>
+          </div>
+
+          <div class="approval-card-actions">
             <button
               phx-click="deny_all_tools"
               class="text-xs bg-error-subtle text-error border border-error/30 rounded px-3 py-2 transition-colors hover:bg-error/10"

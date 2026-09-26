@@ -446,15 +446,126 @@ textarea::placeholder {
   inset: 0;
   z-index: 80;
   display: flex;
+  flex-direction: column;
   align-items: center;
   justify-content: center;
+  padding: 16px;
+  overflow: hidden;
   background: rgba(0, 0, 0, 0.5);
+  box-sizing: border-box;
 }
 
 .tool-approval-overlay .approval-card {
   position: relative;
   z-index: 1;
+  display: flex;
+  flex-direction: column;
+  width: min(480px, 100%);
   max-width: min(480px, calc(100vw - 32px));
+  /* Separate declarations: an unsupported unit must not drop the whole rule. */
+  max-height: calc(100vh - 32px);
+  max-height: calc(100svh - 32px);
+  min-height: 0;
+  margin: auto;
+  flex: 0 1 auto;
+  overflow: hidden;
+}
+
+.approval-card-header,
+.approval-card-actions {
+  flex: 0 0 auto;
+}
+
+.approval-card-header {
+  padding: 20px 20px 12px;
+}
+
+.approval-card-header h3 {
+  margin-bottom: 8px;
+}
+
+.approval-card-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: calc(100vh - 220px);
+  max-height: calc(100svh - 220px);
+  overflow-y: auto;
+  padding: 0 20px 16px;
+}
+
+.approval-card-body > * + * {
+  margin-top: 16px;
+}
+
+.approval-card-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px 20px;
+  border-top: 1px solid var(--color-border);
+  background: var(--color-surface);
+}
+
+.approval-arguments {
+  max-height: 12rem;
+  overflow: auto;
+  background: var(--color-background);
+  overflow-wrap: anywhere;
+}
+
+.approval-arguments pre,
+.approval-patterns {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  border-radius: 0;
+  font-size: inherit;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+/* Release UI still uses utility classes that this stylesheet never generated.
+   Keep the action row on screen and scroll the command list instead. */
+.max-h-32 {
+  max-height: 8rem;
+}
+
+.max-h-\[80vh\] {
+  max-height: 80vh;
+}
+
+.tool-approval-overlay .approval-card > h3,
+.tool-approval-overlay .approval-card > p,
+.tool-approval-overlay .approval-card > details,
+.tool-approval-overlay .approval-card > .flex {
+  flex: 0 0 auto;
+}
+
+.tool-approval-overlay .approval-card > details {
+  max-height: 9rem;
+  overflow: auto;
+}
+
+.tool-approval-overlay .approval-card > .space-y-3 {
+  flex: 1 1 auto;
+  min-height: 0;
+  max-height: calc(100vh - 280px);
+  max-height: calc(100svh - 280px);
+  overflow: auto;
+}
+
+.tool-approval-overlay .approval-card pre {
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-height: 12rem;
+  overflow: auto;
 }
 
 .workspace-panel-toggle {
@@ -2039,6 +2150,18 @@ button.workspace-file-row:hover,
 .conversation-menu-item.danger:hover {
   color: var(--color-error);
   background: var(--color-error-bg);
+}
+
+.conversation-menu-item .copy-done {
+  display: none;
+}
+
+.conversation-menu-item[data-copied="true"] .copy-idle {
+  display: none;
+}
+
+.conversation-menu-item[data-copied="true"] .copy-done {
+  display: inline;
 }
 
 /* ── Conversation badge (workspace label in trash) ── */
