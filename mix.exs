@@ -85,11 +85,8 @@ defmodule Handbeam.MixProject do
 
       # i18n / 多语言支持
       {:gettext, "~> 1.0"},
-
-      # 终端仿真器 — Ghostty VT NIFs + PTY + LiveView 组件
-      {:ghostty, "~> 0.5"},
       {:elixir_make, "~> 0.9", runtime: false}
-    ]
+    ] ++ maybe_ghostty()
   end
 
   # Aliases are shortcuts or tasks specific to the current project.
@@ -112,12 +109,23 @@ defmodule Handbeam.MixProject do
     ]
   end
 
-  # Phoenix release 配置（常规 OTP release，含 ERTS，tar.gz 分发）。
+  # Ghostty NIFs exist for Linux and macOS only. Windows Web UI packages
+  # omit the dep so `mix release` can build; the terminal stays unavailable.
+  defp maybe_ghostty do
+    if match?({:win32, _}, :os.type()) do
+      []
+    else
+      [{:ghostty, "~> 0.5"}]
+    end
+  end
+
+  # Phoenix release 配置（常规 OTP release，含 ERTS）。
+  # Unix 包用 tar.gz，Windows 包用 zip；两边的启动脚本都打进 release。
   defp releases do
     [
       handbeam: [
         include_erts: true,
-        include_executables_for: [:unix]
+        include_executables_for: [:unix, :windows]
       ]
     ]
   end

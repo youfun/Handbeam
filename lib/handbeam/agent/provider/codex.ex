@@ -351,8 +351,16 @@ defmodule Handbeam.Agent.Provider.Codex do
     do: {:error, "Codex stream ended before its terminal response. No tools were executed."}
 
   defp finish(%{response: response, output: streamed}, auth, config) do
+    # Codex can complete with output: [] after delivering full output_item.done
+    # events. An empty list is truthy in Elixir, so `||` would discard those items.
     output =
-      response["output"] || streamed |> Enum.sort_by(&elem(&1, 0)) |> Enum.map(&elem(&1, 1))
+      case response["output"] do
+        empty when empty in [nil, []] ->
+          streamed |> Enum.sort_by(&elem(&1, 0)) |> Enum.map(&elem(&1, 1))
+
+        output ->
+          output
+      end
 
     with :ok <- validate_output(response, output),
          {:ok, parsed} <- OpenAI.parse_response(Map.put(response, "output", output)),

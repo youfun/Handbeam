@@ -104,7 +104,7 @@ defmodule HandbeamWeb.WorkspaceLive do
       |> assign(:file_browser_path, nil)
       |> assign(:sandbox_workspace?, WorkspaceNavigation.sandbox_workspace?())
       |> subscribe_workspace_import()
-      |> assign(:terminal_available?, Handbeam.Host.terminal?())
+      |> assign(:terminal_available?, Handbeam.Terminal.available?())
       |> assign(:show_terminal, false)
       |> assign(:right_panel_view, :files)
       |> assign(:workspace_tree, %{})

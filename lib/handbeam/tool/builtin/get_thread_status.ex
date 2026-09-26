@@ -9,6 +9,11 @@ defmodule Handbeam.Tool.Builtin.GetThreadStatus do
       type: "object",
       additionalProperties: false,
       required: ["thread"],
-      properties: %{thread: %{type: "string"}}
+      properties: %{
+        thread: %{
+          type: "string",
+          description: "Conversation id in the same workspace. Not a title."
+        }
+      }
     }
 end

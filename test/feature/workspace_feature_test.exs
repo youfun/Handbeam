@@ -201,6 +201,25 @@ defmodule HandbeamWeb.Feature.WorkspaceFeatureTest do
       |> assert_has(".conversation-menu-item[phx-click='archive_conversation']", "Archive")
     end
 
+    test "conversation menu copies the id used for thread messaging", %{conn: conn} do
+      session =
+        conn
+        |> visit("/")
+        |> click_button(
+          "button[phx-click='new_conversation_in_workspace'][phx-value-ws_id='default']",
+          ""
+        )
+        |> click_button("button[phx-click='toggle_conversation_menu']", "More actions")
+
+      [conv] =
+        Handbeam.ConversationStore.storage_path()
+        |> File.read!()
+        |> Jason.decode!()
+        |> Map.fetch!("conversations")
+
+      assert_has(session, ".conversation-menu-item[data-copy='#{conv["id"]}']", "Copy ID")
+    end
+
     test "archive conversation removes it from active list", %{conn: conn} do
       conn
       |> visit("/")

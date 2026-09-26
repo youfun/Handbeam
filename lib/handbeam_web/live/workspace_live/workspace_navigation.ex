@@ -316,7 +316,7 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
   end
 
   def show_terminal_panel(socket, mobile? \\ false) do
-    if Handbeam.Host.terminal?() do
+    if Handbeam.Terminal.available?() do
       open_terminal_panel(socket, mobile?)
     else
       socket

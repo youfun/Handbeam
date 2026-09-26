@@ -10,7 +10,11 @@ defmodule Handbeam.Tool.Builtin.SendThreadMessage do
       additionalProperties: false,
       required: ["thread", "message", "request_id"],
       properties: %{
-        thread: %{type: "string"},
+        thread: %{
+          type: "string",
+          description:
+            "Target conversation id in the same workspace. Not a title. Free chats and internal tasks are not addressable."
+        },
         message: %{type: "string", maxLength: 8000},
         request_id: %{type: "string", maxLength: 128},
         handoff_id: %{type: "string", maxLength: 128},

@@ -14,8 +14,11 @@ export SECRET_KEY_BASE="${SECRET_KEY_BASE:-$(openssl rand -base64 48 2>/dev/null
 
 mkdir -p "$HOME/.handbeam"
 
-# 获取本机 LAN IP
-lan_ip=$(ifconfig 2>/dev/null | grep -Eo 'inet (addr:)?192\.168\.[0-9.]+' | head -1 | awk '{print $2}')
+# 获取本机 LAN IP（Linux 用 ip，macOS 回退 ifconfig）
+lan_ip=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "src") { print $(i + 1); exit }}')
+if [[ -z "$lan_ip" ]]; then
+  lan_ip=$(ifconfig 2>/dev/null | grep -Eo 'inet (addr:)?192\.168\.[0-9.]+' | head -1 | awk '{print $2}')
+fi
 if [[ -z "$lan_ip" ]]; then
   lan_ip=$(ifconfig 2>/dev/null | grep -Eo 'inet (addr:)?10\.[0-9.]+' | head -1 | awk '{print $2}')
 fi

@@ -1217,6 +1217,15 @@ msgstr "More actions"
 msgid "重命名"
 msgstr "Rename"
 
+msgid "复制 ID"
+msgstr "Copy ID"
+
+msgid "已复制"
+msgstr "Copied"
+
+msgid "复制会话 ID，用于线程通讯"
+msgstr "Copy conversation ID for thread messaging"
+
 msgid "归档"
 msgstr "Archive"
 

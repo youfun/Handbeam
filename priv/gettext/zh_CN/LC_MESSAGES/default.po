@@ -1309,6 +1309,15 @@ msgstr "更多操作"
 msgid "重命名"
 msgstr "重命名"
 
+msgid "复制 ID"
+msgstr "复制 ID"
+
+msgid "已复制"
+msgstr "已复制"
+
+msgid "复制会话 ID，用于线程通讯"
+msgstr "复制会话 ID，用于线程通讯"
+
 msgid "归档"
 msgstr "归档"
 

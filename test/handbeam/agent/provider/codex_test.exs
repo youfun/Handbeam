@@ -1,4 +1,7 @@
 defmodule Handbeam.Agent.Provider.CodexTest do
+  # Stream boundary failures: a terminal output: [] must not discard completed
+  # item events; absent/null output has the same fallback. A nonempty terminal
+  # output remains authoritative and must not duplicate streamed items.
   use ExUnit.Case, async: false
 
   import Plug.Conn
@@ -329,18 +332,23 @@ defmodule Handbeam.Agent.Provider.CodexTest do
   end
 
   test "out of order completed item events are reassembled by output index" do
-    Req.Test.stub(
-      __MODULE__,
-      &sse(
-        &1,
-        event("response.output_item.done", %{"output_index" => 1, "item" => text_item("second")}) <>
-          event("response.output_item.done", %{"output_index" => 0, "item" => text_item("first")}) <>
-          event("response.done", %{"response" => %{"status" => "completed"}})
+    for terminal <- [%{}, %{"output" => nil}, %{"output" => []}] do
+      Req.Test.stub(
+        __MODULE__,
+        &sse(
+          &1,
+          event("response.output_item.done", %{"output_index" => 1, "item" => text_item("second")}) <>
+            event("response.output_item.done", %{
+              "output_index" => 0,
+              "item" => text_item("first")
+            }) <>
+            event("response.done", %{"response" => Map.put(terminal, "status", "completed")})
+        )
       )
-    )
 
-    assert {:ok, result} = Codex.complete([Message.user("hi")], [], config())
-    assert Message.text(hd(result.messages)) == "first\nsecond"
+      assert {:ok, result} = Codex.complete([Message.user("hi")], [], config())
+      assert Message.text(hd(result.messages)) == "first\nsecond"
+    end
   end
 
   test "invalid function arguments, missing call ID and unknown native tools are rejected" do

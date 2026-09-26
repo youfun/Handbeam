@@ -420,6 +420,35 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
                   <button
                     type="button"
                     role="menuitem"
+                    id={"conversation-action-copy-id-#{conv.workspace_id}-#{conv.id}"}
+                    class="conversation-menu-item"
+                    phx-hook="CopyText"
+                    data-copy={conv.id}
+                    title={gettext("复制会话 ID，用于线程通讯")}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                      <rect
+                        x="4.25"
+                        y="3.25"
+                        width="5.5"
+                        height="6.5"
+                        rx="0.75"
+                        stroke="currentColor"
+                        stroke-width="1.1"
+                      />
+                      <path
+                        d="M3.25 8.75H2.75A.75.75 0 0 1 2 8V2.75A.75.75 0 0 1 2.75 2H8a.75.75 0 0 1 .75.75V3.25"
+                        stroke="currentColor"
+                        stroke-width="1.1"
+                        stroke-linecap="round"
+                      />
+                    </svg>
+                    <span class="copy-idle">{gettext("复制 ID")}</span>
+                    <span class="copy-done">{gettext("已复制")}</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
                     phx-click="archive_conversation"
                     phx-value-id={conv.id}
                     phx-value-ws_id={conv.workspace_id}

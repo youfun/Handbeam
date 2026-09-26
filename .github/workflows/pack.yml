@@ -1,9 +1,12 @@
-# Manual (and tag) pack of the Linux web OTP release and both Android APKs.
+# Pack the Web UI OTP release for Linux x86_64, Windows amd64, Windows arm64,
+# and macOS arm64, plus both Android APKs. Web packages are published to
+# GitHub Releases (moving tag web-latest, or the v* tag that triggered the run).
 name: Pack
 
 on:
   workflow_dispatch:
   push:
+    branches: [main]
     tags:
       - "v*"
 
@@ -13,17 +16,44 @@ concurrency:
 
 jobs:
   web:
-    name: Web (linux-x86_64)
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    name: Web (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: ${{ matrix.timeout }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: linux-x86_64
+            timeout: 40
+          - os: windows-2025
+            target: windows-amd64
+            timeout: 60
+          - os: windows-11-arm
+            target: windows-arm64
+            timeout: 180
+          - os: macos-15
+            target: macos-arm64
+            timeout: 50
 
     steps:
       - uses: actions/checkout@v5
 
       - uses: erlef/setup-beam@v1
+        if: matrix.target != 'windows-arm64'
         with:
           otp-version: "29.0"
           elixir-version: "1.20"
+
+      - name: Install Windows ARM64 OTP
+        if: matrix.target == 'windows-arm64'
+        shell: pwsh
+        run: ./scripts/ci/install_otp_windows_arm64.ps1
+
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: startsWith(matrix.target, 'windows-')
+        with:
+          arch: ${{ matrix.target == 'windows-arm64' && 'arm64' || 'x64' }}
 
       - uses: actions/setup-node@v4
         with:
@@ -37,36 +67,86 @@ jobs:
             _build
             ~/.mix
             ~/.hex
-          key: pack-web-${{ runner.os }}-${{ hashFiles('mix.lock') }}
+          key: pack-web-${{ matrix.target }}-${{ hashFiles('mix.lock') }}
           restore-keys: |
-            pack-web-${{ runner.os }}-
+            pack-web-${{ matrix.target }}-
 
       - name: OTP release
-        run: |
-          mix local.hex --force
-          mix local.rebar --force
-          mix deps.get
-          npm ci
-          MIX_ENV=prod mix compile
-          MIX_ENV=prod mix assets.deploy
-          MIX_ENV=prod mix release --overwrite
+        shell: bash
+        if: matrix.target == 'linux-x86_64' || matrix.target == 'macos-arm64'
+        run: bash scripts/pack_webui.sh ${{ matrix.target }}
 
-      - name: Archive
-        run: |
-          release_dir=_build/prod/rel/handbeam
-          cp scripts/start.sh "$release_dir/start.sh"
-          chmod +x "$release_dir/start.sh"
-          tar -C "$release_dir" -czf handbeam-linux-x86_64.tar.gz .
+      - name: OTP release
+        shell: pwsh
+        if: startsWith(matrix.target, 'windows-')
+        run: ./scripts/pack_webui.ps1 ${{ matrix.target }}
 
       - uses: actions/upload-artifact@v4
         with:
-          name: handbeam-web-linux-x86_64
-          path: handbeam-linux-x86_64.tar.gz
+          name: handbeam-web-${{ matrix.target }}
+          path: handbeam-web-${{ matrix.target }}.*
           if-no-files-found: error
           retention-days: 14
 
+  publish-web:
+    name: Publish Web UI release
+    needs: web
+    if: >-
+      always() &&
+      (github.event_name == 'workflow_dispatch' ||
+       github.ref == 'refs/heads/main' ||
+       startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: handbeam-web-*
+          path: dist
+          merge-multiple: true
+
+      - name: Release notes
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          files=(dist/handbeam-web-*)
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "No Web UI packages were built"
+            exit 1
+          fi
+          {
+            echo "Web UI packages. Each archive is a self-contained OTP release."
+            echo
+            echo "Linux and macOS: unpack and run \`./start.sh\`."
+            echo "Windows: unpack and run \`start.bat\`."
+            echo "Default URL: http://localhost:5008"
+            echo
+            echo "Windows packages do not include the in-browser terminal. Ghostty has no Windows NIF."
+            echo
+            echo "Assets:"
+            find dist -type f -printf '%f\n' | sort
+          } > notes.md
+
+      - name: Replace moving web-latest tag
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release delete web-latest --yes --cleanup-tag || true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/v') && github.ref_name || 'web-latest' }}
+          name: Web UI
+          body_path: notes.md
+          prerelease: true
+          make_latest: false
+          files: dist/handbeam-web-*
+
   android:
     name: Android APK
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     timeout-minutes: 90
     defaults:

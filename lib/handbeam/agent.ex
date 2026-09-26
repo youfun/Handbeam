@@ -36,7 +36,7 @@ defmodule Handbeam.Agent do
     tools = maybe_append_beam_tools(tools, working_dir)
     Enum.each(tools, &Handbeam.Tool.Registry.register/1)
 
-    if Handbeam.Host.terminal?() do
+    if Handbeam.Terminal.available?() do
       Handbeam.Tool.Extension.Terminal.register()
     end
 
@@ -105,7 +105,7 @@ defmodule Handbeam.Agent do
     tools = maybe_append_beam_tools(tools, working_dir)
     Enum.each(tools, &Handbeam.Tool.Registry.register/1)
 
-    if Handbeam.Host.terminal?() do
+    if Handbeam.Terminal.available?() do
       Handbeam.Tool.Extension.Terminal.register()
     end
 
