@@ -22,6 +22,25 @@ fi
 
 mix local.hex 2.4.1 --force
 mix local.rebar --force
+# MixToolchain also checks ~/.mix/archives. mise installs Hex under its Elixir prefix.
+mkdir -p "$HOME/.mix/archives"
+copy_hex_archive() {
+  local src="$1"
+  [[ -d "$src" ]] || return 0
+  local name
+  name="$(basename "$src")"
+  rm -rf "$HOME/.mix/archives/$name"
+  cp -a "$src" "$HOME/.mix/archives/$name"
+  echo "copied Hex archive to $HOME/.mix/archives/$name"
+}
+if [[ -n "${MIX_HOME:-}" ]]; then
+  for src in "$MIX_HOME/archives"/hex-2.4.1*; do
+    copy_hex_archive "$src"
+  done
+fi
+for src in "$HOME"/.local/share/mise/installs/elixir/*/.mix/archives/hex-2.4.1*; do
+  copy_hex_archive "$src"
+done
 mix deps.get
 mix mob.write_mob_exs
 mix mob.write_local_properties

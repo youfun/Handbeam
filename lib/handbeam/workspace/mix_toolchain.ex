@@ -427,17 +427,24 @@ defmodule Handbeam.Workspace.MixToolchain do
   end
 
   defp hex_archive_root do
-    homes = [
-      Path.expand("~/.mix/archives"),
-      System.get_env("HANDBEAM_HEX_ARCHIVE")
-    ]
+    homes =
+      [
+        mix_archives_dir(),
+        Path.expand("~/.mix/archives"),
+        System.get_env("HANDBEAM_HEX_ARCHIVE")
+      ]
+      |> Enum.reject(&(&1 in [nil, ""]))
+      |> Enum.uniq()
 
-    Enum.find_value(homes, fn
-      home when is_binary(home) and home != "" ->
-        hex_archive_in(home)
-
-      _ ->
-        nil
+    Enum.find_value(homes, fn home ->
+      hex_archive_in(home)
     end)
+  end
+
+  defp mix_archives_dir do
+    case System.get_env("MIX_HOME") do
+      home when is_binary(home) and home != "" -> Path.join(home, "archives")
+      _ -> nil
+    end
   end
 end
