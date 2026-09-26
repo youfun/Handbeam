@@ -268,7 +268,12 @@ defmodule Handbeam.Permissions.AutoReview do
     cond do
       use_run_provider?(configured, request) ->
         {:ok, request.run_provider,
-         call_config(request.run_provider_config, request.run_model, timeout, request.workspace_path)}
+         call_config(
+           request.run_provider_config,
+           request.run_model,
+           timeout,
+           request.workspace_path
+         )}
 
       true ->
         resolve_configured_model(request.workspace_path, configured, timeout)
@@ -303,7 +308,8 @@ defmodule Handbeam.Permissions.AutoReview do
   end
 
   defp resolve_configured_model(workspace, model, timeout) do
-    model = if blank_model?(model), do: ModelConfig.default_model_for_workspace(workspace), else: model
+    model =
+      if blank_model?(model), do: ModelConfig.default_model_for_workspace(workspace), else: model
 
     with true <- is_binary(model) and model != "",
          {:ok, provider_config, model_id} <-
@@ -313,7 +319,6 @@ defmodule Handbeam.Permissions.AutoReview do
     else
       false -> {:error, :model_unavailable}
       {:error, reason} -> {:error, {:model_unavailable, reason}}
-      other -> {:error, other}
     end
   end
 
