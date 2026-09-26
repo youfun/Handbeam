@@ -53,7 +53,7 @@ defmodule Handbeam.Script.WorkspaceLiveHoldPlug do
       Plug.Conn.chunk(
         conn,
         "data: " <>
-          Jason.encode!(%{
+          Handbeam.JSON.encode!(%{
             choices: [%{delta: %{content: "Fixture hold"}, finish_reason: nil}]
           }) <> "\n\n"
       )
@@ -62,12 +62,12 @@ defmodule Handbeam.Script.WorkspaceLiveHoldPlug do
 
     reply =
       "data: " <>
-        Jason.encode!(%{
+        Handbeam.JSON.encode!(%{
           choices: [%{delta: %{content: " done"}, finish_reason: nil}]
         }) <>
         "\n\n" <>
         "data: " <>
-        Jason.encode!(%{choices: [%{delta: %{}, finish_reason: "stop"}]}) <>
+        Handbeam.JSON.encode!(%{choices: [%{delta: %{}, finish_reason: "stop"}]}) <>
         "\n\ndata: [DONE]\n\n"
 
     {:ok, conn} = Plug.Conn.chunk(conn, reply)
@@ -118,7 +118,7 @@ System.delete_env("OPENAI_API_KEY")
 
 File.write!(
   System.get_env("HANDBEAM_MODELS_FILE"),
-  Jason.encode!(%{
+  Handbeam.JSON.encode!(%{
     "defaultProvider" => "fixture",
     "defaultModel" => "fixture-hold",
     "providers" => %{
