@@ -58,6 +58,21 @@ defmodule Handbeam.Security.PathValidator.Test do
       path = Path.join(subdir, "new.txt")
       assert PathValidator.validate_writeable(path) == :ok
     end
+
+    test "checks the nearest existing ancestor when parents are missing" do
+      path = Path.join(@sandbox_dir, "desktop/macos/Sources/main.swift")
+      assert PathValidator.validate_writeable(path) == :ok
+    end
+
+    test "rejects a missing tree under a read-only ancestor" do
+      ro_dir = Path.join(@sandbox_dir, "readonly_dir")
+      File.mkdir_p!(ro_dir)
+      File.chmod!(ro_dir, 0o555)
+
+      path = Path.join(ro_dir, "nested/new.txt")
+      {:error, reason} = PathValidator.validate_writeable(path)
+      assert reason =~ "not writeable"
+    end
   end
 
   describe "validate_within_workspace/2 — workspace boundary" do

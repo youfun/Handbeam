@@ -49,11 +49,6 @@ defmodule Handbeam.Tool.Builtin.WriteTest do
     end
 
     test "creates parent directories" do
-      # Pre-create sub1 so validate_writeable can find a writable parent.
-      # (Known gap: validate_writeable only checks one parent level.)
-      sub1 = Path.join(@work_dir, "sub1")
-      File.mkdir_p!(sub1)
-
       path = Path.join(@work_dir, "sub1/sub2/deep.txt")
 
       {:ok, output, data} =
@@ -66,6 +61,20 @@ defmodule Handbeam.Tool.Builtin.WriteTest do
       assert data.file_path == path
       assert File.exists?(path)
       assert File.read!(path) == "deep content\n"
+    end
+
+    test "creates a missing directory tree instead of reporting EACCES" do
+      path = Path.join(@work_dir, "desktop/macos/Sources/Handbeam/main.swift")
+
+      {:ok, output, _data} =
+        Write.execute(
+          %{"file_path" => "desktop/macos/Sources/Handbeam/main.swift", "content" => "import AppKit\n"},
+          %{working_directory: @work_dir}
+        )
+
+      assert output =~ "Wrote"
+      refute output =~ "EACCES"
+      assert File.read!(path) == "import AppKit\n"
     end
 
     @tag :"BDD-WRITE-004"

@@ -29,24 +29,27 @@ defmodule Handbeam.Security.PathValidator do
   end
 
   @doc """
-  Validate that a path (or its parent directory) is writeable.
+  Validate that a path, or the nearest existing ancestor, is writeable.
+
+  A missing file is writeable when its parent is. A missing parent is not a
+  permission error: walk up to the nearest existing ancestor and check that.
+  Callers that create directories, such as `write`, can then mkdir_p.
   """
   @spec validate_writeable(String.t()) :: :ok | {:error, String.t()}
   def validate_writeable(path) do
-    if File.exists?(path) do
-      if is_writeable?(path) do
-        :ok
-      else
-        {:error, "#{path}: Read-only file (EACCES)"}
-      end
-    else
-      target = Path.dirname(path)
+    cond do
+      File.exists?(path) ->
+        if is_writeable?(path), do: :ok, else: {:error, "#{path}: Read-only file (EACCES)"}
 
-      if is_writeable?(target) do
-        :ok
-      else
-        {:error, "#{path}: Parent directory not writeable (EACCES)"}
-      end
+      ancestor = nearest_existing_ancestor(path) ->
+        if is_writeable?(ancestor) do
+          :ok
+        else
+          {:error, "#{path}: Parent directory not writeable (EACCES)"}
+        end
+
+      true ->
+        {:error, "#{path}: No such file"}
     end
   end
 
@@ -430,10 +433,27 @@ defmodule Handbeam.Security.PathValidator do
     end
   end
 
+  defp nearest_existing_ancestor(path) do
+    path
+    |> Path.dirname()
+    |> Stream.iterate(&Path.dirname/1)
+    |> Enum.reduce_while(nil, fn dir, _acc ->
+      cond do
+        File.exists?(dir) -> {:halt, dir}
+        dir == Path.dirname(dir) -> {:halt, nil}
+        true -> {:cont, nil}
+      end
+    end)
+  end
+
   defp is_writeable?(path) do
     case File.stat(path) do
-      {:ok, %{access: access}} when access in [:write, :read_write] -> true
-      _ -> false
+      {:ok, %{access: access, type: type}}
+      when access in [:write, :read_write] and type in [:directory, :regular] ->
+        true
+
+      _ ->
+        false
     end
   end
 end
