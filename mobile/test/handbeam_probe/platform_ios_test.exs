@@ -98,6 +98,16 @@ defmodule HandbeamProbe.Platform.IOSTest do
     assert {:ok, %{"outcome" => "ui_presented"}} = decoded.body
   end
 
+  test "calendar and alarm are explicit unsupported results, not a presented outcome" do
+    for op <- ["platform_device_calendar", "platform_device_alarm", "platform_app_settings"] do
+      req = Request.new(op, "req-ios-#{op}", 1, self(), %{"op" => op})
+      assert {:ok, :async} = Nif.command(req)
+      assert_receive {:engine_result, map}
+      assert {:ok, decoded} = Nif.decode_engine_result(map)
+      assert {:error, "unsupported_on_ios"} = decoded.body
+    end
+  end
+
   test "adapter error is returned instead of a presented outcome" do
     Application.put_env(:handbeam_probe, :ios_platform_adapter, ErrorAdapter)
 

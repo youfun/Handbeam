@@ -66,6 +66,7 @@ defmodule HandbeamProbe.HomeScreen.State do
     models: nil,
     mcp: nil,
     git: nil,
+    app_settings: nil,
 
     # ── platform (composer attachments / system UI requests) ──
     pending_attachments: [],

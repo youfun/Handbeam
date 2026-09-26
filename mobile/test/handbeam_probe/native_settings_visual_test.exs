@@ -390,10 +390,37 @@ defmodule HandbeamProbe.NativeSettingsVisualTest do
       )
 
     blob = flatten_text(tree)
-    assert blob =~ "UI"
-    assert blob =~ "Git"
+    assert blob =~ gettext("UI")
+    assert blob =~ gettext("Git")
+    assert blob =~ gettext("App")
     assert blob =~ gettext("Appearance is not available yet")
     refute blob =~ "models.allow.providers"
+  end
+
+  test "app settings shows calendar grant lines without claiming an alarm permission" do
+    granted = %HandbeamProbe.AppSettings{
+      calendar_read: true,
+      calendar_write: false,
+      notice: nil
+    }
+
+    tree =
+      HomeScreen.render(
+        HandbeamProbe.HomeScreen.State.new(
+          page: :app,
+          app_settings: granted,
+          workspace: %{"id" => "w", "name" => "W", "path" => "/tmp"},
+          approval_open: false
+        )
+      )
+
+    blob = flatten_text(tree)
+    assert blob =~ gettext("Calendar")
+    assert blob =~ gettext("Read allowed")
+    refute blob =~ gettext("Read") <> " · "
+    refute blob =~ gettext("Write") <> " · "
+    assert blob =~ gettext("Allow calendar")
+    assert blob =~ gettext("Alarm")
   end
 
   test "git settings page uses native identity and account chrome" do

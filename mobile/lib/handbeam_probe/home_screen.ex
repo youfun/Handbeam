@@ -23,6 +23,7 @@ defmodule HandbeamProbe.HomeScreen do
   require Logger
 
   alias HandbeamProbe.HomeScreen.{
+    AppSettings,
     Chat,
     Delivery,
     FileNav,
@@ -207,6 +208,17 @@ defmodule HandbeamProbe.HomeScreen do
   defp dispatch({:platform, _, _} = msg, socket), do: Platform.handle(msg, socket)
   defp dispatch({:platform, _, _, _} = msg, socket), do: Platform.handle(msg, socket)
 
+  defp dispatch(
+         {:engine_result, %Inbound.EngineResult{request_id: request_id}} = msg,
+         %{assigns: %{page: :app}} = socket
+       ) do
+    if Requests.ctx(socket, request_id)[:kind] == :app_settings do
+      AppSettings.handle(msg, socket)
+    else
+      Platform.handle(msg, socket)
+    end
+  end
+
   defp dispatch({:engine_result, %Inbound.EngineResult{}} = msg, socket),
     do: Platform.handle(msg, socket)
 
@@ -268,6 +280,10 @@ defmodule HandbeamProbe.HomeScreen do
   defp dispatch({:tap, {action, _}} = msg, %{assigns: %{page: :git}} = socket)
        when action in [:git_edit, :git_default],
        do: GitSettings.handle(msg, socket)
+
+  defp dispatch({:tap, action} = msg, %{assigns: %{page: :app}} = socket)
+       when action in [:request_calendar, :open_app_settings],
+       do: AppSettings.handle(msg, socket)
 
   defp dispatch({:change, {:mcp_field, _}, _} = msg, socket), do: MCPSettings.handle(msg, socket)
 

@@ -68,6 +68,15 @@ defmodule HandbeamProbe.Platform.IOS do
           "outcome" => "chooser_presented"
         })
 
+      "platform_device_calendar" ->
+        reply_error(caller, request_id, generation, "unsupported_on_ios")
+
+      "platform_device_alarm" ->
+        reply_error(caller, request_id, generation, "unsupported_on_ios")
+
+      "platform_app_settings" ->
+        reply_error(caller, request_id, generation, "unsupported_on_ios")
+
       "platform_export" ->
         export(caller, request_id, generation, fields)
 

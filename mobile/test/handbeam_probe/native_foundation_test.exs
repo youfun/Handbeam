@@ -187,6 +187,9 @@ defmodule HandbeamProbe.NativeFoundationTest do
 
     assert "platform_open_url" in HandbeamProbe.Platform.Request.ops()
     assert "platform_share_text" in HandbeamProbe.Platform.Request.ops()
+    assert "platform_device_calendar" in HandbeamProbe.Platform.Request.ops()
+    assert "platform_device_alarm" in HandbeamProbe.Platform.Request.ops()
+    assert "platform_app_settings" in HandbeamProbe.Platform.Request.ops()
     assert {:ok, :async} = Platform.open_url(self(), "url-1", 3, "https://example.com")
     assert_receive {:platform_cmd, url_req}, 1_000
     assert url_req.op == "platform_open_url"

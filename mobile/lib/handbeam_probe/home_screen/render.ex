@@ -153,7 +153,7 @@ defmodule HandbeamProbe.HomeScreen.Render do
   defp content(%{page: :settings} = a), do: content(%{a | page: :models})
 
   defp content(%{page: page} = a)
-       when page in [:models, :workspace, :mcp, :git, :appearance] do
+       when page in [:models, :workspace, :mcp, :git, :appearance, :app] do
     node(:column, [weight: 1, fill_width: true], [
       settings_tabs(page),
       settings_body(a),
@@ -200,6 +200,12 @@ defmodule HandbeamProbe.HomeScreen.Render do
         [
           tab_button(gettext("MCP"), {:page, :mcp}, page == :mcp),
           tab_button(gettext("Git"), {:page, :git}, page == :git),
+          tab_button(gettext("App"), {:page, :app}, page == :app)
+        ],
+        padding_top: 8
+      ),
+      segment_row(
+        [
           tab_button(gettext("UI"), {:page, :appearance}, page == :appearance,
             background: if(page == :appearance, do: color(:muted), else: color(:control)),
             text_color: if(page == :appearance, do: color(:card), else: color(:muted))
@@ -221,6 +227,10 @@ defmodule HandbeamProbe.HomeScreen.Render do
 
   defp settings_body(%{page: :git} = a),
     do: GitSettings.render(a.git)
+
+  defp settings_body(%{page: :app} = a) do
+    HandbeamProbe.AppSettings.render(a.app_settings || HandbeamProbe.AppSettings.new())
+  end
 
   defp settings_body(%{page: :appearance}) do
     scroll([

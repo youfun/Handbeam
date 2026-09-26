@@ -78,6 +78,86 @@ defmodule HandbeamProbe.Platform do
   def open_url(caller, request_id, generation, url),
     do: start(open_url_request(caller, request_id, generation, url))
 
+  @doc """
+  Read or write the system calendar. Android inserts through CalendarContract
+  after READ/WRITE_CALENDAR. iOS replies unsupported. The Agent tool builds
+  the request here.
+  """
+  @spec device_calendar_request(pid(), String.t(), integer(), map()) ::
+          {:ok, Request.t()} | {:error, term()}
+  def device_calendar_request(caller, request_id, generation, cmd)
+      when is_pid(caller) and is_binary(request_id) and is_map(cmd) do
+    action = calendar_action(cmd[:calendar_action])
+
+    if action do
+      {:ok,
+       Request.new("platform_device_calendar", request_id, generation, caller, %{
+         "op" => "platform_device_calendar",
+         "action" => action,
+         "calendar_id" => text_field(cmd, :calendar_id),
+         "query" => text_field(cmd, :query),
+         "start_ms" => int_field(cmd, :start_ms),
+         "end_ms" => int_field(cmd, :end_ms),
+         "limit" => int_field(cmd, :limit) || 20,
+         "title" => text_field(cmd, :title),
+         "description" => text_field(cmd, :description),
+         "location" => text_field(cmd, :location),
+         "all_day" => cmd[:all_day] == true,
+         "deadline_ms" => deadline_ms()
+       })}
+    else
+      {:error, :invalid_action}
+    end
+  end
+
+  @doc """
+  Client-only settings status. `calendar_status` reads the current grant.
+  `request_calendar` shows the system dialog. `open_app_settings` opens the
+  app's system settings page. None of these are Agent tools.
+  """
+  @spec app_settings_request(pid(), String.t(), integer(), String.t()) ::
+          {:ok, Request.t()} | {:error, term()}
+  def app_settings_request(caller, request_id, generation, action)
+      when is_pid(caller) and is_binary(request_id) and
+             action in ["calendar_status", "request_calendar", "open_app_settings"] do
+    {:ok,
+     Request.new("platform_app_settings", request_id, generation, caller, %{
+       "op" => "platform_app_settings",
+       "settings_action" => action,
+       "deadline_ms" => deadline_ms()
+     })}
+  end
+
+  def app_settings_request(_, _, _, _), do: {:error, :invalid_action}
+
+  @doc """
+  Prefill the system clock. This is `AlarmClock.ACTION_SET_ALARM`, not a silent
+  alarm write.
+  """
+  @spec device_alarm_request(pid(), String.t(), integer(), map()) ::
+          {:ok, Request.t()} | {:error, term()}
+  def device_alarm_request(caller, request_id, generation, cmd)
+      when is_pid(caller) and is_binary(request_id) and is_map(cmd) do
+    hour = int_field(cmd, :hour)
+    minute = int_field(cmd, :minute)
+
+    if is_integer(hour) and hour in 0..23 and is_integer(minute) and minute in 0..59 do
+      {:ok,
+       Request.new("platform_device_alarm", request_id, generation, caller, %{
+         "op" => "platform_device_alarm",
+         "hour" => hour,
+         "minute" => minute,
+         "message" => text_field(cmd, :message),
+         "skip_ui" => cmd[:skip_ui] == true,
+         "vibrate" => bool_field(cmd, :vibrate),
+         "days" => day_field(cmd),
+         "deadline_ms" => deadline_ms()
+       })}
+    else
+      {:error, :invalid_time}
+    end
+  end
+
   @doc "User-tapped text share. Wraps host `MobBridge.shareText`; not an Agent tool."
   @spec share_text_request(pid(), String.t(), integer(), String.t()) ::
           {:ok, Request.t()} | {:error, term()}
@@ -224,5 +304,41 @@ defmodule HandbeamProbe.Platform do
   defp deadline_ms do
     System.system_time(:millisecond) +
       Application.get_env(:handbeam_probe, :android_intent_await_ms, 20_000)
+  end
+
+  defp calendar_action(action) when action in ["list_calendars", "list_events", "insert_event"],
+    do: action
+
+  defp calendar_action(action) when action in [:list_calendars, :list_events, :insert_event],
+    do: Atom.to_string(action)
+
+  defp calendar_action(_), do: nil
+
+  defp text_field(cmd, key) do
+    case cmd[key] do
+      text when is_binary(text) and text != "" -> text
+      _ -> nil
+    end
+  end
+
+  defp int_field(cmd, key) do
+    case cmd[key] do
+      value when is_integer(value) -> value
+      _ -> nil
+    end
+  end
+
+  defp bool_field(cmd, key) do
+    case cmd[key] do
+      value when is_boolean(value) -> value
+      _ -> nil
+    end
+  end
+
+  defp day_field(cmd) do
+    case cmd[:days] do
+      days when is_list(days) -> Enum.filter(days, &(&1 in 1..7))
+      _ -> nil
+    end
   end
 end

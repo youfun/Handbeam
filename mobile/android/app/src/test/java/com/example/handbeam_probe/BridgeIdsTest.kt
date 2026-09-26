@@ -19,7 +19,8 @@ class BridgeIdsTest {
             "platform_import", "platform_export", "platform_share_snapshot",
             "platform_open_snapshot", "platform_open_url", "platform_save_snapshot",
             "platform_cleanup", "platform_cancel", "platform_pick_photos", "platform_share_discard",
-            "platform_share_text",
+            "platform_share_text", "platform_device_calendar", "platform_device_alarm",
+            "platform_app_settings",
         )
         assertEquals(expected, BridgeIds.PlatformOps.all)
         assertEquals(expected.size, BridgeIds.PlatformOps.all.size)

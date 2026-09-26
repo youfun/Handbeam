@@ -12,6 +12,7 @@ defmodule HandbeamProbe.HomeScreen.Nav do
   alias HandbeamProbe.Bridge.Inbound
 
   alias HandbeamProbe.HomeScreen.{
+    AppSettings,
     GitSettings,
     MCPSettings,
     Notice,
@@ -70,6 +71,9 @@ defmodule HandbeamProbe.HomeScreen.Nav do
 
       page == :git ->
         GitSettings.load(socket)
+
+      page == :app ->
+        AppSettings.load(socket)
 
       Settings.settings_page?(page) ->
         Settings.load_models(socket)
