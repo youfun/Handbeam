@@ -33,10 +33,10 @@ GitHub Releases 的 `web-latest`（以及 `v*` 标签）提供自包含 OTP 包�
 
 - `handbeam-web-linux-x86_64.tar.gz`
 - `handbeam-web-windows-amd64.zip`
-- `handbeam-web-windows-arm64.zip`
+- `handbeam-web-windows-amd64-toolchain.zip`（实验包）
 - `handbeam-web-macos-arm64.tar.gz`
 
-Linux / macOS 运行 `./start.sh`，Windows 运行 `start.bat`。默认地址是 `http://localhost:5008`。Windows 包没有内置终端（Ghostty 没有 Windows NIF）。
+Linux / macOS 运行 `./start.sh`，Windows 运行 `start.bat`。默认地址是 `http://localhost:5008`。Windows 包没有内置终端（Ghostty 没有 Windows NIF）。实验包额外带上 Elixir、Mix、Hex、Rebar3 和 MinGit，只在本次启动的进程里放到 PATH 前面，不含 C 编译器。不发布 Windows ARM64。
 
 ## 运行
 
