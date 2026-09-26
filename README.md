@@ -36,7 +36,7 @@ GitHub Releases tag `web-latest` (and `v*` tags) includes a self-contained OTP p
 - `handbeam-web-windows-amd64-toolchain.zip` (experimental)
 - `handbeam-web-macos-arm64.tar.gz`
 
-On Linux and macOS run `./start.sh`. On Windows run `start.bat`. The default URL is `http://localhost:5008`. Windows packages do not include the in-browser terminal; Ghostty has no Windows NIF. The toolchain zip adds Elixir, Mix, Hex, Rebar3, and MinGit to PATH for that process only. It does not include a C compiler. Windows ARM64 is not published.
+On Linux and macOS run `./start.sh`. On Windows run `start.bat`. The default URL is `http://localhost:5008`. A native macOS shell (system WebKit, no Electron) lives in [`desktop/macos`](desktop/macos) and can bundle the macOS tarball. Windows packages do not include the in-browser terminal; Ghostty has no Windows NIF. The toolchain zip adds Elixir, Mix, Hex, Rebar3, and MinGit to PATH for that process only. It does not include a C compiler. Windows ARM64 is not published.
 
 ## Inspect effective host configuration
 

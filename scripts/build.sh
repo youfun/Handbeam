@@ -1,12 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$PROJECT_ROOT"
+
 usage() {
   cat <<'EOF'
 Usage: bash scripts/build.sh [release-directory]
 
-Build the production release into release-directory. When omitted, Handbeam
-uses the platform's user application-data directory on the internal system disk.
+Build Handbeam for the current platform. On macOS this creates a native
+Handbeam.app containing the production release, plus a distributable zip.
+On other platforms it builds the production release into release-directory.
 EOF
 }
 
@@ -21,12 +25,13 @@ echo " Handbeam 常规部署构建脚本"
 echo "========================================"
 
 MIX_ENV="${MIX_ENV:-prod}"
+PLATFORM="$(uname -s)"
 echo "当前环境: $MIX_ENV"
 
 if [[ -n "${1:-}" ]]; then
   RELEASE_DIR="$1"
-elif [[ "$(uname -s)" == "Darwin" ]]; then
-  RELEASE_DIR="$HOME/Library/Application Support/Handbeam/release"
+elif [[ "$PLATFORM" == "Darwin" ]]; then
+  RELEASE_DIR="$PROJECT_ROOT/desktop/macos/build/handbeam-web"
 else
   RELEASE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/handbeam/release"
 fi
@@ -73,6 +78,29 @@ if [[ -d "$RELEASE_DIR" ]]; then
 else
   echo "⚠ 未找到 release 输出"
   exit 1
+fi
+
+if [[ "$PLATFORM" == "Darwin" ]]; then
+  echo ""
+  echo "➡ 构建 macOS 原生客户端..."
+  HANDBEAM_WEB_ROOT="$RELEASE_DIR" bash desktop/macos/scripts/build_app.sh
+
+  APP="$PROJECT_ROOT/desktop/macos/build/Handbeam.app"
+  ARCHIVE="$PROJECT_ROOT/desktop/macos/build/Handbeam-macos-arm64.zip"
+  CHECKSUM="$ARCHIVE.sha256"
+  rm -f "$ARCHIVE" "$CHECKSUM"
+  ditto -c -k --keepParent "$APP" "$ARCHIVE"
+  shasum -a 256 "$ARCHIVE" > "$CHECKSUM"
+  codesign --verify --deep --strict "$APP"
+  unzip -tq "$ARCHIVE"
+
+  echo ""
+  echo "🎉 macOS 客户端打包完成！"
+  echo "App:      $APP"
+  echo "Zip:      $ARCHIVE"
+  echo "SHA-256:  $(awk '{print $1}' "$CHECKSUM")"
+  echo "大小:     $(du -sh "$ARCHIVE" | awk '{print $1}')"
+  exit 0
 fi
 
 echo ""
