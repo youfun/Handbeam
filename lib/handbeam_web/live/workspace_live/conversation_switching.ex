@@ -232,7 +232,13 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
       |> assign(:conversations_by_workspace, conversations_by_ws)
       |> reload_conversation_stream()
       |> assign_free(ConversationState.conversation_id(conversation))
-      |> then(Keyword.get(opts, :initialize_model, &Function.identity/1))
+      |> then(
+        Keyword.get(
+          opts,
+          :initialize_model,
+          &HandbeamWeb.WorkspaceLive.ModelSelection.initialize_conversation_model/1
+        )
+      )
       |> reset_new_conversation_projection(opts)
       |> ConversationState.sync_conv_to()
 
@@ -277,7 +283,13 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
       |> assign(:conversations_by_workspace, conversations_by_ws)
       |> reload_conversation_stream()
       |> assign_current(ws, ConversationState.conversation_id(conversation))
-      |> then(Keyword.get(opts, :initialize_model, &Function.identity/1))
+      |> then(
+        Keyword.get(
+          opts,
+          :initialize_model,
+          &HandbeamWeb.WorkspaceLive.ModelSelection.initialize_conversation_model/1
+        )
+      )
       |> reset_new_conversation_projection(opts)
       |> ConversationState.sync_conv_to()
 
@@ -587,8 +599,14 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
 
   defp model_display_name(selected_model, available_models, opts) do
     case Keyword.get(opts, :model_display_name) do
-      fun when is_function(fun, 2) -> fun.(selected_model, available_models)
-      _ -> selected_model || "None"
+      fun when is_function(fun, 2) ->
+        fun.(selected_model, available_models)
+
+      _ ->
+        HandbeamWeb.WorkspaceLive.ModelSelection.model_display_name(
+          selected_model,
+          available_models
+        )
     end
   end
 

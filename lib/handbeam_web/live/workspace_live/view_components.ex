@@ -1,0 +1,2421 @@
+defmodule HandbeamWeb.WorkspaceLive.ViewComponents do
+  @moduledoc false
+
+  use HandbeamWeb, :html
+
+  alias HandbeamWeb.WorkspaceLive.Approval
+  alias HandbeamWeb.WorkspaceLive.Composer
+  alias HandbeamWeb.WorkspaceLive.ConversationSwitching
+  alias HandbeamWeb.WorkspaceLive.ModelSelection
+  alias Handbeam.TranscriptEntry
+  alias HandbeamWeb.FileChangeCard
+
+  defdelegate model_option_label(model, models \\ []), to: ModelSelection
+  defdelegate models_by_provider(models), to: ModelSelection
+  defdelegate provider_display_name(provider_id), to: ModelSelection
+  defdelegate model_empty_message(workspace_root), to: ModelSelection
+
+  defdelegate archived_conversations(workspaces, conversations_by_workspace),
+    to: ConversationSwitching
+
+  defdelegate free_conversations(conversations_by_workspace), to: ConversationSwitching
+
+  defdelegate workspace_conversations(conversations_by_workspace, ws_id, workspaces),
+    to: ConversationSwitching
+
+  defdelegate attachment_url(attachment), to: Composer
+  defdelegate attachment_filename(attachment), to: Composer
+  defdelegate image_attachment?(attachment), to: Composer
+  defdelegate approval_action_requests(pending), to: Approval, as: :action_requests
+  defdelegate format_arguments(arguments), to: Approval
+  defdelegate status_dot_class(status), to: HandbeamWeb.WorkspaceHelper
+  defdelegate tool_status_icon(status), to: HandbeamWeb.WorkspaceHelper
+  defdelegate tool_status_class(status), to: HandbeamWeb.WorkspaceHelper
+  defdelegate tool_border_class(status), to: HandbeamWeb.WorkspaceHelper
+  defdelegate render_tool_status(status), to: HandbeamWeb.WorkspaceHelper
+  defdelegate tool_entry_count(entries), to: HandbeamWeb.WorkspaceHelper
+  defdelegate timeline_summary(entries), to: HandbeamWeb.WorkspaceHelper
+  defdelegate user_message_nav_items(entries), to: HandbeamWeb.WorkspaceHelper
+  defdelegate format_duration(ms), to: HandbeamWeb.WorkspaceHelper
+  defdelegate format_bytes(bytes), to: HandbeamWeb.WorkspaceHelper
+  defdelegate format_tokens(tokens), to: HandbeamWeb.WorkspaceHelper
+  defdelegate format_cache_hit_rate(status), to: HandbeamWeb.WorkspaceHelper
+  defdelegate diff_prefix(type), to: HandbeamWeb.WorkspaceHelper
+  defdelegate file_value(file, key, default), to: HandbeamWeb.WorkspaceHelper
+  defdelegate archived_stream_count(entries), to: HandbeamWeb.WorkspaceHelper
+  defdelegate browser_install_prompt(entry), to: HandbeamWeb.WorkspaceHelper
+  defdelegate preview_card(entry), to: HandbeamWeb.WorkspaceHelper
+  defdelegate browser_takeover_prompt(entry), to: HandbeamWeb.WorkspaceHelper
+
+  defdelegate render_file_preview(path, workspace_root \\ Handbeam.Workspace.root()),
+    to: HandbeamWeb.WorkspaceHelper
+
+  defdelegate tool_entry_name(entry), to: TranscriptEntry, as: :tool_name
+  defdelegate tool_entry_status(entry), to: TranscriptEntry, as: :tool_status
+  defdelegate tool_entry_duration(entry), to: TranscriptEntry, as: :duration_ms
+  defdelegate tool_entry_error(entry), to: TranscriptEntry, as: :error
+  defdelegate tool_entry_input_summary(entry), to: TranscriptEntry, as: :input_summary
+
+  def workspace_group_collapsed?(collapsed, id) when is_struct(collapsed, MapSet) do
+    MapSet.member?(collapsed, to_string(id))
+  end
+
+  def workspace_group_collapsed?(_, _), do: false
+
+  def active_conversation_count(conversations_by_workspace, ws_id, workspaces) do
+    conversations_by_workspace
+    |> workspace_conversations(ws_id, workspaces)
+    |> length()
+  end
+
+  def free_conversation_count(conversations_by_workspace) do
+    conversations_by_workspace |> free_conversations() |> length()
+  end
+
+  def scoped_conversation_count(conversations_by_workspace, :free, _ws_id, _workspaces) do
+    free_conversation_count(conversations_by_workspace)
+  end
+
+  def scoped_conversation_count(conversations_by_workspace, _scope, ws_id, workspaces) do
+    active_conversation_count(conversations_by_workspace, ws_id, workspaces)
+  end
+
+  def has_cache_tokens?(%{cache_read_tokens: read, cache_write_tokens: write})
+      when is_number(read) and is_number(write) do
+    read > 0 or write > 0
+  end
+
+  def has_cache_tokens?(_), do: false
+
+  def reasoning_label(level) do
+    case level do
+      "off" -> gettext("Off")
+      "minimal" -> gettext("Minimal")
+      "low" -> gettext("Low")
+      "medium" -> gettext("Medium")
+      "high" -> gettext("High")
+      "xhigh" -> gettext("X-High")
+      _ -> level
+    end
+  end
+
+  def relative_time(conv) do
+    case Map.get(conv, :updated_at) || Map.get(conv, "updated_at") || Map.get(conv, :created_at) ||
+           Map.get(conv, "created_at") do
+      nil ->
+        ""
+
+      dt_str ->
+        case DateTime.from_iso8601(dt_str) do
+          {:ok, dt, _} ->
+            diff = DateTime.diff(DateTime.utc_now(), dt, :second)
+
+            cond do
+              diff < 60 -> "刚刚"
+              diff < 3600 -> "#{div(diff, 60)}分钟前"
+              diff < 86400 -> "#{div(diff, 3600)}小时前"
+              true -> dt_str |> String.slice(0, 10)
+            end
+
+          _ ->
+            ""
+        end
+    end
+  end
+
+  def any_sheet_open?(show_workspace, show_model, show_reasoning, show_settings) do
+    show_workspace or show_model or show_reasoning or show_settings
+  end
+
+  def settings_href(workspace_id, conversation_id) do
+    query = %{}
+    query = if workspace_id, do: Map.put(query, :workspace_id, workspace_id), else: query
+    query = if conversation_id, do: Map.put(query, :conversation_id, conversation_id), else: query
+    ~p"/settings?#{query}"
+  end
+
+  def permission_label(:auto), do: "完整存取"
+
+  def permission_label(:prompt), do: "安全模式"
+
+  def permission_label(:deny), do: "只读"
+
+  def permission_label(_), do: "完整存取"
+
+  attr :entries, :map, required: true
+  attr :expanded, :any, required: true
+  attr :active_file, :string, default: nil
+  attr :workspace_root, :string, required: true
+  attr :parent, :string, default: ""
+  attr :depth, :integer, default: 0
+
+  def workspace_tree(assigns) do
+    ~H"""
+    <ul class="workspace-file-tree" role={if(@depth == 0, do: "tree", else: "group")}>
+      <li :for={entry <- Map.get(@entries, @parent, [])} role="treeitem">
+        <button
+          :if={entry.kind == :directory}
+          type="button"
+          class="workspace-file-row directory"
+          style={"--tree-depth: #{@depth}"}
+          phx-click="toggle_workspace_directory"
+          phx-value-path={entry.relative_path}
+          aria-expanded={to_string(MapSet.member?(@expanded, entry.relative_path))}
+          title={entry.relative_path}
+        >
+          <span class="workspace-tree-chevron" aria-hidden="true">
+            {if MapSet.member?(@expanded, entry.relative_path), do: "⌄", else: "›"}
+          </span>
+          <span class="workspace-tree-icon" aria-hidden="true">▱</span>
+          <span class="truncate">{entry.name}</span>
+        </button>
+        <.workspace_tree
+          :if={entry.kind == :directory && MapSet.member?(@expanded, entry.relative_path)}
+          entries={@entries}
+          expanded={@expanded}
+          active_file={@active_file}
+          workspace_root={@workspace_root}
+          parent={entry.relative_path}
+          depth={@depth + 1}
+        />
+        <button
+          :if={entry.kind == :file}
+          type="button"
+          class={[
+            "workspace-file-row file",
+            if(@active_file == Path.join(@workspace_root, entry.relative_path),
+              do: "active",
+              else: ""
+            )
+          ]}
+          style={"--tree-depth: #{@depth}"}
+          phx-click="select_workspace_file"
+          phx-value-path={entry.relative_path}
+          title={entry.relative_path}
+        >
+          <span class="workspace-tree-chevron" aria-hidden="true"></span>
+          <span class="workspace-tree-icon file" aria-hidden="true">▧</span>
+          <span class="truncate">{entry.name}</span>
+        </button>
+        <div
+          :if={entry.kind == :symlink}
+          class="workspace-file-row symlink"
+          style={"--tree-depth: #{@depth}"}
+          title={gettext("Symlinks are not opened from the workspace tree")}
+        >
+          <span class="workspace-tree-chevron" aria-hidden="true"></span>
+          <span class="workspace-tree-icon" aria-hidden="true">↗</span>
+          <span class="truncate">{entry.name}</span>
+        </div>
+      </li>
+    </ul>
+    """
+  end
+
+  def assistant_message_final?(entry, running, current_assistant_entry_id) do
+    HandbeamWeb.WorkspaceLive.RuntimeProjection.assistant_final?(
+      entry,
+      running,
+      current_assistant_entry_id
+    )
+  end
+
+  def assistant_message_streaming?(entry, running, current_assistant_entry_id) do
+    running && Map.get(entry, "id") == current_assistant_entry_id &&
+      !truthy?(Map.get(entry, "final"))
+  end
+
+  defp truthy?(value), do: value in [true, "true", 1, "1"]
+
+  def mobile_header(assigns) do
+    ~H"""
+    <div class="mobile-header-v2">
+      <button
+        phx-click="open_sheet"
+        phx-value-type="workspace"
+        class="mobile-header-workspace-btn"
+      >
+        <div class="mobile-header-title">
+          <img src={~p"/images/logo.svg"} class="brand-mark" width="18" height="18" alt="" />
+          <span class="mobile-brand">Handbeam</span>
+          <span class="mobile-workspace truncate">
+            {if(@chat_scope == :free, do: gettext("对话"), else: @workspace_label)}
+          </span>
+        </div>
+        <span
+          id="mobile-workspace-count"
+          class="mobile-workspace-count"
+          title={gettext("会话数量")}
+        >
+          {scoped_conversation_count(
+            @conversations_by_workspace,
+            @chat_scope,
+            @current_workspace_id,
+            @workspaces
+          )}
+        </span>
+        <svg
+          class="mobile-chevron"
+          width="10"
+          height="10"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="3"
+          aria-hidden="true"
+        >
+          <polyline points="6 9 12 15 18 9" />
+        </svg>
+      </button>
+      <div class="mobile-header-actions">
+        <button
+          :if={@chat_scope != :free}
+          id="mobile-open-files"
+          phx-click="select_mobile_right_panel_view"
+          phx-value-view="files"
+          class="mobile-header-panel-btn"
+          aria-label={gettext("Files")}
+          title={gettext("Files")}
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <path d="M3 6h6l2 2h10v10H3z" />
+          </svg>
+        </button>
+        <button
+          :if={@terminal_available?}
+          id="mobile-open-terminal"
+          phx-click="select_mobile_right_panel_view"
+          phx-value-view="terminal"
+          class="mobile-header-panel-btn"
+          aria-label={gettext("Terminal")}
+          title={gettext("Terminal")}
+        >
+          <span aria-hidden="true">›_</span>
+        </button>
+        <button
+          phx-click="open_sheet"
+          phx-value-type="settings"
+          class="mobile-header-info-btn"
+          aria-label={gettext("Conversation info")}
+          title={gettext("Conversation info")}
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <circle cx="12" cy="12" r="10" />
+            <path d="M12 16v-4" />
+            <path d="M12 8h.01" />
+          </svg>
+        </button>
+        <.link
+          id="mobile-open-settings"
+          navigate={settings_href(@current_workspace_id, @current_conversation_id)}
+          class="mobile-header-settings-btn"
+          title={gettext("Settings")}
+          aria-label={gettext("Settings")}
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0 1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+        </.link>
+      </div>
+    </div>
+    """
+  end
+
+  def projects_sidebar(assigns) do
+    ~H"""
+    <div
+      id="activity-bar"
+      class="w-[220px] flex-shrink-0 border-r bg-surface flex flex-col workspace-panel projects-panel"
+    >
+      <div class="projects-panel-header">
+        <h2 class="projects-panel-title">
+          <img src={~p"/images/logo.svg"} class="brand-mark" width="16" height="16" alt="" />
+          <span>{gettext("专案")}</span>
+        </h2>
+        <button
+          phx-click="open_add_project"
+          class="text-xs text-tertiary hover:text-primary transition-colors leading-none"
+          title={gettext("添加项目")}
+        >
+          +
+        </button>
+      </div>
+      <div class="flex-1 overflow-y-auto">
+        <!-- Workspace headers (outside stream, fixed) -->
+        <div
+          :for={ws <- @workspaces}
+          id={"workspace-group-#{ws["id"]}"}
+          class={[
+            "workspace-group",
+            workspace_group_collapsed?(@collapsed_workspace_ids, ws["id"]) && "is-collapsed"
+          ]}
+        >
+          <div class={[
+            "workspace-title-row",
+            @current_workspace_id == ws["id"] && @chat_scope != :free && "is-active"
+          ]}>
+            <button
+              phx-click="select_workspace"
+              phx-value-id={ws["id"]}
+              class={[
+                "workspace-header min-w-0 text-left px-2 py-1.5 text-xs flex items-center gap-1.5 transition-colors",
+                if(@current_workspace_id == ws["id"],
+                  do: "workspace-header-active",
+                  else: "hover:bg-surface-hover"
+                )
+              ]}
+            >
+              <span class="workspace-icon" aria-hidden="true">
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                </svg>
+              </span>
+              <span class="truncate flex-1">{ws["name"]}</span>
+              <span :if={ws["default"]} class="text-tertiary text-[0.6rem]">default</span>
+            </button>
+            <div class="workspace-row-actions">
+              <button
+                phx-click="new_conversation_in_workspace"
+                phx-value-ws_id={ws["id"]}
+                class="workspace-add-btn flex-shrink-0 w-5 h-5 flex items-center justify-center rounded text-tertiary hover:text-primary hover:bg-surface-hover transition-colors"
+                title={gettext("在此工作区新建对话")}
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <path
+                    d="M6 1v10M1 6h10"
+                    stroke="currentColor"
+                    stroke-width="1.5"
+                    stroke-linecap="round"
+                  />
+                </svg>
+              </button>
+              <div :if={!ws["default"]} class="workspace-menu">
+                <button
+                  type="button"
+                  phx-click="toggle_workspace_menu"
+                  phx-value-id={ws["id"]}
+                  id={"workspace-menu-#{ws["id"]}"}
+                  class={["workspace-action", @workspace_menu_id == ws["id"] && "is-open"]}
+                  title={gettext("更多操作")}
+                  aria-label={gettext("更多操作")}
+                  aria-haspopup="menu"
+                  aria-expanded={to_string(@workspace_menu_id == ws["id"])}
+                >
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 12 12"
+                    fill="currentColor"
+                    aria-hidden="true"
+                  >
+                    <circle cx="2.25" cy="6" r="1" />
+                    <circle cx="6" cy="6" r="1" />
+                    <circle cx="9.75" cy="6" r="1" />
+                  </svg>
+                </button>
+                <div
+                  :if={@workspace_menu_id == ws["id"]}
+                  id={"workspace-menu-panel-#{ws["id"]}"}
+                  class="workspace-menu-panel"
+                  role="menu"
+                  phx-click-away="close_workspace_menu"
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    phx-click="open_remove_workspace"
+                    phx-value-id={ws["id"]}
+                    id={"workspace-action-remove-#{ws["id"]}"}
+                    class="workspace-menu-item danger"
+                  >
+                    <span>{gettext("移除工作区")}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+            <button
+              type="button"
+              id={"workspace-toggle-#{ws["id"]}"}
+              phx-click="toggle_workspace_group"
+              phx-value-id={ws["id"]}
+              class="workspace-count-toggle"
+              aria-expanded={
+                to_string(not workspace_group_collapsed?(@collapsed_workspace_ids, ws["id"]))
+              }
+              aria-controls={"workspace-conversations-#{ws["id"]}"}
+              title={
+                if(workspace_group_collapsed?(@collapsed_workspace_ids, ws["id"]),
+                  do: gettext("展开"),
+                  else: gettext("收起")
+                )
+              }
+              aria-label={
+                if(workspace_group_collapsed?(@collapsed_workspace_ids, ws["id"]),
+                  do: gettext("展开"),
+                  else: gettext("收起")
+                )
+              }
+            >
+              <span
+                id={"workspace-count-#{ws["id"]}"}
+                class="workspace-conv-count"
+                title={gettext("会话数量")}
+              >
+                {active_conversation_count(@conversations_by_workspace, ws["id"], @workspaces)}
+              </span>
+              <svg
+                class={[
+                  "workspace-chevron-icon",
+                  workspace_group_collapsed?(@collapsed_workspace_ids, ws["id"]) && "is-collapsed"
+                ]}
+                width="10"
+                height="10"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                aria-hidden="true"
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+          </div>
+
+          <div
+            :if={not workspace_group_collapsed?(@collapsed_workspace_ids, ws["id"])}
+            id={"workspace-conversations-#{ws["id"]}"}
+            class="conversations-list"
+          >
+            <div
+              :for={
+                conv <-
+                  workspace_conversations(@conversations_by_workspace, ws["id"], @workspaces)
+              }
+              :if={!conv.archived}
+              id={"conversation-#{conv.id}"}
+              class="conversation-row"
+            >
+              <button
+                phx-click="select_conversation"
+                phx-value-id={conv.id}
+                phx-value-ws_id={conv.workspace_id}
+                class={[
+                  "conversation-item flex-1 min-w-0 text-left py-1.5 text-xs transition-colors flex items-center gap-1.5",
+                  if(
+                    @current_conversation_id == conv.id and
+                      @current_workspace_id == conv.workspace_id,
+                    do: "conversation-item-active",
+                    else: "hover:bg-surface-hover text-tertiary"
+                  )
+                ]}
+              >
+                <span class={[
+                  "conversation-dot",
+                  if(
+                    @current_conversation_id == conv.id and
+                      @current_workspace_id == conv.workspace_id,
+                    do: "conversation-dot-active",
+                    else: ""
+                  )
+                ]}></span>
+                <span class="truncate flex-1">{conv.title}</span>
+              </button>
+              <div class="conversation-menu">
+                <button
+                  type="button"
+                  phx-click="toggle_conversation_menu"
+                  phx-value-id={conv.id}
+                  id={"conversation-menu-#{conv.workspace_id}-#{conv.id}"}
+                  class={[
+                    "conversation-action",
+                    @conversation_menu_id == conv.id && "is-open"
+                  ]}
+                  title={gettext("更多操作")}
+                  aria-label={gettext("更多操作")}
+                  aria-haspopup="menu"
+                  aria-expanded={to_string(@conversation_menu_id == conv.id)}
+                >
+                  <span class="sr-only">{gettext("更多操作")}</span>
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 12 12"
+                    fill="currentColor"
+                    aria-hidden="true"
+                  >
+                    <circle cx="2.25" cy="6" r="1" />
+                    <circle cx="6" cy="6" r="1" />
+                    <circle cx="9.75" cy="6" r="1" />
+                  </svg>
+                </button>
+                <div
+                  :if={@conversation_menu_id == conv.id}
+                  id={"conversation-menu-panel-#{conv.id}"}
+                  class="conversation-menu-panel"
+                  role="menu"
+                  phx-click-away="close_conversation_menu"
+                >
+                  <button
+                    type="button"
+                    role="menuitem"
+                    phx-click="open_rename_conversation"
+                    phx-value-id={conv.id}
+                    phx-value-ws_id={conv.workspace_id}
+                    id={"conversation-action-rename-#{conv.workspace_id}-#{conv.id}"}
+                    class="conversation-menu-item"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                      <path
+                        d="M7.2 2.1 9.9 4.8 4.4 10.3 1.5 10.5l.2-2.9L7.2 2.1Z"
+                        stroke="currentColor"
+                        stroke-width="1.1"
+                        stroke-linejoin="round"
+                      />
+                      <path
+                        d="M6.4 2.9 9.1 5.6"
+                        stroke="currentColor"
+                        stroke-width="1.1"
+                        stroke-linecap="round"
+                      />
+                    </svg>
+                    <span>{gettext("重命名")}</span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    phx-click="archive_conversation"
+                    phx-value-id={conv.id}
+                    phx-value-ws_id={conv.workspace_id}
+                    id={"conversation-action-archive-#{conv.workspace_id}-#{conv.id}"}
+                    class="conversation-menu-item danger"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+                      <path
+                        d="M2 3.5h8M4.5 3.5V2.75a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 .75.75V3.5M3 3.5l.5 6.75a.75.75 0 0 0 .75.75h3.5a.75.75 0 0 0 .75-.75L9 3.5"
+                        stroke="currentColor"
+                        stroke-width="1.1"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      />
+                    </svg>
+                    <span>{gettext("归档")}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div
+          id="free-chats"
+          class={[
+            "workspace-group mt-2 border-t pt-2",
+            workspace_group_collapsed?(@collapsed_workspace_ids, "free") && "is-collapsed"
+          ]}
+        >
+          <div class={[
+            "workspace-title-row",
+            @chat_scope == :free && "is-active"
+          ]}>
+            <div class="workspace-header min-w-0 text-left px-2 py-1.5 text-xs flex items-center gap-1.5">
+              <span class="truncate flex-1">{gettext("对话")}</span>
+            </div>
+            <button
+              id="new-free-conversation"
+              phx-click="new_free_conversation"
+              class="workspace-add-btn flex-shrink-0 w-5 h-5 flex items-center justify-center rounded text-tertiary hover:text-primary hover:bg-surface-hover transition-colors"
+              title={gettext("新建自由对话")}
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <path
+                  d="M6 1v10M1 6h10"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                />
+              </svg>
+            </button>
+            <button
+              type="button"
+              id="free-workspace-toggle"
+              phx-click="toggle_workspace_group"
+              phx-value-id="free"
+              class="workspace-count-toggle"
+              aria-expanded={
+                to_string(not workspace_group_collapsed?(@collapsed_workspace_ids, "free"))
+              }
+              aria-controls="free-conversations"
+              title={
+                if(workspace_group_collapsed?(@collapsed_workspace_ids, "free"),
+                  do: gettext("展开"),
+                  else: gettext("收起")
+                )
+              }
+              aria-label={
+                if(workspace_group_collapsed?(@collapsed_workspace_ids, "free"),
+                  do: gettext("展开"),
+                  else: gettext("收起")
+                )
+              }
+            >
+              <span id="free-workspace-count" class="workspace-conv-count" title={gettext("会话数量")}>
+                {free_conversation_count(@conversations_by_workspace)}
+              </span>
+              <svg
+                class={[
+                  "workspace-chevron-icon",
+                  workspace_group_collapsed?(@collapsed_workspace_ids, "free") && "is-collapsed"
+                ]}
+                width="10"
+                height="10"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                aria-hidden="true"
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+          </div>
+          <div
+            :if={not workspace_group_collapsed?(@collapsed_workspace_ids, "free")}
+            id="free-conversations"
+            class="conversations-list"
+          >
+            <div
+              :for={conv <- free_conversations(@conversations_by_workspace)}
+              id={"free-conversation-#{conv.id}"}
+              class="conversation-row"
+            >
+              <button
+                phx-click="select_free_conversation"
+                phx-value-id={conv.id}
+                class={[
+                  "conversation-item flex-1 min-w-0 text-left pl-6 pr-1 py-1.5 text-xs transition-colors flex items-center gap-1.5",
+                  if(@current_conversation_id == conv.id and @chat_scope == :free,
+                    do: "conversation-item-active",
+                    else: "hover:bg-surface-hover text-secondary"
+                  )
+                ]}
+              >
+                <span class="truncate flex-1">{conv.title}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Archived conversations -->
+        <div class="workspace-group mt-2 border-t pt-2">
+          <button
+            phx-click="toggle_archive"
+            class="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-xs text-tertiary hover:bg-surface-hover transition-colors rounded"
+          >
+            <span class={["workspace-chevron", if(@show_archive, do: "expanded", else: "")]}>
+              {if(@show_archive, do: "▾", else: "▸")}
+            </span>
+            <span>{gettext("已存档")}</span>
+            <span class="ml-auto tabular-nums text-[0.6rem] lowercase">
+              {archived_stream_count(@streams.conversations)}
+            </span>
+          </button>
+
+          <div :if={@show_archive} class="conversations-list">
+            <div
+              :for={{dom_id, conv} <- @streams.conversations}
+              :if={conv.archived}
+              id={dom_id}
+              class="conversation-row archived"
+            >
+              <button
+                phx-click="select_archived_conversation"
+                phx-value-ws={conv.workspace_id}
+                phx-value-id={conv.id}
+                class={[
+                  "conversation-item flex-1 min-w-0 text-left pl-6 pr-1 py-1.5 text-xs transition-colors flex items-center gap-1.5",
+                  if(
+                    @current_conversation_id == conv.id and
+                      @current_workspace_id == conv.workspace_id,
+                    do: "conversation-item-active",
+                    else: "hover:bg-surface-hover text-tertiary"
+                  )
+                ]}
+              >
+                <span class={[
+                  "conversation-dot archived",
+                  if(
+                    @current_conversation_id == conv.id and
+                      @current_workspace_id == conv.workspace_id,
+                    do: "conversation-dot-active",
+                    else: ""
+                  )
+                ]}></span>
+                <span class="truncate flex-1">{conv.title}</span>
+                <span class="conversation-badge">{conv.workspace_name}</span>
+              </button>
+              <button
+                phx-click="unarchive_conversation"
+                phx-value-id={conv.id}
+                class="conversation-action restore"
+                title={gettext("恢复")}
+              >
+                <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
+                  <path
+                    d="M3 6.5a.5.5 0 0 1 .5-.5h5a.5.5 0 0 1 0 1h-5a.5.5 0 0 1-.5-.5z"
+                    fill="currentColor"
+                  /><path
+                    d="M6 3.5a.5.5 0 0 1 .5.5v5a.5.5 0 0 1-1 0V4a.5.5 0 0 1 .5-.5z"
+                    fill="currentColor"
+                  />
+                </svg>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  def chat_panel(assigns) do
+    ~H"""
+    <div
+      id="ai-panel"
+      class={[
+        "flex-1 flex flex-col min-w-0 workspace-panel chat-panel",
+        if(@mobile_right_panel_open, do: "mobile-right-panel-open", else: "")
+      ]}
+    >
+      <!-- Rename Conversation Dialog -->
+      <div
+        :if={@rename_conversation}
+        id="rename-conversation-overlay"
+        class="absolute inset-0 z-50 flex items-center justify-center"
+        phx-window-keydown="cancel_rename_conversation"
+        phx-key="Escape"
+      >
+        <button
+          type="button"
+          class="absolute inset-0 bg-transparent border-0"
+          phx-click="cancel_rename_conversation"
+          aria-label={gettext("取消")}
+        ></button>
+        <form
+          id="rename-conversation-dialog"
+          phx-submit="confirm_rename_conversation"
+          class="relative add-project-dialog bg-surface border rounded-xl shadow-2xl w-[420px] p-5"
+        >
+          <h3 class="text-base font-semibold text-primary mb-4">{gettext("重命名会话")}</h3>
+          <div class="space-y-3 mb-4">
+            <div>
+              <label for="rename-conversation-input" class="text-xs text-secondary block mb-1">
+                {gettext("会话名称")}
+              </label>
+              <input
+                id="rename-conversation-input"
+                type="text"
+                name="title"
+                value={@rename_conversation.title}
+                phx-mounted={JS.focus()}
+                maxlength="80"
+                autocomplete="off"
+                class="w-full bg-main border rounded px-2 py-1.5 text-xs text-primary focus:outline-none focus:border-accent"
+              />
+            </div>
+            <div
+              :if={@rename_conversation.error}
+              id="rename-conversation-error"
+              class="text-xs text-error bg-error-subtle rounded px-3 py-2"
+            >
+              {@rename_conversation.error}
+            </div>
+          </div>
+          <div class="flex justify-end gap-3">
+            <button
+              type="button"
+              phx-click="cancel_rename_conversation"
+              class="text-xs text-secondary border rounded px-3 py-1.5 transition-colors hover:text-primary hover:border-hover"
+            >
+              {gettext("取消")}
+            </button>
+            <button
+              type="submit"
+              id="rename-conversation-submit"
+              class="text-xs bg-user text-white rounded px-4 py-1.5 transition-colors hover:bg-user-hover"
+            >
+              {gettext("保存")}
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <div
+        :if={@remove_workspace}
+        id="remove-workspace-overlay"
+        class="absolute inset-0 z-50 flex items-center justify-center"
+        phx-window-keydown="cancel_remove_workspace"
+        phx-key="Escape"
+      >
+        <button
+          type="button"
+          class="absolute inset-0 bg-transparent border-0"
+          phx-click="cancel_remove_workspace"
+          aria-label={gettext("取消")}
+        ></button>
+        <div
+          id="remove-workspace-dialog"
+          class="relative add-project-dialog bg-surface border rounded-xl shadow-2xl w-[420px] p-5"
+        >
+          <h3 class="text-base font-semibold text-primary mb-2">{gettext("移除工作区")}</h3>
+          <p class="text-xs text-secondary mb-4">
+            {gettext("移除「%{name}」后，其中的对话会进入已存档。项目目录不会被删除。",
+              name: @remove_workspace.name
+            )}
+          </p>
+          <div class="flex justify-end gap-3">
+            <button
+              type="button"
+              phx-click="cancel_remove_workspace"
+              class="text-xs text-secondary border rounded px-3 py-1.5 transition-colors hover:text-primary hover:border-hover"
+            >
+              {gettext("取消")}
+            </button>
+            <button
+              type="button"
+              id="confirm-remove-workspace"
+              phx-click="confirm_remove_workspace"
+              class="text-xs bg-error text-white rounded px-4 py-1.5 transition-colors"
+            >
+              {gettext("移除")}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Add Project Dialog (overlay) -->
+      <div
+        :if={@show_add_project}
+        id="add-project-overlay"
+        class="absolute inset-0 z-50 flex items-center justify-center pointer-events-none"
+      >
+        <div class="pointer-events-auto add-project-dialog bg-surface border rounded-xl shadow-2xl w-[420px] p-5">
+          <h3 class="text-base font-semibold text-primary mb-4">{gettext("添加项目")}</h3>
+
+          <div class="space-y-3 mb-4">
+            <div>
+              <label class="text-xs text-secondary block mb-1">{gettext("项目路径")}</label>
+              <div class="flex gap-2">
+                <input
+                  type="text"
+                  name="add_path"
+                  value={@add_project_form["path"]}
+                  phx-keyup="update_add_path"
+                  phx-value-value={@add_project_form["path"]}
+                  placeholder={
+                    if(@sandbox_workspace?,
+                      do: gettext("使用系统选择器导入到应用内"),
+                      else: "/path/to/project"
+                    )
+                  }
+                  readonly={@sandbox_workspace?}
+                  class="flex-1 bg-main border rounded px-2 py-1.5 text-xs text-primary font-mono focus:outline-none focus:border-accent"
+                />
+                <button
+                  type="button"
+                  phx-click="browse_folder"
+                  class="text-xs bg-transparent border rounded px-3 py-1.5 text-secondary transition-colors hover:text-primary hover:border-hover whitespace-nowrap"
+                >
+                  {if @sandbox_workspace?, do: gettext("从下载导入…"), else: gettext("浏览...")}
+                </button>
+              </div>
+              <p :if={@sandbox_workspace?} class="text-xs text-tertiary mt-2">
+                {gettext(
+                  "手机不能直接把系统下载目录当工作区。系统授权后会把所选文件夹复制进应用私有目录。Downloads 根目录在部分 Android 版本上不可选，请选其中的项目子文件夹。"
+                )}
+              </p>
+            </div>
+            <div>
+              <label class="text-xs text-secondary block mb-1">{gettext("项目名称 (可选)")}</label>
+              <input
+                type="text"
+                name="add_name"
+                value={@add_project_form["name"]}
+                phx-keyup="update_add_name"
+                phx-value-value={@add_project_form["name"]}
+                placeholder={Path.basename(@add_project_form["path"]) || gettext("自动填充")}
+                class="w-full bg-main border rounded px-2 py-1.5 text-xs text-primary focus:outline-none focus:border-accent"
+              />
+            </div>
+            <div
+              :if={@add_project_form["error"]}
+              class="text-xs text-error bg-error-subtle rounded px-3 py-2"
+            >
+              {@add_project_form["error"]}
+            </div>
+          </div>
+
+          <div class="flex justify-end gap-3">
+            <button
+              phx-click="cancel_add_project"
+              class="text-xs text-secondary border rounded px-3 py-1.5 transition-colors hover:text-primary hover:border-hover"
+            >
+              {gettext("取消")}
+            </button>
+            <button
+              phx-click="confirm_add_project"
+              class="text-xs bg-user text-white rounded px-4 py-1.5 transition-colors hover:bg-user-hover"
+            >
+              {gettext("添加项目")}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- File Browser (LiveComponent) -->
+      <.live_component
+        module={HandbeamWeb.FileBrowserComponent}
+        id="file-browser"
+        show_browser={@show_file_browser}
+        current_path={@file_browser_path}
+      />
+
+      <!-- Chat messages -->
+      <div class="conversation-nav-host">
+        <div id="ai-messages" class="flex-1 overflow-y-auto p-4 space-y-3" phx-hook="ChatScroll">
+          <div :if={@history_has_more?} class="flex justify-center">
+            <button
+              id="load-older-history"
+              type="button"
+              phx-click="load_older_history"
+              class="text-xs text-secondary hover:text-primary"
+            >
+              {gettext("加载更早消息")}
+            </button>
+          </div>
+          <div :if={length(@timeline) > 1} id="turn-header" class="turn-header">
+            <span class="turn-summary">
+              {timeline_summary(@timeline)}
+            </span>
+          </div>
+          <div
+            id="timeline-stream"
+            phx-update="stream"
+            class={["space-y-3", if(@timeline == [], do: "", else: "turn-group")]}
+            data-running={@running}
+          >
+            <div :for={{dom_id, entry} <- @streams.timeline} id={dom_id}>
+              <HandbeamWeb.ThreadHandoff.card
+                :if={HandbeamWeb.ThreadHandoff.show?(entry, @timeline)}
+                entry={entry}
+                conversation_id={@current_conversation_id}
+                workspace_id={@current_workspace_id}
+              />
+              <div
+                :if={
+                  entry["content_type"] == "user_msg" and
+                    get_in(entry, ["origin", "kind"]) != "thread"
+                }
+                class="msg-row flex w-full msg-user justify-end"
+                data-user-msg={entry["id"]}
+              >
+                <% attachments =
+                  if(is_list(entry["attachments"]), do: entry["attachments"], else: []) %>
+                <% {images, files} = Enum.split_with(attachments, &image_attachment?/1) %>
+                <div class="msg-user-stack">
+                  <div :if={images != []} class="msg-shots">
+                    <button
+                      :for={{att, index} <- Enum.with_index(images)}
+                      type="button"
+                      class="msg-shot"
+                      data-shot-open
+                      data-shot-id={"#{entry["id"]}-#{index}"}
+                      data-shot-src={attachment_url(att)}
+                      data-shot-name={attachment_filename(att)}
+                      title={attachment_filename(att)}
+                      aria-label={gettext("查看图片 %{name}", name: attachment_filename(att))}
+                    >
+                      <img
+                        src={attachment_url(att)}
+                        alt={attachment_filename(att)}
+                        decoding="async"
+                      />
+                    </button>
+                  </div>
+                  <a
+                    :for={att <- files}
+                    href={attachment_url(att)}
+                    target="_blank"
+                    rel="noreferrer"
+                    class="msg-file"
+                  >
+                    {attachment_filename(att)}
+                  </a>
+                  <div
+                    :if={
+                      String.trim(to_string(entry["content"] || "")) != "" or
+                        get_in(entry, ["origin", "kind"]) == "automatic"
+                    }
+                    class="msg-bubble msg-user"
+                  >
+                    <div
+                      :if={get_in(entry, ["origin", "kind"]) == "automatic"}
+                      class="text-xs opacity-60 mb-1"
+                    >
+                      Automatic · {get_in(entry, ["origin", "source"])}
+                    </div>
+                    <div class="whitespace-pre-wrap break-words">{entry["content"]}</div>
+                  </div>
+                  <%= if item = Map.get(@pending_messages || %{}, entry["id"]) do %>
+                    <div class="mt-1 flex items-center gap-2 text-xs opacity-70">
+                      <span>
+                        {cond do
+                          item[:status] == :undelivered ->
+                            gettext("Not delivered")
+
+                          @pending_approval ->
+                            gettext("Inserts after approval")
+
+                          item[:deliver_as] == :follow_up ->
+                            gettext("Queued · when this run finishes")
+
+                          true ->
+                            gettext("Waiting to insert · next step")
+                        end}
+                      </span>
+                      <button
+                        :if={item[:status] == :queued}
+                        type="button"
+                        phx-click="cancel_pending"
+                        phx-value-id={entry["id"]}
+                        class="underline"
+                      >
+                        {gettext("Undo")}
+                      </button>
+                      <button
+                        :if={item[:status] == :undelivered}
+                        type="button"
+                        phx-click="resend_pending"
+                        phx-value-id={entry["id"]}
+                        class="underline"
+                      >
+                        {gettext("Resend")}
+                      </button>
+                    </div>
+                  <% end %>
+                </div>
+              </div>
+
+              <div
+                :if={entry["content_type"] == "assistant_msg"}
+                class="msg-row flex w-full msg-assistant justify-start"
+              >
+                <div class="msg-bubble msg-assistant">
+                  <span class="sr-only">{entry["content"]}</span>
+                  <div
+                    id={"assistant-md-wrapper-#{entry["id"]}"}
+                    data-source={entry["content"] || ""}
+                    data-final={
+                      to_string(
+                        assistant_message_final?(entry, @running, @current_assistant_entry_id)
+                      )
+                    }
+                    data-streaming={
+                      to_string(
+                        assistant_message_streaming?(entry, @running, @current_assistant_entry_id)
+                      )
+                    }
+                    class="msg-markdown-wrapper"
+                    phx-hook="StreamingMarkdown"
+                  >
+                    <button
+                      class="msg-copy-btn"
+                      title="复制回复"
+                      aria-label="复制回复"
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                      >
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                      </svg>
+                    </button>
+                    <div
+                      id={"assistant-md-content-#{entry["id"]}"}
+                      data-markdown-target
+                      phx-update="ignore"
+                      class="markdown-body prose prose-sm max-w-none break-words"
+                    >
+                      <div class="markdown-noscript-fallback whitespace-pre-wrap break-words">
+                        {entry["content"]}
+                      </div>
+                      <noscript>{entry["content"]}</noscript>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div
+                :if={entry["content_type"] == "system_msg"}
+                class="msg-row flex w-full msg-assistant justify-start"
+              >
+                <div class="msg-bubble msg-system">
+                  <div class="whitespace-pre-wrap break-words">{entry["content"]}</div>
+                </div>
+              </div>
+
+              <div
+                :if={entry["content_type"] == "tool"}
+                class={[
+                  "tool-event tool-card",
+                  render_tool_status(tool_entry_status(entry)),
+                  if(entry["work_group_first"], do: "tool-work-lead"),
+                  if(entry["work_group_id"] && !entry["work_group_first"],
+                    do: "tool-work-follow"
+                  ),
+                  if(entry["work_collapsed"], do: "tool-work-collapsed"),
+                  if(entry["work_group_complete"] && !entry["work_collapsed"],
+                    do: "tool-work-open"
+                  )
+                ]}
+              >
+                <button
+                  :if={entry["work_group_first"] && entry["work_collapsed"]}
+                  type="button"
+                  id={"tool-work-summary-#{entry["work_group_id"]}"}
+                  class="tool-work-summary"
+                  phx-click="toggle_tool_work"
+                  phx-value-group={entry["work_group_id"]}
+                >
+                  {entry["work_summary"]}
+                </button>
+                <div class="tool-work-body">
+                  <button
+                    :if={
+                      entry["work_group_first"] && entry["work_group_complete"] &&
+                        !entry["work_collapsed"]
+                    }
+                    type="button"
+                    id={"tool-work-hide-#{entry["work_group_id"]}"}
+                    class="tool-work-hide"
+                    phx-click="toggle_tool_work"
+                    phx-value-group={entry["work_group_id"]}
+                  >
+                    {gettext("Hide Work")}
+                  </button>
+                  <div class="flex items-center gap-2">
+                    <span class="tool-name text-xs">{tool_entry_name(entry)}</span>
+                    <span
+                      :if={(tool_entry_input_summary(entry) || "") != ""}
+                      class="tool-summary truncate flex-1"
+                    >
+                      {tool_entry_input_summary(entry)}
+                    </span>
+                    <span
+                      :if={tool_entry_duration(entry)}
+                      class="tool-duration tabular-nums"
+                    >
+                      {format_duration(tool_entry_duration(entry))}
+                    </span>
+                  </div>
+                  <div class={[
+                    "tool-status-line",
+                    tool_status_class(tool_entry_status(entry))
+                  ]}>
+                    {tool_status_icon(tool_entry_status(entry))}
+                    {tool_entry_status(entry)}
+                  </div>
+                  <% install_prompt = browser_install_prompt(entry) %>
+                  <% preview_card = preview_card(entry) %>
+                  <% browser_takeover = browser_takeover_prompt(entry) %>
+                  <div
+                    :if={preview_card}
+                    id={"preview-card-#{entry["id"]}"}
+                    class="preview-card mt-2 rounded border border-edge px-2 py-2"
+                  >
+                    <p class="text-xs text-primary">{preview_card.title}</p>
+                    <p class="mt-1 text-xs text-tertiary">{preview_card.preview_id}</p>
+                    <div class="mt-2 flex items-center gap-2">
+                      <button
+                        id={"open-preview-#{entry["id"]}"}
+                        type="button"
+                        class="text-xs text-tertiary hover:text-primary"
+                        phx-click="open_preview"
+                        phx-value-id={preview_card.preview_id}
+                      >
+                        {gettext("打开预览")}
+                      </button>
+                      <button
+                        id={"open-preview-external-#{entry["id"]}"}
+                        type="button"
+                        class="text-xs text-tertiary hover:text-primary"
+                        phx-click="open_preview_external"
+                        phx-value-id={preview_card.preview_id}
+                      >
+                        {gettext("用浏览器打开")}
+                      </button>
+                    </div>
+                  </div>
+                  <div
+                    :if={browser_takeover}
+                    id={"browser-takeover-#{entry["id"]}"}
+                    class="browser-takeover-prompt mt-2 rounded border border-edge px-2 py-2"
+                  >
+                    <p class="text-xs text-primary">{gettext("接管浏览器")}</p>
+                    <p class="mt-1 text-xs text-tertiary">{browser_takeover.reason}</p>
+                    <button
+                      id={"takeover-browser-#{entry["id"]}"}
+                      type="button"
+                      class="mt-2 text-xs text-tertiary hover:text-primary"
+                      phx-click="takeover_browser"
+                      phx-value-session={browser_takeover.session_id}
+                    >
+                      {gettext("接管浏览器")}
+                    </button>
+                  </div>
+                  <div
+                    :if={install_prompt}
+                    id={"browser-install-#{entry["id"]}"}
+                    class="browser-install-prompt mt-2 rounded border border-edge px-2 py-2"
+                  >
+                    <p class="text-xs text-primary">{install_prompt.title}</p>
+                    <div class="mt-1 flex items-center gap-2">
+                      <code
+                        id={"browser-install-cmd-#{entry["id"]}"}
+                        class="flex-1 text-xs font-mono break-all"
+                      >
+                        {install_prompt.command}
+                      </code>
+                      <button
+                        id={"browser-install-copy-#{entry["id"]}"}
+                        type="button"
+                        class="text-xs text-tertiary hover:text-primary"
+                        phx-hook="CopyText"
+                        data-copy={install_prompt.command}
+                        title="Copy install command"
+                        aria-label="Copy install command"
+                      >
+                        Copy
+                      </button>
+                    </div>
+                    <p class="mt-1 text-xs text-tertiary">{install_prompt.hint}</p>
+                  </div>
+                  <div
+                    :if={is_nil(install_prompt) and tool_entry_error(entry)}
+                    class="mt-1 text-error truncate"
+                  >
+                    {inspect(tool_entry_error(entry))}
+                  </div>
+                </div>
+                <.card
+                  :if={FileChangeCard.change_entry?(entry)}
+                  entry={entry}
+                  open?={entry["file_change_open"] == true}
+                  id={"chat-file-change-#{entry["id"]}"}
+                  confirm_change_id={@revert_confirm_change_id}
+                  message={@revert_message}
+                />
+              </div>
+            </div>
+          </div>
+
+          <!-- Agent working indicator -->
+          <div
+            :if={@running and @timeline != []}
+            id="agent-working"
+            class="agent-working"
+          >
+            <span class="aw-dot dot" aria-hidden="true"></span>
+            <span>{gettext("Agent is working...")}</span>
+          </div>
+
+          <!-- Empty state: no messages yet -->
+          <div
+            :if={@timeline == [] and !@running}
+            id="no-messages"
+            class="empty-state"
+          >
+            <p class="empty-state-title">{gettext("No messages yet")}</p>
+            <p class="empty-state-subtitle">{gettext("Type a message to start")}</p>
+          </div>
+        </div>
+        <% user_nav_items = user_message_nav_items(@timeline) %>
+        <div
+          id="conversation-nav"
+          class={["conversation-nav", if(length(user_nav_items) >= 2, do: "has-many")]}
+          phx-hook="ConversationNav"
+        >
+          <div
+            :if={length(user_nav_items) >= 2}
+            id="conversation-nav-panel"
+            class="conversation-nav-panel"
+            data-conversation-nav-panel
+            hidden
+            role="dialog"
+            aria-label={gettext("对话导航")}
+          >
+            <div class="conversation-nav-panel-head">
+              <span data-conversation-nav-counter>
+                {length(user_nav_items)}/{length(user_nav_items)}
+              </span>
+              <span class="conversation-nav-panel-hint">{gettext("用户消息")}</span>
+            </div>
+            <div class="conversation-nav-list" role="list">
+              <button
+                :for={item <- user_nav_items}
+                type="button"
+                class="conversation-nav-item"
+                data-target-id={item.id}
+                data-index={item.index}
+                role="listitem"
+              >
+                <span class="conversation-nav-item-index">{item.index}</span>
+                <span class="conversation-nav-item-summary">{item.summary}</span>
+              </button>
+            </div>
+          </div>
+          <div class="conversation-nav-buttons">
+            <button
+              :if={length(user_nav_items) >= 2}
+              type="button"
+              class="conversation-nav-btn"
+              data-conversation-nav-toggle
+              aria-expanded="false"
+              aria-controls="conversation-nav-panel"
+              aria-label={gettext("对话导航")}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.2"
+                stroke-linecap="round"
+                aria-hidden="true"
+              >
+                <line x1="4" y1="7" x2="20" y2="7" />
+                <line x1="4" y1="12" x2="20" y2="12" />
+                <line x1="4" y1="17" x2="20" y2="17" />
+              </svg>
+            </button>
+            <button
+              id="mobile-fab"
+              type="button"
+              class="conversation-nav-btn conversation-nav-bottom"
+              data-conversation-nav-bottom
+              phx-click="scroll_to_bottom"
+              aria-label={gettext("滚到底部")}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Input area -->
+      <div id="ai-input-area" class="composer-dock">
+        <form
+          id="composer"
+          phx-submit="send_message"
+          phx-drop-target={@uploads.images.ref}
+          phx-change="composer_drop"
+          class={["composer dropzone", if(@running, do: "composer-running", else: "")]}
+        >
+          <div
+            :if={@composer_error}
+            class="composer-error"
+          >
+            <span class="truncate">{@composer_error}</span>
+            <button type="button" phx-click="clear_composer_error">
+              dismiss
+            </button>
+          </div>
+
+          <div class="composer-turn-controls">
+            <div class="composer-turn-label">
+              {if(@running, do: gettext("下一条使用"), else: gettext("本对话使用"))}
+            </div>
+            <div :if={@available_models != []} class="composer-turn-pickers">
+              <div class="model-control">
+                <select
+                  id="model-picker"
+                  name="model"
+                  value={@selected_model}
+                  phx-click="refresh_models"
+                  phx-change="select_model"
+                  aria-label={gettext("模型")}
+                  title={gettext("可在对话中途更换模型")}
+                >
+                  <optgroup
+                    :for={{provider_id, models} <- models_by_provider(@available_models)}
+                    label={provider_display_name(provider_id)}
+                  >
+                    <option
+                      :for={m <- models}
+                      value={m.id}
+                      selected={m.id == @selected_model}
+                    >
+                      {model_option_label(m, models)}
+                    </option>
+                  </optgroup>
+                </select>
+              </div>
+              <div :if={@available_reasoning_levels != []} class="model-control">
+                <select
+                  id="reasoning-picker"
+                  name="reasoning"
+                  value={@selected_reasoning_level}
+                  phx-change="select_reasoning"
+                  aria-label={gettext("推理等级")}
+                  title={gettext("推理等级")}
+                >
+                  <option
+                    :for={level <- @available_reasoning_levels}
+                    value={level}
+                    selected={level == @selected_reasoning_level}
+                  >
+                    {reasoning_label(level)}
+                  </option>
+                </select>
+              </div>
+            </div>
+            <div :if={@available_models == []} class="composer-model-error">
+              {model_empty_message(@workspace_root)}
+            </div>
+            <div class="permission-menu-container">
+              <button
+                type="button"
+                class="pill"
+                phx-click="toggle_permission_menu"
+                title={"#{gettext("当前权限:")}#{permission_label(@permission_mode)}"}
+              >
+                {permission_label(@permission_mode)} ▾
+              </button>
+              <div
+                :if={@show_permission_menu}
+                phx-click-away="close_sheets"
+                class="permission-dropdown-menu"
+              >
+                <button
+                  type="button"
+                  phx-click="select_permission_mode"
+                  phx-value-mode="auto"
+                  class={[
+                    "permission-dropdown-item",
+                    if(@permission_mode == :auto, do: "active")
+                  ]}
+                >
+                  {gettext("完整存取")}
+                </button>
+                <button
+                  type="button"
+                  phx-click="select_permission_mode"
+                  phx-value-mode="prompt"
+                  class={[
+                    "permission-dropdown-item",
+                    if(@permission_mode == :prompt, do: "active")
+                  ]}
+                >
+                  {gettext("安全模式")}
+                </button>
+                <button
+                  type="button"
+                  phx-click="select_permission_mode"
+                  phx-value-mode="deny"
+                  class={[
+                    "permission-dropdown-item",
+                    if(@permission_mode == :deny, do: "active")
+                  ]}
+                >
+                  {gettext("只读模式")}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div class="composer-bar">
+            <div class="textarea-wrap">
+              <label class="sr-only" for="ai-input">{gettext("消息")}</label>
+              <textarea
+                id="ai-input"
+                name="message"
+                rows="1"
+                phx-keyup="update_input"
+                phx-value-value={@input_value}
+                phx-hook="ComposerPasteUpload"
+                data-upload-name="images"
+                placeholder={
+                  if(@running,
+                    do: gettext("Running: send inserts next · queue waits until this run finishes"),
+                    else: gettext("输入消息")
+                  )
+                }
+              >{Phoenix.HTML.Form.normalize_value("textarea", @input_value)}</textarea>
+
+              <div
+                :if={@skill_suggestions not in [nil, []]}
+                id="skill-suggestions"
+                class="skill-suggestions-dropdown"
+                phx-click-away="dismiss_skill_suggestions"
+              >
+                <div
+                  :for={skill <- @skill_suggestions}
+                  class="skill-suggestion-item"
+                >
+                  <button
+                    type="button"
+                    phx-click="select_skill_suggestion"
+                    phx-value-name={skill.name}
+                    class="skill-suggestion-btn"
+                  >
+                    <span class="skill-suggestion-name">/skill:{skill.name}</span>
+                    <span class="skill-suggestion-desc">{skill.description}</span>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div class="composer-toolbar">
+              <div
+                id="composer-attachments"
+                class={[
+                  "composer-thumbs",
+                  if(@pending_attachments != [] or @uploads.images.entries != [],
+                    do: "visible"
+                  )
+                ]}
+              >
+                <div :for={entry <- @uploads.images.entries} class="composer-thumb">
+                  <.live_img_preview entry={entry} />
+                  <span class="sr-only">{entry.client_name}</span>
+                </div>
+                <div :for={att <- @pending_attachments} class="composer-thumb">
+                  <img
+                    src={att[:url] || att["url"]}
+                    alt={att[:filename] || att["filename"]}
+                  />
+                  <button
+                    type="button"
+                    phx-click="remove_attachment"
+                    phx-value-id={att[:id] || att["id"]}
+                    class="composer-thumb-remove"
+                    aria-label={gettext("移除")}
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+
+              <div class="composer-toolbar-actions">
+                <label class="composer-icon-btn" title={gettext("添加图片")}>
+                  <span class="sr-only">{gettext("添加图片")}</span>
+                  <svg
+                    width="16"
+                    height="16"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="1.8"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M21.44 11.05l-8.49 8.49a5.25 5.25 0 0 1-7.42-7.42l8.48-8.49a3.5 3.5 0 0 1 4.95 4.95l-8.48 8.49a1.75 1.75 0 1 1-2.47-2.47l7.78-7.78" />
+                  </svg>
+                  <.live_file_input upload={@uploads.images} class="hidden" />
+                </label>
+
+                <button
+                  :if={@running}
+                  type="button"
+                  phx-click="stop_run"
+                  class="composer-icon-btn composer-stop-btn"
+                  title={gettext("Stop")}
+                >
+                  <span class="sr-only">{gettext("Stop")}</span>
+                  <span class="composer-stop-square" aria-hidden="true"></span>
+                </button>
+                <button
+                  :if={@running}
+                  id="queue-button"
+                  type="button"
+                  phx-click="queue_message"
+                  phx-value-message={@input_value}
+                  class="composer-icon-btn"
+                  title={gettext("When done")}
+                >
+                  <span class="sr-only">{gettext("When done")}</span>
+                  <span aria-hidden="true">☰</span>
+                </button>
+                <button
+                  id="send-button"
+                  type="submit"
+                  form="composer"
+                  class={["composer-send-btn", if(@running, do: "steer", else: "primary")]}
+                  title={gettext("Send")}
+                >
+                  <span class="sr-only">{gettext("Send")}</span>
+                  <svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.4"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M5 12h14" />
+                    <path d="M13 6l6 6-6 6" />
+                  </svg>
+                  <span :if={@running} class="composer-steer-dot" aria-hidden="true"></span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <button
+      :if={@right_panel_collapsed and @chat_scope != :free}
+      id="workspace-panel-toggle"
+      phx-click="toggle_right_panel"
+      class="workspace-panel-toggle collapsed"
+      title={gettext("Show workspace")}
+      aria-label={gettext("Show workspace")}
+      aria-pressed="false"
+    >
+      <svg
+        width="16"
+        height="16"
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.7"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <rect x="2.5" y="3" width="11" height="10" rx="1.4" />
+        <path d="M10.2 3v10" />
+        <path d="M5.3 6.2 7.1 8 5.3 9.8" />
+      </svg>
+    </button>
+    """
+  end
+
+  def workspace_panel(assigns) do
+    ~H"""
+    <div
+      :if={@chat_scope != :free}
+      id="workspace-panel"
+      phx-hook="WorkspacePanel"
+      class={[
+        "flex-shrink-0 border-l bg-surface flex flex-col workspace-panel files-panel",
+        if(@mobile_right_panel_open, do: "mobile-panel-open", else: ""),
+        if(@right_panel_collapsed,
+          do: "w-0 overflow-hidden border-l-0 opacity-0",
+          else: "w-[440px]"
+        )
+      ]}
+    >
+      <!-- Workspace panel navigation -->
+      <div class="workspace-panel-header border-b flex items-center min-w-0">
+        <button
+          type="button"
+          phx-click="select_right_panel_view"
+          phx-value-view="changes"
+          class={[
+            "workspace-panel-tab",
+            if(@right_panel_view == :changes, do: "active", else: "")
+          ]}
+        >
+          {gettext("Changes")}
+        </button>
+        <button
+          type="button"
+          phx-click="select_right_panel_view"
+          phx-value-view="files"
+          class={["workspace-panel-tab", if(@right_panel_view == :files, do: "active", else: "")]}
+        >
+          {gettext("Files")}
+        </button>
+        <button
+          :if={@terminal_available?}
+          type="button"
+          phx-click="select_right_panel_view"
+          phx-value-view="terminal"
+          class={[
+            "workspace-panel-tab",
+            if(@right_panel_view == :terminal, do: "active", else: "")
+          ]}
+        >
+          {gettext("Terminal")}
+        </button>
+        <span class="workspace-panel-label truncate">{@workspace_label}</span>
+        <button
+          :if={!@right_panel_collapsed}
+          id="workspace-panel-toggle"
+          phx-click="toggle_right_panel"
+          class="workspace-panel-toggle expanded"
+          title={gettext("Collapse workspace")}
+          aria-label={gettext("Collapse workspace")}
+          aria-pressed="true"
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <rect x="2.5" y="3" width="11" height="10" rx="1.4" />
+            <path d="M10.2 3v10" />
+            <path d="M7.1 6.2 5.3 8l1.8 1.8" />
+          </svg>
+        </button>
+        <button
+          id="mobile-close-workspace-panel"
+          phx-click="close_mobile_right_panel"
+          class="mobile-panel-close"
+          title={gettext("Close")}
+          aria-label={gettext("Close")}
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.7"
+            stroke-linecap="round"
+          >
+            <path d="M4 4l8 8M12 4l-8 8" />
+          </svg>
+        </button>
+      </div>
+
+      <div
+        :if={@right_panel_view == :changes}
+        id="workspace-changes"
+        class="workspace-changes-view flex-1 min-h-0 overflow-auto"
+      >
+        <% changes = FileChangeCard.changes(@timeline) %>
+        <p :if={changes == []} class="workspace-changes-empty">
+          {gettext("No file changes yet")}
+        </p>
+        <.card
+          :for={entry <- changes}
+          entry={entry}
+          open?={MapSet.member?(@expanded_file_changes, entry["id"])}
+          id={"changes-file-#{entry["id"]}"}
+          confirm_change_id={@revert_confirm_change_id}
+          message={@revert_message}
+        />
+      </div>
+
+      <div
+        :if={@right_panel_view == :files}
+        class="workspace-files-view flex-1 min-h-0 flex flex-col"
+      >
+        <div class={["workspace-tree-pane", if(@active_file, do: "has-preview", else: "")]}>
+          <div :if={@workspace_tree_error} class="workspace-tree-error">
+            {gettext("Unable to list workspace files")}
+          </div>
+          <.workspace_tree
+            :if={!@workspace_tree_error}
+            entries={@workspace_tree}
+            expanded={@expanded_workspace_dirs}
+            active_file={@active_file}
+            workspace_root={@workspace_root}
+          />
+        </div>
+
+        <div
+          :if={@active_file}
+          id="editor-content"
+          class="workspace-file-preview flex-1 min-h-0 overflow-auto p-4 font-mono text-sm border-t"
+        >
+          <div id="file-preview">
+            <div>
+              <div class="text-xs text-tertiary mb-2 truncate">{@active_file}</div>
+              <div
+                :if={@file_preview_error}
+                class="p-4 bg-error-subtle border-l-4 border-l-error rounded text-sm text-error"
+              >
+                <span class="font-semibold">Error: </span>{@file_preview_error}
+              </div>
+              <pre :if={!@file_preview_error} class="text-primary"><code>{render_file_preview(@active_file, @workspace_root)}</code></pre>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div :if={@terminal_available? and @right_panel_view == :terminal} class="flex-1 min-h-0">
+        <.live_component
+          module={HandbeamWeb.Live.TerminalPanel}
+          id="terminal-panel"
+          workspace_id={@current_workspace_id}
+          workspace_path={@workspace_root}
+        />
+      </div>
+    </div>
+    """
+  end
+
+  def mobile_sheets(assigns) do
+    ~H"""
+    <div
+      id="mobile-backdrop"
+      class={[
+        "mobile-backdrop",
+        if(
+          any_sheet_open?(
+            @show_workspace_sheet,
+            @show_model_sheet,
+            @show_reasoning_sheet,
+            @show_settings_sheet
+          ),
+          do: "open",
+          else: ""
+        )
+      ]}
+      phx-click="close_sheets"
+    >
+    </div>
+
+    <!-- Workspace / Conversation Switcher Sheet -->
+    <div
+      id="workspace-sheet"
+      class={["bottom-sheet", if(@show_workspace_sheet, do: "open", else: "")]}
+    >
+      <div class="sheet-handle"></div>
+      <div class="bottom-sheet-inner">
+        <%= for ws <- @workspaces do %>
+          <% collapsed? = workspace_group_collapsed?(@collapsed_workspace_ids, ws["id"]) %>
+          <div class="sheet-section-title sheet-section-header">
+            <button
+              type="button"
+              id={"sheet-workspace-toggle-#{ws["id"]}"}
+              phx-click="toggle_workspace_group"
+              phx-value-id={ws["id"]}
+              class="sheet-section-toggle"
+              aria-expanded={to_string(not collapsed?)}
+            >
+              <span class="workspace-icon" aria-hidden="true">
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                </svg>
+              </span>
+              <span class="truncate flex-1 min-w-0">{ws["name"]}</span>
+              <span :if={ws["default"]} class="sheet-section-sub">default</span>
+              <span
+                id={"sheet-workspace-count-#{ws["id"]}"}
+                class="sheet-conv-count"
+                title={gettext("会话数量")}
+              >
+                {active_conversation_count(@conversations_by_workspace, ws["id"], @workspaces)}
+              </span>
+              <svg
+                class={["workspace-chevron-icon", collapsed? && "is-collapsed"]}
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                aria-hidden="true"
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+            <button
+              :if={!ws["default"]}
+              phx-click="open_remove_workspace"
+              phx-value-id={ws["id"]}
+              class="sheet-remove-workspace-btn"
+              title={gettext("移除工作区")}
+              aria-label={gettext("移除工作区")}
+            >
+              {gettext("移除")}
+            </button>
+            <button
+              phx-click="mobile_new_conversation_in_workspace"
+              phx-value-ws_id={ws["id"]}
+              class="sheet-new-conv-btn"
+              title={gettext("在此工作区新建对话")}
+              aria-label={gettext("在此工作区新建对话")}
+            >
+              <svg
+                width="16"
+                height="16"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                stroke-linecap="round"
+              >
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+            </button>
+          </div>
+          <%= if not workspace_group_collapsed?(@collapsed_workspace_ids, ws["id"]) do %>
+            <%= for conv <- workspace_conversations(@conversations_by_workspace, ws["id"], @workspaces) |> Enum.reject(& &1[:archived]) do %>
+              <button
+                phx-click="select_conversation"
+                phx-value-id={conv.id}
+                phx-value-ws_id={conv.workspace_id}
+                class={[
+                  "sheet-conv-row",
+                  if(
+                    @current_conversation_id == conv.id and
+                      @current_workspace_id == conv.workspace_id,
+                    do: "active",
+                    else: ""
+                  )
+                ]}
+              >
+                <span class={[
+                  "sheet-conv-dot",
+                  if(
+                    @current_conversation_id == conv.id and
+                      @current_workspace_id == conv.workspace_id,
+                    do: "active",
+                    else: ""
+                  )
+                ]}></span>
+                <span class="truncate flex-1">{conv.title}</span>
+                <span class="sheet-conv-time">{relative_time(conv)}</span>
+              </button>
+            <% end %>
+          <% end %>
+        <% end %>
+        <% free_collapsed? = workspace_group_collapsed?(@collapsed_workspace_ids, "free") %>
+        <div class="sheet-section-title sheet-section-header">
+          <button
+            type="button"
+            id="sheet-free-toggle"
+            phx-click="toggle_workspace_group"
+            phx-value-id="free"
+            class="sheet-section-toggle"
+            aria-expanded={to_string(not free_collapsed?)}
+            aria-controls="sheet-free-conversations"
+          >
+            <span class="truncate flex-1 min-w-0">{gettext("对话")}</span>
+            <span id="sheet-free-count" class="sheet-conv-count" title={gettext("会话数量")}>
+              {free_conversation_count(@conversations_by_workspace)}
+            </span>
+            <svg
+              class={["workspace-chevron-icon", free_collapsed? && "is-collapsed"]}
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+              aria-hidden="true"
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+          <button
+            id="sheet-new-free-conversation"
+            phx-click="new_free_conversation"
+            class="sheet-new-conv-btn"
+            title={gettext("新建自由对话")}
+            aria-label={gettext("新建自由对话")}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+              stroke-linecap="round"
+            >
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+        </div>
+        <div :if={not free_collapsed?} id="sheet-free-conversations">
+          <button
+            :for={conv <- free_conversations(@conversations_by_workspace)}
+            phx-click="select_free_conversation"
+            phx-value-id={conv.id}
+            class={[
+              "sheet-conv-row",
+              @current_conversation_id == conv.id && @chat_scope == :free && "active"
+            ]}
+          >
+            <span class="truncate flex-1">{conv.title}</span>
+          </button>
+        </div>
+        <button phx-click="open_add_project" class="sheet-add-row">
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"
+          >
+            <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+          添加项目
+        </button>
+      </div>
+    </div>
+
+    <!-- Model Picker Sheet -->
+    <div id="model-sheet" class={["bottom-sheet", if(@show_model_sheet, do: "open", else: "")]}>
+      <div class="sheet-handle"></div>
+      <div class="bottom-sheet-inner">
+        <%= for {provider_id, models} <- models_by_provider(@available_models) do %>
+          <div class="sheet-section-title">{provider_display_name(provider_id)}</div>
+          <%= for m <- models do %>
+            <button
+              phx-click="select_model_from_sheet"
+              phx-value-model={m.id}
+              class={["sheet-select-row", if(m.id == @selected_model, do: "active", else: "")]}
+            >
+              <span>{model_option_label(m, models)}</span>
+              <span
+                class="sheet-select-check"
+                style={"opacity: #{if m.id == @selected_model, do: "1", else: "0"}"}
+              >
+                ✓
+              </span>
+            </button>
+          <% end %>
+        <% end %>
+      </div>
+    </div>
+
+    <!-- Reasoning Picker Sheet -->
+    <div
+      id="reasoning-sheet"
+      class={["bottom-sheet", if(@show_reasoning_sheet, do: "open", else: "")]}
+    >
+      <div class="sheet-handle"></div>
+      <div class="bottom-sheet-inner">
+        <div class="sheet-section-title">{gettext("Reasoning Level")}</div>
+        <%= for level <- @available_reasoning_levels do %>
+          <button
+            phx-click="select_reasoning_from_sheet"
+            phx-value-level={level}
+            class={[
+              "sheet-select-row",
+              if(level == @selected_reasoning_level, do: "active", else: "")
+            ]}
+          >
+            <span>{reasoning_label(level)}</span>
+            <span
+              class="sheet-select-check"
+              style={"opacity: #{if level == @selected_reasoning_level, do: "1", else: "0"}"}
+            >
+              ✓
+            </span>
+          </button>
+        <% end %>
+      </div>
+    </div>
+
+    <!-- Settings Sheet -->
+    <div
+      id="settings-sheet"
+      class={["bottom-sheet", if(@show_settings_sheet, do: "open", else: "")]}
+    >
+      <div class="sheet-handle"></div>
+      <div class="bottom-sheet-inner">
+        <div class="sheet-section-title">{gettext("Conversation info")}</div>
+        <div class="mobile-settings-list">
+          <div class="mobile-settings-row">
+            <span>{gettext("Workspace")}</span>
+            <strong class="truncate">{@workspace_label}</strong>
+          </div>
+          <div class="mobile-settings-row">
+            <span>{gettext("Model")}</span>
+            <strong class="truncate">{@status_info.model || gettext("None")}</strong>
+          </div>
+          <div class="mobile-settings-row">
+            <span>{gettext("Status")}</span>
+            <strong>{@status_info.status}</strong>
+          </div>
+          <div class="mobile-settings-row">
+            <span>{gettext("Session")}</span>
+            <strong class="truncate font-mono text-[11px]">
+              {if @current_conversation_id,
+                do: String.slice(@current_conversation_id, 0, 8),
+                else: "none"}
+            </strong>
+          </div>
+          <div class="mobile-settings-row">
+            <span>{gettext("MCP / Skills")}</span>
+            <strong>{@mcp_count} / {@skills_count}</strong>
+          </div>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  def approval_overlay(assigns) do
+    ~H"""
+    <%= if @pending_approval do %>
+      <div id="tool-approval-overlay" class="tool-approval-overlay">
+        <div class="approval-card bg-surface border rounded-xl shadow-2xl w-[480px] max-h-[80vh] overflow-y-auto p-5">
+          <h3 class="text-base font-semibold text-primary mb-3">
+            ⚠ {gettext("Tool Approval Required")}
+          </h3>
+          <p class="text-xs text-secondary mb-4">
+            {gettext("The agent wants to run the following tools. Review and approve or deny.")}
+          </p>
+
+          <div class="space-y-3 mb-4">
+            <%= for request <- approval_action_requests(@pending_approval) do %>
+              <div class="bg-main border rounded-lg p-3">
+                <div class="flex items-center gap-2 mb-2">
+                  <span class="font-mono font-bold text-xs text-accent">
+                    {request["tool_name"] || request[:tool_name]}
+                  </span>
+                  <span class="text-xs text-tertiary font-mono truncate">
+                    {request["tool_call_id"] || request[:tool_call_id]}
+                  </span>
+                </div>
+                <div class="text-xs text-secondary font-mono bg-main-darker rounded p-2 max-h-32 overflow-y-auto">
+                  <pre class="whitespace-pre-wrap break-all">{format_arguments(request["arguments"] || request[:arguments] || %{})}</pre>
+                </div>
+              </div>
+            <% end %>
+          </div>
+
+          <details id="approval-more-options" class="mb-4 text-xs text-secondary">
+            <summary class="cursor-pointer py-2">{gettext("More approval options")}</summary>
+            <div class="space-y-3 border rounded-lg p-3 mt-2">
+              <p>{gettext("Session approval allows these tools for the rest of this run.")}</p>
+              <button
+                phx-click="approve_all_tools"
+                phx-value-remember="session"
+                class="text-xs bg-surface text-primary border rounded px-3 py-2 transition-colors hover:bg-surface-hover"
+              >
+                {gettext("This session")}
+              </button>
+              <p>{gettext("Always allow saves these rules in this workspace:")}</p>
+              <ul class="space-y-1 font-mono break-all">
+                <%= for request <- approval_action_requests(@pending_approval) do %>
+                  <li>
+                    {request[:suggested_pattern] || request["suggested_pattern"] ||
+                      request[:tool_name] || request["tool_name"]}
+                  </li>
+                <% end %>
+              </ul>
+              <button
+                phx-click="approve_all_tools"
+                phx-value-remember="always"
+                class="text-xs bg-surface text-primary border rounded px-3 py-2 transition-colors hover:bg-surface-hover"
+              >
+                {gettext("Always allow")}
+              </button>
+            </div>
+          </details>
+
+          <div class="flex flex-wrap gap-2 justify-end">
+            <button
+              phx-click="deny_all_tools"
+              class="text-xs bg-error-subtle text-error border border-error/30 rounded px-3 py-2 transition-colors hover:bg-error/10"
+            >
+              {gettext("Deny")}
+            </button>
+            <button
+              phx-click="approve_all_tools"
+              class="text-xs bg-primary text-user rounded px-3 py-2 transition-colors"
+            >
+              {gettext("Allow once")}
+            </button>
+          </div>
+        </div>
+      </div>
+    <% end %>
+    """
+  end
+
+  def status_bar(assigns) do
+    ~H"""
+    <div
+      id="status-bar"
+      class="h-8 border-t bg-surface flex items-center justify-between px-4 text-xs text-tertiary flex-shrink-0"
+    >
+      <div id="status-bar-left" class="flex items-center space-x-4">
+        <.link
+          id="open-settings"
+          navigate={settings_href(@current_workspace_id, @current_conversation_id)}
+          class="text-tertiary hover:text-primary transition-colors p-0.5 rounded hover:bg-gray-200 dark:hover:bg-gray-700 inline-flex no-underline"
+          title={gettext("Settings")}
+          aria-label={gettext("Settings")}
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+        </.link>
+        <span id="status-tokens">
+          {gettext("Tokens:")}
+          {gettext("input")}
+          <span id="status-input-tokens" title={@status_info.input_tokens}>
+            {format_tokens(@status_info.input_tokens)}
+          </span>
+          / {gettext("output")}
+          <span id="status-output-tokens" title={@status_info.output_tokens}>
+            {format_tokens(@status_info.output_tokens)}
+          </span>
+        </span>
+        <span
+          :if={has_cache_tokens?(@status_info)}
+          id="status-cache-tokens"
+          class="text-secondary"
+          title="Prompt cache hits/writes (discounted tokens)"
+        >
+          {gettext("read")}
+          <span id="status-cache-read" title={@status_info.cache_read_tokens}>
+            {format_tokens(@status_info.cache_read_tokens)}
+          </span>
+          / {gettext("write")}
+          <span id="status-cache-write" title={@status_info.cache_write_tokens}>
+            {format_tokens(@status_info.cache_write_tokens)}
+          </span>
+        </span>
+        <span
+          id="status-cache-hit-rate"
+          class="whitespace-nowrap"
+          title={
+            gettext(
+              "This run: cached input / total input (including cache reads and writes). Not a cost saving rate. — means no cache activity reported."
+            )
+          }
+        >
+          {gettext("Cache hit")} {format_cache_hit_rate(@status_info)}
+        </span>
+        <span :if={@status_info.turns > 0}>
+          {gettext("Turns:")} <span id="status-turns">{@status_info.turns}</span>
+        </span>
+        <span
+          id="status-session-id"
+          class="text-tertiary"
+          data-session-id={@current_conversation_id || ""}
+        >
+          sid:{@current_conversation_id || "none"}
+        </span>
+        <span
+          id="status-mcp-count"
+          class="inline-flex items-center gap-1 whitespace-nowrap tabular-nums"
+          title={"MCP servers: #{@mcp_count}"}
+        >
+          <span>MCP</span>
+          <span>{@mcp_count}</span>
+        </span>
+        <span
+          id="status-skills-count"
+          class="inline-flex items-center gap-1 whitespace-nowrap tabular-nums"
+          title={"Skills: #{@skills_count}"}
+        >
+          <span>Skills</span>
+          <span>{@skills_count}</span>
+        </span>
+      </div>
+      <div class="flex items-center space-x-4">
+        <span class="flex items-center text-tertiary">
+          <span
+            id="status-dot"
+            class={["status-dot", status_dot_class(@status_info.status)]}
+          ></span>
+          <span id="status-label">{@status_info.status}</span>
+        </span>
+      </div>
+    </div>
+    """
+  end
+end

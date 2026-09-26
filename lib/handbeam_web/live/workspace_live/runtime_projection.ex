@@ -2,7 +2,9 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
   @moduledoc false
 
   import Phoenix.Component, only: [assign: 3]
-  import Phoenix.LiveView, only: [stream_insert: 3]
+  import Phoenix.LiveView, only: [connected?: 1, stream_insert: 3]
+
+  require Logger
 
   def timeline_insert(socket, entry) do
     expanded = Map.get(socket.assigns, :expanded_tool_groups, MapSet.new())
@@ -237,4 +239,524 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
 
   defp stream_related_tool_work(socket, _timeline, _entry), do: socket
   defp truthy?(value), do: value in [true, "true", 1, "1"]
+
+  alias HandbeamWeb.WorkspaceLive.Composer
+  alias HandbeamWeb.WorkspaceLive.ConversationState
+  alias HandbeamWeb.WorkspaceLive.EditorProjection
+  alias HandbeamWeb.WorkspaceLive.ModelSelection
+  alias HandbeamWeb.WorkspaceLive.ToolProjection
+  alias HandbeamWeb.WorkspaceLive.WorkspaceNavigation
+
+  @high_freq_events [:message_delta, :thinking_delta]
+
+  def apply(socket, event), do: handle_current_agent_event(event, socket)
+  def restore_active_session(socket), do: restore_active_session_snapshot(socket)
+  def subscribe_session(socket), do: subscribe_to_session(socket)
+  def subscribe_tasks(socket), do: subscribe_to_runtime_tasks(socket)
+  def mark_cancelled(socket), do: mark_run_cancelled(socket)
+
+  defp project_timeline(socket, entry, _opts), do: timeline_insert(socket, entry)
+
+  def handle_current_agent_event(
+        %Handbeam.PubSub.AgentEvent{topic: "session:" <> _} = event,
+        socket
+      ) do
+    unless event.kind in @high_freq_events do
+      Logger.debug(
+        "[WorkspaceLive] received agent event kind=#{inspect(event.kind)} " <>
+          "topic=#{event.topic} current=#{session_topic(socket.assigns.current_conversation_id)}"
+      )
+    end
+
+    if event.topic == session_topic(socket.assigns.current_conversation_id) do
+      handle_agent_event(event, socket)
+    else
+      socket
+    end
+  end
+
+  def handle_current_agent_event(%Handbeam.PubSub.AgentEvent{} = event, socket) do
+    handle_agent_event(event, socket)
+  end
+
+  def handle_current_agent_event(event, socket), do: handle_agent_event(event, socket)
+
+  def handle_agent_event(%{kind: :run_start, payload: payload}, socket) do
+    Logger.debug(
+      "[WorkspaceLive] applying run_start conversation=#{socket.assigns.current_conversation_id}"
+    )
+
+    socket
+    |> assign(:running, true)
+    |> assign(:running_conversation_id, socket.assigns.current_conversation_id)
+    |> assign(:stream_suppressed, false)
+    |> assign(:tools_active, %{})
+    |> assign(:current_assistant_entry_id, nil)
+    |> assign(:thinking_active, false)
+    |> assign(:thinking_content, "")
+    |> assign(:think_buffer, "")
+    |> update_status(%{
+      model: ModelSelection.model_display_name(payload[:model], socket.assigns.available_models),
+      status: :running,
+      input_tokens: 0,
+      total_input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      turns: 0
+    })
+  end
+
+  def handle_agent_event(%{kind: :turn_start, payload: payload}, socket) do
+    if socket.assigns.stream_suppressed do
+      socket
+    else
+      turns = payload_value(payload, :turn, Map.get(socket.assigns.status_info, :turns, 0))
+
+      socket
+      |> assign(:running, true)
+      |> assign(:running_conversation_id, socket.assigns.current_conversation_id)
+      |> assign(:stream_suppressed, false)
+      |> update_status(%{status: :running, turns: turns})
+    end
+  end
+
+  def handle_agent_event(%{kind: :usage_updated, payload: payload}, socket) do
+    if socket.assigns.stream_suppressed do
+      socket
+    else
+      # Runtime usage is cumulative for this run; replace rather than add on replay.
+      update_status(socket, payload |> payload_value(:usage, %{}) |> usage_tokens())
+    end
+  end
+
+  def handle_agent_event(%{kind: :message_delta, payload: %{chunk: chunk}}, socket) do
+    # Logger.debug(
+    #   "[WorkspaceLive] agent event message_delta bytes=#{byte_size(chunk)} " <>
+    #     "conversation=#{socket.assigns.current_conversation_id}"
+    # )
+
+    if socket.assigns.stream_suppressed do
+      Logger.debug(
+        "[WorkspaceLive] dropped suppressed message_delta bytes=#{byte_size(chunk)} " <>
+          "conversation=#{socket.assigns.current_conversation_id}"
+      )
+
+      socket
+    else
+      update_messages(socket, chunk)
+    end
+  end
+
+  def handle_agent_event(%{kind: :thinking_delta}, socket) do
+    if socket.assigns.stream_suppressed do
+      socket
+    else
+      assign(socket, :thinking_active, true)
+    end
+  end
+
+  def handle_agent_event(%{kind: :tool_start, payload: payload}, socket) do
+    if socket.assigns.stream_suppressed do
+      Logger.debug(
+        "[WorkspaceLive] dropped suppressed tool_start conversation=#{socket.assigns.current_conversation_id}"
+      )
+
+      socket
+    else
+      do_handle_tool_start(payload, socket)
+    end
+  end
+
+  def handle_agent_event(%{kind: :tool_end, payload: payload}, socket) do
+    if socket.assigns.stream_suppressed do
+      Logger.debug(
+        "[WorkspaceLive] dropped suppressed tool_end conversation=#{socket.assigns.current_conversation_id}"
+      )
+
+      socket
+    else
+      do_handle_tool_end(payload, socket)
+    end
+  end
+
+  def handle_agent_event(%{kind: :tool_approval_requested, payload: payload}, socket) do
+    Logger.debug(
+      "[WorkspaceLive] tool_approval_requested conversation=#{socket.assigns.current_conversation_id}"
+    )
+
+    socket
+    |> assign(:pending_approval, payload)
+    |> update_status(%{status: :awaiting_approval})
+  end
+
+  def handle_agent_event(%{kind: :candidate_message_injected, payload: payload}, socket) do
+    pending =
+      Handbeam.Agent.PendingMessages.apply_injected(socket.assigns.pending_messages, payload)
+
+    Composer.assign_pending(socket, pending)
+  end
+
+  def handle_agent_event(%{kind: :candidate_message_deleted, payload: payload}, socket) do
+    pending =
+      Handbeam.Agent.PendingMessages.apply_deleted(socket.assigns.pending_messages, payload)
+
+    Composer.assign_pending(socket, pending)
+  end
+
+  def handle_agent_event(%{kind: :run_end, payload: payload}, socket) do
+    status_value = payload_value(payload, :status, "completed")
+
+    Logger.debug(
+      "[WorkspaceLive] agent event run_end status=#{inspect(status_value)} " <>
+        "conversation=#{socket.assigns.current_conversation_id}"
+    )
+
+    status = safe_status(status_value)
+
+    socket =
+      if socket.assigns.stream_suppressed and status != :cancelled do
+        Logger.debug(
+          "[WorkspaceLive] dropped suppressed run_end status=#{inspect(status_value)} " <>
+            "conversation=#{socket.assigns.current_conversation_id}"
+        )
+
+        socket
+      else
+        do_handle_run_end(payload, status, socket)
+        |> assign(:thinking_active, false)
+      end
+
+    # Only clear pending_approval on terminal run_end (not interrupted/awaiting_approval)
+    socket =
+      if status not in [:interrupted] do
+        socket
+        |> assign(:pending_approval, nil)
+        |> Composer.assign_pending(
+          Handbeam.Agent.PendingMessages.apply_run_end(socket.assigns.pending_messages, status)
+        )
+      else
+        socket
+        |> assign(:running, true)
+        |> assign(:running_conversation_id, socket.assigns.current_conversation_id)
+      end
+
+    socket
+  end
+
+  def handle_agent_event(_event, socket), do: socket
+
+  def do_handle_tool_start(payload, socket) do
+    %{entry: event, tool_name: tool_name} = ToolProjection.start(payload, &summarize_input/2)
+
+    tools_active = Map.put(socket.assigns.tools_active, tool_name, :running)
+
+    socket
+    |> finalize_assistant()
+    |> assign(:tools_active, tools_active)
+    |> assign(:current_assistant_entry_id, nil)
+    |> project_timeline(event, persist?: false)
+  end
+
+  def do_handle_tool_end(payload, socket) do
+    {id, tool_name, tool_use_id} = ToolProjection.identity(payload)
+
+    base_entry =
+      find_entry(socket.assigns.timeline, id) ||
+        %{
+          "id" => id,
+          "content_type" => "tool",
+          "tool_use_id" => tool_use_id,
+          "tool_name" => tool_name,
+          "tool_input_summary" => ""
+        }
+
+    projection = ToolProjection.finish(payload, base_entry)
+    %{entry: entry, status: status, file_path: file_path, diff_lines: diff_lines} = projection
+    tools_active = Map.put(socket.assigns.tools_active, tool_name, status)
+
+    updated =
+      socket
+      |> assign(:tools_active, tools_active)
+      |> project_timeline(entry, persist?: false)
+      |> EditorProjection.maybe_add_diff_file(
+        file_path,
+        diff_lines,
+        ConversationState.current_workspace_path(socket)
+      )
+
+    if updated.assigns.editor_files != socket.assigns.editor_files,
+      do: WorkspaceNavigation.refresh_loaded_tree_parent(updated, Path.expand(file_path)),
+      else: updated
+  end
+
+  def do_handle_run_end(payload, status, socket) do
+    turns = payload_value(payload, :turns, 0)
+    run_error = payload_value(payload, :error)
+    # Runtime already recorded a terminal run. Reload that conversation's
+    # totals. Interrupted is not terminal, so keep the in-flight figures.
+    usage =
+      if status == :interrupted do
+        payload |> payload_value(:usage, %{}) |> usage_tokens()
+      else
+        ConversationState.load_conversation_token_usage(socket.assigns.current_conversation_id)
+      end
+
+    socket =
+      socket
+      |> assign(:conv_tokens, usage)
+      |> finalize_assistant()
+      |> assign(:running, false)
+      |> assign(:running_conversation_id, nil)
+      |> assign(:stream_suppressed, status == :cancelled)
+      |> assign(:tools_active, %{})
+      |> assign(:current_assistant_entry_id, nil)
+      |> update_status(Map.merge(%{status: status, turns: turns}, usage))
+      |> maybe_append_error_message(run_error, persist?: false)
+
+    # If the send path did not name the chat, try again now. A completed run
+    # must not be required for the first title.
+    ConversationState.maybe_auto_title(socket, status)
+  end
+
+  def mark_run_cancelled(socket) do
+    socket
+    |> finalize_assistant()
+    |> assign(:running, false)
+    |> assign(:running_conversation_id, nil)
+    |> assign(:stream_suppressed, true)
+    |> assign(:tools_active, %{})
+    |> assign(:current_assistant_entry_id, nil)
+    |> assign(:pending_approval, nil)
+    |> update_status(%{status: :cancelled})
+  end
+
+  def restore_active_session_snapshot(socket) do
+    conv_id = socket.assigns.current_conversation_id
+
+    cond do
+      not is_binary(conv_id) ->
+        socket
+
+      is_nil(Handbeam.PubSub.Session.whereis(conv_id)) ->
+        socket
+
+      true ->
+        case Handbeam.PubSub.Session.snapshot(conv_id) do
+          %{events: events, meta: meta} ->
+            # Verify the run is actually still active: if the agent process
+            # is dead (e.g. Session restarted after a crash), don't replay
+            # events that would set running=true and show "agent working".
+            agent_pid = Map.get(meta, :agent_pid)
+
+            actually_running? =
+              Map.get(meta, :running?, false) and
+                agent_pid != nil and
+                Process.alive?(agent_pid)
+
+            if actually_running? do
+              timeline = socket.assigns.timeline
+              replay_message_delta? = not timeline_has_assistant_message?(timeline)
+
+              Logger.debug(
+                "[WorkspaceLive] restoring active session snapshot conversation=#{conv_id} " <>
+                  "events=#{length(events)} replay_message_delta?=#{replay_message_delta?}"
+              )
+
+              socket =
+                if replay_message_delta? do
+                  socket
+                else
+                  assign(socket, :current_assistant_entry_id, last_assistant_message_id(timeline))
+                end
+
+              socket =
+                events
+                |> Enum.sort_by(& &1.seq)
+                |> maybe_skip_message_delta_events(replay_message_delta?)
+                |> Enum.reduce(socket, fn event, socket ->
+                  handle_current_agent_event(event, socket)
+                end)
+
+              pending =
+                Handbeam.Agent.PendingMessages.reconcile(
+                  socket.assigns.pending_messages || %{},
+                  session_pending_messages(conv_id),
+                  true,
+                  socket.assigns.timeline || []
+                )
+
+              assign(socket, :pending_messages, pending)
+            else
+              socket
+            end
+
+          _ ->
+            socket
+        end
+    end
+  end
+
+  def session_pending_messages(conv_id) do
+    if Handbeam.PubSub.Session.whereis(conv_id) do
+      Handbeam.PubSub.Session.get_pending_messages(conv_id)
+    else
+      []
+    end
+  catch
+    :exit, _ -> []
+  end
+
+  def maybe_skip_message_delta_events(events, true), do: events
+
+  def maybe_skip_message_delta_events(events, false) do
+    Enum.reject(events, &(&1.kind == :message_delta))
+  end
+
+  def timeline_has_assistant_message?(timeline) do
+    Enum.any?(timeline, fn entry ->
+      Map.get(entry, "content_type") == "assistant_msg" or
+        Map.get(entry, :content_type) == "assistant_msg"
+    end)
+  end
+
+  def last_assistant_message_id(timeline) do
+    timeline
+    |> Enum.reverse()
+    |> Enum.find_value(fn entry ->
+      content_type = Map.get(entry, "content_type", Map.get(entry, :content_type))
+
+      if content_type == "assistant_msg" do
+        Map.get(entry, "id", Map.get(entry, :id))
+      end
+    end)
+  end
+
+  def summarize_input(input, _tool_name) do
+    case input do
+      %{file_path: path} when is_binary(path) ->
+        Path.basename(path) <> range_suffix(input)
+
+      %{"file_path" => path} when is_binary(path) ->
+        Path.basename(path) <> range_suffix(input)
+
+      %{command: cmd} when is_binary(cmd) ->
+        String.slice(cmd, 0, 60)
+
+      %{"command" => cmd} when is_binary(cmd) ->
+        String.slice(cmd, 0, 60)
+
+      %{content: content} when is_binary(content) ->
+        String.slice(content, 0, 60)
+
+      %{"content" => content} when is_binary(content) ->
+        String.slice(content, 0, 60)
+
+      %{query: query} when is_binary(query) ->
+        String.slice(query, 0, 60)
+
+      %{"query" => query} when is_binary(query) ->
+        String.slice(query, 0, 60)
+
+      _ when input == %{} ->
+        ""
+
+      _ ->
+        input |> inspect() |> String.slice(0, 60)
+    end
+  end
+
+  def range_suffix(input) do
+    offset = get_offset(input)
+    limit = get_limit(input)
+
+    cond do
+      is_integer(offset) and offset > 0 and is_integer(limit) ->
+        end_line = offset + limit - 1
+        ":#{offset}-#{end_line}"
+
+      is_integer(offset) and offset > 0 ->
+        ":#{offset}"
+
+      true ->
+        ""
+    end
+  end
+
+  def get_offset(%{offset: offset}) when is_integer(offset), do: offset
+  def get_offset(%{"offset" => offset}) when is_integer(offset), do: offset
+  def get_offset(_), do: nil
+  def get_limit(%{limit: limit}) when is_integer(limit), do: limit
+  def get_limit(%{"limit" => limit}) when is_integer(limit), do: limit
+  def get_limit(_), do: nil
+  def maybe_append_error_message(socket, error, opts)
+  def maybe_append_error_message(socket, nil, _opts), do: socket
+
+  def maybe_append_error_message(socket, error, opts) do
+    msg = "Run error: #{error}"
+
+    entry = %{
+      "id" => unique_id("msg-system"),
+      "content_type" => "system_msg",
+      "role" => "system",
+      "content" => msg
+    }
+
+    project_timeline(socket, entry, opts)
+  end
+
+  def subscribe_to_runtime_tasks(socket) do
+    if connected?(socket) do
+      Handbeam.Runtime.TaskTracker.subscribe()
+      Handbeam.Runtime.TaskTracker.viewing(self(), socket.assigns.current_conversation_id)
+      assign(socket, :runtime_tasks, Handbeam.Runtime.TaskTracker.snapshot())
+    else
+      assign(socket, :runtime_tasks, %{running_count: 0, waiting_count: 0, tasks: []})
+    end
+  end
+
+  def subscribe_to_session(socket) do
+    if connected?(socket) do
+      Handbeam.Runtime.TaskTracker.viewing(self(), socket.assigns.current_conversation_id)
+      conv_id = socket.assigns.current_conversation_id
+      topic = session_topic(conv_id)
+      previous_topic = Map.get(socket.assigns, :subscribed_session_topic)
+
+      if previous_topic && previous_topic != topic do
+        Phoenix.PubSub.unsubscribe(Handbeam.PubSub, previous_topic)
+      end
+
+      if previous_topic != topic do
+        Phoenix.PubSub.subscribe(Handbeam.PubSub, topic)
+      end
+
+      socket
+      |> assign(:subscribed_session_topic, topic)
+      |> subscribe_to_extension_ui()
+    else
+      socket
+    end
+  end
+
+  def session_topic(conv_id), do: "session:#{conv_id}"
+
+  def subscribe_to_extension_ui(socket) do
+    if connected?(socket) do
+      conv_id = socket.assigns.current_conversation_id
+      topic = Handbeam.Extension.UI.topic(conv_id)
+      previous_topic = Map.get(socket.assigns, :subscribed_ext_ui_topic)
+
+      if previous_topic && previous_topic != topic do
+        Phoenix.PubSub.unsubscribe(Handbeam.PubSub, previous_topic)
+      end
+
+      if previous_topic != topic do
+        Phoenix.PubSub.subscribe(Handbeam.PubSub, topic)
+      end
+
+      assign(socket, :subscribed_ext_ui_topic, topic)
+    else
+      socket
+    end
+  end
 end
