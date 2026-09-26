@@ -406,13 +406,35 @@ defmodule Handbeam.Workspace.MixToolchain do
     end
   end
 
-  defp hex_archive_root do
-    home = Path.expand("~/.mix/archives")
+  defp hex_archive_in(home) do
+    direct = Path.join(home, "ebin")
 
-    Enum.find_value(Path.wildcard(Path.join(home, "hex-#{@hex_version}*")), fn dir ->
-      inner = Path.join(dir, Path.basename(dir))
-      ebin = Path.join(inner, "ebin")
-      if File.dir?(ebin), do: inner
+    nested =
+      Enum.find_value(Path.wildcard(Path.join(home, "hex-#{@hex_version}*")), fn dir ->
+        inner = Path.join(dir, Path.basename(dir))
+        ebin = Path.join(inner, "ebin")
+        if File.dir?(ebin), do: inner
+      end)
+
+    cond do
+      is_binary(nested) -> nested
+      File.dir?(direct) -> home
+      true -> nil
+    end
+  end
+
+  defp hex_archive_root do
+    homes = [
+      Path.expand("~/.mix/archives"),
+      System.get_env("HANDBEAM_HEX_ARCHIVE")
+    ]
+
+    Enum.find_value(homes, fn
+      home when is_binary(home) and home != "" ->
+        hex_archive_in(home)
+
+      _ ->
+        nil
     end)
   end
 end
