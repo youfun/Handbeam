@@ -150,11 +150,26 @@ cp "$MOB_DIR/assets/logo/logo_light.png" "$OTP_ROOT/mob_logo_light.png" 2>/dev/n
 echo "=== Compiling native sources (release: -DMOB_RELEASE, no EPMD) ==="
 BUILD_DIR=$(mktemp -d)
 SWIFT_BRIDGING="$MOB_DIR/ios/MobDemo-Bridging-Header.h"
+# Project overlay: stock Mob drops `markdown`. mix mob.release rewrites this
+# script; HandbeamProbe.IosMarkdownRelease splices the block back in first.
+bash ios/patch_markdown_host.sh "$MOB_DIR/ios" \
+    "$BUILD_DIR/MobNode.h" \
+    "$BUILD_DIR/MobNode.m" \
+    "$BUILD_DIR/mob_nif.m" \
+    "$BUILD_DIR/MobRootView.swift"
+IFLAGS="-I$BUILD_DIR $IFLAGS"
 
 $CC -fobjc-arc -fmodules $IFLAGS \
-    -c "$MOB_DIR/ios/MobNode.m" -o "$BUILD_DIR/MobNode.o"
+    -c "$BUILD_DIR/MobNode.m" -o "$BUILD_DIR/MobNode.o"
 
-SWIFT_SOURCES=("$MOB_DIR"/ios/*.swift)
+SWIFT_SOURCES=("$BUILD_DIR/MobRootView.swift")
+for src in "$MOB_DIR"/ios/*.swift; do
+    case "$(basename "$src")" in
+        MobRootView.swift) ;;
+        *) SWIFT_SOURCES+=("$src") ;;
+    esac
+done
+SWIFT_SOURCES+=("ios/HandbeamMarkdown.swift")
 if [ -n "${MOB_IOS_PLUGIN_BOOTSTRAP:-}" ]; then
     SWIFT_SOURCES+=("$MOB_IOS_PLUGIN_BOOTSTRAP")
 fi
@@ -163,6 +178,7 @@ xcrun -sdk iphoneos swiftc \
     -module-name "$APP_NAME" \
     -emit-objc-header -emit-objc-header-path "$BUILD_DIR/MobApp-Swift.h" \
     -import-objc-header "$SWIFT_BRIDGING" \
+    -I "$BUILD_DIR" \
     -I "$MOB_DIR/ios" \
     -parse-as-library -wmo \
     -O \
@@ -177,7 +193,7 @@ xcrun -sdk iphoneos swiftc \
 $CC -fobjc-arc -fmodules $IFLAGS \
     -I "$BUILD_DIR" -DSTATIC_ERLANG_NIF -DMOB_RELEASE \
     ${MOB_ENABLE_SCREENSHOT:+-DMOB_ENABLE_SCREENSHOT} \
-    -c "$MOB_DIR/ios/mob_nif.m" -o "$BUILD_DIR/mob_nif.o"
+    -c "$BUILD_DIR/mob_nif.m" -o "$BUILD_DIR/mob_nif.o"
 
 # MOB_RELEASE on mob_beam.m drops -name/-setcookie/-kernel-dist BEAM
 # args + EPMD thread (no Erlang distribution surface in shipped apps).

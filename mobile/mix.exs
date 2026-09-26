@@ -52,6 +52,14 @@ defmodule HandbeamProbe.MixProject do
       watch: ["mob.watch"],
       icon: ["mob.icon"],
       ios: ["handbeam.pack_mix_toolchain", "mob.deploy --ios"],
+      # TestFlight rewrites ios/release_device.sh from mob_dev. Splice the
+      # markdown host overlay back in before that rewrite, then run the real task.
+      "mob.release": [
+        fn args ->
+          unless "--android" in args, do: HandbeamProbe.IosMarkdownRelease.install!()
+          Mix.Tasks.Mob.Release.run(args)
+        end
+      ],
       "ios.native": ["handbeam.pack_mix_toolchain", "mob.deploy --native --ios"],
       android: ["handbeam.pack_mix_toolchain", "mob.deploy --android"],
       "android.native": ["handbeam.pack_mix_toolchain", "mob.deploy --native --android"]
