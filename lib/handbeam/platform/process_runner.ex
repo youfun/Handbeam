@@ -124,14 +124,32 @@ defmodule Handbeam.Platform.ProcessRunner do
   # BINDIR/ROOTDIR is not enough: bash then finds that `erl`, and `mix` demands
   # the release boot file instead of the machine's dev OTP. Drop only those
   # directories. Mobile hosts keep their packaged OTP; they do not use bash mix.
-  defp child_env(extra) do
-    case System.get_env("PATH") do
-      path when is_binary(path) and path != "" ->
-        [{"PATH", strip_release_erts(path)} | extra]
+  @doc false
+  def shell_prelude do
+    unset = "unset " <> Enum.join(@release_env, " ")
 
-      _ ->
-        extra
+    case sanitized_path() do
+      nil -> unset
+      path -> unset <> "; export PATH=" <> shell_quote(path)
     end
+  end
+
+  defp child_env(extra) do
+    case sanitized_path() do
+      nil -> extra
+      path -> [{"PATH", path} | extra]
+    end
+  end
+
+  defp sanitized_path do
+    case System.get_env("PATH") do
+      path when is_binary(path) and path != "" -> strip_release_erts(path)
+      _ -> nil
+    end
+  end
+
+  defp shell_quote(str) do
+    "'" <> String.replace(str, "'", "'\\''") <> "'"
   end
 
   defp strip_release_erts(path) do

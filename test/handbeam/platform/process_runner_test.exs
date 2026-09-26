@@ -43,6 +43,20 @@ defmodule Handbeam.Platform.ProcessRunnerTest do
       assert meta.exit_code == 0
     end
 
+    test "shell_prelude clears release ROOTDIR for interactive terminals" do
+      old_root = System.get_env("ROOTDIR")
+      System.put_env("ROOTDIR", "/incomplete/release")
+
+      try do
+        {output, 0} =
+          System.cmd("/bin/sh", ["-c", ProcessRunner.shell_prelude() <> "; printf %s \"${ROOTDIR-unset}\""])
+
+        assert output == "unset"
+      after
+        restore_env("ROOTDIR", old_root)
+      end
+    end
+
     test "does not leak release launcher variables into child tools" do
       old_root = System.get_env("ROOTDIR")
       System.put_env("ROOTDIR", "/incomplete/release")

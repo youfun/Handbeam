@@ -10,6 +10,7 @@ defmodule Handbeam.Terminal.Session do
 
   use GenServer
 
+  alias Handbeam.Platform.ProcessRunner
   alias Handbeam.Terminal.Registry
 
   @pubsub Handbeam.PubSub
@@ -133,7 +134,10 @@ defmodule Handbeam.Terminal.Session do
       Ghostty.Terminal.start_link(
         cols: cols,
         rows: rows,
-        max_scrollback: @max_scrollback
+        max_scrollback: @max_scrollback,
+        foreground: {205, 214, 244},
+        background: {30, 30, 46},
+        cursor_color: {137, 180, 250}
       )
 
     # Start PTY (Session is the owner, receives {:data, _}, {:exit, _})
@@ -306,14 +310,18 @@ defmodule Handbeam.Terminal.Session do
   end
 
   defp build_pty_command(cmd, args, cwd) do
-    if cwd == File.cwd!() do
-      # Same cwd, no wrapping needed
-      {cmd, args}
-    else
-      # Wrap with cd && exec to set cwd
-      full_cmd = [cmd | args] |> Enum.map(&shell_escape/1) |> Enum.join(" ")
-      {"/bin/sh", ["-c", "cd #{shell_escape(cwd)} && exec #{full_cmd}"]}
-    end
+    exec = [cmd | args] |> Enum.map(&shell_escape/1) |> Enum.join(" ")
+
+    cd =
+      if is_binary(cwd) and cwd != "" and cwd != File.cwd!() do
+        "cd #{shell_escape(cwd)} && "
+      else
+        ""
+      end
+
+    # PTY children inherit the desktop release environment. Clear it before exec
+    # so mix/iex use the machine OTP instead of release/bin/start.boot.
+    {"/bin/sh", ["-c", "#{ProcessRunner.shell_prelude()}; #{cd}exec #{exec}"]}
   end
 
   defp shell_escape(str) do
