@@ -1,6 +1,8 @@
-# Pack the Web UI OTP release for Linux x86_64, Windows amd64, Windows arm64,
-# and macOS arm64, plus both Android APKs. Web packages are published to
-# GitHub Releases (moving tag web-latest, or the v* tag that triggered the run).
+# Pack the Web UI OTP release for Linux x86_64, Windows amd64, and macOS
+# arm64, plus both Android APKs. Packages are published to GitHub Releases
+# (moving tag web-latest, or the v* tag that triggered the run).
+# Windows ARM64 is not built here: OTP has no ARM64 installer, and the
+# hosted ARM runner cannot install WSL without a reboot.
 name: Pack
 
 on:
@@ -30,13 +32,6 @@ jobs:
           - os: windows-2025
             target: windows-amd64
             timeout: 60
-          - os: windows-11-arm
-            target: windows-arm64
-            timeout: 180
-            # OTP has no Windows ARM64 installer, and this runner cannot
-            # install WSL without a reboot. Keep trying, but do not fail the
-            # release when the other packages built.
-            continue_on_error: true
           - os: macos-15
             target: macos-arm64
             timeout: 50
@@ -95,7 +90,7 @@ jobs:
 
   publish-web:
     name: Publish Web UI release
-    needs: web
+    needs: [web, android]
     if: >-
       always() &&
       (github.event_name == 'workflow_dispatch' ||
@@ -104,6 +99,9 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
 
     steps:
       - uses: actions/download-artifact@v4
@@ -112,13 +110,19 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - uses: actions/download-artifact@v4
+        if: needs.android.result == 'success'
+        with:
+          name: handbeam-android-apk
+          path: dist
+
       - name: Release notes
         run: |
           set -euo pipefail
           shopt -s nullglob
-          files=(dist/handbeam-web-*)
+          files=(dist/handbeam-web-* dist/*.apk)
           if [[ ${#files[@]} -eq 0 ]]; then
-            echo "No Web UI packages were built"
+            echo "No packages were built"
             exit 1
           fi
           {
@@ -139,26 +143,28 @@ jobs:
 
       - name: Replace moving web-latest tag
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: gh release delete web-latest --yes --cleanup-tag || true
 
       - name: Publish release
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
+          shopt -s nullglob
+          files=(dist/handbeam-web-* dist/*.apk)
+          if [[ ${#files[@]} -eq 0 ]]; then
+            echo "No packages to upload"
+            exit 1
+          fi
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             tag="${GITHUB_REF_NAME}"
           else
             tag="web-latest"
           fi
           if gh release view "$tag" >/dev/null 2>&1; then
-            gh release upload "$tag" dist/handbeam-web-* --clobber
-            gh release edit "$tag" --title "Web UI" --notes-file notes.md --prerelease
+            gh release upload "$tag" "${files[@]}" --clobber
+            gh release edit "$tag" --title "Handbeam ${tag}" --notes-file notes.md --prerelease
           else
-            gh release create "$tag" dist/handbeam-web-* \
-              --title "Web UI" \
+            gh release create "$tag" "${files[@]}" \
+              --title "Handbeam ${tag}" \
               --notes-file notes.md \
               --prerelease \
               --latest=false
