@@ -242,6 +242,10 @@ jobs:
             pack-apk-${{ runner.os }}-
 
       - name: Pack APKs
+        env:
+          # ex_git's host Makefile looks under $LIBGIT2_DIR/include. Ubuntu
+          # installs the headers in /usr, not /usr/local.
+          LIBGIT2_DIR: /usr
         run: bash script/pack_android_apks.sh --artifacts artifacts --skip-test
 
       - uses: actions/upload-artifact@v4
