@@ -540,6 +540,58 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
     end
   end
 
+  describe "auto title sidebar" do
+    test "a generated title replaces New chat without a reload", %{conn: conn} do
+      isolate_conversation_home!()
+
+      {:ok, conversation} =
+        Handbeam.ConversationStore.create("default",
+          id: "conv-title-delay",
+          title: "New chat",
+          title_source: "manual",
+          timeline: [
+            %{
+              "id" => "title-user-1",
+              "content_type" => "user_msg",
+              "role" => "user",
+              "content" => "模型列表怎么不一致"
+            }
+          ]
+        )
+
+      {:ok, view, html} = live(conn, "/")
+      assert html =~ "New chat"
+
+      send(view.pid, {:conversation_title_ready, conversation["id"], "模型列表展示不一致"})
+
+      assert has_element?(view, "#conversation-conv-title-delay", "模型列表展示不一致")
+      refute has_element?(view, "#conversation-conv-title-delay", "New chat")
+    end
+
+    test "a provisional title replaces New chat before the model returns", %{conn: conn} do
+      isolate_conversation_home!()
+
+      {:ok, conversation} =
+        Handbeam.ConversationStore.create("default",
+          id: "conv-title-now",
+          title: "New chat",
+          title_source: "manual"
+        )
+
+      {:ok, view, html} = live(conn, "/")
+      assert html =~ "New chat"
+
+      assert {:ok, "模型列表怎么不一致"} =
+               Handbeam.ConversationTitleGenerator.publish_provisional(
+                 conversation["id"],
+                 "模型列表怎么不一致"
+               )
+
+      assert has_element?(view, "#conversation-conv-title-now", "模型列表怎么不一致")
+      refute has_element?(view, "#conversation-conv-title-now", "New chat")
+    end
+  end
+
   describe "send_message" do
     test "adding a user message appears in the message list", %{conn: conn} do
       with_log(fn ->

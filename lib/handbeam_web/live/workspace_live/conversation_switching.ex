@@ -293,23 +293,76 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
             else: ConversationState.conv_value(updated_conv, "workspace_id", nil)
 
         convs = socket.assigns.conversations_by_workspace
-        current_convs = Map.get(convs, ws_id, [])
+        bucket = sidebar_bucket(convs, conv_id) || ws_id
+        current_convs = Map.get(convs, bucket, [])
 
         updated_convs =
           if Enum.any?(current_convs, &(ConversationState.conversation_id(&1) == conv_id)) do
-            Enum.map(current_convs, fn c ->
-              if ConversationState.conversation_id(c) == conv_id, do: updated_conv, else: c
+            Enum.map(current_convs, fn existing ->
+              if ConversationState.conversation_id(existing) == conv_id do
+                merge_refreshed_title(existing, updated_conv)
+              else
+                existing
+              end
             end)
           else
             current_convs ++ [updated_conv]
           end
 
         socket
-        |> assign(:conversations_by_workspace, Map.put(convs, ws_id, updated_convs))
+        |> assign(:conversations_by_workspace, Map.put(convs, bucket, updated_convs))
         |> reload_conversation_stream()
 
       {:error, :not_found} ->
         socket
+    end
+  end
+
+  def apply_sidebar_title(socket, conv_id, title, source \\ "auto")
+      when is_binary(conv_id) and is_binary(title) and is_binary(source) do
+    convs = socket.assigns.conversations_by_workspace
+
+    updated =
+      Map.new(convs, fn {bucket, list} ->
+        {bucket,
+         Enum.map(list, fn conv ->
+           if ConversationState.conversation_id(conv) == conv_id do
+             conv
+             |> ConversationState.put_conversation_value("title", title)
+             |> ConversationState.put_conversation_value("title_source", source)
+           else
+             conv
+           end
+         end)}
+      end)
+
+    socket
+    |> assign(:conversations_by_workspace, updated)
+    |> reload_conversation_stream()
+  end
+
+  defp sidebar_bucket(convs, conv_id) do
+    Enum.find_value(convs, fn {bucket, list} ->
+      if Enum.any?(list, &(ConversationState.conversation_id(&1) == conv_id)), do: bucket
+    end)
+  end
+
+  # A store read can still show "New chat" if it races the title write. Do not
+  # replace a title the sidebar already received.
+  defp merge_refreshed_title(existing, updated) do
+    existing_title = ConversationState.conv_value(existing, "title", "")
+    updated_title = ConversationState.conv_value(updated, "title", "")
+
+    if String.starts_with?(to_string(updated_title), "New chat") and
+         not String.starts_with?(to_string(existing_title), "New chat") do
+      updated
+      |> ConversationState.put_conversation_value("title", existing_title)
+      |> ConversationState.put_conversation_value(
+        "title_source",
+        ConversationState.conv_value(existing, "title_source", "auto")
+      )
+    else
+      updated
     end
   end
 

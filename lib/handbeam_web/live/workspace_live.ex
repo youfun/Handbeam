@@ -1413,8 +1413,27 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   def handle_info({:conversation_updated, conv_id}, socket) do
-    socket = refresh_conversation_in_sidebar(socket, conv_id)
+    socket =
+      socket
+      |> refresh_conversation_in_sidebar(conv_id)
+      |> maybe_patch_current_page_title(conv_id)
 
+    if socket.assigns.current_conversation_id == conv_id do
+      send(self(), {:conversation_handoffs, conv_id})
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:conversation_title_ready, conv_id, title}, socket)
+      when is_binary(conv_id) and is_binary(title) do
+    {:noreply,
+     socket
+     |> apply_sidebar_title(conv_id, title)
+     |> maybe_patch_page_title(conv_id, title)}
+  end
+
+  def handle_info({:conversation_handoffs, conv_id}, socket) do
     socket =
       if socket.assigns.current_conversation_id == conv_id do
         case Handbeam.ConversationTranscriptStore.list(conv_id) do
@@ -1756,10 +1775,9 @@ defmodule HandbeamWeb.WorkspaceLive do
       |> update_status(Map.merge(%{status: status, turns: turns}, usage))
       |> maybe_append_error_message(run_error, persist?: false)
 
-    # Auto-generate title on first successful run (Qwen Code pattern)
+    # If the send path did not name the chat, try again now. A completed run
+    # must not be required for the first title.
     maybe_auto_title(socket, status)
-
-    socket
   end
 
   defp mark_run_cancelled(socket) do
@@ -1775,8 +1793,44 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   # ── Auto-title generation (Qwen Code pattern) ──
+  #
+  # Start as soon as the user sends the first message. Waiting for :completed
+  # leaves the sidebar on "New chat" for the whole agent run.
+
+  defp schedule_auto_title(socket, message) when is_binary(message) do
+    trigger_auto_title(socket, message)
+  end
+
+  defp schedule_auto_title(socket, _message), do: socket
 
   defp maybe_auto_title(socket, :completed) do
+    conversation_id = socket.assigns.current_conversation_id
+
+    timeline =
+      conversation_id
+      |> load_transcript_entries(socket.assigns.timeline)
+
+    first_user_msg =
+      Enum.find_value(timeline, fn entry ->
+        if entry["role"] == "user" and not is_nil(entry["content"]) do
+          entry["content"]
+        end
+      end)
+
+    if first_user_msg do
+      trigger_auto_title(socket, first_user_msg)
+    else
+      Logger.debug(
+        "[WorkspaceLive] maybe_auto_title skip — no user message found in timeline conv_id=#{conversation_id}"
+      )
+
+      socket
+    end
+  end
+
+  defp maybe_auto_title(socket, _not_completed), do: socket
+
+  defp trigger_auto_title(socket, message) when is_binary(message) do
     conv = current_conv_map(socket)
     title = conv_value(conv, "title", "")
     title_source = conv_value(conv, "title_source", nil)
@@ -1786,66 +1840,72 @@ defmodule HandbeamWeb.WorkspaceLive do
       "[WorkspaceLive] maybe_auto_title entry conv_id=#{conversation_id} title=#{inspect(title)} title_source=#{inspect(title_source)}"
     )
 
-    # Skip if title was manually set or already auto-generated
-    if title_source in ["manual", "auto"] and not String.starts_with?(title, "New chat") do
-      Logger.debug(
-        "[WorkspaceLive] maybe_auto_title skip — title already set conv_id=#{conversation_id} title=#{inspect(title)} title_source=#{inspect(title_source)}"
-      )
-
-      :skip
-    else
-      # Only trigger for default placeholder titles
-      if String.starts_with?(title, "New chat") do
-        # Find the first user message in the durable transcript.
-        timeline =
-          socket.assigns.current_conversation_id
-          |> load_transcript_entries(socket.assigns.timeline)
-
-        first_user_msg =
-          Enum.find_value(timeline, fn entry ->
-            if entry["role"] == "user" and not is_nil(entry["content"]) do
-              entry["content"]
-            end
-          end)
-
-        if first_user_msg do
-          case resolve_auto_title_model(socket, conv) do
-            {:ok, provider_config, selected_model} ->
-              case Handbeam.ConversationTitleGenerator.maybe_generate(
-                     socket.assigns.current_conversation_id,
-                     first_user_msg,
-                     provider_config
-                   ) do
-                {:ok, pid} ->
-                  Logger.debug(
-                    "[WorkspaceLive] Triggered auto-title generation conv_id=#{conversation_id} model=#{inspect(selected_model)} task_pid=#{inspect(pid)}"
-                  )
-
-                :skip ->
-                  Logger.debug(
-                    "[WorkspaceLive] TitleGenerator.maybe_generate returned :skip conv_id=#{conversation_id}"
-                  )
-              end
-
-            {:error, reason, selected_model} ->
-              Logger.debug(
-                "[WorkspaceLive] Skipped auto-title generation model=#{inspect(selected_model)} reason=#{inspect(reason)}"
-              )
-          end
-        else
-          Logger.debug(
-            "[WorkspaceLive] maybe_auto_title skip — no user message found in timeline conv_id=#{conversation_id}"
-          )
-        end
-      else
+    cond do
+      titled?(title, title_source) ->
         Logger.debug(
-          "[WorkspaceLive] maybe_auto_title skip — title does not start with 'New chat' conv_id=#{conversation_id} title=#{inspect(title)}"
+          "[WorkspaceLive] maybe_auto_title skip — title already set conv_id=#{conversation_id} title=#{inspect(title)} title_source=#{inspect(title_source)}"
         )
-      end
+
+        socket
+
+      String.trim(message) == "" ->
+        socket
+
+      true ->
+        socket = show_provisional_title(socket, conversation_id, message)
+
+        case resolve_auto_title_model(socket, conv) do
+          {:ok, provider_config, selected_model} ->
+            provider_config = Map.put(provider_config, :notify_pid, self())
+
+            case Handbeam.ConversationTitleGenerator.maybe_generate(
+                   conversation_id,
+                   message,
+                   provider_config
+                 ) do
+              {:ok, pid} ->
+                Logger.debug(
+                  "[WorkspaceLive] Triggered auto-title generation conv_id=#{conversation_id} model=#{inspect(selected_model)} task_pid=#{inspect(pid)}"
+                )
+
+              :skip ->
+                Logger.debug(
+                  "[WorkspaceLive] TitleGenerator.maybe_generate returned :skip conv_id=#{conversation_id}"
+                )
+
+              other ->
+                Logger.debug(
+                  "[WorkspaceLive] TitleGenerator.maybe_generate failed conv_id=#{conversation_id} result=#{inspect(other)}"
+                )
+            end
+
+            socket
+
+          {:error, reason, selected_model} ->
+            Logger.debug(
+              "[WorkspaceLive] Skipped model title model=#{inspect(selected_model)} reason=#{inspect(reason)}"
+            )
+
+            socket
+        end
     end
   end
 
-  defp maybe_auto_title(_socket, _not_completed), do: :skip
+  defp titled?(title, source) do
+    not Handbeam.ConversationTitleGenerator.default_title?(title) and source != "fallback"
+  end
+
+  defp show_provisional_title(socket, conversation_id, message) do
+    case Handbeam.ConversationTitleGenerator.publish_provisional(conversation_id, message) do
+      {:ok, title} ->
+        socket
+        |> apply_sidebar_title(conversation_id, title, "fallback")
+        |> maybe_patch_page_title(conversation_id, title)
+
+      :skip ->
+        socket
+    end
+  end
 
   # ── Conversation state helpers ──
 
@@ -1968,6 +2028,9 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   defp refresh_conversation_in_sidebar(socket, conv_id),
     do: ConversationSwitching.refresh_conversation_in_sidebar(socket, conv_id)
+
+  defp apply_sidebar_title(socket, conv_id, title, source \\ "auto"),
+    do: ConversationSwitching.apply_sidebar_title(socket, conv_id, title, source)
 
   defp running_for_current_conversation?(socket),
     do: ConversationState.running_for_current_conversation?(socket)
@@ -2460,6 +2523,7 @@ defmodule HandbeamWeb.WorkspaceLive do
           |> assign(:current_assistant_entry_id, nil)
           |> append_user_message(message, attachments, msg_id)
           |> assign(:pending_attachments, [])
+          |> schedule_auto_title(message)
           |> update_status(%{
             status: :running,
             input_tokens: 0,
@@ -3384,6 +3448,20 @@ defmodule HandbeamWeb.WorkspaceLive do
     else
       socket
     end
+  end
+
+  defp maybe_patch_current_page_title(socket, conv_id) do
+    title =
+      socket.assigns.conversations_by_workspace
+      |> Map.values()
+      |> List.flatten()
+      |> Enum.find_value(fn conv ->
+        if ConversationState.conversation_id(conv) == conv_id do
+          ConversationState.conv_value(conv, "title", nil)
+        end
+      end)
+
+    maybe_patch_page_title(socket, conv_id, title)
   end
 
   # ── Public helpers for templates (delegated to HandbeamWeb.WorkspaceHelper) ──

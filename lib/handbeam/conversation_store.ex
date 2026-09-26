@@ -385,7 +385,7 @@ defmodule Handbeam.ConversationStore do
   def rename(id, title) when is_binary(id) and is_binary(title) do
     with {:ok, normalized} <- normalize_title(title),
          {:ok, meta} <- update_meta(id, title: normalized, title_source: "manual") do
-      broadcast_title_updated(id)
+      broadcast_title_updated(id, normalized)
       {:ok, meta}
     end
   end
@@ -408,12 +408,22 @@ defmodule Handbeam.ConversationStore do
   end
 
   @doc false
-  def broadcast_title_updated(conversation_id) when is_binary(conversation_id) do
+  def broadcast_title_updated(conversation_id, title \\ nil) when is_binary(conversation_id) do
     Phoenix.PubSub.broadcast(
       Handbeam.PubSub,
       "conversation:updated",
       {:conversation_updated, conversation_id}
     )
+
+    if is_binary(title) and title != "" do
+      Phoenix.PubSub.broadcast(
+        Handbeam.PubSub,
+        "conversation:updated",
+        {:conversation_title_ready, conversation_id, title}
+      )
+    end
+
+    :ok
   end
 
   @doc "Insert or replace a conversation."
