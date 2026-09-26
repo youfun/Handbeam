@@ -20,7 +20,7 @@ if ! command -v mix >/dev/null; then
   exit 1
 fi
 
-mix local.hex --force
+mix local.hex 2.4.1 --force
 mix local.rebar --force
 mix deps.get
 mix mob.write_mob_exs
