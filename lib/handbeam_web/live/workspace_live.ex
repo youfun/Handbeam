@@ -1457,8 +1457,16 @@ defmodule HandbeamWeb.WorkspaceLive do
     {:noreply, socket}
   end
 
-  # Ghostty LiveTerminal.Component sends terminal_ready to parent LiveView
-  def handle_info({:terminal_ready, _id, _cols, _rows}, socket) do
+  # Ghostty LiveTerminal.Component sends terminal_ready to parent LiveView.
+  # Forward it so the session PTY matches the fitted viewport.
+  def handle_info({:terminal_ready, id, cols, rows}, socket) do
+    if socket.assigns[:show_terminal] do
+      send_update(HandbeamWeb.Live.TerminalPanel,
+        id: "terminal-panel",
+        action: {:terminal_ready, id, cols, rows}
+      )
+    end
+
     {:noreply, socket}
   end
 

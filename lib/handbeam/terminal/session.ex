@@ -105,6 +105,13 @@ defmodule Handbeam.Terminal.Session do
     GenServer.call(session, :info)
   end
 
+  @doc "Interactive login shell used by the workspace terminal panel."
+  @spec interactive_shell() :: {String.t(), [String.t()]}
+  def interactive_shell do
+    cmd = default_shell()
+    {cmd, default_shell_args(cmd)}
+  end
+
   # ── Server Callbacks ──
 
   @impl true
@@ -112,8 +119,8 @@ defmodule Handbeam.Terminal.Session do
     workspace_id = Keyword.fetch!(opts, :workspace_id)
     workspace_path = Keyword.fetch!(opts, :workspace_path)
     name = Keyword.fetch!(opts, :name)
-    cmd = Keyword.get(opts, :cmd, default_shell())
-    args = Keyword.get(opts, :args, [])
+    cmd = Keyword.get(opts, :cmd) || default_shell()
+    args = Keyword.get(opts, :args, default_shell_args(cmd))
     cwd = Keyword.get(opts, :cwd, workspace_path)
     cols = Keyword.get(opts, :cols, @default_cols)
     rows = Keyword.get(opts, :rows, @default_rows)
@@ -286,6 +293,16 @@ defmodule Handbeam.Terminal.Session do
 
   defp default_shell do
     System.get_env("SHELL", "/bin/sh")
+  end
+
+  defp default_shell_args(cmd) do
+    case cmd |> Path.basename() |> String.downcase() do
+      "fish" -> ["-i", "-l"]
+      "nu" -> []
+      base when base in ["sh", "dash"] -> []
+      base when base in ["zsh", "bash", "ksh"] -> ["-il"]
+      _ -> []
+    end
   end
 
   defp build_pty_command(cmd, args, cwd) do

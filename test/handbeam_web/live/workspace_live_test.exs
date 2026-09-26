@@ -1848,6 +1848,10 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       |> render_click()
 
       assert has_element?(view, "#workspace-panel #terminal-panel")
+      assert has_element?(view, "#terminal-command-form input[name='line']")
+      refute has_element?(view, "button", "+ New Terminal")
+      refute render(view) =~ "args (space-separated)"
+      refute render(view) =~ "no terminals"
       refute has_element?(view, "#terminal-dock")
       refute has_element?(view, "#status-bar button[phx-click='toggle_terminal']")
     end
