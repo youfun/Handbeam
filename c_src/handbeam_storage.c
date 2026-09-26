@@ -514,7 +514,10 @@ static ERL_NIF_TERM nif_append(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv
         if (fd < 0) saved = errno;
         else if (ftruncate(fd, offset) || write_all_at(fd, data.data, data.size, offset) ||
                  fsync(fd) || (created && sync_parent(path))) {
-            saved = errno; (void)ftruncate(fd, offset); (void)fsync(fd);
+            saved = errno;
+            /* Rollback is best-effort; keep the original error. */
+            if (ftruncate(fd, offset) != 0) saved = saved ? saved : errno;
+            if (fsync(fd) != 0) saved = saved ? saved : errno;
         }
         if (fd >= 0 && close(fd) != 0 && saved == 0) saved = errno;
     }
@@ -543,8 +546,11 @@ static ERL_NIF_TERM nif_replace(ErlNifEnv *env, int argc, const ERL_NIF_TERM arg
         fd = -1;
         if (saved == 0 && (rename(tmp, path) || sync_parent(path))) saved = errno;
     }
-    if (fd >= 0) close(fd);
-    if (saved) unlink(tmp);
+    if (fd >= 0 && close(fd) != 0 && saved == 0) saved = errno;
+    if (saved) {
+        int cleaned = unlink(tmp);
+        (void)cleaned;
+    }
     enif_mutex_unlock(lock->mutex); enif_free(tmp); enif_free(path);
     return saved ? error_atom(env, saved) : enif_make_atom(env, "ok");
 }
