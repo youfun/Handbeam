@@ -97,6 +97,12 @@ defmodule HandbeamWeb.WorkspaceLive.Composer do
   def attachment_filename(%{"filename" => filename}) when is_binary(filename), do: filename
   def attachment_filename(_), do: "image"
 
+  def image_attachment?(att) when is_map(att) do
+    to_string(att["kind"] || att[:kind] || "") != "text"
+  end
+
+  def image_attachment?(_), do: false
+
   def build_opts(socket, workspace_path) do
     if socket.assigns[:chat_scope] == :free do
       [chat_scope: :free, conversation_id: socket.assigns.current_conversation_id]

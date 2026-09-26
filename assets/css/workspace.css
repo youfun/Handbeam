@@ -751,6 +751,142 @@ textarea::placeholder {
   justify-content: flex-end;
 }
 
+#ai-messages .msg-user-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  max-width: min(72%, 36rem);
+  min-width: 0;
+}
+
+#ai-messages .msg-shots {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+#ai-messages .msg-shot {
+  display: block;
+  padding: 0;
+  border: 1px solid var(--sig-border-default);
+  border-radius: 10px;
+  background: var(--sig-bg-elevated);
+  overflow: hidden;
+  cursor: zoom-in;
+  line-height: 0;
+}
+
+#ai-messages .msg-shot img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 88px;
+  max-height: 112px;
+  object-fit: contain;
+}
+
+#ai-messages .msg-file {
+  max-width: 16rem;
+  font-size: 12px;
+  color: var(--sig-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#ai-messages .msg-bubble.msg-assistant img {
+  max-width: min(100%, 24rem);
+  max-height: 18rem;
+  height: auto;
+  border-radius: 8px;
+  object-fit: contain;
+}
+
+.image-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.image-lightbox-bar {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 12px;
+  color: #f4f1ec;
+}
+
+.image-lightbox-count {
+  flex: 0 0 auto;
+  min-width: 3.2rem;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.image-lightbox-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.image-lightbox-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.image-lightbox-icon:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.image-lightbox-nav {
+  width: 40px;
+  height: 64px;
+  border: none;
+  background: transparent;
+  color: #f4f1ec;
+  font-size: 28px;
+  cursor: pointer;
+}
+
+.image-lightbox-nav[hidden] {
+  visibility: hidden;
+}
+
+.image-lightbox-img {
+  grid-column: 2;
+  justify-self: center;
+  max-width: min(92vw, 100%);
+  max-height: calc(100vh - 72px);
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  image-rendering: auto;
+  border-radius: 8px;
+  background: #fff;
+}
+
 #ai-messages .msg-row.msg-assistant {
   justify-content: flex-start;
 }

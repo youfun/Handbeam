@@ -2531,6 +2531,7 @@ defmodule HandbeamWeb.WorkspaceLive do
   defp resend_error(reason), do: Composer.resend_error(reason)
   defdelegate attachment_url(attachment), to: Composer
   defdelegate attachment_filename(attachment), to: Composer
+  defdelegate image_attachment?(attachment), to: Composer
 
   defp timeline_insert(socket, entry, opts) do
     persist? = Keyword.get(opts, :persist?, true)

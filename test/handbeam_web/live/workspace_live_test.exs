@@ -1296,6 +1296,9 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
 
       assert rendered =~ "see image"
       assert rendered =~ "/uploads/"
+      assert rendered =~ "msg-shot"
+      assert rendered =~ "data-shot-open"
+      refute rendered =~ "w-16 h-16"
     end
 
     test "completed uploaded image renders a composer attachment preview before send", %{

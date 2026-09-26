@@ -687,32 +687,52 @@
                 class="msg-row flex w-full msg-user justify-end"
                 data-user-msg={entry["id"]}
               >
-                <div class="msg-bubble msg-user">
-                  <div
-                    :if={get_in(entry, ["origin", "kind"]) == "automatic"}
-                    class="text-xs opacity-60 mb-1"
-                  >
-                    Automatic · {get_in(entry, ["origin", "source"])}
-                  </div>
-                  <div class="whitespace-pre-wrap break-words">{entry["content"]}</div>
-                  <div
-                    :if={is_list(entry["attachments"]) and entry["attachments"] != []}
-                    class="mt-2 flex flex-wrap gap-2"
-                  >
-                    <a
-                      :for={att <- entry["attachments"]}
-                      href={attachment_url(att)}
-                      target="_blank"
-                      rel="noreferrer"
-                      class="inline-flex"
+                <% attachments =
+                  if(is_list(entry["attachments"]), do: entry["attachments"], else: []) %>
+                <% {images, files} = Enum.split_with(attachments, &image_attachment?/1) %>
+                <div class="msg-user-stack">
+                  <div :if={images != []} class="msg-shots">
+                    <button
+                      :for={{att, index} <- Enum.with_index(images)}
+                      type="button"
+                      class="msg-shot"
+                      data-shot-open
+                      data-shot-id={"#{entry["id"]}-#{index}"}
+                      data-shot-src={attachment_url(att)}
+                      data-shot-name={attachment_filename(att)}
                       title={attachment_filename(att)}
+                      aria-label={gettext("查看图片 %{name}", name: attachment_filename(att))}
                     >
                       <img
                         src={attachment_url(att)}
                         alt={attachment_filename(att)}
-                        class="w-16 h-16 rounded object-cover border"
+                        decoding="async"
                       />
-                    </a>
+                    </button>
+                  </div>
+                  <a
+                    :for={att <- files}
+                    href={attachment_url(att)}
+                    target="_blank"
+                    rel="noreferrer"
+                    class="msg-file"
+                  >
+                    {attachment_filename(att)}
+                  </a>
+                  <div
+                    :if={
+                      String.trim(to_string(entry["content"] || "")) != "" or
+                        get_in(entry, ["origin", "kind"]) == "automatic"
+                    }
+                    class="msg-bubble msg-user"
+                  >
+                    <div
+                      :if={get_in(entry, ["origin", "kind"]) == "automatic"}
+                      class="text-xs opacity-60 mb-1"
+                    >
+                      Automatic · {get_in(entry, ["origin", "source"])}
+                    </div>
+                    <div class="whitespace-pre-wrap break-words">{entry["content"]}</div>
                   </div>
                   <%= if item = Map.get(@pending_messages || %{}, entry["id"]) do %>
                     <div class="mt-1 flex items-center gap-2 text-xs opacity-70">
