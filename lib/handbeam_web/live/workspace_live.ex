@@ -2900,7 +2900,7 @@ defmodule HandbeamWeb.WorkspaceLive do
   # Same display names stay distinguishable. Cursor stores one name for a base
   # model and its fast variant; the id is what actually differs.
   @doc false
-  def model_option_label(model, models \ []) do
+  def model_option_label(model, models \\ []) do
     name = label_name(model)
 
     case distinguishing_label(model, name, models) do
