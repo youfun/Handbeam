@@ -79,6 +79,50 @@ defmodule Handbeam.Agent.Provider.Cursor.ModelsTest do
     def close(t), do: t
   end
 
+  defmodule FastVariantTransport do
+    alias Handbeam.Agent.Provider.Cursor.Proto
+
+    def connect(_opts), do: {:ok, %{}}
+    def get_usable_models(transport, _token, _opts), do: {:ok, transport, <<>>}
+
+    def available_models(transport, _token, _opts) do
+      plain = variant("false", "")
+      fast = variant("true", "")
+      already_named = variant("true", "Composer 2.5 Fast")
+
+      composer =
+        Proto.finish(
+          Proto.encode_string(1, "composer-2.5") ++
+            Proto.encode_string(17, "Composer 2.5") ++
+            Proto.encode_message(30, plain) ++
+            Proto.encode_message(30, fast)
+        )
+
+      named =
+        Proto.finish(
+          Proto.encode_string(1, "composer-2.5-named") ++
+            Proto.encode_string(17, "Composer 2.5") ++
+            Proto.encode_message(30, already_named)
+        )
+
+      {:ok, transport,
+       Proto.finish(Proto.encode_message(2, composer) ++ Proto.encode_message(2, named))}
+    end
+
+    def close(t), do: t
+
+    defp variant(fast, outside_picker_name) do
+      Proto.finish(
+        Proto.encode_message(1, parameter("fast", fast)) ++
+          Proto.encode_string(8, outside_picker_name)
+      )
+    end
+
+    defp parameter(id, value) do
+      Proto.finish(Proto.encode_string(1, id) ++ Proto.encode_string(2, value))
+    end
+  end
+
   defmodule ParameterizedTransport do
     alias Handbeam.Agent.Provider.Cursor.Proto
 
@@ -179,6 +223,19 @@ defmodule Handbeam.Agent.Provider.Cursor.ModelsTest do
              Models.discover(auth_path: auth_path, transport_mod: EmptyTransport)
 
     assert message =~ "no usable models"
+  end
+
+  test "discover keeps fast variants distinct when Cursor reuses the display name", %{
+    auth_path: auth_path
+  } do
+    assert {:ok, models} =
+             Models.discover(auth_path: auth_path, transport_mod: FastVariantTransport)
+
+    assert Enum.map(models, &{&1["id"], &1["name"]}) == [
+             {"composer-2.5", "Composer 2.5"},
+             {"composer-2.5-fast", "Composer 2.5 Fast"},
+             {"composer-2.5-named-fast", "Composer 2.5 Fast"}
+           ]
   end
 
   test "discover persists AvailableModels routing for default and 1M variants", %{

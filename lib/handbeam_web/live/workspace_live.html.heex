@@ -1273,7 +1273,7 @@
                       value={m.id}
                       selected={m.id == @selected_model}
                     >
-                      {model_option_label(m)}
+                      {model_option_label(m, models)}
                     </option>
                   </optgroup>
                 </select>
@@ -1900,7 +1900,7 @@
               phx-value-model={m.id}
               class={["sheet-select-row", if(m.id == @selected_model, do: "active", else: "")]}
             >
-              <span>{model_option_label(m)}</span>
+              <span>{model_option_label(m, models)}</span>
               <span
                 class="sheet-select-check"
                 style={"opacity: #{if m.id == @selected_model, do: "1", else: "0"}"}

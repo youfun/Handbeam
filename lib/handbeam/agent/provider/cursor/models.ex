@@ -134,9 +134,17 @@ defmodule Handbeam.Agent.Provider.Cursor.Models do
           model.name
         ],
         &(&1 != "")
-      )
+      ) || model.name
 
-    if context == "1m" and not String.match?(base, ~r/\b1M\b/i), do: base <> " 1M", else: base
+    base
+    |> maybe_append_label(context == "1m", ~r/\b1M\b/i, "1M")
+    |> maybe_append_label(parameter(variant, "fast") == "true", ~r/\bfast\b/i, "Fast")
+  end
+
+  defp maybe_append_label(base, false, _pattern, _label), do: base
+
+  defp maybe_append_label(base, true, pattern, label) do
+    if String.match?(base, pattern), do: base, else: base <> " " <> label
   end
 
   defp context_window("1m", _model, _variant), do: 1_000_000

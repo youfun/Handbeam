@@ -2879,8 +2879,12 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   defp model_display_name(composite_id, available) do
     case Enum.find(available, &(&1.id == composite_id || &1.model_id == composite_id)) do
-      nil -> composite_id
-      entry -> "#{provider_display_name(entry.provider_id)} / #{model_option_label(entry)}"
+      nil ->
+        composite_id
+
+      entry ->
+        siblings = Enum.filter(available, &(&1.provider_id == entry.provider_id))
+        "#{provider_display_name(entry.provider_id)} / #{model_option_label(entry, siblings)}"
     end
   end
 
@@ -2893,7 +2897,72 @@ defmodule HandbeamWeb.WorkspaceLive do
   defp provider_display_name(nil), do: "Unknown"
   defp provider_display_name(provider_id), do: provider_id
 
-  defp model_option_label(model), do: model.name || model.model_id || model.id
+  # Same display names stay distinguishable. Cursor stores one name for a base
+  # model and its fast variant; the id is what actually differs.
+  @doc false
+  def model_option_label(model, models \ []) do
+    name = label_name(model)
+
+    case distinguishing_label(model, name, models) do
+      nil -> name
+      suffix -> "#{name} #{suffix}"
+    end
+  end
+
+  defp label_name(model) do
+    cond do
+      is_binary(model.name) and model.name != "" -> model.name
+      is_binary(model.model_id) and model.model_id != "" -> model.model_id
+      true -> model.id
+    end
+  end
+
+  defp distinguishing_label(model, name, models) do
+    id = model_identity(model)
+
+    collisions =
+      Enum.filter(models, fn other ->
+        label_name(other) == name and model_identity(other) != id
+      end)
+
+    if collisions == [] do
+      nil
+    else
+      tokens = id_tokens(id)
+
+      extra =
+        Enum.reject(tokens, fn token ->
+          Enum.all?(collisions, &(token in id_tokens(model_identity(&1))))
+        end)
+
+      cond do
+        extra == [] -> nil
+        extra == tokens -> "(#{id_tail(id)})"
+        true -> Enum.map_join(extra, " ", &humanize_id_token/1)
+      end
+    end
+  end
+
+  defp model_identity(model) do
+    if is_binary(model.model_id) and model.model_id != "", do: model.model_id, else: model.id
+  end
+
+  defp id_tail(id) do
+    id |> to_string() |> String.split("/") |> List.last()
+  end
+
+  defp id_tokens(id) do
+    id_tail(id)
+    |> String.split("-")
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.map(&String.downcase/1)
+  end
+
+  defp humanize_id_token("fast"), do: "Fast"
+  defp humanize_id_token("max"), do: "Max"
+  defp humanize_id_token("thinking"), do: "Thinking"
+  defp humanize_id_token("1m"), do: "1M"
+  defp humanize_id_token(token), do: String.capitalize(token)
 
   defp model_empty_message(workspace_root) do
     case Handbeam.Agent.ModelConfig.global_config_status() do

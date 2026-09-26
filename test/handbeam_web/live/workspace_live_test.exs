@@ -459,6 +459,27 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       refute html =~ ~r/<textarea[^>]*id=\"ai-input\"[^>]*>\s+\n\s*<\/textarea>/
     end
 
+    test "model picker distinguishes stored variants that share a display name" do
+      models = [
+        %{id: "cursor/composer-2.5", model_id: "composer-2.5", name: "Composer 2.5"},
+        %{id: "cursor/composer-2.5-fast", model_id: "composer-2.5-fast", name: "Composer 2.5"},
+        %{
+          id: "cursor/grok-4.7-high-fast",
+          model_id: "grok-4.7-high-fast",
+          name: "Grok 4.7 High Fast"
+        }
+      ]
+
+      assert HandbeamWeb.WorkspaceLive.model_option_label(Enum.at(models, 0), models) ==
+               "Composer 2.5"
+
+      assert HandbeamWeb.WorkspaceLive.model_option_label(Enum.at(models, 1), models) ==
+               "Composer 2.5 Fast"
+
+      assert HandbeamWeb.WorkspaceLive.model_option_label(Enum.at(models, 2), models) ==
+               "Grok 4.7 High Fast"
+    end
+
     test "renders empty state when no messages are present", %{conn: conn} do
       {:ok, _view, html} = live(conn, "/")
 
