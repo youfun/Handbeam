@@ -250,7 +250,11 @@ defmodule Handbeam.Agent.Provider.Codex do
   end
 
   defp message_item_id(%{id: id}) when is_binary(id) and id != "" do
-    if byte_size(id) <= 64, do: id, else: "msg_" <> short_hash(id)
+    # Transcript IDs (msg-assistant-...) are not Codex message item IDs.
+    # Preserve native IDs; map local IDs deterministically at the wire boundary.
+    if byte_size(id) <= 64 and Regex.match?(~r/\Amsg_[A-Za-z0-9_-]+\z/, id),
+      do: id,
+      else: "msg_" <> short_hash(id)
   end
 
   defp message_item_id(_block),
