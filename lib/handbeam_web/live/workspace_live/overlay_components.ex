@@ -68,9 +68,6 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
               class="sheet-conv-row"
             >
               <span class="truncate flex-1">{conv.title}</span>
-              <span class="sheet-conv-time">
-                {if(conv.scope == "free", do: gettext("对话"), else: conv.workspace_name)}
-              </span>
             </button>
             <button
               type="button"
@@ -83,6 +80,69 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
               <span aria-hidden="true">×</span>
             </button>
           </div>
+        </div>
+        <% free_collapsed? = workspace_group_collapsed?(@collapsed_workspace_ids, "free") %>
+        <div class="sheet-section-title sheet-section-header">
+          <button
+            type="button"
+            id="sheet-free-toggle"
+            phx-click="toggle_workspace_group"
+            phx-value-id="free"
+            class="sheet-section-toggle"
+            aria-expanded={to_string(not free_collapsed?)}
+            aria-controls="sheet-free-conversations"
+          >
+            <span class="truncate flex-1 min-w-0">{gettext("对话")}</span>
+            <span id="sheet-free-count" class="sheet-conv-count" title={gettext("会话数量")}>
+              {free_conversation_count(@conversations_by_workspace)}
+            </span>
+            <svg
+              class={["workspace-chevron-icon", free_collapsed? && "is-collapsed"]}
+              width="12"
+              height="12"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+              aria-hidden="true"
+            >
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </button>
+          <button
+            id="sheet-new-free-conversation"
+            phx-click="new_free_conversation"
+            class="sheet-new-conv-btn"
+            title={gettext("新建自由对话")}
+            aria-label={gettext("新建自由对话")}
+          >
+            <svg
+              width="16"
+              height="16"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="2.5"
+              stroke-linecap="round"
+            >
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+        </div>
+        <div :if={not free_collapsed?} id="sheet-free-conversations">
+          <button
+            :for={conv <- free_conversations(@conversations_by_workspace)}
+            :if={not conv.pinned}
+            phx-click="select_free_conversation"
+            phx-value-id={conv.id}
+            class={[
+              "sheet-conv-row",
+              @current_conversation_id == conv.id && @chat_scope == :free && "active"
+            ]}
+          >
+            <span class="truncate flex-1">{conv.title}</span>
+          </button>
         </div>
         <%= for ws <- @workspaces do %>
           <% collapsed? = workspace_group_collapsed?(@collapsed_workspace_ids, ws["id"]) %>
@@ -193,69 +253,6 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
             <% end %>
           <% end %>
         <% end %>
-        <% free_collapsed? = workspace_group_collapsed?(@collapsed_workspace_ids, "free") %>
-        <div class="sheet-section-title sheet-section-header">
-          <button
-            type="button"
-            id="sheet-free-toggle"
-            phx-click="toggle_workspace_group"
-            phx-value-id="free"
-            class="sheet-section-toggle"
-            aria-expanded={to_string(not free_collapsed?)}
-            aria-controls="sheet-free-conversations"
-          >
-            <span class="truncate flex-1 min-w-0">{gettext("对话")}</span>
-            <span id="sheet-free-count" class="sheet-conv-count" title={gettext("会话数量")}>
-              {free_conversation_count(@conversations_by_workspace)}
-            </span>
-            <svg
-              class={["workspace-chevron-icon", free_collapsed? && "is-collapsed"]}
-              width="12"
-              height="12"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2.5"
-              aria-hidden="true"
-            >
-              <polyline points="6 9 12 15 18 9" />
-            </svg>
-          </button>
-          <button
-            id="sheet-new-free-conversation"
-            phx-click="new_free_conversation"
-            class="sheet-new-conv-btn"
-            title={gettext("新建自由对话")}
-            aria-label={gettext("新建自由对话")}
-          >
-            <svg
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2.5"
-              stroke-linecap="round"
-            >
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-          </button>
-        </div>
-        <div :if={not free_collapsed?} id="sheet-free-conversations">
-          <button
-            :for={conv <- free_conversations(@conversations_by_workspace)}
-            :if={not conv.pinned}
-            phx-click="select_free_conversation"
-            phx-value-id={conv.id}
-            class={[
-              "sheet-conv-row",
-              @current_conversation_id == conv.id && @chat_scope == :free && "active"
-            ]}
-          >
-            <span class="truncate flex-1">{conv.title}</span>
-          </button>
-        </div>
         <button phx-click="open_add_project" class="sheet-add-row">
           <svg
             width="16"

@@ -254,31 +254,109 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
                     "conversation-item-active"
                 ]}
               >
-                <svg
-                  class="conversation-pin-icon"
-                  width="11"
-                  height="11"
-                  viewBox="0 0 12 12"
-                  fill="none"
-                  aria-hidden="true"
-                >
-                  <path
-                    d="M4.1 1.4h3.8v1.7l1.2 1.2H2.9l1.2-1.2V1.4Z"
-                    stroke="currentColor"
-                    stroke-width="1.1"
-                    stroke-linejoin="round"
-                  />
-                  <path
-                    d="M6 4.3v6.3"
-                    stroke="currentColor"
-                    stroke-width="1.1"
-                    stroke-linecap="round"
-                  />
-                </svg>
                 <span class="truncate flex-1">{conv.title}</span>
-                <span class="conversation-badge">
-                  {if(conv.scope == "free", do: gettext("对话"), else: conv.workspace_name)}
-                </span>
+              </button>
+              <.conversation_menu conv={conv} conversation_menu_id={@conversation_menu_id} />
+            </div>
+          </div>
+        </div>
+
+        <div
+          id="free-chats"
+          class={[
+            "workspace-group",
+            workspace_group_collapsed?(@collapsed_workspace_ids, "free") && "is-collapsed"
+          ]}
+        >
+          <div class={[
+            "workspace-title-row",
+            @chat_scope == :free && "is-active"
+          ]}>
+            <div class="workspace-header min-w-0 text-left px-2 py-1.5 text-xs flex items-center gap-1.5">
+              <span class="truncate flex-1">{gettext("对话")}</span>
+            </div>
+            <button
+              id="new-free-conversation"
+              phx-click="new_free_conversation"
+              class="workspace-add-btn flex-shrink-0 w-5 h-5 flex items-center justify-center rounded text-tertiary hover:text-primary hover:bg-surface-hover transition-colors"
+              title={gettext("新建自由对话")}
+            >
+              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                <path
+                  d="M6 1v10M1 6h10"
+                  stroke="currentColor"
+                  stroke-width="1.5"
+                  stroke-linecap="round"
+                />
+              </svg>
+            </button>
+            <button
+              type="button"
+              id="free-workspace-toggle"
+              phx-click="toggle_workspace_group"
+              phx-value-id="free"
+              class="workspace-count-toggle"
+              aria-expanded={
+                to_string(not workspace_group_collapsed?(@collapsed_workspace_ids, "free"))
+              }
+              aria-controls="free-conversations"
+              title={
+                if(workspace_group_collapsed?(@collapsed_workspace_ids, "free"),
+                  do: gettext("展开"),
+                  else: gettext("收起")
+                )
+              }
+              aria-label={
+                if(workspace_group_collapsed?(@collapsed_workspace_ids, "free"),
+                  do: gettext("展开"),
+                  else: gettext("收起")
+                )
+              }
+            >
+              <span id="free-workspace-count" class="workspace-conv-count" title={gettext("会话数量")}>
+                {free_conversation_count(@conversations_by_workspace)}
+              </span>
+              <svg
+                class={[
+                  "workspace-chevron-icon",
+                  workspace_group_collapsed?(@collapsed_workspace_ids, "free") && "is-collapsed"
+                ]}
+                width="10"
+                height="10"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.5"
+                aria-hidden="true"
+              >
+                <polyline points="6 9 12 15 18 9" />
+              </svg>
+            </button>
+          </div>
+          <div
+            :if={not workspace_group_collapsed?(@collapsed_workspace_ids, "free")}
+            id="free-conversations"
+            class="conversations-list"
+          >
+            <div
+              :for={conv <- free_conversations(@conversations_by_workspace)}
+              :if={not conv.pinned}
+              id={"free-conversation-#{conv.id}"}
+              class="conversation-row"
+              data-conversation-id={conv.id}
+            >
+              <button
+                phx-click="select_free_conversation"
+                phx-value-id={conv.id}
+                class={[
+                  "conversation-item flex-1 min-w-0 text-left pl-6 pr-1 py-1.5 text-xs transition-colors flex items-center gap-1.5",
+                  if(@current_conversation_id == conv.id and @chat_scope == :free,
+                    do: "conversation-item-active",
+                    else: "hover:bg-surface-hover text-secondary"
+                  )
+                ]}
+              >
+                <span class="truncate flex-1">{conv.title}</span>
               </button>
               <.conversation_menu conv={conv} conversation_menu_id={@conversation_menu_id} />
             </div>
@@ -472,108 +550,6 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
                     else: ""
                   )
                 ]}></span>
-                <span class="truncate flex-1">{conv.title}</span>
-              </button>
-              <.conversation_menu conv={conv} conversation_menu_id={@conversation_menu_id} />
-            </div>
-          </div>
-        </div>
-
-        <div
-          id="free-chats"
-          class={[
-            "workspace-group mt-2 border-t pt-2",
-            workspace_group_collapsed?(@collapsed_workspace_ids, "free") && "is-collapsed"
-          ]}
-        >
-          <div class={[
-            "workspace-title-row",
-            @chat_scope == :free && "is-active"
-          ]}>
-            <div class="workspace-header min-w-0 text-left px-2 py-1.5 text-xs flex items-center gap-1.5">
-              <span class="truncate flex-1">{gettext("对话")}</span>
-            </div>
-            <button
-              id="new-free-conversation"
-              phx-click="new_free_conversation"
-              class="workspace-add-btn flex-shrink-0 w-5 h-5 flex items-center justify-center rounded text-tertiary hover:text-primary hover:bg-surface-hover transition-colors"
-              title={gettext("新建自由对话")}
-            >
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                <path
-                  d="M6 1v10M1 6h10"
-                  stroke="currentColor"
-                  stroke-width="1.5"
-                  stroke-linecap="round"
-                />
-              </svg>
-            </button>
-            <button
-              type="button"
-              id="free-workspace-toggle"
-              phx-click="toggle_workspace_group"
-              phx-value-id="free"
-              class="workspace-count-toggle"
-              aria-expanded={
-                to_string(not workspace_group_collapsed?(@collapsed_workspace_ids, "free"))
-              }
-              aria-controls="free-conversations"
-              title={
-                if(workspace_group_collapsed?(@collapsed_workspace_ids, "free"),
-                  do: gettext("展开"),
-                  else: gettext("收起")
-                )
-              }
-              aria-label={
-                if(workspace_group_collapsed?(@collapsed_workspace_ids, "free"),
-                  do: gettext("展开"),
-                  else: gettext("收起")
-                )
-              }
-            >
-              <span id="free-workspace-count" class="workspace-conv-count" title={gettext("会话数量")}>
-                {free_conversation_count(@conversations_by_workspace)}
-              </span>
-              <svg
-                class={[
-                  "workspace-chevron-icon",
-                  workspace_group_collapsed?(@collapsed_workspace_ids, "free") && "is-collapsed"
-                ]}
-                width="10"
-                height="10"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2.5"
-                aria-hidden="true"
-              >
-                <polyline points="6 9 12 15 18 9" />
-              </svg>
-            </button>
-          </div>
-          <div
-            :if={not workspace_group_collapsed?(@collapsed_workspace_ids, "free")}
-            id="free-conversations"
-            class="conversations-list"
-          >
-            <div
-              :for={conv <- free_conversations(@conversations_by_workspace)}
-              :if={not conv.pinned}
-              id={"free-conversation-#{conv.id}"}
-              class="conversation-row"
-              data-conversation-id={conv.id}
-            >
-              <button
-                phx-click="select_free_conversation"
-                phx-value-id={conv.id}
-                class={[
-                  "conversation-item flex-1 min-w-0 text-left pl-6 pr-1 py-1.5 text-xs transition-colors flex items-center gap-1.5",
-                  if(@current_conversation_id == conv.id and @chat_scope == :free,
-                    do: "conversation-item-active",
-                    else: "hover:bg-surface-hover text-secondary"
-                  )
-                ]}
-              >
                 <span class="truncate flex-1">{conv.title}</span>
               </button>
               <.conversation_menu conv={conv} conversation_menu_id={@conversation_menu_id} />
