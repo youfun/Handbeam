@@ -287,10 +287,9 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
   def load_free_conversations(opts \\ []) do
     include_archived? = Keyword.get(opts, :include_archived?, false)
 
-    Handbeam.ConversationStore.list_free(
-      include_archived?: include_archived?,
-      include_timeline?: false
-    )
+    Handbeam.ConversationStore.list_free_metadata()
+    |> filter_archived(include_archived?)
+    |> Enum.sort_by(&(&1["updated_at"] || ""), :desc)
     |> Enum.reject(fn conv ->
       String.starts_with?(ConversationState.conv_value(conv, "title", ""), "New chat") and
         ConversationState.conv_value(conv, "title_source", nil) in [nil, "manual"] and
@@ -496,10 +495,9 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
       ws_id = ws["id"]
 
       convs =
-        Handbeam.ConversationStore.list_for_workspace(ws_id,
-          include_archived?: include_archived?,
-          include_timeline?: false
-        )
+        Handbeam.ConversationStore.list_metadata(ws_id)
+        |> filter_archived(include_archived?)
+        |> Enum.sort_by(&(&1["updated_at"] || ""), :desc)
         |> Enum.reject(fn conv ->
           String.starts_with?(ConversationState.conv_value(conv, "title", ""), "New chat") and
             ConversationState.conv_value(conv, "title_source", nil) in [nil, "manual"] and
@@ -753,6 +751,11 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
   end
 
   defp maybe_sort_conversations(conversations, false), do: conversations
+
+  defp filter_archived(conversations, true), do: conversations
+
+  defp filter_archived(conversations, false),
+    do: Enum.reject(conversations, &archived_conversation?/1)
 
   defp conversation_title(1), do: "New chat"
   defp conversation_title(num), do: "New chat ##{num}"

@@ -134,15 +134,24 @@ defmodule Handbeam.ConversationStore do
 
   @doc "Read workspace metadata without loading transcripts or editor files."
   def list_metadata(workspace_id) do
+    list_metadata_matching(&(&1["workspace_id"] == workspace_id and not free?(&1)))
+  end
+
+  @doc "Read free-chat metadata without loading transcripts or editor files."
+  def list_free_metadata do
+    list_metadata_matching(&free?/1)
+  end
+
+  defp list_metadata_matching(predicate) do
     case read_index() do
       {:ok, index} ->
         index
         |> Map.get("conversations", [])
-        |> Enum.filter(&(&1["workspace_id"] == workspace_id and not free?(&1)))
+        |> Enum.filter(predicate)
         |> Enum.flat_map(fn entry ->
           case get_metadata(entry["id"]) do
-            {:ok, %{"workspace_id" => ^workspace_id} = meta} ->
-              if free?(meta), do: [], else: [meta]
+            {:ok, meta} ->
+              [meta]
 
             _ ->
               []
