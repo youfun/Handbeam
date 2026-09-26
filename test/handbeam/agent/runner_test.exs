@@ -16,7 +16,7 @@ defmodule Handbeam.Agent.RunnerTest do
 
     on_exit(fn ->
       if old_home, do: System.put_env("HOME", old_home), else: System.delete_env("HOME")
-      File.rm_rf!(home_dir)
+      File.rm_rf(home_dir)
     end)
 
     :ok
@@ -107,7 +107,7 @@ defmodule Handbeam.Agent.RunnerTest do
     end
   end
 
-  defp opts(extra \\ []) do
+  defp opts(extra) do
     Keyword.merge(
       [
         workspace_path: File.cwd!(),
@@ -134,7 +134,7 @@ defmodule Handbeam.Agent.RunnerTest do
                opts(provider: BlockingProvider, provider_config: %{notify: self()})
              )
 
-    assert_receive {:blocking_provider_started, _task_pid}
+    assert_receive {:blocking_provider_started, _task_pid}, 1_000
 
     assert {:ok, %{running?: true, status: :running, run_pid: ^runner_pid, queue_pid: queue_pid}} =
              Coordinator.status(sid)
@@ -154,7 +154,7 @@ defmodule Handbeam.Agent.RunnerTest do
                opts(provider: BlockingProvider, provider_config: %{notify: self()})
              )
 
-    assert_receive {:blocking_provider_started, _task_pid}
+    assert_receive {:blocking_provider_started, _task_pid}, 1_000
     assert :ok = Coordinator.cancel(sid)
 
     assert_eventually(fn ->
@@ -173,7 +173,7 @@ defmodule Handbeam.Agent.RunnerTest do
                opts(provider: BlockingProvider, provider_config: %{notify: self()})
              )
 
-    assert_receive {:blocking_provider_started, _task_pid}
+    assert_receive {:blocking_provider_started, _task_pid}, 1_000
     ref = Process.monitor(runner)
     parent = self()
     supervisor = Handbeam.AgentRunTaskSupervisor
@@ -202,7 +202,7 @@ defmodule Handbeam.Agent.RunnerTest do
                opts(provider: BlockingProvider, provider_config: %{notify: self()})
              )
 
-    assert_receive {:blocking_provider_started, _task_pid}
+    assert_receive {:blocking_provider_started, _task_pid}, 1_000
 
     TranscriptPersistence.handle_event(
       sid,
@@ -293,7 +293,7 @@ defmodule Handbeam.Agent.RunnerTest do
                )
              )
 
-    assert_receive {:blocking_provider_started, task}
+    assert_receive {:blocking_provider_started, task}, 1_000
     ref = Process.monitor(runner)
     Process.exit(task, :kill)
     assert_receive {:agent_event, %{kind: :run_end, payload: %{status: "error"}}}, 1_000

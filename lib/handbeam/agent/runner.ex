@@ -261,19 +261,6 @@ defmodule Handbeam.Agent.Runner do
     end
   end
 
-  defp finish_terminal(state, result, status) do
-    Handbeam.Agent.Provider.Cursor.Session.stop_for_conversation(state.conversation_id)
-    Handbeam.Agent.CandidateQueue.seal(state.queue_pid)
-    Session.mark_run_finished(state.conversation_id)
-
-    Task.Supervisor.start_child(Handbeam.AgentRunTaskSupervisor, fn ->
-      Handbeam.Threads.Collaboration.completed(state.conversation_id, result, state.opts)
-    end)
-
-    stop_run_supervisor(state)
-    {:noreply, %{state | status: status, result: result, task: nil}}
-  end
-
   def handle_info({ref, {:error, reason}}, %{task: %{ref: ref}} = state) do
     Process.demonitor(ref, [:flush])
     Handbeam.Agent.Provider.Cursor.Session.stop_for_conversation(state.conversation_id)
@@ -286,6 +273,19 @@ defmodule Handbeam.Agent.Runner do
   end
 
   def handle_info(_message, state), do: {:noreply, state}
+
+  defp finish_terminal(state, result, status) do
+    Handbeam.Agent.Provider.Cursor.Session.stop_for_conversation(state.conversation_id)
+    Handbeam.Agent.CandidateQueue.seal(state.queue_pid)
+    Session.mark_run_finished(state.conversation_id)
+
+    Task.Supervisor.start_child(Handbeam.AgentRunTaskSupervisor, fn ->
+      Handbeam.Threads.Collaboration.completed(state.conversation_id, result, state.opts)
+    end)
+
+    stop_run_supervisor(state)
+    {:noreply, %{state | status: status, result: result, task: nil}}
+  end
 
   defp interrupt_type(%{status: :awaiting_approval, interrupted_state: %{interrupt_data: data}})
        when is_map(data) do
