@@ -1,5 +1,12 @@
 # 更新日志 (CHANGELOG)
 
+## [0.2.0] - Web UI 安装包
+
+### 新增
+- Web UI 自包含安装包：Linux x86_64、Windows amd64、macOS arm64。解压后运行 `start.sh` 或 `start.bat`，默认 `http://localhost:5008`。
+- Windows 包不含浏览器内终端（Ghostty 没有 Windows NIF）。
+- Android `versionName` 升到 `0.2.0`，`versionCode` 升到 `4`。iOS 短版本同步为 `0.2.0`。
+
 ## [2026-09-22] - 工作区代码索引
 
 ### 新增
