@@ -2242,6 +2242,32 @@ button.workspace-file-row:hover,
   opacity: 1;
 }
 
+.code-block-wrapper:has(.mermaid-diagram) .code-block-copy,
+.code-block-wrapper:has(.mermaid-diagram):hover .code-block-copy {
+  opacity: 1;
+}
+
+.mermaid-diagram {
+  overflow-x: auto;
+  padding: var(--spacing-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+}
+
+.mermaid-diagram svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0 auto;
+}
+
+.mermaid-error {
+  margin: 0.35rem 0 0;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    Turn Folding
    ═══════════════════════════════════════════════════════════════════ */

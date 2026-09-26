@@ -35,8 +35,14 @@ function patchNode(current, incoming, selection) {
 
   if (!isElement(current) || !isElement(incoming)) return;
   if (tagName(current) !== tagName(incoming)) return;
+  if (shouldPreserveRendered(current)) return;
   copyAttributes(current, incoming);
   patchChildren(current, childList(incoming), selection);
+}
+
+function shouldPreserveRendered(node) {
+  const marker = node.getAttribute?.("data-mermaid-rendered") || node.dataset?.mermaidRendered;
+  return marker === "true" || marker === true;
 }
 
 function findReusable(currentChildren, incoming, used) {
