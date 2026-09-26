@@ -68,9 +68,7 @@ jobs:
         with:
           install: true
           cache: true
-          mise_toml: |
-            [tools]
-            zig = "0.17.0-dev.269+ebff43698"
+          working_directory: mobile
 
       - uses: android-actions/setup-android@v3
         with:
@@ -89,7 +87,17 @@ jobs:
             "cmake;3.22.1"
 
       - name: Host packages
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends zip
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends zip libgit2-dev pkg-config
+          if [[ ! -f /usr/include/git2/sys/errors.h ]]; then
+            sudo mkdir -p /usr/include/git2/sys
+            printf '%s\n' \
+              '#ifndef INCLUDE_git_sys_errors_h__' \
+              '#define INCLUDE_git_sys_errors_h__' \
+              '#include "git2/errors.h"' \
+              '#endif' \
+              | sudo tee /usr/include/git2/sys/errors.h >/dev/null
+          fi
 
       - uses: actions/cache@v4
         with:
@@ -107,6 +115,8 @@ jobs:
             mob-apk-${{ runner.os }}-
 
       - name: Pack APKs
+        env:
+          LIBGIT2_DIR: /usr
         run: bash script/pack_android_apks.sh --artifacts artifacts
 
       - uses: actions/upload-artifact@v4
