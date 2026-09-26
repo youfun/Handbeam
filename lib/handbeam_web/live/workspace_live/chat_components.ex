@@ -584,6 +584,7 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
                   id={"chat-file-change-#{entry["id"]}"}
                   confirm_change_id={@revert_confirm_change_id}
                   message={@revert_message}
+                  workspace_root={@workspace_root}
                 />
               </div>
             </div>

@@ -13,6 +13,26 @@ defmodule HandbeamWeb.FileChangeCardTest do
     {:ok, tmp: tmp}
   end
 
+  describe "relative_display_path/2" do
+    test "absolute paths inside the workspace keep their directory" do
+      root = "/tmp/handbeam"
+      path = Path.join(root, "assets/css/workspace.css")
+
+      assert FileChangeCard.relative_display_path(path, root) == "assets/css/workspace.css"
+    end
+
+    test "already relative paths are not reduced to the basename" do
+      assert FileChangeCard.relative_display_path("assets/css/app.css", "/tmp/handbeam") ==
+               "assets/css/app.css"
+    end
+
+    test "paths outside the workspace stay identifiable" do
+      path = "/other/project/lib/app.ex"
+
+      assert FileChangeCard.relative_display_path(path, "/tmp/handbeam") == path
+    end
+  end
+
   describe "changes/1 session net diff" do
     test "two successful writes of one path are one row from first baseline to latest" do
       path = "lib/notes.ex"

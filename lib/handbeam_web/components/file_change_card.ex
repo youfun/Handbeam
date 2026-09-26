@@ -18,6 +18,7 @@ defmodule HandbeamWeb.FileChangeCard do
   attr :class, :string, default: nil
   attr :confirm_change_id, :string, default: nil
   attr :message, :map, default: nil
+  attr :workspace_root, :string, default: nil
 
   def card(assigns) do
     change = ChangeHelper.change_from_entry(assigns.entry)
@@ -31,7 +32,7 @@ defmodule HandbeamWeb.FileChangeCard do
       |> assign(:entry_id, entry_id)
       |> assign(:card_id, assigns.id || "file-change-#{entry_id}")
       |> assign(:label, label(assigns.entry, lines))
-      |> assign(:path, display_path(change, assigns.entry))
+      |> assign(:path, display_path(change, assigns.entry, assigns.workspace_root))
       |> assign(:added, count(lines, :add))
       |> assign(:removed, count(lines, :remove))
       |> assign(:reversible?, reversible?(change))
@@ -235,11 +236,35 @@ defmodule HandbeamWeb.FileChangeCard do
       else: Gettext.gettext(HandbeamWeb.Gettext, "Edited")
   end
 
-  defp display_path(change, entry) do
+  defp display_path(change, entry, workspace_root) do
     path = Map.get(change, "file_path") || TranscriptEntry.input_summary(entry) || ""
-    name = Path.basename(path)
-    if name == "", do: path, else: name
+    relative_display_path(path, workspace_root)
   end
+
+  @doc false
+  def relative_display_path(path, workspace_root \\ nil)
+
+  def relative_display_path(path, workspace_root)
+      when is_binary(path) and path != "" and is_binary(workspace_root) and workspace_root != "" do
+    expanded_root = Path.expand(workspace_root)
+
+    expanded =
+      if Path.type(path) == :absolute do
+        Path.expand(path)
+      else
+        Path.expand(path, expanded_root)
+      end
+
+    case Path.relative_to(expanded, expanded_root) do
+      ^expanded -> normalize_separators(path)
+      relative -> normalize_separators(relative)
+    end
+  end
+
+  def relative_display_path(path, _workspace_root) when is_binary(path), do: normalize_separators(path)
+  def relative_display_path(_path, _workspace_root), do: ""
+
+  defp normalize_separators(path), do: String.replace(path, "\\", "/")
 
   defp diff_lines(entry) do
     entry

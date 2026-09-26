@@ -205,6 +205,7 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceComponents do
           id={"changes-file-#{entry["id"]}"}
           confirm_change_id={@revert_confirm_change_id}
           message={@revert_message}
+          workspace_root={@workspace_root}
         />
       </div>
 
