@@ -30,7 +30,27 @@ function clamp(value, min, max) {
 
 //#endregion
 //#region render.ts
+function mergeRenderCells(previous, payload) {
+	if (Array.isArray(payload.cells)) return payload.cells;
+	if (!Array.isArray(payload.rows) || !Array.isArray(previous)) return null;
+	const next = previous.map((row) => row);
+	for (const update of payload.rows) {
+		if (update && Number.isInteger(update.index)) next[update.index] = update.cells;
+	}
+	return next;
+}
+function scrollCursorIntoView(state) {
+	const cursor = state.cursor;
+	if (!cursor || cursor.y == null || !state.el) return;
+	const metrics = measureCellMetrics(state.pre, state.measure, state.input, state.cursorEl);
+	const top = metrics.paddingTop + cursor.y * metrics.height;
+	const bottom = top + metrics.height;
+	const view = state.el;
+	if (top < view.scrollTop) view.scrollTop = top;
+	else if (bottom > view.scrollTop + view.clientHeight) view.scrollTop = bottom - view.clientHeight;
+}
 function renderCells(pre, rows) {
+	if (!rows) return;
 	let html = "";
 	for (const row of rows) {
 		for (const [char, fg, bg, flags] of row) {
@@ -876,20 +896,25 @@ const GhosttyTerminal = {
 		}
 		this.handleEvent("ghostty:render", (payload) => {
 			if (payload.id !== this.el.id) return;
-			this.rowsData = payload.cells;
+			const cells = mergeRenderCells(this.rowsData, payload);
+			if (!cells) return;
+			this.rowsData = cells;
 			this.cursor = payload.cursor;
-			this.cols = payload.cells[0]?.length ?? this.cols;
-			this.rows = payload.cells.length || this.rows;
+			this.cols = cells[0]?.length ?? this.cols;
+			this.rows = cells.length || this.rows;
 			this.mouse = payload.mouse || { ...DEFAULT_MOUSE };
 			this.scrollbar = payload.scrollbar ?? null;
 			this.focusReporting = payload.focus_reporting ?? false;
+			if (payload.background) this.pre.style.backgroundColor = rgb(payload.background);
+			if (payload.foreground) this.pre.style.color = rgb(payload.foreground);
 			if (mouseModeActive(this)) {
 				clearSelection(this);
 			}
-			renderCells(this.pre, payload.cells);
+			renderCells(this.pre, cells);
 			doRenderSelection(this);
 			syncCursorBlink(this);
 			doRenderCursor(this);
+			scrollCursorIntoView(this);
 			scheduleFit(this);
 			sendReady(this);
 		});

@@ -65,7 +65,8 @@ defmodule HandbeamWeb.Live.TerminalPanel do
         #terminal-panel .terminal-presets { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 8px; border-bottom: 1px solid var(--color-border, #333); }
         #terminal-panel .terminal-preset { border: 1px solid var(--color-border, #333); border-radius: 4px; background: transparent; color: var(--color-text-tertiary, #888); font-family: ui-monospace, monospace; font-size: 10px; padding: 2px 8px; cursor: pointer; }
         #terminal-panel .terminal-viewport { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; overflow: hidden; background: #1e1e2e; }
-        #terminal-panel .terminal-screen { flex: 1 1 auto; min-height: 0; width: 100%; height: 100%; }
+        #terminal-panel .terminal-screen { flex: 1 1 auto; min-height: 0; width: 100%; height: 100%; overflow: auto; background: #1e1e2e; }
+        #terminal-panel .terminal-screen pre { margin: 0 !important; padding: 8px !important; line-height: 1.2 !important; font-size: 13px !important; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace !important; background: #1e1e2e !important; color: #cdd6f4 !important; border-radius: 0 !important; overflow: hidden !important; white-space: pre !important; box-sizing: border-box !important; }
         #terminal-panel .terminal-command-bar { display: flex; align-items: center; gap: 6px; min-height: 34px; padding: 4px 8px; border-top: 1px solid var(--color-border, #333); background: var(--color-surface, #111); }
         #terminal-panel .terminal-command-input { flex: 1 1 auto; min-width: 0; border: 0; background: transparent; color: var(--color-text-primary, #eee); font-family: ui-monospace, monospace; font-size: 12px; outline: none; }
         #terminal-panel .terminal-command-input:disabled { opacity: 0.5; }
@@ -202,7 +203,7 @@ defmodule HandbeamWeb.Live.TerminalPanel do
             term={@active_term_pid}
             pty={@active_pty_pid}
             fit={true}
-            autofocus={false}
+            autofocus={true}
             class="terminal-screen"
           />
         <% else %>
@@ -234,7 +235,6 @@ defmodule HandbeamWeb.Live.TerminalPanel do
           enterkeyhint="send"
           class="terminal-command-input"
           disabled={!@active_pty_pid}
-          phx-mounted={JS.focus()}
         />
         <button
           type="button"

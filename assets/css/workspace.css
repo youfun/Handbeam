@@ -1410,7 +1410,22 @@ button.workspace-file-row:hover,
   min-height: 0;
   width: 100%;
   height: 100%;
-  overflow: hidden;
+  overflow: auto;
+  background: #1e1e2e;
+}
+
+#workspace-panel .terminal-screen pre {
+  margin: 0 !important;
+  padding: 8px !important;
+  line-height: 1.2 !important;
+  font-size: 13px !important;
+  font-family: var(--font-mono);
+  background: #1e1e2e !important;
+  color: #cdd6f4 !important;
+  border-radius: 0 !important;
+  overflow: hidden !important;
+  white-space: pre !important;
+  box-sizing: border-box !important;
 }
 
 #workspace-panel .terminal-command-bar {
