@@ -64,6 +64,7 @@ defmodule Handbeam.MixProject do
       {:phoenix_test, "~> 0.12.0", only: :test, runtime: false},
       {:req, "~> 0.7.4"},
       {:mint, "~> 1.10.1"},
+      {:castore, "~> 1.0"},
       {:floki, "~> 0.38.4"},
       {:llm_db, "~> 2026.9"},
       {:telemetry_metrics, "~> 1.0"},
