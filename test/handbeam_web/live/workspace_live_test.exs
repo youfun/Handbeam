@@ -2422,8 +2422,8 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
 
       rendered = render(view)
       assert rendered =~ "preview-card"
-      assert rendered =~ "打开预览"
-      assert rendered =~ "用浏览器打开"
+      assert rendered =~ "Open preview"
+      assert rendered =~ "Open in browser"
       assert rendered =~ "Demo site"
       assert rendered =~ ~s(id="composer") or rendered =~ "phx-submit=\"send_message\""
     end
@@ -2446,7 +2446,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       )
 
       rendered = render(view)
-      assert rendered =~ "接管浏览器"
+      assert rendered =~ "Take over browser"
       assert rendered =~ "captcha"
       refute rendered =~ "Mob.UI.webview"
     end
@@ -2606,10 +2606,22 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         assert rendered =~ "+1"
         assert rendered =~ "diff-lineno"
 
-        view |> element("button[phx-value-view='changes']") |> render_click()
+        view
+        |> element("button[phx-click='select_right_panel_view'][phx-value-view='changes']")
+        |> render_click()
+
         changes = render(view)
-        assert changes =~ "id=\"changes-file-tool-tu_edit_1-diff\""
-        assert changes =~ "&lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;"
+        assert changes =~ "id=\"changes-file-net-"
+        refute changes =~ "id=\"changes-file-tool-tu_edit_1\""
+
+        view
+        |> element("#workspace-changes [id^='changes-file-net-'][id$='-toggle']")
+        |> render_click()
+
+        opened = render(view)
+        assert opened =~ "id=\"changes-file-net-"
+        assert opened =~ "-diff\""
+        assert opened =~ "safe"
       after
         File.rm(file_path)
       end
@@ -3163,7 +3175,8 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         |> render_click()
 
         rendered = render(view)
-        refute rendered =~ "Hello"
+        assert has_element?(view, "#no-messages")
+        refute has_element?(view, "#timeline-stream .msg-user", "Hello")
         assert rendered =~ "No messages yet"
         assert rendered =~ "idle"
         assert rendered =~ "step-router-v1"
@@ -3307,7 +3320,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         {:ok, view, _html} = live(conn, "/")
 
         view |> element("#activity-bar button[phx-click='open_add_project']") |> render_click()
-        assert render(view) =~ "从下载导入"
+        assert render(view) =~ "Import from Downloads"
 
         send(view.pid, {:workspace_imported, %{path: imported, name: "Downloads Project"}})
         rendered = render(view)
