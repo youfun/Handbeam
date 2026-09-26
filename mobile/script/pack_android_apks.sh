@@ -94,10 +94,7 @@ ensure_libgit2_sys_header() {
   cat > "$tmp" << 'EOF'
 #ifndef INCLUDE_git_sys_errors_h__
 #define INCLUDE_git_sys_errors_h__
-#include "git2/common.h"
-GIT_EXTERN(int) git_error_set(int error_class, const char *fmt, ...)
-    __attribute__((format(printf, 2, 3)));
-GIT_EXTERN(int) git_error_set_str(int error_class, const char *string);
+#include "git2/errors.h"
 #endif
 EOF
   if [[ ! -d "$dir" ]]; then
