@@ -169,7 +169,7 @@ assert.equal(navEl.classList.contains("is-open"), true);
 assert.equal(toggle.getAttribute("aria-expanded"), "true");
 
 let unpinned = 0;
-messages.addEventListener("sigil:unpin-chat-scroll", () => {
+messages.addEventListener("handbeam:unpin-chat-scroll", () => {
   unpinned += 1;
 });
 
