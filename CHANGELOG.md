@@ -1,5 +1,18 @@
 # 更新日志 (CHANGELOG)
 
+## [0.2.1] - macOS 原生客户端
+
+### 新增与改进
+- 新增基于系统 WebKit 的 macOS 原生客户端，内置 OTP release，使用随机 loopback 端口启动本机服务。
+- `Pack` workflow 在 macOS ARM64 构建中同时生成 Web UI tarball 与 `Handbeam-macos-arm64.zip`，并发布 SHA-256 校验文件。
+- macOS 标题栏提供原生导航、工作区面板和设置操作，Web 页面不再重复显示面板控制。
+- 启动时侧栏仅加载会话元数据，异常恢复仅检查运行中标记的会话，不再扫描全部历史 transcript。
+- 更新 Markdown、Mermaid、DOMPurify 与测试 DOM 依赖，`npm audit` 无已知漏洞。
+
+### 版本
+- Handbeam 与 Handbeam Probe 升至 `0.2.1`。
+- Android `versionCode` 升至 `5`，iOS `CFBundleVersion` 升至 `4`，macOS `CFBundleVersion` 升至 `2`。
+
 ## [0.2.0] - Web UI 安装包
 
 ### 新增

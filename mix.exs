@@ -4,7 +4,7 @@ defmodule Handbeam.MixProject do
   def project do
     [
       app: :handbeam,
-      version: "0.2.0",
+      version: "0.2.1",
       elixir: ">= 1.20.0-rc.5 and < 1.21.0",
       source_url: "https://github.com/youfun/Handbeam",
       elixirc_paths: elixirc_paths(Mix.env()),

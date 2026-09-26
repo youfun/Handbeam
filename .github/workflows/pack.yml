@@ -1,6 +1,7 @@
 # Pack the Web UI OTP release for Linux x86_64, Windows amd64, and macOS
-# arm64, plus both Android APKs. Packages are published to GitHub Releases
-# (moving tag web-latest, or the v* tag that triggered the run).
+# arm64, the native macOS WebKit app, plus both Android APKs. Packages are
+# published to GitHub Releases (moving tag web-latest, or the v* tag that
+# triggered the run).
 # Windows ARM64 is not built here: OTP has no ARM64 installer, and the
 # hosted ARM runner cannot install WSL without a reboot.
 name: Pack
@@ -81,6 +82,27 @@ jobs:
         if: startsWith(matrix.target, 'windows-')
         run: ./scripts/pack_webui.ps1 ${{ matrix.target }}
 
+      - name: Test macOS shell
+        if: matrix.target == 'macos-arm64'
+        working-directory: desktop/macos
+        run: swift test
+
+      - name: Pack native macOS app
+        if: matrix.target == 'macos-arm64'
+        shell: bash
+        run: |
+          set -euo pipefail
+          export HANDBEAM_WEB_ROOT="$PWD/_build/prod/rel/handbeam"
+          bash desktop/macos/scripts/build_app.sh
+
+          app="desktop/macos/build/Handbeam.app"
+          archive="desktop/macos/build/Handbeam-macos-arm64.zip"
+          rm -f "$archive" "$archive.sha256"
+          ditto -c -k --keepParent "$app" "$archive"
+          shasum -a 256 "$archive" > "$archive.sha256"
+          codesign --verify --deep --strict "$app"
+          unzip -tq "$archive"
+
       - name: Experimental Windows toolchain package
         shell: pwsh
         if: matrix.target == 'windows-amd64'
@@ -101,8 +123,16 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+      - uses: actions/upload-artifact@v4
+        if: matrix.target == 'macos-arm64'
+        with:
+          name: handbeam-macos-app-arm64
+          path: desktop/macos/build/Handbeam-macos-arm64.zip*
+          if-no-files-found: error
+          retention-days: 14
+
   publish-web:
-    name: Publish Web UI release
+    name: Publish release
     needs: [web, android]
     if: >-
       always() &&
@@ -129,19 +159,26 @@ jobs:
           name: handbeam-android-apk
           path: dist
 
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: handbeam-macos-app-arm64
+          path: dist
+
       - name: Release notes
         run: |
           set -euo pipefail
           shopt -s nullglob
-          files=(dist/handbeam-web-* dist/*.apk)
+          files=(dist/handbeam-web-* dist/Handbeam-macos-* dist/*.apk)
           if [[ ${#files[@]} -eq 0 ]]; then
             echo "No packages were built"
             exit 1
           fi
           {
-            echo "Web UI packages. Each archive is a self-contained OTP release."
+            echo "Handbeam desktop, Web UI, and mobile packages."
             echo
-            echo "Linux and macOS: unpack and run \`./start.sh\`."
+            echo "macOS desktop: unpack \`Handbeam-macos-arm64.zip\` and open \`Handbeam.app\`."
+            echo "Linux and macOS Web UI: unpack the platform tarball and run \`./start.sh\`."
             echo "Windows: unpack and run \`start.bat\`."
             echo "Default URL: http://localhost:5008"
             echo
@@ -165,7 +202,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          files=(dist/handbeam-web-* dist/*.apk)
+          files=(dist/handbeam-web-* dist/Handbeam-macos-* dist/*.apk)
           if [[ ${#files[@]} -eq 0 ]]; then
             echo "No packages to upload"
             exit 1

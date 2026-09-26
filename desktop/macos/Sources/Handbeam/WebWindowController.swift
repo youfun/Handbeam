@@ -183,7 +183,7 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
     }
 
     @objc private func openSettings() {
-        clickWebControl("#open-settings")
+        navigateWebControl("#open-settings")
     }
 
     private func openExternally(_ url: URL) {
@@ -319,6 +319,17 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
         let encoded = try? JSONSerialization.data(withJSONObject: selector, options: .fragmentsAllowed)
         guard let encoded, let literal = String(data: encoded, encoding: .utf8) else { return }
         webView.evaluateJavaScript("document.querySelector(\(literal))?.click()")
+    }
+
+    private func navigateWebControl(_ selector: String) {
+        let encoded = try? JSONSerialization.data(withJSONObject: selector, options: .fragmentsAllowed)
+        guard let encoded, let literal = String(data: encoded, encoding: .utf8) else { return }
+        webView.evaluateJavaScript("""
+        (() => {
+          const href = document.querySelector(\(literal))?.href;
+          if (href) window.location.assign(href);
+        })()
+        """)
     }
 
     private func syncWorkspacePanelState(after delay: TimeInterval = 0) {

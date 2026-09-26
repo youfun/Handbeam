@@ -35,8 +35,9 @@ GitHub Releases 的 `web-latest`（以及 `v*` 标签）提供自包含 OTP 包�
 - `handbeam-web-windows-amd64.zip`
 - `handbeam-web-windows-amd64-toolchain.zip`（实验包）
 - `handbeam-web-macos-arm64.tar.gz`
+- `Handbeam-macos-arm64.zip`（原生 WebKit App）
 
-Linux / macOS 运行 `./start.sh`，Windows 运行 `start.bat`。默认地址是 `http://localhost:5008`。macOS 原生壳（系统 WebKit，不含 Electron）在 [`desktop/macos`](desktop/macos)，可把 macOS 包打进 `.app`。Windows 包没有内置终端（Ghostty 没有 Windows NIF）。实验包额外带上 Elixir、Mix、Hex、Rebar3 和 MinGit，只在本次启动的进程里放到 PATH 前面，不含 C 编译器。不发布 Windows ARM64。
+macOS 原生包解压后打开 `Handbeam.app`。Web UI 包在 Linux / macOS 运行 `./start.sh`，Windows 运行 `start.bat`；默认地址是 `http://localhost:5008`。macOS 原生壳使用系统 WebKit，不含 Electron。Windows 包没有内置终端（Ghostty 没有 Windows NIF）。实验包额外带上 Elixir、Mix、Hex、Rebar3 和 MinGit，只在本次启动的进程里放到 PATH 前面，不含 C 编译器。不发布 Windows ARM64。
 
 ## 运行
 

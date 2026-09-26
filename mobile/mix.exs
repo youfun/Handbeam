@@ -4,7 +4,7 @@ defmodule HandbeamProbe.MixProject do
   def project do
     [
       app: :handbeam_probe,
-      version: "0.2.0",
+      version: "0.2.1",
       elixir: "~> 1.18",
       start_permanent: false,
       deps: deps(),
