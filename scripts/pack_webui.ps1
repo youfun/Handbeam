@@ -13,6 +13,7 @@ mix deps.get
 npm ci
 $env:MIX_ENV = "prod"
 mix compile
+mix esbuild.install --if-missing
 mix assets.deploy
 mix release --overwrite
 

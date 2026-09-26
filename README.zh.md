@@ -27,6 +27,17 @@ Android 原生聊天主界面，英文界面真机截图。
 
 需要 Elixir 1.20、OTP 28+、Node。
 
+## Web UI 安装包
+
+GitHub Releases 的 `web-latest`（以及 `v*` 标签）提供自包含 OTP 包，解压后即可打开 Web UI，不必安装 Elixir：
+
+- `handbeam-web-linux-x86_64.tar.gz`
+- `handbeam-web-windows-amd64.zip`
+- `handbeam-web-windows-arm64.zip`
+- `handbeam-web-macos-arm64.tar.gz`
+
+Linux / macOS 运行 `./start.sh`，Windows 运行 `start.bat`。默认地址是 `http://localhost:5008`。Windows 包没有内置终端（Ghostty 没有 Windows NIF）。
+
 ## 运行
 
 ```bash
