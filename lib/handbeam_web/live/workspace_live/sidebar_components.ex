@@ -145,7 +145,6 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
   attr :current_conversation_id, :any, required: true
   attr :current_workspace_id, :any, required: true
   attr :show_archive, :any, required: true
-  attr :streams, :any, required: true
   attr :workspace_menu_id, :any, required: true
   attr :workspaces, :any, required: true
 
@@ -357,117 +356,7 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
                 ]}></span>
                 <span class="truncate flex-1">{conv.title}</span>
               </button>
-              <div class="conversation-menu">
-                <button
-                  type="button"
-                  phx-click="toggle_conversation_menu"
-                  phx-value-id={conv.id}
-                  id={"conversation-menu-#{conv.workspace_id}-#{conv.id}"}
-                  class={[
-                    "conversation-action",
-                    @conversation_menu_id == conv.id && "is-open"
-                  ]}
-                  title={gettext("更多操作")}
-                  aria-label={gettext("更多操作")}
-                  aria-haspopup="menu"
-                  aria-expanded={to_string(@conversation_menu_id == conv.id)}
-                >
-                  <span class="sr-only">{gettext("更多操作")}</span>
-                  <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 12 12"
-                    fill="currentColor"
-                    aria-hidden="true"
-                  >
-                    <circle cx="2.25" cy="6" r="1" />
-                    <circle cx="6" cy="6" r="1" />
-                    <circle cx="9.75" cy="6" r="1" />
-                  </svg>
-                </button>
-                <div
-                  :if={@conversation_menu_id == conv.id}
-                  id={"conversation-menu-panel-#{conv.id}"}
-                  class="conversation-menu-panel"
-                  role="menu"
-                  phx-click-away="close_conversation_menu"
-                >
-                  <button
-                    type="button"
-                    role="menuitem"
-                    phx-click="open_rename_conversation"
-                    phx-value-id={conv.id}
-                    phx-value-ws_id={conv.workspace_id}
-                    id={"conversation-action-rename-#{conv.workspace_id}-#{conv.id}"}
-                    class="conversation-menu-item"
-                  >
-                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                      <path
-                        d="M7.2 2.1 9.9 4.8 4.4 10.3 1.5 10.5l.2-2.9L7.2 2.1Z"
-                        stroke="currentColor"
-                        stroke-width="1.1"
-                        stroke-linejoin="round"
-                      />
-                      <path
-                        d="M6.4 2.9 9.1 5.6"
-                        stroke="currentColor"
-                        stroke-width="1.1"
-                        stroke-linecap="round"
-                      />
-                    </svg>
-                    <span>{gettext("重命名")}</span>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    id={"conversation-action-copy-id-#{conv.workspace_id}-#{conv.id}"}
-                    class="conversation-menu-item"
-                    phx-hook="CopyText"
-                    data-copy={conv.id}
-                    title={gettext("复制会话 ID，用于线程通讯")}
-                  >
-                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                      <rect
-                        x="4.25"
-                        y="3.25"
-                        width="5.5"
-                        height="6.5"
-                        rx="0.75"
-                        stroke="currentColor"
-                        stroke-width="1.1"
-                      />
-                      <path
-                        d="M3.25 8.75H2.75A.75.75 0 0 1 2 8V2.75A.75.75 0 0 1 2.75 2H8a.75.75 0 0 1 .75.75V3.25"
-                        stroke="currentColor"
-                        stroke-width="1.1"
-                        stroke-linecap="round"
-                      />
-                    </svg>
-                    <span class="copy-idle">{gettext("复制 ID")}</span>
-                    <span class="copy-done">{gettext("已复制")}</span>
-                  </button>
-                  <button
-                    type="button"
-                    role="menuitem"
-                    phx-click="archive_conversation"
-                    phx-value-id={conv.id}
-                    phx-value-ws_id={conv.workspace_id}
-                    id={"conversation-action-archive-#{conv.workspace_id}-#{conv.id}"}
-                    class="conversation-menu-item danger"
-                  >
-                    <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-                      <path
-                        d="M2 3.5h8M4.5 3.5V2.75a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 .75.75V3.5M3 3.5l.5 6.75a.75.75 0 0 0 .75.75h3.5a.75.75 0 0 0 .75-.75L9 3.5"
-                        stroke="currentColor"
-                        stroke-width="1.1"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                      />
-                    </svg>
-                    <span>{gettext("归档")}</span>
-                  </button>
-                </div>
-              </div>
+              <.conversation_menu conv={conv} conversation_menu_id={@conversation_menu_id} />
             </div>
           </div>
         </div>
@@ -567,6 +456,7 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
               >
                 <span class="truncate flex-1">{conv.title}</span>
               </button>
+              <.conversation_menu conv={conv} conversation_menu_id={@conversation_menu_id} />
             </div>
           </div>
         </div>
@@ -582,15 +472,14 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
             </span>
             <span>{gettext("已存档")}</span>
             <span class="ml-auto tabular-nums text-[0.6rem] lowercase">
-              {archived_stream_count(@streams.conversations)}
+              {length(archived_conversations(@workspaces, @conversations_by_workspace))}
             </span>
           </button>
 
           <div :if={@show_archive} class="conversations-list">
             <div
-              :for={{dom_id, conv} <- @streams.conversations}
-              :if={conv.archived}
-              id={dom_id}
+              :for={conv <- archived_conversations(@workspaces, @conversations_by_workspace)}
+              id={"archived-conversation-#{conv.id}"}
               class="conversation-row archived"
             >
               <button
@@ -600,8 +489,12 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
                 class={[
                   "conversation-item flex-1 min-w-0 text-left pl-6 pr-1 py-1.5 text-xs transition-colors flex items-center gap-1.5",
                   if(
-                    @current_conversation_id == conv.id and
-                      @current_workspace_id == conv.workspace_id,
+                    archived_conversation_active?(
+                      conv,
+                      @current_conversation_id,
+                      @current_workspace_id,
+                      @chat_scope
+                    ),
                     do: "conversation-item-active",
                     else: "hover:bg-surface-hover text-tertiary"
                   )
@@ -610,14 +503,20 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
                 <span class={[
                   "conversation-dot archived",
                   if(
-                    @current_conversation_id == conv.id and
-                      @current_workspace_id == conv.workspace_id,
+                    archived_conversation_active?(
+                      conv,
+                      @current_conversation_id,
+                      @current_workspace_id,
+                      @chat_scope
+                    ),
                     do: "conversation-dot-active",
                     else: ""
                   )
                 ]}></span>
                 <span class="truncate flex-1">{conv.title}</span>
-                <span class="conversation-badge">{conv.workspace_name}</span>
+                <span class="conversation-badge">
+                  {if(conv.scope == "free", do: gettext("对话"), else: conv.workspace_label)}
+                </span>
               </button>
               <button
                 phx-click="unarchive_conversation"
@@ -643,4 +542,128 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
     """
   end
 
+  attr :conv, :map, required: true
+  attr :conversation_menu_id, :any, required: true
+
+  def conversation_menu(assigns) do
+    ~H"""
+    <div class="conversation-menu">
+      <button
+        type="button"
+        phx-click="toggle_conversation_menu"
+        phx-value-id={@conv.id}
+        id={"conversation-menu-#{menu_scope_id(@conv)}-#{@conv.id}"}
+        class={[
+          "conversation-action",
+          @conversation_menu_id == @conv.id && "is-open"
+        ]}
+        title={gettext("更多操作")}
+        aria-label={gettext("更多操作")}
+        aria-haspopup="menu"
+        aria-expanded={to_string(@conversation_menu_id == @conv.id)}
+      >
+        <span class="sr-only">{gettext("更多操作")}</span>
+        <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor" aria-hidden="true">
+          <circle cx="2.25" cy="6" r="1" />
+          <circle cx="6" cy="6" r="1" />
+          <circle cx="9.75" cy="6" r="1" />
+        </svg>
+      </button>
+      <div
+        :if={@conversation_menu_id == @conv.id}
+        id={"conversation-menu-panel-#{@conv.id}"}
+        class="conversation-menu-panel"
+        role="menu"
+        phx-click-away="close_conversation_menu"
+      >
+        <button
+          type="button"
+          role="menuitem"
+          phx-click="open_rename_conversation"
+          phx-value-id={@conv.id}
+          phx-value-ws_id={@conv.workspace_id}
+          id={"conversation-action-rename-#{menu_scope_id(@conv)}-#{@conv.id}"}
+          class="conversation-menu-item"
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <path
+              d="M7.2 2.1 9.9 4.8 4.4 10.3 1.5 10.5l.2-2.9L7.2 2.1Z"
+              stroke="currentColor"
+              stroke-width="1.1"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M6.4 2.9 9.1 5.6"
+              stroke="currentColor"
+              stroke-width="1.1"
+              stroke-linecap="round"
+            />
+          </svg>
+          <span>{gettext("重命名")}</span>
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          id={"conversation-action-copy-id-#{menu_scope_id(@conv)}-#{@conv.id}"}
+          class="conversation-menu-item"
+          phx-hook="CopyText"
+          data-copy={@conv.id}
+          title={gettext("复制会话 ID，用于线程通讯")}
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <rect
+              x="4.25"
+              y="3.25"
+              width="5.5"
+              height="6.5"
+              rx="0.75"
+              stroke="currentColor"
+              stroke-width="1.1"
+            />
+            <path
+              d="M3.25 8.75H2.75A.75.75 0 0 1 2 8V2.75A.75.75 0 0 1 2.75 2H8a.75.75 0 0 1 .75.75V3.25"
+              stroke="currentColor"
+              stroke-width="1.1"
+              stroke-linecap="round"
+            />
+          </svg>
+          <span class="copy-idle">{gettext("复制 ID")}</span>
+          <span class="copy-done">{gettext("已复制")}</span>
+        </button>
+        <button
+          type="button"
+          role="menuitem"
+          phx-click="archive_conversation"
+          phx-value-id={@conv.id}
+          phx-value-ws_id={@conv.workspace_id}
+          id={"conversation-action-archive-#{menu_scope_id(@conv)}-#{@conv.id}"}
+          class="conversation-menu-item danger"
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <path
+              d="M2 3.5h8M4.5 3.5V2.75a.75.75 0 0 1 .75-.75h1.5a.75.75 0 0 1 .75.75V3.5M3 3.5l.5 6.75a.75.75 0 0 0 .75.75h3.5a.75.75 0 0 0 .75-.75L9 3.5"
+              stroke="currentColor"
+              stroke-width="1.1"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <span>{gettext("归档")}</span>
+        </button>
+      </div>
+    </div>
+    """
+  end
+
+  defp menu_scope_id(%{scope: "free"}), do: "free"
+  defp menu_scope_id(%{workspace_id: id}) when is_binary(id) and id != "", do: id
+  defp menu_scope_id(_), do: "free"
+
+  defp archived_conversation_active?(conv, current_id, current_workspace_id, chat_scope) do
+    current_id == conv.id and
+      if(conv.scope == "free",
+        do: chat_scope == :free,
+        else: current_workspace_id == conv.workspace_id
+      )
+  end
 end

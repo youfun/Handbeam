@@ -579,20 +579,39 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   @impl true
-  def handle_event("select_archived_conversation", %{"id" => conv_id, "ws" => ws_id}, socket) do
-    with {:ok, %{"workspace_id" => ^ws_id}} <-
-           Handbeam.ConversationStore.get(conv_id, include_timeline?: false) do
-      {socket, _conv_id} =
-        ConversationSwitching.select_archived_conversation(socket, ws_id, conv_id)
+  def handle_event("select_archived_conversation", %{"id" => conv_id} = params, socket) do
+    with {:ok, conv} <- Handbeam.ConversationStore.get(conv_id, include_timeline?: false) do
+      if Handbeam.ConversationStore.free?(conv) do
+        {socket, _conv_id} = ConversationSwitching.select_free_conversation(socket, conv_id)
 
-      socket =
-        socket
-        |> ConversationState.sync_conv_state(reload?: true)
-        |> RuntimeProjection.subscribe_session()
-        |> restore_session()
-        |> WorkspaceNavigation.close_mobile_sheets()
+        socket =
+          socket
+          |> WorkspaceNavigation.enter_free_chat()
+          |> RuntimeProjection.subscribe_session()
+          |> restore_session()
+          |> WorkspaceNavigation.close_mobile_sheets()
 
-      {:noreply, push_patch(socket, to: "/w/#{ws_id}/c/#{conv_id}")}
+        {:noreply, push_patch(socket, to: "/c/#{conv_id}")}
+      else
+        ws_id = params["ws"] || conv["workspace_id"]
+
+        with true <- is_binary(ws_id),
+             {:ok, %{"workspace_id" => ^ws_id}} <- {:ok, conv} do
+          {socket, _conv_id} =
+            ConversationSwitching.select_archived_conversation(socket, ws_id, conv_id)
+
+          socket =
+            socket
+            |> ConversationState.sync_conv_state(reload?: true)
+            |> RuntimeProjection.subscribe_session()
+            |> restore_session()
+            |> WorkspaceNavigation.close_mobile_sheets()
+
+          {:noreply, push_patch(socket, to: "/w/#{ws_id}/c/#{conv_id}")}
+        else
+          _ -> {:noreply, socket}
+        end
+      end
     else
       _ -> {:noreply, socket}
     end
@@ -609,18 +628,25 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   @impl true
-  def handle_event("open_rename_conversation", %{"id" => conv_id, "ws_id" => ws_id}, socket) do
+  def handle_event("open_rename_conversation", %{"id" => conv_id} = params, socket) do
     case Handbeam.ConversationStore.get(conv_id, include_timeline?: false) do
-      {:ok, %{"workspace_id" => ^ws_id, "title" => title}} ->
-        {:noreply,
-         socket
-         |> assign(:conversation_menu_id, nil)
-         |> assign(:rename_conversation, %{
-           id: conv_id,
-           workspace_id: ws_id,
-           title: title || "",
-           error: nil
-         })}
+      {:ok, %{"title" => title} = conv} ->
+        free? = Handbeam.ConversationStore.free?(conv)
+        ws_id = params["ws_id"]
+
+        if free? or conv["workspace_id"] == ws_id do
+          {:noreply,
+           socket
+           |> assign(:conversation_menu_id, nil)
+           |> assign(:rename_conversation, %{
+             id: conv_id,
+             workspace_id: if(free?, do: nil, else: ws_id),
+             title: title || "",
+             error: nil
+           })}
+        else
+          {:noreply, assign(socket, :conversation_menu_id, nil)}
+        end
 
       _ ->
         {:noreply, assign(socket, :conversation_menu_id, nil)}
@@ -673,29 +699,45 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   @impl true
-  def handle_event("archive_conversation", params, socket) do
-    conv_id = params["id"]
-    ws_id = params["ws_id"] || socket.assigns.current_workspace_id
-
-    {socket, next_conv_id} =
-      ConversationSwitching.archive_conversation(
-        socket
-        |> assign(:conversation_menu_id, nil)
-        |> assign(:rename_conversation, nil),
-        conv_id,
-        ws_id,
-        ModelSelection.state_opts()
-      )
-
+  def handle_event("archive_conversation", %{"id" => conv_id} = params, socket) do
     socket =
-      if next_conv_id do
-        socket = RuntimeProjection.subscribe_session(socket)
-        push_patch(socket, to: "/w/#{ws_id}/c/#{next_conv_id}")
-      else
-        socket
-      end
+      socket
+      |> assign(:conversation_menu_id, nil)
+      |> assign(:rename_conversation, nil)
 
-    {:noreply, socket}
+    with {:ok, conv} <- Handbeam.ConversationStore.get(conv_id, include_timeline?: false) do
+      free? = Handbeam.ConversationStore.free?(conv)
+      ws_id = conv["workspace_id"] || params["ws_id"] || socket.assigns.current_workspace_id
+
+      {socket, next_conv_id} =
+        ConversationSwitching.archive_conversation(
+          socket,
+          conv_id,
+          ws_id,
+          ModelSelection.state_opts()
+        )
+
+      socket =
+        cond do
+          next_conv_id && free? ->
+            socket
+            |> WorkspaceNavigation.enter_free_chat()
+            |> RuntimeProjection.subscribe_session()
+            |> push_patch(to: "/c/#{next_conv_id}")
+
+          next_conv_id && is_binary(ws_id) ->
+            socket
+            |> RuntimeProjection.subscribe_session()
+            |> push_patch(to: "/w/#{ws_id}/c/#{next_conv_id}")
+
+          true ->
+            socket
+        end
+
+      {:noreply, socket}
+    else
+      _ -> {:noreply, socket}
+    end
   end
 
   @impl true

@@ -5250,5 +5250,49 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert render(view) =~ "hello free chat"
       refute render(view) =~ "Message not delivered"
     end
+
+    test "free chats can be renamed, archived, and restored", %{conn: conn} do
+      isolate_conversation_home!()
+      {:ok, conv} = Handbeam.ConversationStore.create_free(title: "Free notes")
+
+      {:ok, view, _html} = live(conn, "/c/#{conv["id"]}")
+
+      assert has_element?(view, "#conversation-menu-free-#{conv["id"]}")
+      view |> element("#conversation-menu-free-#{conv["id"]}") |> render_click()
+      assert has_element?(view, "#conversation-action-rename-free-#{conv["id"]}", "Rename")
+      assert has_element?(view, "#conversation-action-archive-free-#{conv["id"]}", "Archive")
+
+      view |> element("#conversation-action-rename-free-#{conv["id"]}") |> render_click()
+      assert has_element?(view, "#rename-conversation-dialog")
+
+      view
+      |> form("#rename-conversation-dialog", %{title: "Renamed free"})
+      |> render_submit()
+
+      assert has_element?(view, "#free-conversation-#{conv["id"]}", "Renamed free")
+      {:ok, renamed} = Handbeam.ConversationStore.get_metadata(conv["id"])
+      assert renamed["title"] == "Renamed free"
+      assert renamed["title_source"] == "manual"
+
+      view |> element("#conversation-menu-free-#{conv["id"]}") |> render_click()
+      view |> element("#conversation-action-archive-free-#{conv["id"]}") |> render_click()
+
+      refute has_element?(view, "#free-conversation-#{conv["id"]}")
+      {:ok, archived} = Handbeam.ConversationStore.get_metadata(conv["id"])
+      assert is_binary(archived["archived_at"])
+
+      view |> element("button[phx-click='toggle_archive']") |> render_click()
+
+      assert has_element?(
+               view,
+               "button[phx-click='unarchive_conversation'][phx-value-id='#{conv["id"]}']"
+             )
+
+      view
+      |> element("button[phx-click='unarchive_conversation'][phx-value-id='#{conv["id"]}']")
+      |> render_click()
+
+      assert has_element?(view, "#free-conversation-#{conv["id"]}", "Renamed free")
+    end
   end
 end
