@@ -1041,7 +1041,8 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
 
     <button
       :if={@right_panel_collapsed and @chat_scope != :free}
-      id="workspace-panel-toggle"
+      id="workspace-panel-expand"
+      data-workspace-panel-toggle
       phx-click="toggle_right_panel"
       class="workspace-panel-toggle collapsed"
       title={gettext("Show workspace")}

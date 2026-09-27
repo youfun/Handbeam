@@ -146,7 +146,8 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceComponents do
         <span class="workspace-panel-label truncate">{@workspace_label}</span>
         <button
           :if={!@right_panel_collapsed}
-          id="workspace-panel-toggle"
+          id="workspace-panel-collapse"
+          data-workspace-panel-toggle
           phx-click="toggle_right_panel"
           class="workspace-panel-toggle expanded"
           title={gettext("Collapse workspace")}

@@ -17,7 +17,6 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
         target: nil,
         action: nil
     )
-    private let workspaceLabel = NSTextField(labelWithString: "")
     private let workspaceControls = NSStackView()
     private let toolbarTitleLabel = NSTextField(labelWithString: "Handbeam")
     private var origin = AppOrigin(hosts: DesktopConfig.loopbackHosts, port: DesktopConfig.defaultPort)
@@ -166,7 +165,7 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
     }
 
     @objc private func toggleWorkspacePanel() {
-        clickWebControl("#workspace-panel-toggle")
+        clickWebControl("[data-workspace-panel-toggle]")
         workspaceControls.isHidden.toggle()
         updatePanelButton(collapsed: workspaceControls.isHidden)
         syncWorkspacePanelState(after: 0.15)
@@ -273,14 +272,8 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
             workspaceTabs.action = #selector(selectWorkspacePanelView)
             workspaceTabs.selectedSegment = 1
             workspaceTabs.controlSize = .small
-            workspaceLabel.font = .systemFont(ofSize: 12)
-            workspaceLabel.textColor = .secondaryLabelColor
-            workspaceLabel.lineBreakMode = .byTruncatingTail
-            workspaceLabel.maximumNumberOfLines = 1
-            workspaceLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            workspaceControls.setViews([workspaceTabs, workspaceLabel], in: .leading)
+            workspaceControls.setViews([workspaceTabs], in: .leading)
             workspaceControls.orientation = .horizontal
-            workspaceControls.spacing = 7
 
             let separator = NSBox()
             separator.boxType = .separator
@@ -338,12 +331,11 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
             let script = """
             (() => {
               const panel = document.querySelector('#workspace-panel');
-              const toggle = document.querySelector('#workspace-panel-toggle');
+              const toggle = document.querySelector('[data-workspace-panel-toggle]');
               if (!panel || !toggle) return null;
               return {
                 collapsed: toggle.getAttribute('aria-pressed') === 'false',
                 view: document.querySelector('.workspace-panel-tab.active')?.getAttribute('phx-value-view') || '',
-                label: document.querySelector('.workspace-panel-label')?.textContent?.trim() || '',
                 terminal: Boolean(document.querySelector("button[phx-value-view='terminal']"))
               };
             })()
@@ -358,7 +350,6 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
                 self.panelButton.isEnabled = true
                 self.workspaceControls.isHidden = collapsed
                 self.updatePanelButton(collapsed: collapsed)
-                self.workspaceLabel.stringValue = state["label"] as? String ?? ""
                 self.workspaceTabs.setEnabled(
                     state["terminal"] as? Bool ?? false,
                     forSegment: 2

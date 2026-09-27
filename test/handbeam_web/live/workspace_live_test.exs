@@ -4026,15 +4026,15 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
     } do
       {:ok, view, html} = live(conn, "/")
 
-      assert html =~ ~s(id="workspace-panel-toggle")
+      assert html =~ ~s(id="workspace-panel-collapse")
       refute html =~ ~s(id="workspace-expand-bar")
 
       view
-      |> element("#workspace-panel-toggle")
+      |> element("[data-workspace-panel-toggle]")
       |> render_click()
 
       html = render(view)
-      assert html =~ ~s(workspace-panel-toggle)
+      assert html =~ ~s(id="workspace-panel-expand")
       assert html =~ "collapsed"
       refute html =~ ~s(id="workspace-expand-bar")
     end
