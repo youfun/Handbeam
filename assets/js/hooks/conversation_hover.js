@@ -11,6 +11,7 @@ export const ConversationHover = {
 
     this.workspaceCard = this.el.querySelector("#workspace-hover-card");
     this.workspaceRow = null;
+    this.workspaceId = null;
 
     this.onOver = (event) => {
       const row = event.target.closest("[data-conversation-id]");
@@ -48,14 +49,27 @@ export const ConversationHover = {
       if (this.row) this.place(this.row);
       if (this.workspaceRow) this.placeWorkspace(this.workspaceRow);
     };
-    this.onPointerDown = () => {
+    this.onPointerDown = (event) => {
+      if (event.target.closest(".workspace-hover, .conversation-hover")) return;
       this.hide();
+      this.hideWorkspace();
+    };
+    this.onClick = (event) => {
+      const rename = event.target.closest("[data-workspace-hover-rename]");
+      const remove = event.target.closest("[data-workspace-hover-remove]");
+      if (!rename && !remove) return;
+      const id = this.workspaceId;
+      if (!id) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.pushEvent(rename ? "open_rename_workspace" : "open_remove_workspace", { id });
       this.hideWorkspace();
     };
 
     this.el.addEventListener("pointerover", this.onOver);
     this.el.addEventListener("pointerout", this.onOut);
     this.el.addEventListener("pointerdown", this.onPointerDown);
+    this.el.addEventListener("click", this.onClick);
     if (this.scroll) this.scroll.addEventListener("scroll", this.onScroll, { passive: true });
     if (this.card) {
       this.card.addEventListener("pointerenter", () => this.clearHide());
@@ -64,15 +78,6 @@ export const ConversationHover = {
     if (this.workspaceCard) {
       this.workspaceCard.addEventListener("pointerenter", () => this.clearHideWorkspace());
       this.workspaceCard.addEventListener("pointerleave", () => this.scheduleHideWorkspace());
-      this.onRename = () => {
-        const id = this.workspaceRow && this.workspaceRow.dataset.workspaceId;
-        if (!id) return;
-        this.pushEvent("open_rename_workspace", { id });
-        this.hideWorkspace();
-      };
-      this.workspaceCard
-        .querySelector("[data-workspace-hover-rename]")
-        .addEventListener("click", this.onRename);
     }
   },
 
@@ -88,6 +93,7 @@ export const ConversationHover = {
     this.el.removeEventListener("pointerover", this.onOver);
     this.el.removeEventListener("pointerout", this.onOut);
     this.el.removeEventListener("pointerdown", this.onPointerDown);
+    this.el.removeEventListener("click", this.onClick);
     if (this.scroll) this.scroll.removeEventListener("scroll", this.onScroll);
   },
 
@@ -133,7 +139,10 @@ export const ConversationHover = {
     const repository = group.dataset.workspaceRepo || "";
     if (repoName) repoName.textContent = repository;
     if (repo) repo.hidden = repository === "";
-    if (rename) rename.dataset.workspaceId = group.dataset.workspaceId || "";
+    this.workspaceId = group.dataset.workspaceId || "";
+    if (rename) rename.dataset.workspaceId = this.workspaceId;
+    const remove = this.workspaceCard.querySelector("[data-workspace-hover-remove]");
+    if (remove) remove.hidden = group.dataset.workspaceDefault === "true";
     this.workspaceCard.hidden = false;
     this.workspaceCard.classList.add("is-open");
     this.placeWorkspace(group);
@@ -167,6 +176,7 @@ export const ConversationHover = {
 
   hideWorkspace() {
     this.workspaceRow = null;
+    this.workspaceId = null;
     if (!this.workspaceCard) return;
     this.workspaceCard.classList.remove("is-open");
     this.workspaceCard.hidden = true;

@@ -145,7 +145,6 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
   attr :current_conversation_id, :any, required: true
   attr :current_workspace_id, :any, required: true
   attr :show_archive, :any, required: true
-  attr :workspace_menu_id, :any, required: true
   attr :workspaces, :any, required: true
   attr :runtime_tasks, :map, default: %{tasks: []}
 
@@ -424,6 +423,7 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
           data-workspace-name={ws["name"]}
           data-workspace-path={ws["path"]}
           data-workspace-repo={repo_name(ws["path"])}
+          data-workspace-default={if(ws["default"], do: "true", else: "false")}
         >
           <div class={[
             "workspace-title-row",
@@ -485,49 +485,6 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
                   />
                 </svg>
               </button>
-              <div :if={!ws["default"]} class="workspace-menu">
-                <button
-                  type="button"
-                  phx-click="toggle_workspace_menu"
-                  phx-value-id={ws["id"]}
-                  id={"workspace-menu-#{ws["id"]}"}
-                  class={["workspace-action", @workspace_menu_id == ws["id"] && "is-open"]}
-                  title={gettext("更多操作")}
-                  aria-label={gettext("更多操作")}
-                  aria-haspopup="menu"
-                  aria-expanded={to_string(@workspace_menu_id == ws["id"])}
-                >
-                  <svg
-                    width="12"
-                    height="12"
-                    viewBox="0 0 12 12"
-                    fill="currentColor"
-                    aria-hidden="true"
-                  >
-                    <circle cx="2.25" cy="6" r="1" />
-                    <circle cx="6" cy="6" r="1" />
-                    <circle cx="9.75" cy="6" r="1" />
-                  </svg>
-                </button>
-                <div
-                  :if={@workspace_menu_id == ws["id"]}
-                  id={"workspace-menu-panel-#{ws["id"]}"}
-                  class="workspace-menu-panel"
-                  role="menu"
-                  phx-click-away="close_workspace_menu"
-                >
-                  <button
-                    type="button"
-                    role="menuitem"
-                    phx-click="open_remove_workspace"
-                    phx-value-id={ws["id"]}
-                    id={"workspace-action-remove-#{ws["id"]}"}
-                    class="workspace-menu-item danger"
-                  >
-                    <span>{gettext("移除工作区")}</span>
-                  </button>
-                </div>
-              </div>
             </div>
             <button
               type="button"
@@ -744,6 +701,15 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
           </svg>
         </button>
       </div>
+      <button
+        type="button"
+        id="workspace-hover-remove"
+        class="workspace-hover-remove"
+        data-workspace-hover-remove
+        hidden
+      >
+        {gettext("移除工作区")}
+      </button>
     </div>
     """
   end

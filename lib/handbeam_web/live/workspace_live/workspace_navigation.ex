@@ -188,25 +188,16 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
   def toggle_group(socket, id), do: toggle_workspace_group(socket, id)
   def expand_group(socket, id), do: expand_workspace_group(socket, id)
 
-  def toggle_workspace_menu(socket, ws_id) do
-    menu_id = if socket.assigns.workspace_menu_id == ws_id, do: nil, else: ws_id
-    assign(socket, :workspace_menu_id, menu_id)
-  end
-
-  def close_workspace_menu(socket), do: assign(socket, :workspace_menu_id, nil)
-
   def open_remove_workspace(socket, ws_id) do
     case Handbeam.WorkspaceStore.get(ws_id) do
       {:ok, %{"default" => true}} ->
-        assign(socket, :workspace_menu_id, nil)
+        socket
 
       {:ok, ws} ->
-        socket
-        |> assign(:workspace_menu_id, nil)
-        |> assign(:remove_workspace, %{id: ws["id"], name: ws["name"]})
+        assign(socket, :remove_workspace, %{id: ws["id"], name: ws["name"]})
 
       {:error, :not_found} ->
-        assign(socket, :workspace_menu_id, nil)
+        socket
     end
   end
 

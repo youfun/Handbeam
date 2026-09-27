@@ -179,7 +179,6 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
         socket
         |> assign(:workspaces, workspaces)
         |> assign(:conversations_by_workspace, conversations_by_ws)
-        |> assign(:workspace_menu_id, nil)
         |> assign(:remove_workspace, nil)
         |> assign(:show_archive, true)
         |> reload_conversation_stream()

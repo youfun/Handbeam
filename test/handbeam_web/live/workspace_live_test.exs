@@ -3286,13 +3286,12 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
 
         {:ok, view, _html} = live(conn, "/")
 
-        view
-        |> element("#workspace-menu-#{added["id"]}")
-        |> render_click()
+        rendered = render(view)
+        assert rendered =~ ~s(id="workspace-hover-remove")
+        refute rendered =~ "workspace-menu-#{added["id"]}"
 
         view
-        |> element("#workspace-action-remove-#{added["id"]}")
-        |> render_click()
+        |> render_click("open_remove_workspace", %{"id" => added["id"]})
 
         dialog = render(view)
         assert dialog =~ "Remove workspace"

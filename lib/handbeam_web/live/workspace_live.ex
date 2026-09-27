@@ -138,7 +138,6 @@ defmodule HandbeamWeb.WorkspaceLive do
       |> assign(:expanded_tool_groups, MapSet.new())
       |> assign(:show_archive, false)
       |> assign(:collapsed_workspace_ids, MapSet.new())
-      |> assign(:workspace_menu_id, nil)
       |> assign(:remove_workspace, nil)
       |> assign(:rename_workspace, nil)
       |> assign(:conversation_menu_id, nil)
@@ -793,25 +792,18 @@ defmodule HandbeamWeb.WorkspaceLive do
     {:noreply, WorkspaceNavigation.toggle_group(socket, id)}
   end
 
-  @impl true
-  def handle_event("toggle_workspace_menu", %{"id" => ws_id}, socket) do
-    {:noreply, WorkspaceNavigation.toggle_workspace_menu(socket, ws_id)}
-  end
-
-  def handle_event("close_workspace_menu", _params, socket) do
-    {:noreply, WorkspaceNavigation.close_workspace_menu(socket)}
-  end
-
   def handle_event("open_rename_workspace", %{"id" => ws_id}, socket) do
     case Handbeam.WorkspaceStore.get(ws_id) do
       {:ok, ws} ->
         {:noreply,
-         socket
-         |> assign(:workspace_menu_id, nil)
-         |> assign(:rename_workspace, %{id: ws["id"], name: ws["name"] || "", error: nil})}
+         assign(socket, :rename_workspace, %{
+           id: ws["id"],
+           name: ws["name"] || "",
+           error: nil
+         })}
 
       {:error, :not_found} ->
-        {:noreply, assign(socket, :workspace_menu_id, nil)}
+        {:noreply, socket}
     end
   end
 
