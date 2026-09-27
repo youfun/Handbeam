@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Assemble an ad-hoc signed Handbeam.app. Does not notarize.
+# Assemble an ad-hoc signed Handbeam.app.
+# Direct download uses scripts/notarize_app.sh (Developer ID, notarytool, stapler).
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

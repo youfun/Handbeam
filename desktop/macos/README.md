@@ -66,13 +66,18 @@ open build/Handbeam.app
 
 `swift test` and `swift run` work without a bundle. `swift run` can attach to a server you already started; it cannot see `Resources/handbeam-web` unless you set `HANDBEAM_WEB_ROOT`.
 
-The ad-hoc signature is not notarized. Nested OTP binaries are not deep-signed. After downloading a zip, clear quarantine or use Finder → Open once:
+`build_app.sh` signs ad-hoc so the app opens on this Mac. That signature is not notarized, and a downloaded copy is stopped by Gatekeeper. A release zip has to be signed with a Developer ID Application certificate and notarized:
 
 ```bash
-xattr -dr com.apple.quarantine Handbeam.app
+bash scripts/build.sh
+bash desktop/macos/scripts/notarize_app.sh
 ```
 
-GitHub Actions workflow `.github/workflows/desktop-macos.yml` is `workflow_dispatch` only. It builds an unsigned zip artifact; it does not notarize.
+The script signs every Mach-O inside the bundle with Hardened Runtime, uploads the zip to `notarytool`, staples the ticket onto `Handbeam.app`, and rewrites `Handbeam-macos-arm64.zip`. Upload that second zip. The first zip, produced before stapling, does not carry the ticket.
+
+Apple Distribution certificates cannot be used for this. Create a Developer ID Application certificate and store a notarytool keychain profile named `handbeam-notary` first; the script prints the exact commands when either is missing. Entitlements are `desktop/macos/entitlements.plist` (JIT and bundled NIFs). The app stays outside the App Sandbox, which is what lets it read a workspace.
+
+GitHub Actions workflow `.github/workflows/desktop-macos.yml` is `workflow_dispatch` only. It builds an ad-hoc zip artifact; it does not notarize.
 
 ## Check
 
@@ -94,5 +99,5 @@ kill "$(head -n 1 "$HOME/Library/Application Support/Handbeam/backend.pid")"
 - One bundled server per port. A second app attaches; only the process that spawned the server stops it.
 - Workspace files are read by the OTP child, not by the web view. Protected folders (Desktop, Documents, Downloads) can still raise macOS privacy prompts for that child.
 - The in-browser terminal uses the same WebKit the page gets. If a page needs a browser-only API, use the system browser for that link; the shell will not become a general browser.
-- No auto-update, Developer ID, or notarization. Menu bar mode is not implemented yet.
+- No auto-update. Direct download uses `scripts/notarize_app.sh`; menu bar mode is not implemented yet.
 - Keep-awake is not enabled. Closing the window quits.
