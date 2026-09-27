@@ -160,7 +160,7 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
     ~H"""
     <div
       id="activity-bar"
-      phx-hook="ConversationActivity"
+      phx-hook="ConversationSidebar"
       class="w-[220px] flex-shrink-0 border-r bg-surface flex flex-col workspace-panel projects-panel"
     >
       <div class="projects-panel-header">
@@ -242,6 +242,9 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
               id={"pinned-conversation-#{conv.id}"}
               class="conversation-row is-pinned"
               data-conversation-id={conv.id}
+              data-conversation-title={conv.title}
+              data-conversation-age={conv.age}
+              data-workspace-id={conv.workspace_id}
             >
               <button
                 phx-click={
@@ -354,6 +357,9 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
               id={"free-conversation-#{conv.id}"}
               class="conversation-row"
               data-conversation-id={conv.id}
+              data-conversation-title={conv.title}
+              data-conversation-age={conv.age}
+              data-workspace-id={conv.workspace_id}
             >
               <button
                 phx-click="select_free_conversation"
@@ -537,6 +543,9 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
               id={"conversation-#{conv.id}"}
               class="conversation-row"
               data-conversation-id={conv.id}
+              data-conversation-title={conv.title}
+              data-conversation-age={conv.age}
+              data-workspace-id={conv.workspace_id}
             >
               <button
                 phx-click="select_conversation"
@@ -580,6 +589,10 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
               :for={conv <- archived_conversations(@workspaces, @conversations_by_workspace)}
               id={"archived-conversation-#{conv.id}"}
               class="conversation-row archived"
+              data-conversation-id={conv.id}
+              data-conversation-title={conv.title}
+              data-conversation-age={conv.age}
+              data-workspace-id={conv.workspace_id}
             >
               <button
                 phx-click="select_archived_conversation"
@@ -637,8 +650,72 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
           </div>
         </div>
       </div>
+      <.conversation_hover_card workspaces={@workspaces} />
     </div>
     """
+  end
+
+  attr :workspaces, :list, required: true
+
+  defp conversation_hover_card(assigns) do
+    assigns = assign(assigns, :contexts, hover_contexts(assigns.workspaces))
+
+    ~H"""
+    <div id="conversation-hover-card" class="conversation-hover" role="tooltip" hidden>
+      <div class="conversation-hover-title-row">
+        <span class="conversation-hover-grip" aria-hidden="true">
+          <svg width="10" height="14" viewBox="0 0 10 14" fill="currentColor">
+            <circle cx="2.5" cy="2.5" r="1" /><circle cx="7.5" cy="2.5" r="1" />
+            <circle cx="2.5" cy="7" r="1" /><circle cx="7.5" cy="7" r="1" />
+            <circle cx="2.5" cy="11.5" r="1" /><circle cx="7.5" cy="11.5" r="1" />
+          </svg>
+        </span>
+        <span class="conversation-hover-title" data-hover-title></span>
+        <button
+          type="button"
+          class="conversation-hover-copy"
+          phx-hook="CopyText"
+          id="conversation-hover-copy"
+          data-copy=""
+          title={gettext("复制标题")}
+          aria-label={gettext("复制标题")}
+        >
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <rect x="4.25" y="3.25" width="5.5" height="6.5" rx="0.75" stroke="currentColor" stroke-width="1.1" />
+            <path d="M3.25 8.75H2.75A.75.75 0 0 1 2 8V2.75A.75.75 0 0 1 2.75 2H8a.75.75 0 0 1 .75.75V3.25" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" />
+          </svg>
+        </button>
+        <span class="conversation-hover-age" data-hover-age hidden></span>
+      </div>
+      <div
+        :for={{key, meta} <- @contexts}
+        id={"conversation-hover-context-#{key}"}
+        data-hover-context={key}
+        hidden
+      >
+        <div :if={meta.folder} class="conversation-hover-meta">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+          </svg>
+          <span class="truncate">{meta.folder}</span>
+        </div>
+        <div :if={meta.branch} class="conversation-hover-meta">
+          <svg class="conversation-hover-branch-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <line x1="6" y1="3" x2="6" y2="15" />
+            <circle cx="18" cy="6" r="3" /><circle cx="6" cy="18" r="3" />
+            <path d="M18 9a9 9 0 0 1-9 9" />
+          </svg>
+          <span class="truncate">{meta.branch}</span>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  defp hover_contexts(workspaces) do
+    workspaces
+    |> Enum.map(fn ws -> {ws["id"], hover_context(workspaces, ws["id"])} end)
+    |> Enum.filter(fn {_id, meta} -> meta.folder || meta.branch end)
   end
 
   attr :id, :string, required: true

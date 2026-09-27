@@ -578,17 +578,23 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
       convs
       |> Enum.filter(&archived_conversation?/1)
       |> Enum.map(fn c ->
-        %{
-          id: ConversationState.conversation_id(c),
-          title: ConversationState.conv_value(c, "title", "Archived"),
-          workspace_id: workspace_id,
-          workspace_label: label,
-          scope: scope,
-          updated_at: ConversationState.conv_value(c, "updated_at", "")
-        }
+        archived_row(c, workspace_id, label, scope)
       end)
     end)
     |> Enum.sort_by(& &1.updated_at, :desc)
+  end
+
+  defp archived_row(conv, workspace_id, label, scope) do
+    row = %{
+      id: ConversationState.conversation_id(conv),
+      title: ConversationState.conv_value(conv, "title", "Archived"),
+      workspace_id: workspace_id,
+      workspace_label: label,
+      scope: scope,
+      updated_at: ConversationState.conv_value(conv, "updated_at", "")
+    }
+
+    Map.put(row, :age, HandbeamWeb.WorkspaceLive.ViewComponents.short_relative_time(row))
   end
 
   defp archived_bucket(@free_key, _ws_map), do: {nil, "对话", "free"}
@@ -616,7 +622,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
   end
 
   defp conversation_row(conv, workspace_id, workspace_name, scope) do
-    %{
+    row = %{
       id: ConversationState.conversation_id(conv),
       title: ConversationState.conv_value(conv, "title", "New chat"),
       workspace_id: workspace_id,
@@ -628,6 +634,68 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
       updated_at: ConversationState.conv_value(conv, "updated_at", nil),
       created_at: ConversationState.conv_value(conv, "created_at", nil)
     }
+
+    Map.put(row, :age, HandbeamWeb.WorkspaceLive.ViewComponents.short_relative_time(row))
+  end
+
+  @doc """
+  Folder name and current Git branch shown on conversation hover.
+
+  Branch lookup is cached per workspace path so rendering the sidebar does
+  not spawn a Git process for every row.
+  """
+  def hover_context(workspaces, workspace_id) when is_list(workspaces) do
+    workspace = Enum.find(workspaces, &(&1["id"] == workspace_id))
+    path = workspace && workspace["path"]
+
+    %{
+      folder: hover_folder(workspace),
+      branch: hover_branch(path)
+    }
+  end
+
+  def hover_context(_workspaces, _workspace_id), do: %{folder: nil, branch: nil}
+
+  defp hover_folder(nil), do: nil
+
+  defp hover_folder(workspace) do
+    case workspace["path"] do
+      path when is_binary(path) and path != "" -> Path.basename(path)
+      _ -> nil
+    end
+  end
+
+  defp hover_branch(path) when is_binary(path) and path != "" do
+    key = {path, branch_cache_bucket()}
+
+    case :persistent_term.get({__MODULE__, :branch, key}, :miss) do
+      :miss ->
+        branch = read_branch(path)
+        :persistent_term.put({__MODULE__, :branch, key}, branch)
+        branch
+
+      branch ->
+        branch
+    end
+  end
+
+  defp hover_branch(_path), do: nil
+
+  defp branch_cache_bucket do
+    System.system_time(:second) |> div(30)
+  end
+
+  defp read_branch(path) do
+    case Handbeam.Git.CLI.branches({:cli, path}) do
+      {:ok, branches} ->
+        case Enum.find(branches, & &1.current?) do
+          %{name: name} when is_binary(name) and name != "" -> name
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
   end
 
   def pinned_conversations(workspaces, conversations_by_workspace)

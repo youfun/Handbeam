@@ -182,23 +182,35 @@ textarea::placeholder {
   opacity: 1;
 }
 
-/* ── Scrollbar ── */
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+/* ── Scrollbar ──
+   Transparent track, light gray pill thumb. */
+:root {
+  --scrollbar-size: 8px;
+  --scrollbar-thumb: color-mix(in srgb, var(--sig-text-tertiary) 42%, var(--sig-bg-page));
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--sig-text-tertiary) 68%, var(--sig-bg-page));
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+  scrollbar-width: thin;
 }
 
-::-webkit-scrollbar-track {
+::-webkit-scrollbar {
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
   background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--color-text-tertiary);
-  border-radius: 3px;
+  background-color: var(--scrollbar-thumb);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-radius: var(--sig-radius-full, 9999px);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--color-text-secondary);
+  background-color: var(--scrollbar-thumb-hover);
 }
 
 
@@ -1995,6 +2007,7 @@ button.workspace-file-row:hover,
 
 /* ── Conversation row (item + inline action) ── */
 .conversation-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 0;
@@ -2002,6 +2015,97 @@ button.workspace-file-row:hover,
   border-radius: var(--radius-md);
   transition: background-color 0.15s ease;
   min-width: 0;
+}
+
+.conversation-hover {
+  position: fixed;
+  z-index: 80;
+  display: none;
+  width: max-content;
+  max-width: 280px;
+  padding: 10px 12px;
+  border: 1px solid var(--sig-border-subtle);
+  border-radius: var(--sig-radius-lg);
+  background: var(--sig-bg-elevated);
+  box-shadow: 0 8px 24px rgba(26, 24, 21, 0.1);
+  color: var(--sig-text-primary);
+  pointer-events: none;
+}
+
+.conversation-hover.is-open {
+  display: block;
+  pointer-events: auto;
+}
+
+.conversation-hover-title-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.conversation-hover-grip {
+  flex: 0 0 auto;
+  margin-top: 2px;
+  color: var(--sig-text-tertiary);
+}
+
+.conversation-hover-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--sig-text-primary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.conversation-hover-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--sig-text-tertiary);
+  cursor: pointer;
+}
+
+.conversation-hover-copy:hover,
+.conversation-hover-copy[data-copied="true"] {
+  color: var(--sig-text-primary);
+}
+
+.conversation-hover-age {
+  flex: 0 0 auto;
+  margin-top: 1px;
+  color: var(--sig-text-tertiary);
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.conversation-hover-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  min-width: 0;
+  color: var(--sig-text-secondary);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.conversation-hover-meta svg {
+  flex: 0 0 auto;
+  color: var(--sig-text-tertiary);
+}
+
+.conversation-hover-branch-icon {
+  color: #7c6bb5;
 }
 
 .conversation-row:has(.conversation-action.is-open) {

@@ -17,6 +17,8 @@ defmodule HandbeamWeb.WorkspaceLive.ViewComponents do
   defdelegate archived_conversations(workspaces, conversations_by_workspace),
     to: ConversationSwitching
 
+  defdelegate hover_context(workspaces, workspace_id), to: ConversationSwitching
+
   defdelegate pinned_conversations(workspaces, conversations_by_workspace),
     to: ConversationSwitching
 
@@ -102,8 +104,7 @@ defmodule HandbeamWeb.WorkspaceLive.ViewComponents do
   end
 
   def relative_time(conv) do
-    case Map.get(conv, :updated_at) || Map.get(conv, "updated_at") || Map.get(conv, :created_at) ||
-           Map.get(conv, "created_at") do
+    case conversation_timestamp(conv) do
       nil ->
         ""
 
@@ -124,6 +125,32 @@ defmodule HandbeamWeb.WorkspaceLive.ViewComponents do
         end
     end
   end
+
+  @doc "Compact age for the conversation hover card, e.g. `3m`, `2h`, `5d`, `3mo`."
+  def short_relative_time(conv) do
+    case conversation_timestamp(conv) do
+      nil ->
+        ""
+
+      dt_str ->
+        case DateTime.from_iso8601(dt_str) do
+          {:ok, dt, _} -> format_short_age(DateTime.diff(DateTime.utc_now(), dt, :second))
+          _ -> ""
+        end
+    end
+  end
+
+  defp conversation_timestamp(conv) do
+    Map.get(conv, :updated_at) || Map.get(conv, "updated_at") || Map.get(conv, :created_at) ||
+      Map.get(conv, "created_at")
+  end
+
+  defp format_short_age(diff) when diff < 60, do: "now"
+  defp format_short_age(diff) when diff < 3_600, do: "#{div(diff, 60)}m"
+  defp format_short_age(diff) when diff < 86_400, do: "#{div(diff, 3_600)}h"
+  defp format_short_age(diff) when diff < 86_400 * 30, do: "#{div(diff, 86_400)}d"
+  defp format_short_age(diff) when diff < 86_400 * 365, do: "#{div(diff, 86_400 * 30)}mo"
+  defp format_short_age(diff), do: "#{div(diff, 86_400 * 365)}y"
 
   def any_sheet_open?(show_workspace, show_model, show_reasoning, show_settings) do
     show_workspace or show_model or show_reasoning or show_settings

@@ -7,7 +7,28 @@ import { ComposerPasteUpload } from "./hooks/composer_paste_upload.js";
 import { WorkspacePanel } from "./hooks/workspace_panel.js";
 import { CopyText } from "./hooks/copy_text.js";
 import { ConversationContextMenu } from "./hooks/conversation_context_menu.js";
+import { ConversationHover } from "./hooks/conversation_hover.js";
 import { ConversationActivity } from "./hooks/conversation_activity.js";
+
+const ConversationSidebar = {
+  mounted() {
+    ConversationHover.mounted.call(this);
+    ConversationActivity.mounted.call(this);
+  },
+  updated() {
+    ConversationHover.updated.call(this);
+    ConversationActivity.updated.call(this);
+  },
+  destroyed() {
+    ConversationHover.destroyed.call(this);
+    ConversationActivity.destroyed.call(this);
+  },
+  show: ConversationHover.show,
+  place: ConversationHover.place,
+  hide: ConversationHover.hide,
+  scheduleHide: ConversationHover.scheduleHide,
+  clearHide: ConversationHover.clearHide
+};
 import { LocalWebGPUProbe } from "./hooks/local_webgpu_probe.js";
 import { GhosttyTerminal } from "../vendor/ghostty.js";
 import { installImageLightbox } from "./image_lightbox.js";
@@ -35,7 +56,7 @@ const MobHook = {
 }
 
 let csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content");
-let Hooks = { StreamingMarkdown, ChatScroll, ConversationNav, ComposerPasteUpload, WorkspacePanel, CopyText, ConversationContextMenu, ConversationActivity, LocalWebGPUProbe, GhosttyTerminal, MobHook };
+let Hooks = { StreamingMarkdown, ChatScroll, ConversationNav, ComposerPasteUpload, WorkspacePanel, CopyText, ConversationContextMenu, ConversationActivity, ConversationSidebar, LocalWebGPUProbe, GhosttyTerminal, MobHook };
 
 try {
   let liveSocket = new LiveSocket("/live", Socket, {
