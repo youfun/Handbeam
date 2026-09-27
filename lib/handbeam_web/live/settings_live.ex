@@ -27,6 +27,7 @@ defmodule HandbeamWeb.SettingsLive do
     %{id: :model_ai, label_key: "Model / AI"},
     %{id: :workspace_models, label_key: "Workspace Models"},
     %{id: :available_models, label_key: "Available Models"},
+    %{id: :local_webgpu, label_key: "Local WebGPU"},
     %{id: :mcp, label_key: "MCP"},
     %{id: :git, label_key: "Git"},
     %{id: :ui, label_key: "UI"},
@@ -308,6 +309,7 @@ defmodule HandbeamWeb.SettingsLive do
   def tab_label(:model_ai), do: gettext("Model / AI")
   def tab_label(:workspace_models), do: gettext("Workspace Models")
   def tab_label(:available_models), do: gettext("Available Models")
+  def tab_label(:local_webgpu), do: gettext("Local WebGPU")
   def tab_label(:mcp), do: gettext("MCP")
   def tab_label(:git), do: gettext("Git")
   def tab_label(:ui), do: gettext("UI")

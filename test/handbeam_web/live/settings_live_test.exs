@@ -113,6 +113,7 @@ defmodule HandbeamWeb.SettingsLiveTest do
       assert html =~ "Model / AI"
       assert html =~ "Workspace Models"
       assert html =~ "Available Models"
+      assert html =~ "Local WebGPU"
       assert html =~ "UI"
       assert html =~ "Coming soon" or html =~ "即将推出"
     end
@@ -182,6 +183,21 @@ defmodule HandbeamWeb.SettingsLiveTest do
       assert html =~ "Providers"
       assert html =~ "StepFun"
       assert html =~ "OpenAI"
+    end
+
+    test "Local WebGPU tab exposes the browser-only capability probe", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/settings")
+
+      view
+      |> element(~s|button[phx-value-tab="local_webgpu"]|)
+      |> render_click()
+
+      html = render(view)
+      assert html =~ "Local WebGPU capability probe"
+      assert html =~ ~s(id="local-webgpu-probe")
+      assert html =~ ~s(phx-hook="LocalWebGPUProbe")
+      assert html =~ ~s(data-probe-check="compute")
+      assert html =~ "does not download or run a model"
     end
 
     test "Workspace Models tab edits current workspace policy", %{conn: conn} do

@@ -209,6 +209,78 @@
         )}
       </div>
 
+      <!-- Local WebGPU capability PoC — runs entirely in this browser. -->
+      <div :if={@active_tab == :local_webgpu} class="settings-content-wrap">
+        <div class="settings-content-card">
+          <div class="settings-section-heading">
+            <div class="settings-section-title">{gettext("Local WebGPU capability probe")}</div>
+            <div class="settings-help-text">
+              {gettext(
+                "Checks the browser boundaries needed by a future local model setting. It does not download or run a model."
+              )}
+            </div>
+          </div>
+
+          <div
+            id="local-webgpu-probe"
+            class="webgpu-probe"
+            phx-hook="LocalWebGPUProbe"
+            data-probe-status="running"
+          >
+            <div class="webgpu-probe-summary">
+              <div>
+                <div class="webgpu-probe-eyebrow">{gettext("Overall result")}</div>
+                <div class="webgpu-probe-status" data-probe-summary>running</div>
+              </div>
+              <button type="button" class="settings-save-btn" data-probe-run>
+                {gettext("Run probe")}
+              </button>
+            </div>
+
+            <div class="webgpu-probe-meta" data-probe-meta>
+              {gettext("Reading browser capabilities…")}
+            </div>
+
+            <div class="webgpu-probe-grid" aria-live="polite">
+              <div
+                :for={
+                  {key, label} <- [
+                    {"navigator_gpu", "navigator.gpu"},
+                    {"adapter", "requestAdapter"},
+                    {"device", "requestDevice"},
+                    {"compute", "WebGPU compute"},
+                    {"shared_worker", "SharedWorker"},
+                    {"opfs", "OPFS"}
+                  ]
+                }
+                class="webgpu-probe-check"
+                data-probe-check={key}
+                data-status="running"
+              >
+                <div class="webgpu-probe-check-heading">
+                  <span data-check-label>{label}</span>
+                  <span class="webgpu-probe-check-status" data-check-status>running</span>
+                </div>
+                <div class="webgpu-probe-check-detail" data-check-detail>
+                  {gettext("Waiting for probe…")}
+                </div>
+              </div>
+            </div>
+
+            <details class="webgpu-probe-details">
+              <summary>{gettext("Structured result")}</summary>
+              <pre data-probe-json>{gettext("Probe is running…")}</pre>
+            </details>
+
+            <p class="webgpu-probe-caveat">
+              {gettext(
+                "A ready result proves API access and one tiny compute dispatch only. It is not model compatibility or performance evidence, especially on software or virtual GPUs."
+              )}
+            </p>
+          </div>
+        </div>
+      </div>
+
       <div :if={@active_tab == :mcp} class="flex-1 overflow-hidden">
         {live_render(@socket, HandbeamWeb.MCPSettingsLive,
           id: "settings-mcp",
@@ -274,7 +346,15 @@
       <!-- Coming Soon Tabs -->
       <div
         :if={
-          @active_tab not in [:model_ai, :workspace_models, :available_models, :mcp, :git, :ui]
+          @active_tab not in [
+            :model_ai,
+            :workspace_models,
+            :available_models,
+            :local_webgpu,
+            :mcp,
+            :git,
+            :ui
+          ]
         }
         class="settings-content-wrap"
       >
