@@ -142,6 +142,16 @@ defmodule Handbeam.ConversationStore do
     list_metadata_matching(&free?/1)
   end
 
+  @doc "Read workspace conversation summaries directly from the sidebar index."
+  def list_summaries(workspace_id) do
+    list_index_matching(&(&1["workspace_id"] == workspace_id and not free?(&1)))
+  end
+
+  @doc "Read free-chat summaries directly from the sidebar index."
+  def list_free_summaries do
+    list_index_matching(&free?/1)
+  end
+
   defp list_metadata_matching(predicate) do
     case read_index() do
       {:ok, index} ->
@@ -157,6 +167,18 @@ defmodule Handbeam.ConversationStore do
               []
           end
         end)
+
+      _ ->
+        []
+    end
+  end
+
+  defp list_index_matching(predicate) do
+    case read_index() do
+      {:ok, index} ->
+        index
+        |> Map.get("conversations", [])
+        |> Enum.filter(predicate)
 
       _ ->
         []
@@ -188,6 +210,18 @@ defmodule Handbeam.ConversationStore do
   end
 
   def get_metadata(_), do: {:error, :not_found}
+
+  @doc "Return whether a conversation has no persisted transcript records."
+  def transcript_empty?(id) when is_binary(id) do
+    if byte_size(id) in 1..128 and Regex.match?(~r/\A[A-Za-z0-9_-]+\z/, id) do
+      path = messages_path(id)
+      empty_transcript_file?(path) and empty_or_missing_file?(path <> ".pending")
+    else
+      false
+    end
+  end
+
+  def transcript_empty?(_), do: false
 
   @doc "Get one conversation by id."
   @spec get(String.t()) :: {:ok, conversation()} | {:error, :not_found}
@@ -987,6 +1021,41 @@ defmodule Handbeam.ConversationStore do
       {:error, reason} ->
         Logger.error("[ConversationStore] Error reading meta #{path}: #{inspect(reason)}")
         {:error, reason}
+    end
+  end
+
+  defp empty_or_missing_file?(path) do
+    case File.stat(path) do
+      {:ok, %{size: 0}} -> true
+      {:error, :enoent} -> true
+      _ -> false
+    end
+  end
+
+  defp empty_transcript_file?(path) do
+    case File.stat(path) do
+      {:ok, %{size: 0}} ->
+        true
+
+      {:ok, %{size: size}} when size <= 256 ->
+        with {:ok, content} <- File.read(path) do
+          content
+          |> String.split("\n", trim: true)
+          |> Enum.all?(fn line ->
+            match?(
+              {:ok, %{"$handbeam_journal" => 1, "op" => "checkpoint"}},
+              Handbeam.JSON.decode(line)
+            )
+          end)
+        else
+          _ -> false
+        end
+
+      {:error, :enoent} ->
+        true
+
+      _ ->
+        false
     end
   end
 

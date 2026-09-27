@@ -196,6 +196,41 @@ defmodule Handbeam.ConversationStoreTest do
       assert ConversationStore.list_for_workspace("ws_a") == []
       assert length(ConversationStore.list_for_workspace("ws_a", include_archived?: true)) == 1
     end
+
+    test "sidebar summaries come from the index without reading item files" do
+      {:ok, workspace} = ConversationStore.create("ws_a", title: "Indexed workspace chat")
+      {:ok, free} = ConversationStore.create_free(title: "Indexed free chat")
+
+      File.rm_rf!(ConversationStore.conversation_dir(workspace["id"]))
+      File.rm_rf!(ConversationStore.conversation_dir(free["id"]))
+
+      assert [%{"id" => workspace_id, "title" => "Indexed workspace chat"}] =
+               ConversationStore.list_summaries("ws_a")
+
+      assert workspace_id == workspace["id"]
+
+      assert [%{"id" => free_id, "title" => "Indexed free chat"}] =
+               ConversationStore.list_free_summaries()
+
+      assert free_id == free["id"]
+    end
+
+    test "transcript emptiness uses journal file state without parsing history" do
+      {:ok, empty} = ConversationStore.create("ws_a", title: "New chat")
+
+      {:ok, populated} =
+        ConversationStore.create("ws_a",
+          title: "New chat #2",
+          timeline: [%{"id" => "m1", "role" => "user", "content" => "hello"}]
+        )
+
+      assert ConversationStore.transcript_empty?(empty["id"])
+      refute ConversationStore.transcript_empty?(populated["id"])
+      refute ConversationStore.transcript_empty?("../outside")
+
+      File.write!(ConversationStore.messages_path(empty["id"]) <> ".pending", "pending")
+      refute ConversationStore.transcript_empty?(empty["id"])
+    end
   end
 
   # ── get ─────────────────────────────────────────────────────────────────

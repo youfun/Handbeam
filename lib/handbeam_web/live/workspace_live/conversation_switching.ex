@@ -287,7 +287,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
   def load_free_conversations(opts \\ []) do
     include_archived? = Keyword.get(opts, :include_archived?, false)
 
-    Handbeam.ConversationStore.list_free_metadata()
+    Handbeam.ConversationStore.list_free_summaries()
     |> filter_archived(include_archived?)
     |> Enum.sort_by(&(&1["updated_at"] || ""), :desc)
     |> Enum.reject(fn conv ->
@@ -495,7 +495,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
       ws_id = ws["id"]
 
       convs =
-        Handbeam.ConversationStore.list_metadata(ws_id)
+        Handbeam.ConversationStore.list_summaries(ws_id)
         |> filter_archived(include_archived?)
         |> Enum.sort_by(&(&1["updated_at"] || ""), :desc)
         |> Enum.reject(fn conv ->
@@ -736,10 +736,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
   end
 
   defp transcript_empty?(conversation_id) do
-    case Handbeam.ConversationTranscriptStore.page(conversation_id, limit: 1) do
-      {:ok, %{entries: []}} -> true
-      _ -> false
-    end
+    Handbeam.ConversationStore.transcript_empty?(conversation_id)
   end
 
   defp maybe_sort_conversations(conversations, true) do
