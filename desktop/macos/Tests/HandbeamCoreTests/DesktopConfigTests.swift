@@ -2,10 +2,36 @@ import XCTest
 @testable import HandbeamCore
 
 final class DesktopConfigTests: XCTestCase {
-    func testHealthCheckUsesAStaticAsset() {
+    func testHealthCheckUsesTheDesktopIdentityEndpoint() {
         XCTAssertEqual(
             DesktopConfig.healthURL(port: 5008).absoluteString,
-            "http://127.0.0.1:5008/assets/default.css"
+            "http://127.0.0.1:5008/desktop-health"
+        )
+    }
+
+    func testLoopbackListenerPortsParsesLsofFieldOutput() {
+        let output = """
+        p100
+        f39
+        n127.0.0.1:56243
+        f54
+        n127.0.0.1:5002
+        p200
+        f10
+        n[::1]:60302
+        f11
+        n*:4369
+        f12
+        n10.0.0.8:9999
+        f13
+        n127.0.0.1:not-a-port
+        f14
+        n127.0.0.1:5002
+        """
+
+        XCTAssertEqual(
+            DesktopConfig.loopbackListenerPorts(lsofOutput: output),
+            [5002, 56243, 60302]
         )
     }
 

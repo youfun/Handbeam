@@ -19,16 +19,22 @@ final class BackendController {
     private var logHandle: FileHandle?
     private var intentionalStop = false
     private var startGeneration = 0
-    private let port: Int
+    private let managedPort: Int
+    private var port: Int
     private let fileManager = FileManager.default
 
     init(port: Int? = nil) {
-        self.port = port ?? Self.resolvePort()
+        let resolvedPort = port ?? Self.resolvePort()
+        self.managedPort = resolvedPort
+        self.port = resolvedPort
     }
 
     func start() {
         startGeneration += 1
         let generation = startGeneration
+        if process?.isRunning != true {
+            port = managedPort
+        }
         state = .starting
         onChange?(state)
         Task { await self.boot(generation: generation) }
@@ -68,13 +74,22 @@ final class BackendController {
             await publishReady(generation: generation, spawned: true)
             return
         }
+        if let ownerPID = storageOwnerPID() {
+            if let ownerPort = await discoverStorageOwnerServer(pid: ownerPID) {
+                await attach(port: ownerPort, generation: generation, reason: "storage owner")
+            } else {
+                guard generation == startGeneration else { return }
+                state = .failed("偵測到另一個 Handbeam 正在使用會話資料，但其網頁服務尚未就緒。請稍後重試。")
+                onChange?(state)
+            }
+            return
+        }
         if await probe() {
-            guard generation == startGeneration else { return }
-            let host = discoverPhoenixHost()
-            let url = DesktopConfig.pageURL(port: port, spawnedByApp: false, discoveredHost: host)
-            ShellLog.write("attaching to existing server at \(url.absoluteString)")
-            state = .ready(url: url, owned: false)
-            onChange?(state)
+            await attach(port: port, generation: generation, reason: "configured port")
+            return
+        }
+        if let existingPort = await discoverExistingServer(excluding: port) {
+            await attach(port: existingPort, generation: generation, reason: "discovered server")
             return
         }
         guard generation == startGeneration else { return }
@@ -87,6 +102,16 @@ final class BackendController {
             return
         }
         await publishReady(generation: generation, spawned: true)
+    }
+
+    private func attach(port: Int, generation: Int, reason: String) async {
+        guard generation == startGeneration else { return }
+        self.port = port
+        let host = discoverPhoenixHost()
+        let url = DesktopConfig.pageURL(port: port, spawnedByApp: false, discoveredHost: host)
+        ShellLog.write("attaching to \(reason) at \(url.absoluteString)")
+        state = .ready(url: url, owned: false)
+        onChange?(state)
     }
 
     private func publishReady(generation: Int, spawned: Bool) async {
@@ -172,14 +197,70 @@ final class BackendController {
         onChange?(state)
     }
 
-    private func probe() async -> Bool {
-        var request = URLRequest(url: DesktopConfig.healthURL(port: port), timeoutInterval: 1.5)
+    private func probe(port: Int? = nil) async -> Bool {
+        let candidatePort = port ?? self.port
+        var request = URLRequest(url: DesktopConfig.healthURL(port: candidatePort), timeoutInterval: 3)
         request.cachePolicy = .reloadIgnoringLocalCacheData
         do {
-            let (_, response) = try await URLSession(configuration: .ephemeral).data(for: request)
-            return response is HTTPURLResponse
+            let (data, response) = try await URLSession(configuration: .ephemeral).data(for: request)
+            guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return false }
+            return String(data: data, encoding: .utf8) == DesktopConfig.healthResponse
         } catch {
             return false
+        }
+    }
+
+    private func discoverExistingServer(excluding excludedPort: Int) async -> Int? {
+        let output = runTool(
+            "/usr/sbin/lsof",
+            ["-nP", "-a", "-c", "beam.smp", "-iTCP", "-sTCP:LISTEN", "-Fn"]
+        )
+        let candidates = DesktopConfig.loopbackListenerPorts(lsofOutput: output)
+            .filter { $0 != excludedPort }
+
+        return await firstHandbeamServer(in: candidates)
+    }
+
+    private func storageOwnerPID() -> String? {
+        let lockPath = fileManager.homeDirectoryForCurrentUser
+            .appendingPathComponent(".handbeam/conversations/.handbeam-storage.lock").path
+        let ownerOutput = runTool("/usr/sbin/lsof", ["-nP", "-t", lockPath])
+        return ownerOutput.split(whereSeparator: \.isNewline).first.map(String.init)
+    }
+
+    private func discoverStorageOwnerServer(pid ownerPID: String) async -> Int? {
+        let listenerOutput = runTool(
+            "/usr/sbin/lsof",
+            ["-nP", "-a", "-p", ownerPID, "-iTCP", "-sTCP:LISTEN", "-Fn"]
+        )
+        let candidates = DesktopConfig.loopbackListenerPorts(lsofOutput: listenerOutput)
+
+        for attempt in 0..<3 {
+            if let port = await firstHandbeamServer(in: candidates) {
+                return port
+            }
+            if attempt < 2 {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
+        return nil
+    }
+
+    private func firstHandbeamServer(in candidates: [Int]) async -> Int? {
+        return await withTaskGroup(of: Int?.self) { group in
+            for candidatePort in candidates {
+                group.addTask { [weak self] in
+                    guard let self, await self.probe(port: candidatePort) else { return nil }
+                    return candidatePort
+                }
+            }
+            for await result in group {
+                if let result {
+                    group.cancelAll()
+                    return result
+                }
+            }
+            return nil
         }
     }
 

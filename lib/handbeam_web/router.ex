@@ -92,6 +92,10 @@ defmodule HandbeamWeb.Router do
   end
 
   scope "/", HandbeamWeb do
+    get "/desktop-health", DesktopHealthController, :show
+  end
+
+  scope "/", HandbeamWeb do
     pipe_through :browser
 
     live "/", WorkspaceLive, :index

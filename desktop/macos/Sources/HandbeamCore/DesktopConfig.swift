@@ -8,9 +8,35 @@ public enum DesktopConfig {
     public static let defaultPort = 5008
     public static let bundleIdentifier = "com.youfun.handbeam"
     public static let loopbackHosts: Set<String> = ["127.0.0.1", "localhost", "::1"]
+    public static let healthResponse = "handbeam-desktop-health:v1"
 
     public static func healthURL(port: Int) -> URL {
-        URL(string: "http://127.0.0.1:\(port)/assets/default.css")!
+        URL(string: "http://127.0.0.1:\(port)/desktop-health")!
+    }
+
+    /// Parses `lsof -Fn` output and returns only IPv4/IPv6 loopback listeners.
+    /// Other Beam listeners (for example Erlang distribution on all interfaces)
+    /// must never become desktop attachment candidates.
+    public static func loopbackListenerPorts(lsofOutput: String) -> [Int] {
+        let ports = lsofOutput.split(whereSeparator: \.isNewline).compactMap { rawLine -> Int? in
+            let line = String(rawLine)
+            guard line.hasPrefix("n") else { return nil }
+
+            let endpoint = String(line.dropFirst())
+            let rawPort: Substring
+            if endpoint.hasPrefix("127.0.0.1:") {
+                rawPort = endpoint.dropFirst("127.0.0.1:".count)
+            } else if endpoint.hasPrefix("[::1]:") {
+                rawPort = endpoint.dropFirst("[::1]:".count)
+            } else {
+                return nil
+            }
+
+            guard let port = Int(rawPort), (1...65535).contains(port) else { return nil }
+            return port
+        }
+
+        return Array(Set(ports)).sorted()
     }
 
     /// Spawned servers use 127.0.0.1 so the page host matches `PHX_HOST` and does
