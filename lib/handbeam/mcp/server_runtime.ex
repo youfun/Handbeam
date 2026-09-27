@@ -42,8 +42,10 @@ defmodule Handbeam.MCP.ServerRuntime do
 
   @spec call_tool(pid(), String.t(), map()) ::
           {:ok, String.t(), map()} | {:ok, String.t()} | {:error, String.t()}
-  def call_tool(pid, tool_name, input),
-    do: GenServer.call(pid, {:call_tool, tool_name, input}, 60_000)
+  def call_tool(pid, tool_name, input, timeout_ms \\ 60_000)
+      when is_integer(timeout_ms) and timeout_ms > 0 do
+    GenServer.call(pid, {:call_tool, tool_name, input, timeout_ms}, timeout_ms + 1_000)
+  end
 
   @spec shutdown(pid()) :: :ok
   def shutdown(pid) do
@@ -163,18 +165,26 @@ defmodule Handbeam.MCP.ServerRuntime do
 
   def handle_call(:tools, _from, {:http, state}), do: {:reply, {:ok, state.tools}, {:http, state}}
 
-  def handle_call({:call_tool, tool_name, input}, _from, {:stdio, state}) do
+  def handle_call({:call_tool, tool_name, input}, from, state),
+    do: handle_call({:call_tool, tool_name, input, 15_000}, from, state)
+
+  def handle_call({:call_tool, tool_name, input, timeout_ms}, _from, {:stdio, state})
+      when is_integer(timeout_ms) do
+    state = Map.put(state, :call_timeout_ms, timeout_ms)
+
     case stdio_rpc(state, "tools/call", %{name: tool_name, arguments: input || %{}}) do
       {:ok, result} -> {:reply, normalize_tool_result(result), {:stdio, state}}
       {:error, reason} -> {:reply, {:error, format_error(reason)}, {:stdio, state}}
     end
   end
 
-  def handle_call({:call_tool, tool_name, input}, _from, {:http, state}) do
-    case Handbeam.MCP.HTTP.call(state.cfg, "tools/call", %{
-           name: tool_name,
-           arguments: input || %{}
-         }) do
+  def handle_call({:call_tool, tool_name, input, timeout_ms}, _from, {:http, state}) do
+    case Handbeam.MCP.HTTP.call(
+           state.cfg,
+           "tools/call",
+           %{name: tool_name, arguments: input || %{}},
+           timeout_ms
+         ) do
       {:ok, result} -> {:reply, normalize_tool_result(result), {:http, state}}
       {:error, reason} -> {:reply, {:error, format_error(reason)}, {:http, state}}
     end
@@ -228,6 +238,9 @@ defmodule Handbeam.MCP.ServerRuntime do
     :ok
   end
 
+  defp call_timeout(%{call_timeout_ms: ms}) when is_integer(ms) and ms > 0, do: ms
+  defp call_timeout(_state), do: 15_000
+
   defp send_port(port, payload) do
     bytes = Handbeam.JSON.encode!(payload) <> "\n"
     Port.command(port, bytes)
@@ -256,8 +269,8 @@ defmodule Handbeam.MCP.ServerRuntime do
       {^port, {:exit_status, status}} ->
         {:error, "MCP server exited with status #{status}"}
     after
-      15_000 ->
-        {:error, "MCP request timed out"}
+      call_timeout(state) ->
+        {:error, {:mcp_timeout, "MCP request timed out"}}
     end
   end
 

@@ -22,18 +22,20 @@ defmodule Handbeam.MCP.HTTP do
     end
   end
 
-  def call(%ServerConfig{protocol_era: :modern} = cfg, method, params) do
+  def call(cfg, method, params, timeout_ms \\ 60_000)
+
+  def call(%ServerConfig{protocol_era: :modern} = cfg, method, params, timeout_ms) do
     id = Protocol.generate_id()
     params = Map.put(params, "_meta", client_meta())
 
-    with {:ok, response} <- post(cfg, request(id, method, params), method),
+    with {:ok, response} <- post(cfg, request(id, method, params), method, timeout_ms),
          do: response(response.body, id)
   end
 
-  def call(%ServerConfig{} = cfg, method, params) do
+  def call(%ServerConfig{} = cfg, method, params, timeout_ms) do
     id = Protocol.generate_id()
 
-    with {:ok, response} <- post(cfg, request(id, method, params)),
+    with {:ok, response} <- post(cfg, request(id, method, params), nil, timeout_ms),
          do: response(response.body, id)
   end
 
@@ -141,7 +143,7 @@ defmodule Handbeam.MCP.HTTP do
 
   defp client_version, do: to_string(Application.spec(:handbeam, :vsn))
 
-  defp post(cfg, payload, method \\ nil) do
+  defp post(cfg, payload, method \\ nil, timeout_ms \\ 60_000) do
     headers =
       cfg.runtime_headers
       |> Map.new(fn {key, value} -> {String.downcase(key), value} end)
@@ -151,13 +153,15 @@ defmodule Handbeam.MCP.HTTP do
       })
       |> maybe_put_modern_headers(cfg, payload, method)
 
-    case Req.post(cfg.url,
+    req = Application.get_env(:handbeam, :mcp_http_req, Req)
+
+    case req.post(cfg.url,
            body: Handbeam.JSON.encode!(payload),
            headers: headers,
            decode_body: false,
            redirect: false,
            retry: false,
-           receive_timeout: 30_000
+           receive_timeout: timeout_ms
          ) do
       {:ok, %{status: status} = response} when status in 200..299 -> {:ok, response}
       {:ok, %{status: status, body: body}} -> {:error, {:http, status, body}}

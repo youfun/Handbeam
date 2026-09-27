@@ -26,7 +26,8 @@ defmodule Handbeam.MCP.ToolBridge do
 
             executor = fn input, context ->
               if Handbeam.MCP.Access.allowed?(config, opts, context) do
-                Handbeam.MCP.ServerRuntime.call_tool(runtime_pid, tool.name, input)
+                timeout_ms = mcp_timeout(context)
+                Handbeam.MCP.ServerRuntime.call_tool(runtime_pid, tool.name, input, timeout_ms)
               else
                 {:error, "MCP server is disabled, changed, or not allowed in this workspace"}
               end
@@ -38,11 +39,13 @@ defmodule Handbeam.MCP.ToolBridge do
                 tool.description,
                 tool.input_schema,
                 executor,
+                nested_only?: config.exposure != "direct",
                 meta: %{
                   source: :mcp,
                   server: server_name,
                   remote_name: tool.name,
                   scope: scope,
+                  exposure: config.exposure,
                   fingerprint: Handbeam.MCP.Access.fingerprint(config),
                   runtime_pid: runtime_pid
                 }
@@ -68,6 +71,22 @@ defmodule Handbeam.MCP.ToolBridge do
         :ok
     end
   end
+
+  defp mcp_timeout(context) when is_map(context) do
+    remaining =
+      case context[:run_deadline] do
+        deadline when is_integer(deadline) ->
+          max(deadline - System.monotonic_time(:millisecond), 1)
+
+        _ ->
+          nil
+      end
+
+    tool_cap = context[:tool_timeout] || 60_000
+    if is_integer(remaining), do: min(tool_cap, remaining), else: tool_cap
+  end
+
+  defp mcp_timeout(_context), do: 60_000
 
   def namespaced_name(server_name, tool_name) do
     "mcp__#{server_name}__#{tool_name}"
