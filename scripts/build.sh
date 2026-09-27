@@ -64,6 +64,11 @@ mix assets.deploy
 # 5. 构建 OTP Release
 echo ""
 echo "➡ 构建 OTP Release..."
+if [[ "$RELEASE_DIR" == "/" ]]; then
+  echo "拒绝将系统根目录用作 Release 目录" >&2
+  exit 2
+fi
+rm -rf "$RELEASE_DIR"
 MIX_ENV=$MIX_ENV mix release handbeam --path "$RELEASE_DIR" --overwrite
 
 # 6. 检查输出
