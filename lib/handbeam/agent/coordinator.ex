@@ -24,7 +24,8 @@ defmodule Handbeam.Agent.Coordinator do
              is_list(opts) do
     {content, opts} = stamp_message_ids(content, opts)
 
-    with :ok <- validate_conversation_access(conversation_id, opts),
+    with :ok <- reserve_operation(conversation_id, content, opts),
+         :ok <- validate_conversation_access(conversation_id, opts),
          :ok <- validate_required_opts(opts),
          :ok <- validate_model_policy(opts),
          :ok <- validate_advisor_policy(opts),
@@ -64,6 +65,39 @@ defmodule Handbeam.Agent.Coordinator do
     end
   end
 
+  defp replay_ack(receipt) when is_map(receipt) do
+    %{
+      action: replay_action(receipt["action"] || receipt[:action]),
+      run_id: receipt["run_id"] || receipt[:run_id],
+      run_pid: nil,
+      replayed: true
+    }
+  end
+
+  defp replay_action("started"), do: :started
+  defp replay_action(:started), do: :started
+  defp replay_action("enqueued"), do: :enqueued
+  defp replay_action(:enqueued), do: :enqueued
+  defp replay_action(_other), do: :started
+
+  defp reserve_operation(conversation_id, content, opts) do
+    request_id = Keyword.get(opts, :request_id)
+
+    fingerprint =
+      Handbeam.Agent.OperationReceipt.fingerprint({conversation_id, content, opts[:deliver_as]})
+
+    case Handbeam.Agent.OperationReceipt.reserve(
+           {:message, conversation_id},
+           request_id,
+           fingerprint
+         ) do
+      :ok -> :ok
+      {:replay, receipt} -> {:ok, replay_ack(receipt)}
+      {:unknown, reason} -> {:error, reason}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   @spec start_run(String.t(), String.t() | Handbeam.Agent.Message.t(), keyword()) ::
           {:ok, ack()} | {:error, :run_in_progress | term()}
   def start_run(conversation_id, content, opts \\ [])
@@ -84,12 +118,19 @@ defmodule Handbeam.Agent.Coordinator do
         {:ok, pid} ->
           runner_pid = wait_until_registered(conversation_id)
 
-          {:ok,
-           %{
-             action: :started,
-             run_id: Keyword.fetch!(run_opts, :run_id),
-             run_pid: runner_pid || pid
-           }}
+          ack = %{
+            action: :started,
+            run_id: Keyword.fetch!(run_opts, :run_id),
+            run_pid: runner_pid || pid
+          }
+
+          Handbeam.Agent.OperationReceipt.complete(
+            {:message, conversation_id},
+            Keyword.get(opts, :request_id),
+            ack
+          )
+
+          {:ok, ack}
 
         {:error, reason} ->
           normalize_start_run_error(reason)
@@ -130,9 +171,13 @@ defmodule Handbeam.Agent.Coordinator do
     end
   end
 
-  @spec cancel(String.t()) :: :ok | {:error, :not_running | term()}
-  def cancel(conversation_id) when is_binary(conversation_id) do
-    Handbeam.Agent.Runner.cancel(conversation_id)
+  @spec cancel(String.t(), keyword()) :: :ok | {:error, :not_running | term()}
+  def cancel(conversation_id, opts \\ []) when is_binary(conversation_id) and is_list(opts) do
+    with :ok <- bind_control(conversation_id, :cancel, opts) do
+      result = do_cancel(conversation_id, opts)
+      finish_control(conversation_id, :cancel, opts, result)
+      result
+    end
   end
 
   @spec delete_pending_message(String.t(), String.t()) :: :ok | {:error, term()}
@@ -143,15 +188,122 @@ defmodule Handbeam.Agent.Coordinator do
     end
   end
 
-  @spec resume(String.t(), [map()]) :: :ok | {:error, term()}
-  def resume(conversation_id, decisions)
-      when is_binary(conversation_id) and is_list(decisions) do
-    if Handbeam.ConversationStore.internal?(conversation_id) do
-      {:error, :internal_conversation}
-    else
-      Handbeam.Agent.Runner.resume(conversation_id, decisions)
+  @spec resume(String.t(), [map()], keyword()) :: :ok | {:error, term()}
+  def resume(conversation_id, decisions, opts \\ [])
+      when is_binary(conversation_id) and is_list(decisions) and is_list(opts) do
+    with :ok <- bind_control(conversation_id, :resume, opts),
+         :ok <- validate_approval(conversation_id, decisions, opts) do
+      result = do_resume(conversation_id, decisions)
+      finish_control(conversation_id, :resume, opts, result)
+      result
     end
   end
+
+  defp do_cancel(conversation_id, opts) do
+    case expected_run(conversation_id, opts) do
+      :ok -> Handbeam.Agent.Runner.cancel(conversation_id)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp runner_awaiting?(conversation_id) do
+    case Handbeam.Agent.Runner.status(conversation_id) do
+      {:ok, %{status: :awaiting_approval}} -> true
+      _ -> false
+    end
+  end
+
+  defp do_resume(conversation_id, decisions) do
+    cond do
+      Handbeam.ConversationStore.internal?(conversation_id) ->
+        {:error, :internal_conversation}
+
+      not runner_awaiting?(conversation_id) ->
+        {:error, :not_awaiting_approval}
+
+      true ->
+        Handbeam.Agent.Runner.resume(conversation_id, decisions)
+    end
+  end
+
+  defp bind_control(conversation_id, kind, opts) do
+    request_id = Keyword.get(opts, :request_id)
+
+    fingerprint =
+      Handbeam.Agent.OperationReceipt.fingerprint({
+        kind,
+        conversation_id,
+        Keyword.get(opts, :expected_run_id),
+        Keyword.get(opts, :approval_batch_id)
+      })
+
+    case Handbeam.Agent.OperationReceipt.reserve({kind, conversation_id}, request_id, fingerprint) do
+      :ok -> :ok
+      {:replay, receipt} -> {:ok, replay_ack(receipt)}
+      {:unknown, reason} -> {:error, reason}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp finish_control(conversation_id, kind, opts, result) do
+    request_id = Keyword.get(opts, :request_id)
+
+    case result do
+      :ok ->
+        Handbeam.Agent.OperationReceipt.complete({kind, conversation_id}, request_id, %{
+          status: :ok
+        })
+
+      {:error, reason} ->
+        Handbeam.Agent.OperationReceipt.mark_unknown({kind, conversation_id}, request_id)
+        {:error, reason}
+    end
+  end
+
+  defp expected_run(conversation_id, opts) do
+    case Keyword.get(opts, :expected_run_id) do
+      nil ->
+        :ok
+
+      run_id when is_binary(run_id) ->
+        case Handbeam.Agent.Runner.status(conversation_id) do
+          {:ok, %{run_id: ^run_id, status: :awaiting_approval}} -> :ok
+          {:ok, %{run_id: ^run_id}} -> :ok
+          {:ok, %{run_id: other}} -> {:error, {:run_mismatch, other}}
+          _ -> {:error, :not_awaiting_approval}
+        end
+    end
+  end
+
+  defp validate_approval(conversation_id, decisions, opts) do
+    awaiting = if runner_awaiting?(conversation_id), do: :ok, else: {:error, :not_awaiting_approval}
+
+    with :ok <- expected_run(conversation_id, opts),
+         :ok <- awaiting,
+         {:ok, info} <- status(conversation_id) do
+      pending = pending_tool_ids(info)
+
+      cond do
+        opts[:approval_batch_id] && opts[:approval_batch_id] != info[:approval_batch_id] ->
+          {:error, :stale_approval}
+
+        Enum.any?(decisions, fn decision ->
+          id = decision["tool_call_id"] || decision[:tool_call_id]
+          pending != [] and id not in pending
+        end) ->
+          {:error, :approval_mismatch}
+
+        true ->
+          :ok
+      end
+    end
+  end
+
+  defp pending_tool_ids(%{interrupt_data: %{action_requests: requests}}) when is_list(requests) do
+    Enum.map(requests, &(&1[:tool_call_id] || &1["tool_call_id"]))
+  end
+
+  defp pending_tool_ids(_info), do: []
 
   defp validate_required_opts(opts) do
     missing = Enum.reject(@required_opts, &Keyword.has_key?(opts, &1))
