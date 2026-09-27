@@ -7,6 +7,8 @@ import { ComposerPasteUpload } from "./hooks/composer_paste_upload.js";
 import { WorkspacePanel } from "./hooks/workspace_panel.js";
 import { CopyText } from "./hooks/copy_text.js";
 import { ConversationContextMenu } from "./hooks/conversation_context_menu.js";
+import { ConversationActivity } from "./hooks/conversation_activity.js";
+import { LocalWebGPUProbe } from "./hooks/local_webgpu_probe.js";
 import { GhosttyTerminal } from "../vendor/ghostty.js";
 import { installImageLightbox } from "./image_lightbox.js";
 
@@ -33,7 +35,7 @@ const MobHook = {
 }
 
 let csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content");
-let Hooks = { StreamingMarkdown, ChatScroll, ConversationNav, ComposerPasteUpload, WorkspacePanel, CopyText, ConversationContextMenu, GhosttyTerminal, MobHook };
+let Hooks = { StreamingMarkdown, ChatScroll, ConversationNav, ComposerPasteUpload, WorkspacePanel, CopyText, ConversationContextMenu, ConversationActivity, LocalWebGPUProbe, GhosttyTerminal, MobHook };
 
 try {
   let liveSocket = new LiveSocket("/live", Socket, {

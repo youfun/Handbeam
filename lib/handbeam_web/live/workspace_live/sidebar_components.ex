@@ -147,11 +147,20 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
   attr :show_archive, :any, required: true
   attr :workspace_menu_id, :any, required: true
   attr :workspaces, :any, required: true
+  attr :runtime_tasks, :map, default: %{tasks: []}
 
   def projects_sidebar(assigns) do
+    assigns =
+      assign(
+        assigns,
+        :run_states,
+        Map.new(assigns.runtime_tasks.tasks, &{&1.conversation_id, &1.status})
+      )
+
     ~H"""
     <div
       id="activity-bar"
+      phx-hook="ConversationActivity"
       class="w-[220px] flex-shrink-0 border-r bg-surface flex flex-col workspace-panel projects-panel"
     >
       <div class="projects-panel-header">
@@ -254,6 +263,7 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
                     "conversation-item-active"
                 ]}
               >
+                <.run_indicator id={conv.id} state={Map.get(@run_states, conv.id)} />
                 <span class="truncate flex-1">{conv.title}</span>
               </button>
               <.conversation_menu conv={conv} conversation_menu_id={@conversation_menu_id} />
@@ -356,6 +366,7 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
                   )
                 ]}
               >
+                <.run_indicator id={conv.id} state={Map.get(@run_states, conv.id)} />
                 <span class="truncate flex-1">{conv.title}</span>
               </button>
               <.conversation_menu conv={conv} conversation_menu_id={@conversation_menu_id} />
@@ -541,15 +552,7 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
                   )
                 ]}
               >
-                <span class={[
-                  "conversation-dot",
-                  if(
-                    @current_conversation_id == conv.id and
-                      @current_workspace_id == conv.workspace_id,
-                    do: "conversation-dot-active",
-                    else: ""
-                  )
-                ]}></span>
+                <.run_indicator id={conv.id} state={Map.get(@run_states, conv.id)} />
                 <span class="truncate flex-1">{conv.title}</span>
               </button>
               <.conversation_menu conv={conv} conversation_menu_id={@conversation_menu_id} />
@@ -635,6 +638,27 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
         </div>
       </div>
     </div>
+    """
+  end
+
+  attr :id, :string, required: true
+  attr :state, :atom, default: nil
+
+  defp run_indicator(assigns) do
+    ~H"""
+    <span
+      class="conversation-run-indicator"
+      data-run-id={@id}
+      data-run-state={@state || :idle}
+      role={@state && "img"}
+      aria-label={
+        case @state do
+          :running -> gettext("运行中")
+          :waiting_confirmation -> gettext("等待确认")
+          _ -> nil
+        end
+      }
+    ><span class="conversation-run-marble" aria-hidden="true"></span></span>
     """
   end
 

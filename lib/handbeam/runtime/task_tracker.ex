@@ -115,6 +115,19 @@ defmodule Handbeam.Runtime.TaskTracker do
     end
   end
 
+  defp handle_lifecycle({:run_lifecycle, conversation_id, :run_resumed, _payload}, state) do
+    case Map.get(state.tasks, conversation_id) do
+      %{status: :waiting_confirmation} = task ->
+        task = %{task | status: :running}
+        state = put_in(state, [:tasks, conversation_id], task)
+        dispatch(state, {:started, task})
+        {:noreply, state}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
   defp handle_lifecycle(_message, state), do: {:noreply, state}
 
   defp dispatch(state, event) do

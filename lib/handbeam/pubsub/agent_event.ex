@@ -20,6 +20,7 @@ defmodule Handbeam.PubSub.AgentEvent do
           | :tool_approval_requested
           | :session_state
           | :run_start
+          | :run_resumed
           | :run_end
           | :agent_end
           | :turn_start

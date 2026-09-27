@@ -218,6 +218,8 @@ defmodule Handbeam.Agent.Runner do
 
     resume = resume_fun(state)
 
+    Session.broadcast_event(state.conversation_id, :run_resumed, %{})
+
     task =
       Task.Supervisor.async_nolink(Handbeam.AgentRunTaskSupervisor, fn ->
         resume.(state.interrupted_state, decisions, run_opts)

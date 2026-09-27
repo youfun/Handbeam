@@ -122,7 +122,9 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
   end
 
   defdelegate update_status(socket, overrides), to: HandbeamWeb.WorkspaceLive.StatusProjection
-  defdelegate maybe_update_status(socket, overrides), to: HandbeamWeb.WorkspaceLive.StatusProjection
+
+  defdelegate maybe_update_status(socket, overrides),
+    to: HandbeamWeb.WorkspaceLive.StatusProjection
 
   def usage_tokens(usage) when is_map(usage) do
     input = Map.get(usage, :input_tokens, Map.get(usage, "input_tokens", 0)) || 0
@@ -298,6 +300,14 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
       cache_write_tokens: 0,
       turns: 0
     })
+  end
+
+  def handle_agent_event(%{kind: :run_resumed}, socket) do
+    socket
+    |> assign(:pending_approval, nil)
+    |> assign(:running, true)
+    |> assign(:running_conversation_id, socket.assigns.current_conversation_id)
+    |> update_status(%{status: :running})
   end
 
   def handle_agent_event(%{kind: :turn_start, payload: payload}, socket) do
@@ -703,6 +713,7 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
   def subscribe_to_runtime_tasks(socket) do
     if connected?(socket) do
       Handbeam.Runtime.TaskTracker.subscribe()
+      Phoenix.PubSub.subscribe(Handbeam.PubSub, "runtime:activity")
       Handbeam.Runtime.TaskTracker.viewing(self(), socket.assigns.current_conversation_id)
       assign(socket, :runtime_tasks, Handbeam.Runtime.TaskTracker.snapshot())
     else

@@ -1092,6 +1092,22 @@ defmodule HandbeamWeb.WorkspaceLive do
     {:noreply, assign(socket, :runtime_tasks, snapshot)}
   end
 
+  def handle_info({:runtime_activity, conversation_id, kind}, socket) do
+    visible? =
+      Enum.any?(socket.assigns.conversations_by_workspace, fn {_workspace, conversations} ->
+        Enum.any?(conversations, &(&1["id"] == conversation_id))
+      end)
+
+    socket =
+      if visible? do
+        push_event(socket, "conversation_activity", %{id: conversation_id, kind: kind})
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
   def handle_info({:in_app_ended, task, reason}, socket) do
     if task.conversation_id == socket.assigns.current_conversation_id do
       {:noreply, socket}
