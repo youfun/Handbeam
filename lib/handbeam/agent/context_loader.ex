@@ -6,9 +6,9 @@ defmodule Handbeam.Agent.ContextLoader do
   ## Discovery
 
   Walks from `cwd` upward through parent directories collecting every
-  `AGENTS.md` file. Paths are sorted by depth ascending — shallowest
-  (lowest priority) first, deepest (highest priority) last. The walk
-  continues until the filesystem root.
+  `AGENTS.md` file until the filesystem root. A `mix.exs` file is not a
+  boundary. Paths are sorted by depth ascending — shallowest (lowest
+  priority) first, deepest (highest priority) last.
 
   ## Loading
 
@@ -41,8 +41,7 @@ defmodule Handbeam.Agent.ContextLoader do
   @doc """
   Discover AGENTS.md files walking upward from `cwd`.
 
-  The walk stops when it reaches the project root (a directory that
-  contains `mix.exs`) or the filesystem root.
+  The walk stops at the filesystem root. It does not stop at `mix.exs`.
 
   Returns absolute paths sorted by directory depth (shallowest first).
 
@@ -54,10 +53,8 @@ defmodule Handbeam.Agent.ContextLoader do
   """
   @spec discover(String.t()) :: [String.t()]
   def discover(cwd \\ File.cwd!()) do
-    root = find_project_root(cwd)
-
     cwd
-    |> walk_up(root)
+    |> walk_up()
     |> Enum.filter(&File.exists?/1)
     |> Enum.sort_by(&depth/1, :asc)
   end
@@ -132,30 +129,10 @@ defmodule Handbeam.Agent.ContextLoader do
 
   # ── Private: discovery ──
 
-  defp find_project_root(cwd) do
-    cwd
-    |> Stream.unfold(fn
-      nil -> nil
-      d -> {d, parent(d)}
-    end)
-    |> Enum.find(fn dir ->
-      File.exists?(Path.join(dir, "mix.exs"))
-    end) || cwd
-  end
-
-  defp walk_up(dir, root) do
-    root_depth = depth(root)
-
+  defp walk_up(dir) do
     Stream.unfold(dir, fn
-      nil ->
-        nil
-
-      d ->
-        if depth(d) < root_depth do
-          nil
-        else
-          {Path.join(d, "AGENTS.md"), parent(d)}
-        end
+      nil -> nil
+      d -> {Path.join(d, "AGENTS.md"), parent(d)}
     end)
     |> Enum.to_list()
   end

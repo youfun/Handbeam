@@ -11,7 +11,8 @@ defmodule Handbeam.Agent.ContextLoaderTest do
   end
 
   defp mark_project_root(dir) do
-    # Create a sentinel file so discover/1 stops here
+    # Present so older fixtures still look like a Mix project. Discovery
+    # must not treat this file as a walk boundary.
     write_file(Path.join(dir, "mix.exs"), "# project root marker")
   end
 
@@ -54,12 +55,34 @@ defmodule Handbeam.Agent.ContextLoaderTest do
 
   @tag :tmp_dir
   test "discover/1 stops at filesystem root", %{tmp_dir: tmp_dir} do
-    mark_project_root(tmp_dir)
     write_file(Path.join(tmp_dir, "AGENTS.md"), "# root")
     sub = Path.join(tmp_dir, "sub")
 
     paths = ContextLoader.discover(sub)
-    assert length(paths) == 1
+    assert Path.join(tmp_dir, "AGENTS.md") in paths
+    assert Enum.all?(paths, &String.ends_with?(&1, "AGENTS.md"))
+  end
+
+  @tag :tmp_dir
+  test "discover/1 does not stop at mix.exs", %{tmp_dir: tmp_dir} do
+    outside =
+      Path.join(Path.dirname(tmp_dir), "agents_above_#{System.unique_integer([:positive])}")
+
+    above = Path.join(outside, "AGENTS.md")
+    on_exit(fn -> File.rm_rf(outside) end)
+
+    write_file(above, "# above the mix project")
+    mark_project_root(tmp_dir)
+    write_file(Path.join(tmp_dir, "AGENTS.md"), "# mix project")
+    nested = Path.join(tmp_dir, "lib")
+
+    paths = ContextLoader.discover(nested)
+
+    assert above in paths
+    assert Path.join(tmp_dir, "AGENTS.md") in paths
+
+    assert Enum.find_index(paths, &(&1 == above)) <
+             Enum.find_index(paths, &(&1 == Path.join(tmp_dir, "AGENTS.md")))
   end
 
   @tag :tmp_dir
