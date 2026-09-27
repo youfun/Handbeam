@@ -335,13 +335,17 @@ final class BackendController {
 
     private static func resolvePort() -> Int {
         let env = ProcessInfo.processInfo.environment["HANDBEAM_PORT"]
-        let stored = UserDefaults.standard.string(forKey: "HandbeamPort")
-        for raw in [env, stored] {
-            if let raw, let value = Int(raw), (1...65535).contains(value) {
-                return value
-            }
+        let defaults = UserDefaults.standard
+        let stored = defaults.string(forKey: "HandbeamPort")
+        let port = DesktopConfig.preferredPort(
+            environment: env,
+            stored: stored,
+            availablePort: DesktopConfig.availableLoopbackPort
+        )
+        if env == nil {
+            defaults.set(String(port), forKey: "HandbeamPort")
         }
-        return DesktopConfig.availableLoopbackPort() ?? DesktopConfig.defaultPort
+        return port
     }
 }
 

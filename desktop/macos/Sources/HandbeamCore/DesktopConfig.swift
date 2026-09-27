@@ -39,6 +39,19 @@ public enum DesktopConfig {
         return host
     }
 
+    public static func preferredPort(
+        environment: String?,
+        stored: String?,
+        availablePort: () -> Int?
+    ) -> Int {
+        for raw in [environment, stored] {
+            if let raw, let value = Int(raw), (1...65535).contains(value) {
+                return value
+            }
+        }
+        return availablePort() ?? defaultPort
+    }
+
     /// Ask the kernel for an unused loopback port. The listener is closed before
     /// the backend starts, so callers must still handle the unlikely bind race.
     public static func availableLoopbackPort() -> Int? {

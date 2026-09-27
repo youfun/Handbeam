@@ -43,6 +43,33 @@ final class DesktopConfigTests: XCTestCase {
         XCTAssertTrue((1...65535).contains(port))
     }
 
+    func testPreferredPortKeepsTheDesktopOriginStable() {
+        XCTAssertEqual(
+            DesktopConfig.preferredPort(
+                environment: nil,
+                stored: "51234",
+                availablePort: { 54321 }
+            ),
+            51234
+        )
+        XCTAssertEqual(
+            DesktopConfig.preferredPort(
+                environment: "5008",
+                stored: "51234",
+                availablePort: { 54321 }
+            ),
+            5008
+        )
+        XCTAssertEqual(
+            DesktopConfig.preferredPort(
+                environment: nil,
+                stored: "invalid",
+                availablePort: { 54321 }
+            ),
+            54321
+        )
+    }
+
     func testLaunchOverridesHostPortAndNode() {
         let launch = BackendPlanner.launch(
             releaseRoot: "/tmp/handbeam web",
