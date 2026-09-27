@@ -101,6 +101,41 @@ defmodule Handbeam.MCP.WorkspaceRuntimeTest do
     %{root: root, opts: [user_config_path: Path.join(root, "mcp.json")]}
   end
 
+  test "default MCP exposure is nested-only and direct still declares tools", %{opts: opts} do
+    File.write!(
+      opts[:user_config_path],
+      Jason.encode!(%{
+        "mcpServers" => %{
+          "docs" => %{"url" => "https://one.example/mcp", "name" => "Docs"},
+          "shown" => %{
+            "url" => "https://two.example/mcp",
+            "name" => "Shown",
+            "exposure" => "direct"
+          }
+        }
+      })
+    )
+
+    a = Keyword.put(opts, :workspace_id, "a")
+    {:ok, boot} = Handbeam.MCP.bootstrap(a)
+
+    entries =
+      Enum.map(boot.registered, fn name ->
+        {:ok, entry} = Handbeam.Tool.Registry.get(name)
+        entry
+      end)
+
+    hidden = Enum.find(entries, &(&1.meta.server == "docs"))
+    shown = Enum.find(entries, &(&1.meta.server == "shown"))
+    assert hidden.nested_only?
+    refute shown.nested_only?
+
+    defs = Handbeam.Tool.Registry.tool_defs()
+    refute Enum.any?(defs, &(&1.name == hidden.name))
+    assert Enum.any?(defs, &(&1.name == shown.name))
+    assert {:ok, "one.example", _} = hidden.executor.(%{}, %{mcp_scope: a})
+  end
+
   test "two workspaces keep independent runtimes; revoke blocks discovery AND captured executors",
        %{opts: opts} do
     form =

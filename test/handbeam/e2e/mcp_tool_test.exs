@@ -194,7 +194,13 @@ defmodule Handbeam.E2E.MCPToolTest do
     File.write!(
       Path.join(workspace, ".mcp.json"),
       Jason.encode!(%{
-        "mcpServers" => %{"echo" => %{"command" => python, "args" => [server_script]}}
+        "mcpServers" => %{
+          "echo" => %{
+            "command" => python,
+            "args" => [server_script],
+            "exposure" => "direct"
+          }
+        }
       })
     )
 

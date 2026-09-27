@@ -19,6 +19,7 @@ defmodule Handbeam.MCP.ServerConfig do
     runtime_headers: %{},
     protocol_era: nil,
     source: nil,
+    exposure: "nested",
     raw: %{}
   ]
 
@@ -37,6 +38,7 @@ defmodule Handbeam.MCP.ServerConfig do
           runtime_headers: %{String.t() => String.t()},
           protocol_era: :modern | :legacy | nil,
           source: String.t() | nil,
+          exposure: String.t(),
           raw: map()
         }
 end

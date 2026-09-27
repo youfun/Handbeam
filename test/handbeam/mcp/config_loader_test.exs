@@ -350,6 +350,34 @@ defmodule Handbeam.MCP.ConfigLoaderTest do
       System.delete_env("HANDBEAM_HTTP_TOKEN")
     end
 
+    test "defaults exposure to nested and accepts direct" do
+      project = Path.join(@tmp_base, "exposure_ok")
+
+      write_json(project, ".mcp.json", %{
+        "mcpServers" => %{
+          "hidden" => %{"command" => "echo"},
+          "shown" => %{"command" => "printf", "exposure" => "direct"}
+        }
+      })
+
+      {:ok, config} = ConfigLoader.load(user_config_path: nil, project: project)
+      assert config.servers["hidden"].exposure == "nested"
+      assert config.servers["shown"].exposure == "direct"
+      refute Map.has_key?(config.servers["hidden"].raw, "exposure")
+    end
+
+    test "invalid exposure fails config load" do
+      project = Path.join(@tmp_base, "exposure_bad")
+
+      write_json(project, ".mcp.json", %{
+        "mcpServers" => %{"bad" => %{"command" => "echo", "exposure" => "public"}}
+      })
+
+      {:ok, config} = ConfigLoader.load(user_config_path: nil, project: project)
+      refute Map.has_key?(config.servers, "bad")
+      assert Enum.any?(config.diagnostics, &(&1.type == :error and &1.message =~ "exposure"))
+    end
+
     test "server without command or url is rejected" do
       project = Path.join(@tmp_base, "no_transport")
       write_json(project, ".mcp.json", %{"mcpServers" => %{"neither" => %{"disabled" => false}}})

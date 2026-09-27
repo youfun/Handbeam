@@ -182,7 +182,8 @@ defmodule Handbeam.MCP.ConfigLoader do
     errors =
       validate_name(name, source) ++
         validate_server_type(raw_cfg, name, source, transport_kind) ++
-        validate_maps(raw_cfg, name, source)
+        validate_maps(raw_cfg, name, source) ++
+        validate_exposure(raw_cfg, name, source)
 
     if errors != [] do
       {:error, errors}
@@ -277,6 +278,25 @@ defmodule Handbeam.MCP.ConfigLoader do
     end
   end
 
+  @exposures ["nested", "direct"]
+
+  defp validate_exposure(raw_cfg, name, source) do
+    case Map.get(raw_cfg, "exposure", "nested") do
+      exposure when exposure in @exposures ->
+        []
+
+      _ ->
+        [
+          diagnostic(
+            :error,
+            "Invalid exposure for server \"#{name}\": expected \"nested\" or \"direct\"",
+            source,
+            name
+          )
+        ]
+    end
+  end
+
   defp validate_command(raw_cfg, name, source) do
     cmd = raw_cfg["command"]
 
@@ -290,7 +310,19 @@ defmodule Handbeam.MCP.ConfigLoader do
   defp build_server_config(name, raw_cfg, args, source) do
     env = normalize_string_map(raw_cfg["env"])
     headers = normalize_string_map(raw_cfg["headers"])
-    known = ["command", "args", "env", "disabled", "cwd", "transport", "type", "url", "headers"]
+
+    known = [
+      "command",
+      "args",
+      "env",
+      "disabled",
+      "cwd",
+      "transport",
+      "type",
+      "url",
+      "headers",
+      "exposure"
+    ]
 
     %ServerConfig{
       name: name,
@@ -306,6 +338,7 @@ defmodule Handbeam.MCP.ConfigLoader do
       headers: headers,
       runtime_headers: resolve_placeholders(headers),
       source: source,
+      exposure: Map.get(raw_cfg, "exposure", "nested"),
       raw: Map.drop(raw_cfg, known)
     }
   end
