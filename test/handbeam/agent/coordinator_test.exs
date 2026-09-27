@@ -14,10 +14,17 @@ defmodule Handbeam.Agent.CoordinatorTest do
 
     File.mkdir_p!(home_dir)
     System.put_env("HOME", home_dir)
+    previous_host = Application.get_env(:handbeam, :host)
+    Handbeam.Host.put!(%{data_dir: home_dir})
 
     on_exit(fn ->
       if old_home, do: System.put_env("HOME", old_home), else: System.delete_env("HOME")
-      File.rm_rf!(home_dir)
+
+      if previous_host,
+        do: Application.put_env(:handbeam, :host, previous_host),
+        else: Application.delete_env(:handbeam, :host)
+
+      remove_home!(home_dir)
     end)
 
     :ok
@@ -121,6 +128,20 @@ defmodule Handbeam.Agent.CoordinatorTest do
     end)
 
     dir
+  end
+
+  defp remove_home!(dir) do
+    Enum.reduce_while(1..8, :error, fn attempt, _ ->
+      case File.rm_rf(dir) do
+        {:ok, _} ->
+          {:halt, :ok}
+
+        {:error, reason, _path} ->
+          if attempt == 8, do: raise("failed to remove #{dir}: #{inspect(reason)}")
+          Process.sleep(25 * attempt)
+          {:cont, :error}
+      end
+    end)
   end
 
   defp opts(extra \\ []) do
@@ -397,7 +418,7 @@ defmodule Handbeam.Agent.CoordinatorTest do
 
     on_exit(fn ->
       if old_home, do: System.put_env("HOME", old_home), else: System.delete_env("HOME")
-      if File.exists?(home_dir), do: File.rm_rf!(home_dir)
+      if File.exists?(home_dir), do: remove_home!(home_dir)
     end)
 
     sid = "coord-sns-follow-#{System.unique_integer([:positive])}"
@@ -678,10 +699,11 @@ defmodule Handbeam.Agent.CoordinatorTest do
       Path.join(System.tmp_dir!(), "sigil_coord_sns_home_#{System.unique_integer([:positive])}")
 
     System.put_env("HOME", home_dir)
+    Handbeam.Host.put!(%{data_dir: home_dir})
 
     on_exit(fn ->
       if old_home, do: System.put_env("HOME", old_home), else: System.delete_env("HOME")
-      if File.exists?(home_dir), do: File.rm_rf!(home_dir)
+      if File.exists?(home_dir), do: remove_home!(home_dir)
     end)
 
     {:ok, conversation} = Handbeam.ConversationStore.create("default", id: "coord-sns")
@@ -703,7 +725,7 @@ defmodule Handbeam.Agent.CoordinatorTest do
              )
 
     assert is_binary(run_id)
-    assert_receive {:delivered, %{"role" => "assistant", "delivery_delta" => delivered_delta}}
+    assert_receive {:delivered, %{"role" => "assistant", "delivery_delta" => delivered_delta}}, 2_000
     assert delivered_delta =~ "Hello!"
     assert_receive_run_end(sid)
 

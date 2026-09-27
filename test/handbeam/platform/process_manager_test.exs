@@ -11,7 +11,10 @@ defmodule Handbeam.Platform.ProcessManagerTest do
     test "returns :ok for valid pid (process may already be dead)" do
       port = Port.open({:spawn, "sleep 0.1"}, [:binary])
       os_pid = port_info_os_pid(port)
-      Port.close(port)
+
+      if Port.info(port) do
+        Port.close(port)
+      end
 
       # Process likely exited, but kill should not crash
       assert :ok = ProcessManager.kill_process_tree(os_pid)

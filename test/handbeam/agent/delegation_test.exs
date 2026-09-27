@@ -355,20 +355,17 @@ defmodule Handbeam.Agent.DelegationTest do
     assert reason =~ "monetary budget"
   end
 
-  test "delegated supervision never restarts either child" do
+  test "neither delegated nor ordinary runs are restarted with the original input" do
     assert Handbeam.Agent.RunSupervisor.child_spec(run_opts: [delegated?: true]).restart ==
              :temporary
 
-    assert Handbeam.Agent.RunSupervisor.child_spec(run_opts: []).restart == :permanent
+    assert Handbeam.Agent.RunSupervisor.child_spec(run_opts: []).restart == :temporary
 
-    {:ok, {_, children}} =
-      Handbeam.Agent.RunSupervisor.init(conversation_id: "internal", run_opts: [delegated?: true])
+    for opts <- [[delegated?: true], []] do
+      {:ok, {_, children}} =
+        Handbeam.Agent.RunSupervisor.init(conversation_id: "run", run_opts: opts)
 
-    assert Enum.all?(children, &(&1.restart == :temporary))
-
-    {:ok, {_, children}} =
-      Handbeam.Agent.RunSupervisor.init(conversation_id: "ordinary", run_opts: [])
-
-    assert Enum.all?(children, &(&1.restart == :transient))
+      assert Enum.all?(children, &(&1.restart == :temporary))
+    end
   end
 end

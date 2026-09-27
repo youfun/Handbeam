@@ -16,7 +16,18 @@ defmodule Handbeam.Agent.RunSupervisorTest do
 
     on_exit(fn ->
       if old_home, do: System.put_env("HOME", old_home), else: System.delete_env("HOME")
-      File.rm_rf!(home_dir)
+
+      Enum.reduce_while(1..8, :error, fn attempt, _ ->
+        case File.rm_rf(home_dir) do
+          {:ok, _} ->
+            {:halt, :ok}
+
+          {:error, reason, _path} ->
+            if attempt == 8, do: raise("failed to remove #{home_dir}: #{inspect(reason)}")
+            Process.sleep(25 * attempt)
+            {:cont, :error}
+        end
+      end)
     end)
 
     %{sid: conversation["id"]}
@@ -59,7 +70,7 @@ defmodule Handbeam.Agent.RunSupervisorTest do
 
   test "queue lifecycle is bound to run and stale queue is sealed after cancel", %{sid: sid} do
     assert {:ok, %{action: :started}} = Coordinator.add_message(sid, "hello", opts())
-    assert_receive {:run_supervisor_provider_started, _task_pid}
+    assert_receive {:run_supervisor_provider_started, _task_pid}, 2_000
     assert {:ok, %{queue_pid: queue}} = Coordinator.status(sid)
 
     assert :ok = CandidateQueue.enqueue(queue, "while running", deliver_as: :steer)

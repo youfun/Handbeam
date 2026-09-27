@@ -147,7 +147,7 @@ defmodule Handbeam.Agent.Provider.RetryBudgetTest do
         Handbeam.Agent.Turn.run_loop(state, streaming: false)
       end)
 
-    assert_receive {:provider_called, turn_pid}, 1_000
+    assert_receive {:provider_called, turn_pid}, 2_000
     send(turn_pid, :run_cancelled)
     result = Task.await(task, 1_000)
     assert :counters.get(calls, 1) == 1

@@ -49,7 +49,10 @@ defmodule Handbeam.Platform.ProcessRunnerTest do
 
       try do
         {output, 0} =
-          System.cmd("/bin/sh", ["-c", ProcessRunner.shell_prelude() <> "; printf %s \"${ROOTDIR-unset}\""])
+          System.cmd("/bin/sh", [
+            "-c",
+            ProcessRunner.shell_prelude() <> "; printf %s \"${ROOTDIR-unset}\""
+          ])
 
         assert output == "unset"
       after
@@ -127,6 +130,30 @@ defmodule Handbeam.Platform.ProcessRunnerTest do
         restore_env("PATH", old_path)
         File.rm_rf!(root)
       end
+    end
+
+    test "owner death before Port.open does not start the command" do
+      marker = Path.join(System.tmp_dir!(), "hb-open-hold-#{System.unique_integer([:positive])}")
+      owner = spawn(fn -> Process.sleep(60_000) end)
+      hold = self()
+
+      task =
+        Task.async(fn ->
+          Handbeam.Platform.ProcessRunner.run_bash("echo leaked > #{marker}", nil, 2_000,
+            owner: owner,
+            hold_before_open: hold
+          )
+        end)
+
+      assert_receive {:held_before_open, invocation}, 1_000
+      ref = Process.monitor(invocation)
+      Process.exit(owner, :kill)
+      send(invocation, :release_open)
+      assert_receive {:DOWN, ^ref, :process, ^invocation, _reason}, 1_000
+      result = Task.await(task, 2_000)
+      refute File.exists?(marker)
+      assert result == {:error, :cancelled} or match?({:error, _}, result)
+      refute File.exists?(marker)
     end
 
     test "fails closed when a workspace sandbox is unavailable" do

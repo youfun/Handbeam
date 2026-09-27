@@ -194,35 +194,12 @@ defmodule Handbeam.Agent do
     prepend_messages(state, Keyword.get(opts, :history_messages, []))
   end
 
-  defp session_event_callback(session_id, nil) do
-    fn {kind, payload} ->
-      log_session_event(session_id, kind, payload)
-      Session.broadcast_event(session_id, kind, payload)
-    end
-  end
+  # Runner's persistence callback already broadcasts. Wrapping again duplicates
+  # message_delta and can deliver the same assistant text twice.
+  defp session_event_callback(_session_id, nil), do: fn _event -> :ok end
 
-  defp session_event_callback(session_id, user_on_event) when is_function(user_on_event, 1) do
-    fn {kind, payload} = event ->
-      log_session_event(session_id, kind, payload)
-      user_on_event.(event)
-      Session.broadcast_event(session_id, kind, payload)
-    end
-  end
-
-  defp log_session_event(_session_id, :message_delta, %{chunk: chunk}) when is_binary(chunk) do
-    :ok
-  end
-
-  defp log_session_event(_session_id, :thinking_delta, _payload) do
-    :ok
-  end
-
-  defp log_session_event(session_id, kind, _payload) do
-    require Logger
-
-    if kind not in [:message_delta, :user_on_chunk] do
-      Logger.debug("[Agent] session callback #{kind} session=#{session_id}")
-    end
+  defp session_event_callback(_session_id, user_on_event) when is_function(user_on_event, 1) do
+    fn event -> user_on_event.(event) end
   end
 
   # ── Default tool set ──

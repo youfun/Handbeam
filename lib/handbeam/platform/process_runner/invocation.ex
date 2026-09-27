@@ -33,6 +33,25 @@ defmodule Handbeam.Platform.ProcessRunner.Invocation do
 
   @impl true
   def handle_continue(:open, state) do
+    if hold = state.opts[:hold_before_open] do
+      send(hold, {:held_before_open, self()})
+
+      receive do
+        :release_open -> :ok
+      end
+    end
+
+    caller = state.opts[:reply_to]
+
+    if not Process.alive?(state.business) or (is_pid(caller) and not Process.alive?(caller)) do
+      reply(state, {:error, :cancelled})
+      {:stop, :normal, state}
+    else
+      open_and_track(state)
+    end
+  end
+
+  defp open_and_track(state) do
     case open_port(state.opts) do
       {:ok, port, os_pid, invocation} ->
         caller = state.opts[:reply_to]
@@ -54,7 +73,13 @@ defmodule Handbeam.Platform.ProcessRunner.Invocation do
     caller = state.opts[:reply_to]
 
     if pid == state.business or pid == caller do
+      # This process owns the port. A business-owner or caller exit sends DOWN;
+      # callers must not kill this process. Cleanup runs here, including when
+      # the DOWN arrives while Port.open is still in progress: the port is
+      # closed and the recorded OS pid is killed. This does not cover :kill of
+      # this process or a VM crash.
       cleanup(state)
+      reply(state, {:error, :cancelled})
       {:stop, :normal, %{state | port: nil}}
     else
       {:noreply, state}

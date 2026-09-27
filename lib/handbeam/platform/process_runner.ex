@@ -220,6 +220,9 @@ defmodule Handbeam.Platform.ProcessRunner do
         {:invocation_result, ^pid, {:error, reason}} ->
           {:error, reason}
 
+        {:DOWN, _ref, :process, ^pid, :normal} ->
+          {:error, :cancelled}
+
         {:DOWN, _ref, :process, ^pid, {:open_failed, reason}} ->
           {:error, reason}
 
