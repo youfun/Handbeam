@@ -102,11 +102,11 @@
 .markdown-body pre {
   overflow-x: auto;
   padding: 0.75rem;
-  border-radius: 0.5rem;
+  border-radius: var(--sig-radius-lg);
 }
 
 .markdown-body code {
-  border-radius: 0.25rem;
+  border-radius: var(--sig-radius-sm);
   padding: 0.1rem 0.25rem;
 }
 
@@ -276,7 +276,7 @@
   align-items: center;
   gap: 0.5rem;
   padding: 0.75rem 1.25rem;
-  border-radius: 0.5rem;
+  border-radius: var(--sig-radius-lg);
   font-size: 0.875rem;
   font-weight: 500;
   box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);

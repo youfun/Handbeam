@@ -173,7 +173,7 @@
   width: 32px;
   height: 32px;
   flex-shrink: 0;
-  border-radius: 8px;
+  border-radius: var(--sig-radius-lg);
   overflow: hidden;
   background: var(--sig-bg-input);
   border: 1px solid var(--sig-border-default);
@@ -221,7 +221,7 @@
   height: 32px;
   flex-shrink: 0;
   border: none;
-  border-radius: var(--sig-radius-lg, 10px);
+  border-radius: var(--sig-radius-full);
   background: transparent;
   color: var(--sig-text-tertiary);
   cursor: pointer;
@@ -240,7 +240,7 @@
   height: 32px;
   flex-shrink: 0;
   border: none;
-  border-radius: var(--sig-radius-lg, 10px);
+  border-radius: var(--sig-radius-full);
   background: var(--sig-text-primary);
   color: var(--sig-text-inverse);
   cursor: pointer;
