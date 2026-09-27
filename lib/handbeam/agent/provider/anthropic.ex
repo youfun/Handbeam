@@ -93,7 +93,7 @@ defmodule Handbeam.Agent.Provider.Anthropic do
        ] ++ default_req_options(config) ++ Map.get(config, :req_options, []))
       |> Keyword.put(:retry, false)
 
-    case request_with_retry(req_opts, Map.get(config, :retry_count, @default_retry_count)) do
+    case request_with_retry(req_opts, Map.get(config, :retry_count, @default_retry_count), config) do
       {:ok, %{status: 200, body: resp_body}} ->
         parse_response(resp_body)
 
@@ -146,7 +146,7 @@ defmodule Handbeam.Agent.Provider.Anthropic do
        ] ++ default_req_options(config) ++ Map.get(config, :req_options, []))
       |> Keyword.put(:retry, false)
 
-    case request_with_retry(req_opts, Map.get(config, :retry_count, @default_retry_count)) do
+    case request_with_retry(req_opts, Map.get(config, :retry_count, @default_retry_count), config) do
       {:ok, %{status: 200} = resp} ->
         sse_acc = Map.get(resp.private, :sse_acc, initial_acc)
         build_stream_response(sse_acc)
@@ -377,13 +377,41 @@ defmodule Handbeam.Agent.Provider.Anthropic do
   end
 
   defp build_headers(config) do
-    [
-      {"x-api-key", config.api_key},
-      {"anthropic-version", Map.get(config, :api_version, @default_api_version)},
-      {"content-type", "application/json"},
-      {"user-agent", "pi-coding-agent"}
-    ] ++ Map.get(config, :extra_headers, [])
+    ([
+       auth_header(config),
+       {"anthropic-version", Map.get(config, :api_version, @default_api_version)},
+       {"content-type", "application/json"},
+       {"user-agent", Map.get(config, :user_agent) || "pi-coding-agent"}
+     ] ++ Map.get(config, :extra_headers, []))
+    |> drop_overridden_headers()
   end
+
+  # extra_headers win when a subscription adapter replaces the default identity.
+  defp drop_overridden_headers(headers) do
+    {kept, _seen} =
+      Enum.reduce(Enum.reverse(headers), {[], MapSet.new()}, fn {name, value}, {acc, seen} ->
+        key = String.downcase(name)
+
+        if MapSet.member?(seen, key) do
+          {acc, seen}
+        else
+          {[{name, value} | acc], MapSet.put(seen, key)}
+        end
+      end)
+
+    kept
+  end
+
+  # Ollama Cloud and OpenCode Go reject x-api-key-only auth. Their Messages
+  # routes require the same bearer token as Chat Completions.
+  defp auth_header(%{auth_header: "authorization"} = config),
+    do: {"authorization", "Bearer #{config.api_key}"}
+
+  defp auth_header(%{provider: provider} = config)
+       when provider in ["ollama", "opencode-go"],
+       do: {"authorization", "Bearer #{config.api_key}"}
+
+  defp auth_header(config), do: {"x-api-key", config.api_key}
 
   defp format_message(%Message{role: :tool_result, content: blocks}) when is_list(blocks) do
     %{"role" => "user", "content" => Enum.map(blocks, &format_content_block/1)}
@@ -657,17 +685,19 @@ defmodule Handbeam.Agent.Provider.Anthropic do
     [receive_timeout: Map.get(config, :receive_timeout, @default_receive_timeout)]
   end
 
-  defp request_with_retry(req_opts, retry_count) do
-    case Req.request(req_opts) do
+  defp request_with_retry(req_opts, retry_count, config) do
+    req_mod = Map.get(config, :req_module, Req)
+
+    case req_mod.request(req_opts) do
       {:error, %{reason: :closed}} when retry_count > 0 ->
-        request_with_retry(req_opts, retry_count - 1)
+        request_with_retry(req_opts, retry_count - 1, config)
 
       {:error, %Finch.TransportError{reason: :closed}} when retry_count > 0 ->
-        request_with_retry(req_opts, retry_count - 1)
+        request_with_retry(req_opts, retry_count - 1, config)
 
       {:error, %Finch.TransportError{reason: :timeout}} when retry_count > 0 ->
         Logger.warning(fn -> "[Anthropic] transport timeout, retrying (#{retry_count} left)" end)
-        request_with_retry(req_opts, retry_count - 1)
+        request_with_retry(req_opts, retry_count - 1, config)
 
       other ->
         other

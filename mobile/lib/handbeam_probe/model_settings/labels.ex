@@ -38,6 +38,8 @@ defmodule HandbeamProbe.ModelSettings.Labels do
   def protocol("openai-responses"), do: gettext("OpenAI Responses")
   def protocol("anthropic-messages"), do: gettext("Anthropic Messages")
   def protocol("stepfun-step-plan"), do: gettext("StepFun Step Plan")
+  def protocol("ollama-cloud"), do: gettext("Ollama Cloud")
+  def protocol("opencode-go"), do: gettext("OpenCode Go")
   def protocol(other), do: to_string(other)
 
   def key_status(:missing), do: gettext("API key: not configured")

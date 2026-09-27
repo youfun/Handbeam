@@ -89,7 +89,9 @@ defmodule HandbeamProbe.ModelSettings.Forms do
       "openai-chat-completions",
       "openai-responses",
       "anthropic-messages",
-      "stepfun-step-plan"
+      "stepfun-step-plan",
+      "ollama-cloud",
+      "opencode-go"
     ]
   end
 

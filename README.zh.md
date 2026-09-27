@@ -7,7 +7,7 @@
 - 读、改、写文件，跑 shell，模糊搜文件
 - 工作区权限（auto / prompt / deny）
 - 流式回复和工具状态
-- Anthropic / OpenAI 兼容协议（StepFun、DeepSeek、OpenRouter 等）
+- Anthropic / OpenAI 兼容协议（StepFun、Ollama、OpenCode Go、DeepSeek、OpenRouter 等）
 - MCP、BEAM 内省、跨会话记忆
 - Android / iOS 共用同一套 Coordinator / Runner
 

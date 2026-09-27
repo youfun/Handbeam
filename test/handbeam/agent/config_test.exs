@@ -16,6 +16,18 @@ defmodule Handbeam.Agent.ConfigTest do
       assert config.provider == Handbeam.Agent.Provider.OpenRouter
     end
 
+    test "uses Ollama adapter when provider field is ollama" do
+      config = Config.from_opts(provider_config: %{provider: "ollama", api: :openai})
+
+      assert config.provider == Handbeam.Agent.Provider.Ollama
+    end
+
+    test "uses OpenCode Go adapter when provider field is opencode-go" do
+      config = Config.from_opts(provider_config: %{provider: "opencode-go", api: :openai})
+
+      assert config.provider == Handbeam.Agent.Provider.OpenCodeGo
+    end
+
     test "uses DeepSeek adapter when provider field is deepseek" do
       config = Config.from_opts(provider_config: %{provider: "deepseek", api: :openai})
 

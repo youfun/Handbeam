@@ -319,6 +319,8 @@ defmodule Handbeam.Agent.ModelConfig do
   defp default_base_url_for_provider("zenmux"), do: "https://zenmux.ai/api/v1"
   defp default_base_url_for_provider("openrouter"), do: "https://openrouter.ai/api/v1"
   defp default_base_url_for_provider("deepseek"), do: "https://api.deepseek.com"
+  defp default_base_url_for_provider("ollama"), do: "https://ollama.com/v1"
+  defp default_base_url_for_provider("opencode-go"), do: "https://opencode.ai/zen/go/v1"
   defp default_base_url_for_provider("xai"), do: "https://api.x.ai/v1"
   defp default_base_url_for_provider("cursor"), do: "https://api2.cursor.sh"
   defp default_base_url_for_provider(_provider), do: nil
@@ -481,6 +483,8 @@ defmodule Handbeam.Agent.ModelConfig do
   def api_to_atom("anthropic-messages"), do: :anthropic
   def api_to_atom("stepfun"), do: :stepfun
   def api_to_atom("stepfun-step-plan"), do: :stepfun
+  def api_to_atom("ollama-cloud"), do: :openai
+  def api_to_atom("opencode-go"), do: :openai
   def api_to_atom("openai-responses"), do: :openai_responses
   def api_to_atom("cursor-agent"), do: :cursor_agent
   def api_to_atom("openai-codex-responses"), do: :openai_codex_responses

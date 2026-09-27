@@ -89,10 +89,7 @@ defmodule Handbeam.Agent.Provider.OpenAI do
         [
           url: "#{config.api_url}/v1/responses",
           method: :post,
-          headers: [
-            {"authorization", "Bearer #{config.api_key}"},
-            {"content-type", "application/json"}
-          ],
+          headers: request_headers(config),
           body: Handbeam.JSON.encode!(body)
         ],
         config
@@ -123,10 +120,7 @@ defmodule Handbeam.Agent.Provider.OpenAI do
 
     url = "#{config.api_url}/v1/responses"
 
-    headers = [
-      {"authorization", "Bearer #{config.api_key}"},
-      {"content-type", "application/json"}
-    ]
+    headers = request_headers(config)
 
     initial_acc = %{
       buffer: "",
@@ -558,12 +552,18 @@ defmodule Handbeam.Agent.Provider.OpenAI do
     end
   end
 
-  defp put_streamed_text(%{messages: [%Message{content: blocks} = message | rest]} = parsed, content)
+  defp put_streamed_text(
+         %{messages: [%Message{content: blocks} = message | rest]} = parsed,
+         content
+       )
        when is_binary(content) and content != "" and is_list(blocks) do
     if Enum.any?(blocks, &(is_map(&1) and (&1[:type] == "text" or &1["type"] == "text"))) do
       parsed
     else
-      %{parsed | messages: [%{message | content: blocks ++ [%{type: "text", text: content}]} | rest]}
+      %{
+        parsed
+        | messages: [%{message | content: blocks ++ [%{type: "text", text: content}]} | rest]
+      }
     end
   end
 
@@ -921,6 +921,13 @@ defmodule Handbeam.Agent.Provider.OpenAI do
 
   defp normalize_config(config) do
     Map.put_new(config, :api_url, config[:base_url] || @default_api_url)
+  end
+
+  defp request_headers(config) do
+    [
+      {"authorization", "Bearer #{config.api_key}"},
+      {"content-type", "application/json"}
+    ] ++ Map.get(config, :extra_headers, [])
   end
 
   defp build_req_opts(base, config) do

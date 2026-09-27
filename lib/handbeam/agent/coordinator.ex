@@ -306,10 +306,42 @@ defmodule Handbeam.Agent.Coordinator do
     |> Keyword.put(:session_id, conversation_id)
     |> Keyword.put(:conversation_id, conversation_id)
     |> ensure_run_id()
+    |> put_saved_provider()
     |> put_transcript_history(conversation_id)
     |> put_working_directory()
     |> put_skills()
     |> put_advisor_pin()
+  end
+
+  # A composite model id is the saved catalog entry. Load that provider so a
+  # subscription adapter is selected from models.json, not from a caller that
+  # only forwarded transport options such as a test plug.
+  defp put_saved_provider(opts) do
+    model = Keyword.get(opts, :model)
+
+    with true <- is_binary(model) and String.contains?(model, "/"),
+         {:ok, saved, model_id} <- saved_provider_config(opts, model) do
+      caller = Keyword.get(opts, :provider_config, %{})
+
+      opts
+      |> Keyword.put(:model, model_id)
+      |> Keyword.put(:provider_config, Map.merge(saved, caller))
+    else
+      _ -> opts
+    end
+  end
+
+  defp saved_provider_config(opts, model) do
+    cond do
+      free_chat?(opts) ->
+        HandbeamWeb.WorkspaceLive.ModelSelection.resolve_global_model(model)
+
+      match?({:ok, _}, Keyword.fetch(opts, :workspace_path)) ->
+        Handbeam.Agent.ModelConfig.resolve_model_for_workspace(opts[:workspace_path], model)
+
+      true ->
+        :error
+    end
   end
 
   defp put_working_directory(opts) do

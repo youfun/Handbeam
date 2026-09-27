@@ -250,6 +250,7 @@ defmodule HandbeamWeb.AvailableModelsLive do
     form =
       previous
       |> Map.merge(params)
+      |> maybe_apply_subscription_preset()
       |> hydrate_add_provider_form(force?)
 
     {:noreply, assign(socket, :add_provider_form, form)}
@@ -261,7 +262,11 @@ defmodule HandbeamWeb.AvailableModelsLive do
   end
 
   def handle_event("submit_add_provider", %{"add_provider" => params}, socket) do
-    params = Map.merge(socket.assigns.add_provider_form, params)
+    params =
+      socket.assigns.add_provider_form
+      |> Map.merge(params)
+      |> maybe_apply_subscription_preset()
+
     provider_id = params["id"] |> to_string() |> String.trim()
     name = params["name"] |> to_string() |> String.trim()
     api = params["api"] |> to_string() |> String.trim()
@@ -277,30 +282,17 @@ defmodule HandbeamWeb.AvailableModelsLive do
       not String.match?(provider_id, ~r/^[a-z0-9_-]+$/) ->
         {:noreply, assign(socket, :form_error, gettext("Provider ID 只能包含小写字母、数字、横线和下划线"))}
 
-      model_id == "" ->
+      model_id == "" and subscription_seed_models(provider_id) == [] ->
         {:noreply, assign(socket, :form_error, gettext("需要至少一个模型"))}
 
       true ->
-        model_cost = build_cost_map(params)
-
         provider_attrs = %{
           "provider" => runtime_provider(params, provider_id),
           "baseUrl" => base_url,
           "api" => api,
           "apiKey" => api_key,
           "name" => present_or(name, display_name(provider_id)),
-          "models" => [
-            %{
-              "id" => model_id,
-              "name" => present_or(model_name, model_id),
-              "input" => ["text"],
-              "contextWindow" => parse_int(params["context_window"], 128_000),
-              "maxTokens" => parse_int(params["max_tokens"], 8192),
-              "cost" => model_cost
-            }
-            |> maybe_put_reasoning(params, model_id)
-            |> maybe_drop_empty_cost()
-          ]
+          "models" => provider_models(params, provider_id, model_id, model_name)
         }
 
         case ModelConfig.add_provider(provider_id, provider_attrs) do
@@ -1006,6 +998,54 @@ defmodule HandbeamWeb.AvailableModelsLive do
       current_id
     else
       providers |> List.first() |> then(&if(&1, do: &1.id))
+    end
+  end
+
+  @subscription_presets ["ollama", "ollama-cloud", "ollama_cloud", "opencode-go", "opencode_go"]
+
+  defp maybe_apply_subscription_preset(form) do
+    case Handbeam.Agent.Provider.SubscriptionCatalog.preset(form["id"]) do
+      nil ->
+        form
+
+      preset ->
+        form
+        |> Map.put("id", preset["provider"])
+        |> Map.put("name", preset["name"])
+        |> Map.put("base_url", preset["baseUrl"])
+        |> Map.put("api", preset["api"])
+        |> Map.put("provider_runtime", preset["provider"])
+    end
+  end
+
+  defp provider_models(params, provider_id, model_id, model_name) do
+    case subscription_seed_models(provider_id) do
+      [_ | _] = models ->
+        models
+
+      [] ->
+        [
+          %{
+            "id" => model_id,
+            "name" => present_or(model_name, model_id),
+            "input" => ["text"],
+            "contextWindow" => parse_int(params["context_window"], 128_000),
+            "maxTokens" => parse_int(params["max_tokens"], 8192),
+            "cost" => build_cost_map(params)
+          }
+          |> maybe_put_reasoning(params, model_id)
+          |> maybe_drop_empty_cost()
+        ]
+    end
+  end
+
+  defp subscription_seed_models(provider_id) do
+    case Handbeam.Agent.Provider.SubscriptionCatalog.preset(provider_id) do
+      %{"models" => models} when provider_id in @subscription_presets and is_list(models) ->
+        models
+
+      _ ->
+        []
     end
   end
 

@@ -240,6 +240,8 @@ defmodule Handbeam.LlmDbDefaults do
   defp api_type_for(:openai), do: "openai"
   defp api_type_for(:anthropic), do: "anthropic-messages"
   defp api_type_for(:stepfun), do: "stepfun-step-plan"
+  defp api_type_for(:ollama_cloud), do: "ollama-cloud"
+  defp api_type_for(:opencode_go), do: "opencode-go"
   defp api_type_for(_provider), do: "openai-compatible"
 
   defp runtime_provider_for(:openai), do: "openai"
@@ -248,6 +250,8 @@ defmodule Handbeam.LlmDbDefaults do
   defp runtime_provider_for(:zenmux), do: "zenmux"
   defp runtime_provider_for(:openrouter), do: "openrouter"
   defp runtime_provider_for(:deepseek), do: "deepseek"
+  defp runtime_provider_for(:ollama_cloud), do: "ollama"
+  defp runtime_provider_for(:opencode_go), do: "opencode-go"
   defp runtime_provider_for(_provider), do: "openai-compat"
 
   defp numeric_cost(cost, key) do

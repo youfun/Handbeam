@@ -144,6 +144,8 @@ defmodule Handbeam.Agent.Config do
     - `provider_config[:provider] == "zenmux"` → `Handbeam.Agent.Provider.ZenMux`
     - `provider_config[:provider] == "openrouter"` → `Handbeam.Agent.Provider.OpenRouter`
     - `provider_config[:provider] == "deepseek"` → `Handbeam.Agent.Provider.DeepSeek`
+    - `provider_config[:provider] == "ollama"` → `Handbeam.Agent.Provider.Ollama`
+    - `provider_config[:provider] == "opencode-go"` → `Handbeam.Agent.Provider.OpenCodeGo`
     - `provider_config[:api] == :anthropic` → `Handbeam.Agent.Provider.Anthropic`
       (even when the provider key is StepFun/Step Plan; this is the
       Anthropic Messages wire protocol)
@@ -171,6 +173,11 @@ defmodule Handbeam.Agent.Config do
     do: Handbeam.Agent.Provider.OpenRouter
 
   def resolve_provider_from_api(_api, _model, "deepseek"), do: Handbeam.Agent.Provider.DeepSeek
+  def resolve_provider_from_api(_api, _model, "ollama"), do: Handbeam.Agent.Provider.Ollama
+
+  def resolve_provider_from_api(_api, _model, "opencode-go"),
+    do: Handbeam.Agent.Provider.OpenCodeGo
+
   def resolve_provider_from_api(_api, _model, "cursor"), do: Handbeam.Agent.Provider.Cursor
 
   def resolve_provider_from_api(:cursor_agent, _model, _provider),

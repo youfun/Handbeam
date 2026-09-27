@@ -394,6 +394,12 @@
           >
             StepFun Step Plan
           </option>
+          <option value="ollama-cloud" selected={@add_provider_form["api"] == "ollama-cloud"}>
+            Ollama Cloud
+          </option>
+          <option value="opencode-go" selected={@add_provider_form["api"] == "opencode-go"}>
+            OpenCode Go
+          </option>
           <option
             value="openai-compatible"
             selected={@add_provider_form["api"] == "openai-compatible"}
@@ -633,6 +639,12 @@
             selected={@edit_provider_form["api"] == "stepfun-step-plan"}
           >
             StepFun Step Plan
+          </option>
+          <option value="ollama-cloud" selected={@edit_provider_form["api"] == "ollama-cloud"}>
+            Ollama Cloud
+          </option>
+          <option value="opencode-go" selected={@edit_provider_form["api"] == "opencode-go"}>
+            OpenCode Go
           </option>
           <option
             value="openai-compatible"

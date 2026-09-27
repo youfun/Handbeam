@@ -7,7 +7,7 @@ A local agent assistant. Chat, tools, and memory stay on the machine. One OTP ru
 - Read, edit, and write files; run a shell; fuzzy-search files; locate code by symbol or configured embeddings (`code_search` returns paths and line numbers, then `read` loads the file)
 - Workspace permissions (auto / prompt / deny)
 - Streaming replies and tool status
-- Anthropic and OpenAI-compatible APIs (StepFun, DeepSeek, OpenRouter, and others)
+- Anthropic and OpenAI-compatible APIs (StepFun, Ollama, OpenCode Go, DeepSeek, OpenRouter, and others)
 - MCP, BEAM introspection, and memory across sessions
 - Same Coordinator / Runner on Android and iOS
 

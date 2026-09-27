@@ -489,6 +489,38 @@ defmodule HandbeamWeb.AvailableModelsLiveTest do
     assert html =~ "composer-2.5"
   end
 
+  test "adding an Ollama Cloud subscription stores the cloud catalog without a typed model", %{
+    conn: conn
+  } do
+    {:ok, view, _html} =
+      live_isolated(conn, HandbeamWeb.AvailableModelsLive, session: %{"embedded" => "true"})
+
+    view
+    |> element(~s|button[phx-click="open_add_provider"]|)
+    |> render_click()
+
+    render_change(view, "update_add_provider", %{
+      "add_provider" => %{"id" => "ollama_cloud", "api_key" => "env:OLLAMA_API_KEY"}
+    })
+
+    html = render(view)
+    assert html =~ ~s(value="Ollama")
+    assert html =~ ~s(value="https://ollama.com/v1")
+    assert html =~ "Ollama Cloud"
+
+    render_submit(view, "submit_add_provider", %{
+      "add_provider" => %{"id" => "ollama", "api_key" => "env:OLLAMA_API_KEY"}
+    })
+
+    {:ok, config} = ModelConfig.config_file_path() |> File.read!() |> Jason.decode()
+    provider = get_in(config, ["providers", "ollama"])
+
+    assert provider["baseUrl"] == "https://ollama.com/v1"
+    assert provider["api"] == "ollama-cloud"
+    assert provider["provider"] == "ollama"
+    assert Enum.any?(provider["models"], &(&1["id"] == "gemma4:31b"))
+  end
+
   defp isolate_sigil_home! do
     old_home = System.get_env("HOME")
 
