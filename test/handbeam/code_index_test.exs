@@ -94,9 +94,34 @@ defmodule Handbeam.CodeIndexTest do
     Store.close(store)
 
     assert {:error, :identity_mismatch} = Store.open(dir, root, "ws-b")
+    assert {:error, :identity_mismatch} = CodeIndex.open_store(dir, "/other", "ws-b")
+    assert {:ok, kept} = Store.open(dir, root, "ws-a")
+    Store.close(kept)
     assert {:ok, rebuilt} = Store.rebuild(dir, "/other", "ws-b")
     assert Store.meta(rebuilt, "workspace_id") == "ws-b"
     Store.close(rebuilt)
+  end
+
+  test "search rebinds a same-root index after the workspace id changes", %{root: root} do
+    File.mkdir_p!(Path.join(root, "lib"))
+
+    File.write!(Path.join(root, "lib/auth.ex"), """
+    defmodule Auth do
+      def middleware(conn), do: conn
+    end
+    """)
+
+    assert {:ok, _} = CodeIndex.search(root, "ws-old", "middleware", budget_ms: 5_000)
+    assert {:ok, dir} = CodeIndex.index_dir(root, "ws-old")
+    assert File.exists?(Path.join(dir, "index.sqlite"))
+
+    assert {:ok, result} = CodeIndex.search(root, "ws-new", "middleware", budget_ms: 5_000)
+    assert Enum.any?(result.hits, &(&1.path == "lib/auth.ex"))
+
+    assert {:ok, store} = Store.open(dir, root, "ws-new")
+    assert Store.meta(store, "workspace_id") == "ws-new"
+    assert Store.meta(store, "workspace_root") == Path.expand(root)
+    Store.close(store)
   end
 
   test "keyword search works with shell false and does not need git", %{root: root} do
@@ -214,6 +239,42 @@ defmodule Handbeam.CodeIndexTest do
     assert text =~ "Do not treat this as file contents."
     refute text =~ "defmodule Auth"
     assert details.file_path == "lib/auth.ex"
+  end
+
+  test "removing a workspace deletes its local code index", %{root: root} do
+    alias Handbeam.WorkspaceStore
+
+    previous = System.get_env("HANDBEAM_WORKSPACES_FILE")
+
+    storage =
+      Path.join(System.tmp_dir!(), "workspaces_#{System.unique_integer([:positive])}.json")
+
+    System.put_env("HANDBEAM_WORKSPACES_FILE", storage)
+
+    on_exit(fn ->
+      if previous,
+        do: System.put_env("HANDBEAM_WORKSPACES_FILE", previous),
+        else: System.delete_env("HANDBEAM_WORKSPACES_FILE")
+
+      File.rm(storage)
+    end)
+
+    File.mkdir_p!(Path.join(root, "lib"))
+
+    File.write!(
+      Path.join(root, "lib/auth.ex"),
+      "defmodule Auth, do: def middleware(conn), do: conn"
+    )
+
+    assert {:ok, workspace} = WorkspaceStore.add(root, name: "Indexed")
+    assert {:ok, _} = CodeIndex.search(root, workspace["id"], "middleware", budget_ms: 5_000)
+    assert {:ok, dir} = CodeIndex.index_dir(root, workspace["id"])
+    assert File.exists?(Path.join(dir, "index.sqlite"))
+
+    assert {:ok, _removed} = WorkspaceStore.remove(workspace["id"])
+    refute File.exists?(Path.join(dir, "index.sqlite"))
+    refute File.exists?(Path.join(dir, "index.sqlite-wal"))
+    refute File.exists?(Path.join(dir, "index.sqlite-shm"))
   end
 
   test "host seeds include code_search on desktop and phone" do

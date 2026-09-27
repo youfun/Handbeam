@@ -301,6 +301,7 @@ defmodule Handbeam.WorkspaceStore do
           Map.put(data, "workspaces", Enum.reject(workspaces, &(&1["id"] == id)))
 
         write_storage(storage_path(), updated_data)
+        _ = Handbeam.CodeIndex.delete_local(workspace["path"])
         {:ok, workspace}
     end
   end

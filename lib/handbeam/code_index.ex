@@ -37,7 +37,7 @@ defmodule Handbeam.CodeIndex do
     budget = Keyword.get(opts, :budget_ms, @sync_budget_ms)
 
     with {:ok, dir} <- Location.resolve(workspace_root, workspace_id),
-         {:ok, store} <- Store.open(dir, workspace_root, workspace_id) do
+         {:ok, store} <- open_or_rebind(dir, workspace_root, workspace_id) do
       outcome =
         Sync.sync(store, workspace_root, budget, Keyword.put(opts, :workspace_id, workspace_id))
 
@@ -101,10 +101,59 @@ defmodule Handbeam.CodeIndex do
     end
   end
 
+  @doc false
+  @spec open_store(Path.t(), Path.t(), String.t()) :: {:ok, Store.t()} | {:error, term()}
+  def open_store(dir, workspace_root, workspace_id) do
+    open_or_rebind(dir, workspace_root, workspace_id)
+  end
+
+  @doc "Remove a workspace-local index. Fallback indexes live outside the workspace."
+  @spec delete_local(Path.t()) :: :ok
+  def delete_local(workspace_root) when is_binary(workspace_root) do
+    root = Path.expand(workspace_root)
+    dir = Path.join([root, ".handbeam", "code-index"])
+
+    if File.dir?(dir) do
+      Enum.each(["index.sqlite", "index.sqlite-wal", "index.sqlite-shm"], fn name ->
+        _ = File.rm(Path.join(dir, name))
+      end)
+    end
+
+    :ok
+  end
+
+  def delete_local(_), do: :ok
+
   @doc "True when models.json has a usable embeddings section. Does not read the key."
   @spec embeddings_configured?(keyword()) :: boolean()
   def embeddings_configured?(opts \\ []) do
     match?({:ok, _}, Embedder.HTTP.config(opts))
+  end
+
+  # A removed workspace is added back with a new id. The local index still
+  # names the old id, so reuse it only when the root matches and rebind.
+  defp open_or_rebind(dir, workspace_root, workspace_id) do
+    case Store.open(dir, workspace_root, workspace_id) do
+      {:ok, store} ->
+        {:ok, store}
+
+      {:error, :identity_mismatch} ->
+        if same_root?(dir, workspace_root) do
+          Store.rebuild(dir, workspace_root, workspace_id)
+        else
+          {:error, :identity_mismatch}
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp same_root?(dir, workspace_root) do
+    case Store.read_identity(dir) do
+      {:ok, _id, root} -> root == Path.expand(workspace_root)
+      _ -> false
+    end
   end
 
   defp search_mode(opts) do

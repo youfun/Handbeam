@@ -53,6 +53,25 @@ defmodule Handbeam.CodeIndex.Store do
   @spec close(t()) :: :ok
   def close(%{db: db}), do: Sqlite3.close(db)
 
+  @doc "Read stored identity without binding it to a caller."
+  @spec read_identity(Path.t()) :: {:ok, String.t() | nil, String.t() | nil} | {:error, term()}
+  def read_identity(dir) do
+    case Sqlite3.open(Path.join(dir, @db)) do
+      {:ok, db} ->
+        try do
+          case identity(db) do
+            {:empty, _} -> {:ok, nil, nil}
+            {:ok, id, root} -> {:ok, id, root}
+          end
+        after
+          Sqlite3.close(db)
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
   @spec rebuild(Path.t(), Path.t(), String.t()) :: {:ok, t()} | {:error, term()}
   def rebuild(dir, workspace_root, workspace_id) do
     path = Path.join(dir, @db)
