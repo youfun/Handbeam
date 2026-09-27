@@ -11,6 +11,8 @@ import { ConversationHover } from "./hooks/conversation_hover.js";
 import { ConversationActivity } from "./hooks/conversation_activity.js";
 
 const ConversationSidebar = {
+  ...ConversationHover,
+  ...ConversationActivity,
   mounted() {
     ConversationHover.mounted.call(this);
     ConversationActivity.mounted.call(this);
@@ -22,17 +24,7 @@ const ConversationSidebar = {
   destroyed() {
     ConversationHover.destroyed.call(this);
     ConversationActivity.destroyed.call(this);
-  },
-  show: ConversationHover.show,
-  place: ConversationHover.place,
-  hide: ConversationHover.hide,
-  scheduleHide: ConversationHover.scheduleHide,
-  clearHide: ConversationHover.clearHide,
-  showWorkspace: ConversationHover.showWorkspace,
-  placeWorkspace: ConversationHover.placeWorkspace,
-  hideWorkspace: ConversationHover.hideWorkspace,
-  scheduleHideWorkspace: ConversationHover.scheduleHideWorkspace,
-  clearHideWorkspace: ConversationHover.clearHideWorkspace
+  }
 };
 import { LocalWebGPUProbe } from "./hooks/local_webgpu_probe.js";
 import { GhosttyTerminal } from "../vendor/ghostty.js";

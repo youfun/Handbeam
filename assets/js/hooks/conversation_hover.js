@@ -48,9 +48,14 @@ export const ConversationHover = {
       if (this.row) this.place(this.row);
       if (this.workspaceRow) this.placeWorkspace(this.workspaceRow);
     };
+    this.onPointerDown = () => {
+      this.hide();
+      this.hideWorkspace();
+    };
 
     this.el.addEventListener("pointerover", this.onOver);
     this.el.addEventListener("pointerout", this.onOut);
+    this.el.addEventListener("pointerdown", this.onPointerDown);
     if (this.scroll) this.scroll.addEventListener("scroll", this.onScroll, { passive: true });
     if (this.card) {
       this.card.addEventListener("pointerenter", () => this.clearHide());
@@ -73,14 +78,16 @@ export const ConversationHover = {
 
   updated() {
     this.card = this.el.querySelector("#conversation-hover-card");
-    if (this.row && this.row.isConnected) this.show(this.row);
-    else this.hide();
+    this.workspaceCard = this.el.querySelector("#workspace-hover-card");
+    this.hide();
+    this.hideWorkspace();
   },
 
   destroyed() {
     this.clearHide();
     this.el.removeEventListener("pointerover", this.onOver);
     this.el.removeEventListener("pointerout", this.onOut);
+    this.el.removeEventListener("pointerdown", this.onPointerDown);
     if (this.scroll) this.scroll.removeEventListener("scroll", this.onScroll);
   },
 
