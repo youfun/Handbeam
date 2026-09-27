@@ -120,6 +120,7 @@ defmodule Handbeam.Tool.RegistryTest do
       assert "open_file" in names
       assert "share_file" in names
       assert "run_elixir_script" in names
+
       for tool <- ~w(web_fetch skill task job_status job_cancel create_thread send_thread_message),
           do: assert(tool in names)
 
@@ -349,5 +350,55 @@ defmodule Handbeam.Tool.RegistryTest do
     def description, do: "b"
     def input_schema, do: %{"type" => "object", "properties" => %{"x" => %{}}}
     def execute(_input, _context), do: {:ok, "b"}
+  end
+
+  defmodule NestedOnlyProbe do
+    @behaviour Handbeam.Agent.Tool
+
+    def name, do: "nested_only_probe"
+    def description, do: "secret nested probe"
+    def input_schema, do: %{"type" => "object", "properties" => %{}}
+    def nested_only?, do: true
+    def execute(_input, _context), do: {:ok, "nested"}
+  end
+
+  describe "nested-only exposure" do
+    test "omits nested-only module and virtual tools from provider defs and prompt snippets" do
+      assert :ok = Registry.register(NestedOnlyProbe)
+
+      assert :ok =
+               Registry.register_virtual(
+                 "virtual_nested_probe",
+                 "hidden virtual",
+                 %{},
+                 fn _input, _context -> {:ok, "virtual"} end,
+                 nested_only?: true
+               )
+
+      assert {:ok, %{nested_only?: true}} = Registry.get("nested_only_probe")
+      assert {:ok, %{nested_only?: true}} = Registry.get("virtual_nested_probe")
+      assert "nested_only_probe" in Registry.list()
+
+      refute Enum.any?(
+               Registry.tool_defs(),
+               &(&1.name in ["nested_only_probe", "virtual_nested_probe"])
+             )
+
+      session_id = "nested-session-#{System.unique_integer([:positive])}"
+      :ok = Registry.set_active_for_session(session_id, ["nested_only_probe", "read"])
+
+      session_defs = Registry.tool_defs_for_session(session_id)
+      refute Enum.any?(session_defs, &(&1.name == "nested_only_probe"))
+      assert Enum.any?(session_defs, &(&1.name == "read"))
+
+      refute Registry.prompt_snippets() =~ "nested_only_probe"
+      refute Registry.prompt_snippets() =~ "virtual_nested_probe"
+      refute Registry.prompt_snippets() =~ "secret nested probe"
+      refute Registry.prompt_snippets_for_session(session_id) =~ "nested_only_probe"
+      assert Registry.prompt_snippets_for_session(session_id) =~ "read"
+    after
+      Registry.unregister("nested_only_probe")
+      Registry.unregister("virtual_nested_probe")
+    end
   end
 end

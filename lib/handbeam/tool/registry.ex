@@ -74,7 +74,11 @@ defmodule Handbeam.Tool.Registry do
     GenServer.call(__MODULE__, :list)
   end
 
-  @doc "Get all tool definitions for provider consumption."
+  @doc """
+  Tool definitions declared to the provider.
+
+  Nested-only tools stay registered and executable, but are omitted here.
+  """
   @spec tool_defs() :: [map()]
   def tool_defs do
     GenServer.call(__MODULE__, :tool_defs)
@@ -110,10 +114,31 @@ defmodule Handbeam.Tool.Registry do
     GenServer.call(__MODULE__, {:active_for_session, session_id})
   end
 
-  @doc "Get tool_defs filtered by session's active set. nil = all tools."
+  @doc """
+  Session tool definitions declared to the provider.
+
+  Nested-only tools are omitted even when the session active set names them.
+  `nil` means every declared tool, not every registered tool.
+  """
   @spec tool_defs_for_session(String.t()) :: [map()]
   def tool_defs_for_session(session_id) when is_binary(session_id) do
     GenServer.call(__MODULE__, {:tool_defs_for_session, session_id})
+  end
+
+  @doc """
+  Prompt text for tools the provider is allowed to see.
+
+  Nested-only tools are omitted. An empty active set yields an empty string.
+  """
+  @spec prompt_snippets() :: String.t()
+  def prompt_snippets do
+    GenServer.call(__MODULE__, :prompt_snippets)
+  end
+
+  @doc "Session-scoped prompt snippets. Nested-only tools are omitted."
+  @spec prompt_snippets_for_session(String.t()) :: String.t()
+  def prompt_snippets_for_session(session_id) when is_binary(session_id) do
+    GenServer.call(__MODULE__, {:prompt_snippets_for_session, session_id})
   end
 
   # ── Server Callbacks ──
@@ -366,15 +391,7 @@ defmodule Handbeam.Tool.Registry do
   end
 
   def handle_call(:tool_defs, _from, state) do
-    defs =
-      Enum.map(
-        state.tools,
-        fn {_k, entry} ->
-          %{name: entry.name, description: entry.description, input_schema: entry.input_schema}
-        end
-      )
-
-    {:reply, defs, state}
+    {:reply, declared_defs(state.tools, nil), state}
   end
 
   def handle_call(:tool_fns, _from, state) do
@@ -404,27 +421,20 @@ defmodule Handbeam.Tool.Registry do
   end
 
   def handle_call({:tool_defs_for_session, session_id}, _from, state) do
-    defs =
-      case Map.get(state.active_sets, session_id) do
-        nil ->
-          Enum.map(state.tools, fn {_k, entry} ->
-            %{name: entry.name, description: entry.description, input_schema: entry.input_schema}
-          end)
+    {:reply, declared_defs(state.tools, Map.get(state.active_sets, session_id)), state}
+  end
 
-        active_names ->
-          name_set = MapSet.new(active_names)
+  def handle_call(:prompt_snippets, _from, state) do
+    {:reply, format_prompt_snippets(state.tools, nil), state}
+  end
 
-          state.tools
-          |> Enum.filter(fn {name, _entry} -> MapSet.member?(name_set, name) end)
-          |> Enum.map(fn {_name, entry} ->
-            %{name: entry.name, description: entry.description, input_schema: entry.input_schema}
-          end)
-      end
-
-    {:reply, defs, state}
+  def handle_call({:prompt_snippets_for_session, session_id}, _from, state) do
+    {:reply, format_prompt_snippets(state.tools, Map.get(state.active_sets, session_id)), state}
   end
 
   defp build_module_entry(mod, owner) do
+    meta = if is_nil(owner), do: %{}, else: %{owner: owner}
+
     %{
       kind: :module,
       name: mod.name(),
@@ -440,7 +450,8 @@ defmodule Handbeam.Tool.Registry do
       concurrent?:
         if(function_exported?(mod, :concurrent?, 0), do: mod.concurrent?(), else: true),
       timeout_ms: if(function_exported?(mod, :timeout_ms, 0), do: mod.timeout_ms(), else: nil),
-      meta: if(is_nil(owner), do: %{}, else: %{owner: owner})
+      nested_only?: nested_only?(mod, meta),
+      meta: meta
     }
   end
 
@@ -449,6 +460,8 @@ defmodule Handbeam.Tool.Registry do
   end
 
   defp build_virtual_entry(name, description, input_schema, executor, opts) do
+    meta = Keyword.get(opts, :meta, %{})
+
     %{
       kind: :virtual,
       name: name,
@@ -458,7 +471,46 @@ defmodule Handbeam.Tool.Registry do
       executor: executor,
       max_result_chars: Keyword.get(opts, :max_result_chars, :unlimited),
       concurrent?: Keyword.get(opts, :concurrent?, true),
-      meta: Keyword.get(opts, :meta, %{})
+      timeout_ms: Keyword.get(opts, :timeout_ms),
+      nested_only?: nested_only?(nil, meta) or Keyword.get(opts, :nested_only?, false),
+      meta: meta
     }
+  end
+
+  defp nested_only?(mod, meta) do
+    module_flag =
+      is_atom(mod) and function_exported?(mod, :nested_only?, 0) and mod.nested_only?()
+
+    module_flag or truthy?(meta[:nested_only]) or truthy?(meta["nested_only"]) or
+      meta[:exposure] == "nested" or meta["exposure"] == "nested"
+  end
+
+  defp truthy?(value), do: value in [true, "true"]
+
+  defp declared_defs(tools, active_names) do
+    tools
+    |> declared_entries(active_names)
+    |> Enum.map(fn entry ->
+      %{name: entry.name, description: entry.description, input_schema: entry.input_schema}
+    end)
+  end
+
+  defp format_prompt_snippets(tools, active_names) do
+    tools
+    |> declared_entries(active_names)
+    |> Enum.map_join("\n", fn entry ->
+      "- #{entry.name}: #{entry.description}"
+    end)
+  end
+
+  defp declared_entries(tools, active_names) do
+    name_set = if is_list(active_names), do: MapSet.new(active_names)
+
+    tools
+    |> Map.values()
+    |> Enum.filter(fn entry ->
+      not entry.nested_only? and (is_nil(name_set) or MapSet.member?(name_set, entry.name))
+    end)
+    |> Enum.sort_by(& &1.name)
   end
 end
