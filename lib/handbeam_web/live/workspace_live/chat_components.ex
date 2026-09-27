@@ -704,8 +704,8 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
                 data-index={item.index}
                 role="listitem"
               >
-                <span class="conversation-nav-item-index">{item.index}</span>
                 <span class="conversation-nav-item-summary">{item.summary}</span>
+                <span :if={item.age != ""} class="conversation-nav-item-age">{item.age}</span>
               </button>
             </div>
           </div>

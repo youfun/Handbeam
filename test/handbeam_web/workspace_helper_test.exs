@@ -264,6 +264,7 @@ defmodule HandbeamWeb.WorkspaceHelperTest do
       assert Enum.map(items, & &1.id) == ["u1", "u2", "u3"]
       assert Enum.map(items, & &1.index) == [1, 2, 3]
       assert hd(items).summary == "第一轮"
+      assert hd(items).age == ""
       assert Enum.at(items, 1).summary == String.duplicate("问", 36) <> "…"
       assert List.last(items).summary == "atom keyed"
     end
@@ -285,6 +286,17 @@ defmodule HandbeamWeb.WorkspaceHelperTest do
                {"img", "(image)"},
                {"empty", "(empty message)"}
              ]
+    end
+
+    test "formats the message age on the right of the navigator" do
+      now = DateTime.utc_now() |> DateTime.add(-7 * 60, :second) |> DateTime.to_iso8601()
+
+      [item] =
+        WorkspaceHelper.user_message_nav_items([
+          %{"id" => "u1", "content_type" => "user_msg", "content" => "问时间", "created_at" => now}
+        ])
+
+      assert item.age == "7m ago"
     end
 
     test "returns empty list for non-lists" do

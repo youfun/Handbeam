@@ -117,7 +117,8 @@ defmodule HandbeamWeb.WorkspaceHelper do
             %{
               id: id,
               index: index,
-              summary: user_message_nav_summary(content, attachments)
+              summary: user_message_nav_summary(content, attachments),
+              age: user_message_nav_age(entry)
             }
           ]
 
@@ -135,6 +136,26 @@ defmodule HandbeamWeb.WorkspaceHelper do
   end
 
   defp user_msg_entry?(_entry), do: false
+
+  defp user_message_nav_age(entry) do
+    timestamp = Map.get(entry, "created_at") || Map.get(entry, :created_at)
+
+    case timestamp && DateTime.from_iso8601(timestamp) do
+      {:ok, dt, _} ->
+        diff = DateTime.diff(DateTime.utc_now(), dt, :second)
+
+        cond do
+          diff < 60 -> "now"
+          diff < 3_600 -> "#{div(diff, 60)}m ago"
+          diff < 86_400 -> "#{div(diff, 3_600)}h ago"
+          diff < 86_400 * 30 -> "#{div(diff, 86_400)}d ago"
+          true -> "#{div(diff, 86_400 * 30)}mo ago"
+        end
+
+      _ ->
+        ""
+    end
+  end
 
   defp user_message_nav_summary(content, attachments) when is_binary(content) do
     trimmed = String.trim(content)
