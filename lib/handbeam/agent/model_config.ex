@@ -663,22 +663,57 @@ defmodule Handbeam.Agent.ModelConfig do
           if model_id && not model_enabled?(model_meta) do
             {:error, "Model #{model_id} is disabled"}
           else
-            case assemble_provider_config(
-                   provider_id,
-                   provider_config,
-                   model_id,
-                   normalized_url,
-                   api,
-                   provider,
-                   model_meta
-                 ) do
-              {:ok, config} -> {:ok, config}
-              {:error, _} = error -> error
+            case test_provider_override(provider_id, model_id) do
+              {:ok, _config} = overridden ->
+                overridden
+
+              :passthrough ->
+                case assemble_provider_config(
+                       provider_id,
+                       provider_config,
+                       model_id,
+                       normalized_url,
+                       api,
+                       provider,
+                       model_meta
+                     ) do
+                  {:ok, config} -> {:ok, config}
+                  {:error, _} = error -> error
+                end
             end
           end
       end
     else
       {:error, "No global model configuration found"}
+    end
+  end
+
+  # Tests set this so a LiveView send resolves to FakeProvider instead of the
+  # catalog adapter. Production never sets it, so a normal resolve still reads
+  # models.json and can reach a real provider.
+  defp test_provider_override(provider_id, model_id) do
+    case Application.get_env(:handbeam, :test_provider) do
+      %{module: module, scenario: scenario} = override ->
+        config = %{
+          provider: "fake",
+          api: :openai,
+          model: model_id,
+          provider_key: provider_id,
+          scenario: scenario,
+          base_url: "http://127.0.0.1"
+        }
+
+        config =
+          case override[:provider_config] do
+            extra when is_map(extra) -> Map.merge(config, extra)
+            _ -> config
+          end
+
+        _ = module
+        {:ok, config}
+
+      _ ->
+        :passthrough
     end
   end
 

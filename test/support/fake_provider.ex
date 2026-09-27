@@ -93,9 +93,25 @@ defmodule Handbeam.TestSupport.FakeProvider do
       :prompt_too_long_once ->
         do_complete(messages, tool_defs, :prompt_too_long_once, Map.get(config, :turn, 0))
 
+      {:script, fun} when is_function(fun, 2) ->
+        # LiveView runs with streaming: true. Emit the scripted text as one
+        # chunk so the composer path and the non-streaming path share a result.
+        result = do_complete(messages, tool_defs, scenario, Map.get(config, :turn, 0))
+        emit_scripted_chunks(result, on_chunk)
+        result
+
       _ ->
-        complete(messages, tool_defs, config)
+        complete(messages, tool_defs, Map.delete(config, :stream))
     end
+  end
+
+  defp emit_scripted_chunks({:ok, %{messages: messages}}, on_chunk) do
+    messages
+    |> Enum.filter(&match?(%Message{role: :assistant}, &1))
+    |> Enum.each(fn message ->
+      text = Message.text(message)
+      if is_binary(text) and text != "", do: on_chunk.(text)
+    end)
   end
 
   # ── Scenario dispatch ──

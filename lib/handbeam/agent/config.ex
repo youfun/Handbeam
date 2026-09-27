@@ -86,8 +86,9 @@ defmodule Handbeam.Agent.Config do
 
   Provider selection priority:
     1. Explicit `:provider` module in opts
-    2. `provider_config[:provider]` → maps "stepfun" to StepFun, "openai" to OpenAI Responses, "openai-compat" to OpenAICompat
-    3. Default → `Handbeam.Agent.Provider.OpenAICompat`
+    2. `:test_provider` application env, used by tests so a LiveView send does not call a catalog adapter
+    3. `provider_config[:provider]` → maps "stepfun" to StepFun, "openai" to OpenAI Responses, "openai-compat" to OpenAICompat
+    4. Default → `Handbeam.Agent.Provider.OpenAICompat`
   """
   @spec from_opts(keyword()) :: t()
   def from_opts(opts \\ []) do
@@ -95,6 +96,7 @@ defmodule Handbeam.Agent.Config do
 
     provider =
       Keyword.get(opts, :provider) ||
+        test_provider_module() ||
         resolve_provider_from_api(
           provider_config[:api],
           Keyword.get(opts, :model),
@@ -214,6 +216,7 @@ defmodule Handbeam.Agent.Config do
       run_id: Keyword.get(opts, :run_id),
       thread_handoff_id: get_in(Keyword.get(opts, :origin) || %{}, ["handoff_id"]),
       delegated_read_only: Keyword.get(opts, :delegated_read_only, false),
+      browser_runner: Keyword.get(opts, :browser_runner),
       memory_scope: om_value(om, :memory_scope),
       privacy_mode: om_value(om, :privacy_mode),
       observational: observational
@@ -223,6 +226,13 @@ defmodule Handbeam.Agent.Config do
   end
 
   defp om_value(om, key), do: Map.get(om, key, Map.get(om, Atom.to_string(key)))
+
+  defp test_provider_module do
+    case Application.get_env(:handbeam, :test_provider) do
+      %{module: module} when is_atom(module) -> module
+      _ -> nil
+    end
+  end
 
   defp working_directory(opts) do
     case Keyword.get(opts, :working_directory) do
