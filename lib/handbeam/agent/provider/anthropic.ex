@@ -48,7 +48,7 @@ defmodule Handbeam.Agent.Provider.Anthropic do
   alias Handbeam.Agent.Message
   alias Handbeam.Agent.Provider.SSE
 
-  require Logger
+
 
   @default_api_url "https://api.anthropic.com"
   @default_api_version "2023-06-01"
@@ -685,22 +685,10 @@ defmodule Handbeam.Agent.Provider.Anthropic do
     [receive_timeout: Map.get(config, :receive_timeout, @default_receive_timeout)]
   end
 
-  defp request_with_retry(req_opts, retry_count, config) do
+  # Transport replay is owned by Handbeam.Agent.Turn + Provider.Retry.
+  # A second retry here multiplies attempts after visible output may exist.
+  defp request_with_retry(req_opts, _retry_count, config) do
     req_mod = Map.get(config, :req_module, Req)
-
-    case req_mod.request(req_opts) do
-      {:error, %{reason: :closed}} when retry_count > 0 ->
-        request_with_retry(req_opts, retry_count - 1, config)
-
-      {:error, %Finch.TransportError{reason: :closed}} when retry_count > 0 ->
-        request_with_retry(req_opts, retry_count - 1, config)
-
-      {:error, %Finch.TransportError{reason: :timeout}} when retry_count > 0 ->
-        Logger.warning(fn -> "[Anthropic] transport timeout, retrying (#{retry_count} left)" end)
-        request_with_retry(req_opts, retry_count - 1, config)
-
-      other ->
-        other
-    end
+    req_mod.request(req_opts)
   end
 end

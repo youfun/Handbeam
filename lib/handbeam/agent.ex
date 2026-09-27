@@ -110,6 +110,17 @@ defmodule Handbeam.Agent do
     end
 
     opts = maybe_bootstrap_mcp(opts)
+
+    opts =
+      Keyword.update(
+        opts,
+        :context,
+        %{run_deadline: Keyword.get(opts, :run_deadline)},
+        fn context ->
+          Map.put(context || %{}, :run_deadline, Keyword.get(opts, :run_deadline))
+        end
+      )
+
     config = Config.from_opts(opts)
 
     {state, opts, session_id, queue_pid} =

@@ -55,6 +55,11 @@ defmodule Handbeam.Agent.Provider.Retry do
   end
 
   def retryable?(:timeout), do: true
+
+  def retryable?(%{status: status}) when is_integer(status), do: retryable_status?(status)
+
+  def retryable?(%{reason: reason}) when is_binary(reason), do: retryable?(reason)
+
   def retryable?(_), do: false
 
   @doc """
@@ -132,7 +137,53 @@ defmodule Handbeam.Agent.Provider.Retry do
   def next_delay_ms(attempt, config \\ %{}) do
     base = Map.get(config, :retry_delay_base_ms, @default_retry_delay_base_ms)
     delay = trunc(base * :math.pow(2, attempt))
-    min(delay, 30_000)
+    cap = Map.get(config, :retry_delay_cap_ms, 30_000)
+    jitter = Map.get(config, :jitter_ms, 0)
+    min(delay + jitter, cap)
+  end
+
+  @doc """
+  Delay that honors a server Retry-After when it is longer than the backoff cap.
+
+  `retry_after_ms` is milliseconds already parsed from seconds or an HTTP date.
+  The wait never exceeds the remaining run budget. A cap must not retry earlier
+  than the server asked.
+  """
+  @spec delay_ms(non_neg_integer(), map(), keyword()) :: pos_integer() | :budget_exceeded
+  def delay_ms(attempt, config \\ %{}, opts \\ []) do
+    requested = max(next_delay_ms(attempt, config), Keyword.get(opts, :retry_after_ms, 0))
+    remaining = Keyword.get(opts, :remaining_ms)
+
+    cond do
+      is_integer(remaining) and requested > remaining -> :budget_exceeded
+      true -> requested
+    end
+  end
+
+  def parse_retry_after(value) when is_integer(value), do: value * 1_000
+
+  def parse_retry_after(value) when is_binary(value) do
+    case Integer.parse(value) do
+      {seconds, ""} ->
+        seconds * 1_000
+
+      _ ->
+        case :httpd_util.convert_request_date(String.to_charlist(value)) do
+          {{_, _, _}, {_, _, _}} = date ->
+            seconds =
+              :calendar.datetime_to_gregorian_seconds(date) -
+                :calendar.datetime_to_gregorian_seconds(:calendar.universal_time())
+
+            max(seconds, 0) * 1_000
+
+          _ ->
+            0
+        end
+    end
+  end
+
+  defp jitter_ms(delay) do
+    :rand.uniform(max(div(delay, 5), 1))
   end
 
   @doc """

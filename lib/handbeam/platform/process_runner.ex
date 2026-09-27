@@ -85,20 +85,32 @@ defmodule Handbeam.Platform.ProcessRunner do
   @spec run_bash(binary(), Path.t() | nil, timeout(), keyword()) ::
           {:ok, binary(), run_meta()} | {:error, String.t()}
   def run_bash(command, cwd, timeout_ms, opts \\ []) do
-    with {:ok, shell} <- ShellResolver.resolve(opts),
-         {:ok, invocation} <- ProcessSandbox.wrap(shell, command, cwd, opts) do
-      try do
-        port =
-          Port.open(
-            {:spawn_executable, invocation.executable},
-            [{:args, invocation.args} | port_options(invocation)]
-          )
+    business = Keyword.get(opts, :owner, self())
 
-        os_pid = get_os_pid(port)
-        collect_output(port, os_pid, timeout_ms, invocation)
-      rescue
-        e -> {:error, "Failed to spawn: #{Exception.message(e)}"}
-      end
+    child_opts =
+      Keyword.merge(opts,
+        command: command,
+        cwd: cwd,
+        business_owner: business,
+        reply_to: self()
+      )
+
+    case Handbeam.Platform.ProcessRunner.InvocationSupervisor.start_invocation(child_opts) do
+      {:ok, pid} -> collect_invocation(pid, timeout_ms)
+      {:error, reason} -> {:error, "Failed to start invocation: #{inspect(reason)}"}
+    end
+  end
+
+  def open_tracked(opts) do
+    with {:ok, shell} <- ShellResolver.resolve(opts),
+         {:ok, invocation} <- ProcessSandbox.wrap(shell, opts[:command], opts[:cwd], opts) do
+      port =
+        Port.open(
+          {:spawn_executable, invocation.executable},
+          [{:args, invocation.args} | port_options(invocation)]
+        )
+
+      {:ok, port, get_os_pid(port), invocation}
     end
   end
 
@@ -173,45 +185,84 @@ defmodule Handbeam.Platform.ProcessRunner do
 
   # Linux kills the PID namespace init. macOS verifies and kills the independent
   # process group established before Seatbelt. Unconfined shells use a tree snapshot.
-  defp collect_output(port, os_pid, timeout_ms, invocation) do
+  defp collect_invocation(pid, timeout_ms) do
     deadline = System.monotonic_time(:millisecond) + timeout_ms
-    state = %{chunks: [], buf_bytes: 0, total_bytes: 0}
-    do_collect(port, os_pid, deadline, state, timeout_ms, invocation)
+    _ = Process.monitor(pid)
+    do_collect_invocation(pid, deadline, %{chunks: [], buf_bytes: 0, total_bytes: 0}, timeout_ms)
   end
 
-  defp do_collect(port, os_pid, deadline, state, original_timeout, invocation) do
+  defp do_collect_invocation(pid, deadline, state, original_timeout) do
     remaining = deadline - System.monotonic_time(:millisecond)
 
     if remaining <= 0 do
-      cleanup_timeout(os_pid, invocation)
+      GenServer.cast(pid, :cancel)
 
-      safe_close_port(port)
-      output = build_output(state)
-
-      {:ok, output <> "\n\n[Command timed out after #{div(original_timeout, 1000)}s]",
+      {:ok,
+       build_output(state) <> "\n\n[Command timed out after #{div(original_timeout, 1000)}s]",
        %{timed_out: true}}
     else
       receive do
-        {^port, {:data, data}} ->
-          state = ingest_chunk(state, data)
-          do_collect(port, os_pid, deadline, state, original_timeout, invocation)
+        {:invocation_data, ^pid, data} ->
+          do_collect_invocation(pid, deadline, ingest_chunk(state, data), original_timeout)
 
-        {^port, {:exit_status, exit_code}} ->
-          output = build_output(state)
+        {:invocation_result, ^pid, {:ok, output, meta}} ->
+          formatted = build_output(state) |> String.trim_trailing("\n")
 
-          if exit_code == 0 do
-            {:ok, output, %{exit_code: 0, timed_out: false}}
-          else
-            content = if output == "", do: "", else: output <> "\n\n"
+          formatted =
+            cond do
+              formatted == "(no output)" -> output
+              is_integer(meta[:exit_code]) and meta[:exit_code] != 0 -> output
+              true -> formatted
+            end
 
-            {:ok, "#{content}Command exited with code #{exit_code}",
-             %{exit_code: exit_code, timed_out: false}}
-          end
+          {:ok, formatted, meta}
+
+        {:invocation_result, ^pid, {:error, reason}} ->
+          {:error, reason}
+
+        {:DOWN, _ref, :process, ^pid, {:open_failed, reason}} ->
+          {:error, reason}
+
+        {:invocation_opened, ^pid, _os_pid} ->
+          do_collect_invocation(pid, deadline, state, original_timeout)
       after
         min(remaining, 200) ->
-          do_collect(port, os_pid, deadline, state, original_timeout, invocation)
+          do_collect_invocation(pid, deadline, state, original_timeout)
       end
     end
+  end
+
+  def track_owned(owner, os_pid, invocation) when is_pid(owner) and is_integer(os_pid) do
+    ensure_tracker()
+    :ets.insert(:handbeam_owned_os, {owner, os_pid, invocation})
+    :ok
+    send(owner, {:os_process_started, os_pid, invocation})
+    :ok
+  end
+
+  def track_owned(_owner, _os_pid, _invocation), do: :ok
+
+  def cleanup_owner(owner) when is_pid(owner) do
+    ensure_tracker()
+
+    :handbeam_owned_os
+    |> :ets.lookup(owner)
+    |> Enum.each(fn {_owner, os_pid, invocation} -> cleanup_owned(os_pid, invocation) end)
+
+    :ets.delete(:handbeam_owned_os, owner)
+    :ok
+  end
+
+  defp ensure_tracker do
+    if :ets.whereis(:handbeam_owned_os) == :undefined do
+      :ets.new(:handbeam_owned_os, [:named_table, :public, :bag])
+    end
+
+    :ok
+  end
+
+  def cleanup_owned(os_pid, invocation) when is_integer(os_pid) do
+    cleanup_timeout(os_pid, invocation)
   end
 
   defp cleanup_timeout(os_pid, %{pid_namespace?: true}),
@@ -270,6 +321,8 @@ defmodule Handbeam.Platform.ProcessRunner do
   end
 
   # ── Helpers ──
+
+  def os_pid(port), do: get_os_pid(port)
 
   defp get_os_pid(port) do
     case Port.info(port, :os_pid) do

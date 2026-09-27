@@ -372,11 +372,20 @@ defmodule Handbeam.PubSub.Session do
 
   @impl true
   def handle_cast({:broadcast_event, kind, payload}, state) do
-    # Cast path: used for high-frequency events; throttle disk saves to avoid
-    # blocking the agent task on slow filesystems.
-    force? = kind not in @high_freq_events
-    new_state = do_broadcast_event(state, kind, payload, force_save?: force?)
-    {:noreply, new_state}
+    if stale_run_event?(state, kind, payload) do
+      Logger.debug(
+        "[Session] dropped stale #{kind} session=#{state.session_id} " <>
+          "event_run=#{payload_run_id(payload)} active_run=#{state.meta.run_id}"
+      )
+
+      {:noreply, state}
+    else
+      # Cast path: used for high-frequency events; throttle disk saves to avoid
+      # blocking the agent task on slow filesystems.
+      force? = kind not in @high_freq_events
+      new_state = do_broadcast_event(state, kind, payload, force_save?: force?)
+      {:noreply, new_state}
+    end
   end
 
   def handle_cast({:append, %AgentEvent{} = event}, state) do
@@ -547,6 +556,20 @@ defmodule Handbeam.PubSub.Session do
   defp maybe_existing_atom(value), do: value
 
   # Core broadcast/append/persist pipeline shared by call and cast paths.
+  defp stale_run_event?(state, kind, payload) when kind in [:run_end, :run_resumed] do
+    event_run = payload_run_id(payload)
+    active_run = state.meta.run_id
+    is_binary(event_run) and is_binary(active_run) and event_run != active_run
+  end
+
+  defp stale_run_event?(_state, _kind, _payload), do: false
+
+  defp payload_run_id(payload) when is_map(payload) do
+    Map.get(payload, :run_id) || Map.get(payload, "run_id")
+  end
+
+  defp payload_run_id(_payload), do: nil
+
   defp do_broadcast_event(state, kind, payload, opts) do
     seq = state.seq + 1
     topic = session_topic(state.session_id)

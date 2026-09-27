@@ -52,6 +52,7 @@ defmodule Handbeam.Application do
           Handbeam.SessionSupervisor,
           Handbeam.AgentRunSupervisor,
           {Task.Supervisor, name: Handbeam.AgentRunTaskSupervisor},
+          Handbeam.Platform.ProcessRunner.InvocationSupervisor,
           Handbeam.Agent.Delegation,
           Handbeam.Runtime.TaskTracker
         ] ++

@@ -264,6 +264,7 @@ defmodule Handbeam.Agent.Turn do
       payload = %{
         tool_use_id: call_id,
         tool: call[:name] || call["name"],
+        parent_tool_call_id: nil,
         duration_ms: 0,
         details: details,
         file_path: file_path,
@@ -305,8 +306,21 @@ defmodule Handbeam.Agent.Turn do
 
     if state.status == :halted do
       Logger.warning("[Turn] before_agent_start blocked: #{state.error}")
-      emit(opts, :run_end, %{status: :error, error: state.error, turns: 0})
-      emit(opts, :agent_end, %{status: :error, error: state.error, turns: 0})
+
+      emit(opts, :run_end, %{
+        status: :error,
+        error: state.error,
+        turns: 0,
+        run_id: state.config.run_id
+      })
+
+      emit(opts, :agent_end, %{
+        status: :error,
+        error: state.error,
+        turns: 0,
+        run_id: state.config.run_id
+      })
+
       # session_end middleware
       mw_run(state, :session_end)
     else
@@ -339,7 +353,13 @@ defmodule Handbeam.Agent.Turn do
   end
 
   defp finish_run(result, opts) do
-    payload = %{status: result.status, turns: result.turn, usage: result.usage}
+    payload = %{
+      status: result.status,
+      turns: result.turn,
+      usage: result.usage,
+      run_id: result.config.run_id
+    }
+
     payload = if result.error, do: Map.put(payload, :error, result.error), else: payload
 
     payload =
@@ -678,7 +698,11 @@ defmodule Handbeam.Agent.Turn do
 
   defp do_completion(%State{} = state, opts) do
     provider = state.config.provider
-    provider_config = build_provider_config(state)
+
+    provider_config =
+      state
+      |> build_provider_config()
+      |> Map.put(:run_deadline, Keyword.get(opts, :run_deadline))
 
     streaming? = Keyword.get(opts, :streaming, false)
 
@@ -714,6 +738,7 @@ defmodule Handbeam.Agent.Turn do
     provider_config =
       provider_config
       |> Map.put(:stream, streaming?)
+      |> Map.put(:retry_owner, :turn)
       |> maybe_put_provider_event_callback(opts)
       |> then(fn pc ->
         if is_function(on_chunk, 1), do: Map.put(pc, :on_chunk, on_chunk), else: pc
@@ -755,7 +780,9 @@ defmodule Handbeam.Agent.Turn do
             provider_config,
             streaming?,
             on_chunk,
-            chunk_tracker
+            chunk_tracker,
+            0,
+            opts
           )
 
         {result, take_streamed_text(streamed_text_tracker)}
@@ -1026,7 +1053,8 @@ defmodule Handbeam.Agent.Turn do
          streaming?,
          on_chunk,
          chunk_tracker,
-         attempt \\ 0
+         attempt,
+         loop_opts
        ) do
     result =
       call_provider(provider, outbound_messages, tool_defs, provider_config, streaming?, on_chunk)
@@ -1037,23 +1065,35 @@ defmodule Handbeam.Agent.Turn do
 
         case {Retry.should_retry_error?(reason, attempt, retry_config),
               chunks_emitted?(chunk_tracker)} do
-          {{:retry, delay_ms}, false} ->
+          {{:retry, _delay_ms}, false} ->
             if uncertain_cursor_error?(reason) do
               result
             else
-              retry_provider_call(
-                provider,
-                state,
-                outbound_messages,
-                tool_defs,
-                provider_config,
-                streaming?,
-                on_chunk,
-                chunk_tracker,
-                attempt,
-                delay_ms,
-                reason
-              )
+              remaining = remaining_budget_ms(loop_opts)
+
+              case Retry.delay_ms(attempt, retry_config,
+                     retry_after_ms: retry_after_ms(reason),
+                     remaining_ms: remaining
+                   ) do
+                :budget_exceeded ->
+                  {:error, {:run_budget_exceeded, reason}}
+
+                delay_ms ->
+                  retry_provider_call(
+                    provider,
+                    state,
+                    outbound_messages,
+                    tool_defs,
+                    provider_config,
+                    streaming?,
+                    on_chunk,
+                    chunk_tracker,
+                    attempt,
+                    delay_ms,
+                    reason,
+                    loop_opts
+                  )
+              end
             end
 
           {_retry_result, _chunks_emitted?} ->
@@ -1076,15 +1116,52 @@ defmodule Handbeam.Agent.Turn do
          chunk_tracker,
          attempt,
          delay_ms,
-         reason
+         reason,
+         loop_opts
        ) do
     Logger.warning(fn ->
       "[Turn] provider transient error, retrying attempt=#{attempt + 1} " <>
         "delay_ms=#{delay_ms} error=#{format_error(reason)}"
     end)
 
-    Process.sleep(delay_ms)
+    parent = self()
 
+    receive do
+      :run_cancelled ->
+        {:error, {:run_cancelled, reason}}
+    after
+      0 ->
+        if not interruptible_sleep(delay_ms, loop_opts, parent) do
+          {:error, {:run_budget_exceeded, reason}}
+        else
+          retry_after_sleep(
+            provider,
+            state,
+            outbound_messages,
+            tool_defs,
+            provider_config,
+            streaming?,
+            on_chunk,
+            chunk_tracker,
+            attempt,
+            loop_opts
+          )
+        end
+    end
+  end
+
+  defp retry_after_sleep(
+         provider,
+         state,
+         outbound_messages,
+         tool_defs,
+         provider_config,
+         streaming?,
+         on_chunk,
+         chunk_tracker,
+         attempt,
+         loop_opts
+       ) do
     call_provider_with_retry(
       provider,
       state,
@@ -1094,8 +1171,60 @@ defmodule Handbeam.Agent.Turn do
       streaming?,
       on_chunk,
       chunk_tracker,
-      attempt + 1
+      attempt + 1,
+      loop_opts
     )
+  end
+
+  defp remaining_budget_ms(opts) do
+    case Keyword.get(opts, :run_deadline) do
+      deadline when is_integer(deadline) ->
+        max(deadline - System.monotonic_time(:millisecond), 0)
+
+      _ ->
+        nil
+    end
+  end
+
+  defp retry_after_ms(%{retry_after_ms: ms}) when is_integer(ms) and ms >= 0, do: ms
+
+  defp retry_after_ms(%{headers: headers}) when is_list(headers) or is_map(headers) do
+    header =
+      Enum.find_value(headers, fn
+        {key, value} -> if String.downcase(to_string(key)) == "retry-after", do: value
+        _ -> nil
+      end)
+
+    if header, do: Handbeam.Agent.Provider.Retry.parse_retry_after(to_string(header)), else: 0
+  end
+
+  defp retry_after_ms(_reason), do: 0
+
+  defp interruptible_sleep(delay_ms, opts, parent \\ self()) do
+    deadline = Keyword.get(opts, :run_deadline)
+
+    wait =
+      if is_integer(deadline),
+        do: min(delay_ms, max(deadline - System.monotonic_time(:millisecond), 0)),
+        else: delay_ms
+
+    if wait <= 0 do
+      false
+    else
+      ref = Process.monitor(parent)
+
+      result =
+        receive do
+          :run_deadline_interrupt -> false
+          :run_cancelled -> false
+          {:DOWN, ^ref, :process, ^parent, _reason} -> false
+        after
+          wait -> is_nil(deadline) or System.monotonic_time(:millisecond) < deadline
+        end
+
+      Process.demonitor(ref, [:flush])
+      result
+    end
   end
 
   defp call_provider(provider, messages, tool_defs, provider_config, true, on_chunk)
@@ -1405,7 +1534,8 @@ defmodule Handbeam.Agent.Turn do
                     tool_use_id: call[:id],
                     tool_name: call[:name],
                     args: call[:input] || %{},
-                    session_id: session_id
+                    session_id: session_id,
+                    parent_tool_call_id: nil
                   }}
                ) do
             {:block, reason} ->
@@ -1439,7 +1569,8 @@ defmodule Handbeam.Agent.Turn do
       emit(opts, :tool_start, %{
         tool_use_id: call[:id],
         tool: call[:name],
-        input: redact_tool_input(call[:name], call[:input] || %{})
+        input: redact_tool_input(call[:name], call[:input] || %{}),
+        parent_tool_call_id: nil
       })
     end)
 
@@ -1492,6 +1623,7 @@ defmodule Handbeam.Agent.Turn do
             payload = %{
               tool_use_id: call[:id],
               tool: call[:name],
+              parent_tool_call_id: nil,
               duration_ms: duration_ms,
               details: details,
               file_path: file_path,

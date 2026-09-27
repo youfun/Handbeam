@@ -20,7 +20,7 @@ defmodule Handbeam.Agent.Provider.OpenAICompat do
   @behaviour Handbeam.Agent.Provider
 
   alias Handbeam.Agent.Message
-  alias Handbeam.Agent.Provider.{OpenAIStream, Retry}
+  alias Handbeam.Agent.Provider.OpenAIStream
 
   require Logger
 
@@ -68,17 +68,23 @@ defmodule Handbeam.Agent.Provider.OpenAICompat do
       {:ok, %{body: resp_body}} ->
         parse_response(resp_body)
 
+      {:error, {:retry_exhausted, last_status, body, headers}} ->
+        Logger.error(
+          "[OpenAICompat] Retry exhausted (HTTP #{last_status}): #{api_error_message(body)}"
+        )
+
+        {:error, provider_error(config, last_status, body, headers, true)}
+
+      {:error, {:api_error, status, body}} ->
+        Logger.error("[OpenAICompat] HTTP #{status}: #{api_error_message(body)}")
+        {:error, provider_error(config, status, body, [], false)}
+
       {:error, {:retry_exhausted, last_status, body}} ->
         Logger.error(
           "[OpenAICompat] Retry exhausted (HTTP #{last_status}): #{api_error_message(body)}"
         )
 
         {:error, "OpenAI API error #{last_status} (after retries): #{api_error_message(body)}"}
-
-      {:error, {:api_error, status, body}} ->
-        Logger.error("[OpenAICompat] HTTP #{status}: #{api_error_message(body)}")
-
-        {:error, "OpenAI API error #{status}: #{api_error_message(body)}"}
 
       {:error, {:http_error, reason}} ->
         {:error, "HTTP request failed: #{inspect(reason)}"}
@@ -384,16 +390,46 @@ defmodule Handbeam.Agent.Provider.OpenAICompat do
 
   # ── Retry logic ──
 
+  # Turn is the retry owner when it calls this provider. Direct `complete/3`
+  # callers still need the local status loop; Turn sets `retry_owner: :turn`.
+  defp provider_error(config, status, body, headers, exhausted?) do
+    suffix = if exhausted?, do: " (after retries)", else: ""
+    message = "OpenAI API error #{status}#{suffix}: #{api_error_message(body)}"
+
+    if Map.get(config, :retry_owner) == :turn do
+      %{
+        reason: message,
+        status: status,
+        headers: headers,
+        retry_after_ms: retry_after_header(headers)
+      }
+    else
+      message
+    end
+  end
+
+  defp retry_after_header(headers) do
+    value =
+      Enum.find_value(List.wrap(headers), fn
+        {key, value} -> if String.downcase(to_string(key)) == "retry-after", do: value
+        _ -> nil
+      end)
+
+    if value, do: Handbeam.Agent.Provider.Retry.parse_retry_after(to_string(value)), else: 0
+  end
+
   defp request_with_retry(url, body, headers, config) do
     req_mod = Map.get(config, :req_module, Req)
+    do_retry = retry_decision(config)
+    attempt_request(req_mod, url, body, headers, 0, do_retry, config)
+  end
 
-    do_retry = fn status, attempt ->
-      case Retry.should_retry?(status, attempt, config) do
+  defp retry_decision(%{retry_owner: :turn}), do: fn _status, _attempt -> :stop end
+
+  defp retry_decision(config) do
+    fn status, attempt ->
+      case Handbeam.Agent.Provider.Retry.should_retry?(status, attempt, config) do
         {:retry, delay} ->
-          Logger.warning(fn ->
-            "[OpenAICompat] HTTP #{status}, retrying (attempt #{attempt + 1}, delay #{delay}ms)"
-          end)
-
           Process.sleep(delay)
           :retry
 
@@ -401,8 +437,6 @@ defmodule Handbeam.Agent.Provider.OpenAICompat do
           :stop
       end
     end
-
-    attempt_request(req_mod, url, body, headers, 0, do_retry, config)
   end
 
   defp attempt_request(req_mod, url, body, headers, attempt, do_retry, config) do
@@ -419,7 +453,12 @@ defmodule Handbeam.Agent.Provider.OpenAICompat do
       |> Keyword.merge(default_req_opts)
       |> Keyword.merge(caller_opts)
 
-    result = req_mod.post(url, req_opts)
+    result =
+      if is_atom(req_mod) do
+        req_mod.post(url, req_opts)
+      else
+        req_mod.post.(url, req_opts)
+      end
 
     case result do
       {:ok, %{status: 200} = resp} ->
@@ -427,8 +466,12 @@ defmodule Handbeam.Agent.Provider.OpenAICompat do
 
       {:ok, %{status: status} = resp} ->
         case do_retry.(status, attempt) do
-          :retry -> attempt_request(req_mod, url, body, headers, attempt + 1, do_retry, config)
-          :stop -> {:error, {:retry_exhausted, status, Map.get(resp, :body, %{})}}
+          :retry ->
+            attempt_request(req_mod, url, body, headers, attempt + 1, do_retry, config)
+
+          :stop ->
+            {:error,
+             {:retry_exhausted, status, Map.get(resp, :body, %{}), Map.get(resp, :headers, [])}}
         end
 
       {:error, reason} when attempt > 0 ->

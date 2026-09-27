@@ -13,9 +13,16 @@ defmodule Handbeam.Agent.RunnerTest do
     home_dir = Path.join(System.tmp_dir!(), "sigil_runner_home_#{Ecto.UUID.generate()}")
     File.mkdir_p!(home_dir)
     System.put_env("HOME", home_dir)
+    previous_host = Application.get_env(:handbeam, :host)
+    Handbeam.Host.put!(%{data_dir: home_dir})
 
     on_exit(fn ->
       if old_home, do: System.put_env("HOME", old_home), else: System.delete_env("HOME")
+
+      if previous_host,
+        do: Application.put_env(:handbeam, :host, previous_host),
+        else: Application.delete_env(:handbeam, :host)
+
       File.rm_rf(home_dir)
     end)
 
@@ -29,6 +36,28 @@ defmodule Handbeam.Agent.RunnerTest do
     defdelegate append(id, entry, opts), to: Store
     defdelegate update(id, entry_id, patch, opts), to: Store
     defdelegate list(id, opts), to: Store
+  end
+
+  defmodule LateProvider do
+    @behaviour Handbeam.Agent.Provider
+
+    @impl true
+    def complete(_messages, _tool_defs, config) do
+      send(config.notify, {:late_provider_started, self()})
+
+      receive do
+        :finish ->
+          {:ok,
+           %{
+             stop_reason: :end_turn,
+             messages: [Handbeam.Agent.Message.assistant("late")],
+             usage: %{input_tokens: 1, output_tokens: 1}
+           }}
+      end
+    end
+
+    @impl true
+    def stream(messages, tools, config, _on_chunk), do: complete(messages, tools, config)
   end
 
   defmodule BlockingProvider do
@@ -52,6 +81,53 @@ defmodule Handbeam.Agent.RunnerTest do
         5_000 ->
           raise "blocking provider timed out"
       end
+    end
+
+    @impl true
+    def stream(messages, tool_defs, config, _on_chunk), do: complete(messages, tool_defs, config)
+  end
+
+  defmodule ResumeBudgetProvider do
+    @behaviour Handbeam.Agent.Provider
+
+    @impl true
+    def complete(messages, _tool_defs, config) do
+      if Enum.any?(messages, &(&1.role == :tool_result)) do
+        send(config.notify, {:resumed_deadline, config[:run_deadline]})
+        Process.sleep(5_000)
+      end
+
+      {:ok,
+       %{
+         stop_reason: :tool_use,
+         messages: [
+           Handbeam.Agent.Message.assistant([
+             %{type: "tool_use", id: "call-1", name: "run_elixir_script", input: %{"code" => "1"}}
+           ])
+         ],
+         usage: %{input_tokens: 1, output_tokens: 1}
+       }}
+    end
+
+    @impl true
+    def stream(messages, tool_defs, config, _on_chunk), do: complete(messages, tool_defs, config)
+  end
+
+  defmodule ApprovalProvider do
+    @behaviour Handbeam.Agent.Provider
+
+    @impl true
+    def complete(_messages, _tool_defs, _config) do
+      {:ok,
+       %{
+         stop_reason: :tool_use,
+         messages: [
+           Handbeam.Agent.Message.assistant([
+             %{type: "tool_use", id: "call-1", name: "run_elixir_script", input: %{"code" => "1"}}
+           ])
+         ],
+         usage: %{input_tokens: 1, output_tokens: 1}
+       }}
     end
 
     @impl true
@@ -277,6 +353,440 @@ defmodule Handbeam.Agent.RunnerTest do
     assert content =~ "enospc"
   end
 
+  test "a crashed runner is not restarted with the original input" do
+    sid = "runner-no-replay-#{System.unique_integer([:positive])}"
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
+    counter = :counters.new(1, [])
+
+    provider =
+      Module.concat(__MODULE__, "CountingProvider#{System.unique_integer([:positive])}")
+
+    defmodule provider do
+      @behaviour Handbeam.Agent.Provider
+
+      def complete(_messages, _tool_defs, config) do
+        :counters.add(config.counter, 1, 1)
+        send(config.notify, {:provider_entered, :counters.get(config.counter, 1)})
+        Process.sleep(5_000)
+        {:ok, %{messages: [], stop_reason: :end_turn, usage: %{}}}
+      end
+
+      def stream(messages, tool_defs, config, _on_chunk),
+        do: complete(messages, tool_defs, config)
+    end
+
+    assert {:ok, %{run_pid: runner}} =
+             Coordinator.add_message(
+               sid,
+               "side effect",
+               opts(provider: provider, provider_config: %{counter: counter, notify: self()})
+             )
+
+    assert_receive {:provider_entered, 1}, 1_000
+    ref = Process.monitor(runner)
+    Process.exit(runner, :kill)
+    assert_receive {:DOWN, ^ref, :process, ^runner, :killed}, 1_000
+    refute_receive {:provider_entered, 2}, 200
+    assert :counters.get(counter, 1) == 1
+    assert {:error, :not_found} = Handbeam.Agent.Runner.status(sid)
+  end
+
+  test "the same request id through Coordinator delivers the side effect once" do
+    sid = "runner-idem-#{System.unique_integer([:positive])}"
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
+    parent = self()
+    counter = :counters.new(1, [])
+
+    provider =
+      Module.concat(__MODULE__, "OnceProvider#{System.unique_integer([:positive])}")
+
+    defmodule provider do
+      @behaviour Handbeam.Agent.Provider
+
+      def complete(_messages, _tool_defs, config) do
+        :counters.add(config.counter, 1, 1)
+        send(config.notify, {:side_effect, :counters.get(config.counter, 1)})
+
+        {:ok,
+         %{
+           stop_reason: :end_turn,
+           messages: [Handbeam.Agent.Message.assistant("done")],
+           usage: %{input_tokens: 1, output_tokens: 1}
+         }}
+      end
+
+      def stream(messages, tool_defs, config, _on_chunk),
+        do: complete(messages, tool_defs, config)
+    end
+
+    run_opts =
+      opts(
+        provider: provider,
+        provider_config: %{counter: counter, notify: parent},
+        request_id: "op-once"
+      )
+
+    assert {:ok, %{action: :started}} = Coordinator.add_message(sid, "write once", run_opts)
+
+    assert_receive {:side_effect, 1}, 1_000
+    assert {:ok, receipt} = Coordinator.add_message(sid, "write once", run_opts)
+    assert receipt.action == :started
+    assert receipt.replayed == true
+    assert receipt.run_id
+    refute_receive {:side_effect, 2}, 100
+    assert :counters.get(counter, 1) == 1
+  end
+
+  test "approval wait expires on the original deadline and a late resume is rejected" do
+    sid = "runner-approval-deadline-#{System.unique_integer([:positive])}"
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
+    :ok = Session.subscribe(sid)
+
+    assert {:ok, %{run_pid: runner, run_id: run_id}} =
+             Coordinator.add_message(
+               sid,
+               "needs approval",
+               opts(
+                 timeout_ms: 400,
+                 provider: ApprovalProvider,
+                 tools: [Handbeam.Tool.Builtin.RunElixirScript],
+                 middleware: [Handbeam.Agent.Middleware.ToolGuard]
+               )
+             )
+
+    assert_receive {:agent_event, %{kind: :tool_approval_requested}}, 1_000
+    assert_receive {:agent_event, %{kind: :run_end, payload: %{status: "timeout"}}}, 1_500
+    Process.sleep(100)
+    refute Process.alive?(runner)
+
+    assert {:error, :not_awaiting_approval} =
+             Coordinator.resume(sid, [%{"tool_call_id" => "call-1", "action" => "approve"}],
+               expected_run_id: run_id
+             )
+  end
+
+  test "resume before the deadline does not extend the original budget" do
+    sid = "runner-resume-budget-#{System.unique_integer([:positive])}"
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
+    :ok = Session.subscribe(sid)
+    parent = self()
+
+    assert {:ok, %{run_id: run_id}} =
+             Coordinator.add_message(
+               sid,
+               "approve then block",
+               opts(
+                 timeout_ms: 700,
+                 provider: ResumeBudgetProvider,
+                 provider_config: %{notify: parent},
+                 tools: [Handbeam.Tool.Builtin.RunElixirScript],
+                 middleware: [Handbeam.Agent.Middleware.ToolGuard]
+               )
+             )
+
+    assert_receive {:agent_event, %{kind: :tool_approval_requested}}, 1_000
+
+    original_deadline =
+      assert_eventually(fn ->
+        assert {:ok, %{deadline: deadline, status: :awaiting_approval}} = Coordinator.status(sid)
+        deadline
+      end)
+
+    assert :ok =
+             Coordinator.resume(sid, [%{"tool_call_id" => "call-1", "action" => "approve"}],
+               expected_run_id: run_id
+             )
+
+    assert_receive {:resumed_deadline, received_deadline}, 1_000
+    assert received_deadline == original_deadline
+
+    assert_receive {:agent_event, %{kind: :run_end, payload: %{status: "timeout"}}}, 1_200
+    refute_receive {:agent_event, %{kind: :run_end, payload: %{status: :completed}}}, 50
+  end
+
+  test "run timeout kills the bash child started by the tool" do
+    sid = "runner-bash-kill-#{System.unique_integer([:positive])}"
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
+    workspace = File.cwd!()
+    shell_file = Path.join(workspace, "tmp-bash-shell-#{System.unique_integer([:positive])}.txt")
+    child_file = Path.join(workspace, "tmp-bash-child-#{System.unique_integer([:positive])}.txt")
+
+    provider =
+      Module.concat(__MODULE__, "BashHangProvider#{System.unique_integer([:positive])}")
+
+    defmodule provider do
+      @behaviour Handbeam.Agent.Provider
+
+      def complete(_messages, _tool_defs, config) do
+        {:ok,
+         %{
+           stop_reason: :tool_use,
+           messages: [
+             Handbeam.Agent.Message.assistant([
+               %{
+                 type: "tool_use",
+                 id: "bash-1",
+                 name: "bash",
+                 input: %{
+                   "command" =>
+                     "echo $$ > #{config.shell_file}; sleep 30 & echo $! > #{config.child_file}; wait"
+                 }
+               }
+             ])
+           ],
+           usage: %{input_tokens: 1, output_tokens: 1}
+         }}
+      end
+
+      def stream(messages, tool_defs, config, _on_chunk),
+        do: complete(messages, tool_defs, config)
+    end
+
+    :ok = Session.subscribe(sid)
+
+    assert {:ok, _} =
+             Coordinator.add_message(
+               sid,
+               "hang",
+               opts(
+                 timeout_ms: 1_500,
+                 provider: provider,
+                 provider_config: %{shell_file: shell_file, child_file: child_file},
+                 tools: [Handbeam.Tool.Builtin.Bash],
+                 middleware: [],
+                 workspace_path: workspace,
+                 working_directory: workspace
+               )
+             )
+
+    assert_eventually(fn ->
+      assert File.exists?(shell_file) and File.exists?(child_file)
+    end)
+
+    shell_pid = shell_file |> File.read!() |> String.trim() |> String.to_integer()
+    child_pid = child_file |> File.read!() |> String.trim() |> String.to_integer()
+    assert_receive {:agent_event, %{kind: :run_end, payload: %{status: "timeout"}}}, 2_000
+
+    assert_eventually(fn ->
+      refute alive_os?(shell_pid)
+      refute alive_os?(child_pid)
+    end)
+
+    File.rm(shell_file)
+    File.rm(child_file)
+  end
+
+  test "killing the runner cleans the bash process group" do
+    sid = "runner-bash-crash-#{System.unique_integer([:positive])}"
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
+    workspace = File.cwd!()
+
+    shell_file =
+      Path.join(workspace, "tmp-bash-crash-shell-#{System.unique_integer([:positive])}.txt")
+
+    child_file =
+      Path.join(workspace, "tmp-bash-crash-child-#{System.unique_integer([:positive])}.txt")
+
+    provider = Module.concat(__MODULE__, "CrashBash#{System.unique_integer([:positive])}")
+
+    defmodule provider do
+      @behaviour Handbeam.Agent.Provider
+
+      def complete(_messages, _tool_defs, config) do
+        {:ok,
+         %{
+           stop_reason: :tool_use,
+           messages: [
+             Handbeam.Agent.Message.assistant([
+               %{
+                 type: "tool_use",
+                 id: "bash-crash",
+                 name: "bash",
+                 input: %{
+                   "command" =>
+                     "echo $$ > #{config.shell_file}; sleep 30 & echo $! > #{config.child_file}; wait"
+                 }
+               }
+             ])
+           ],
+           usage: %{input_tokens: 1, output_tokens: 1}
+         }}
+      end
+
+      def stream(messages, tool_defs, config, _on_chunk),
+        do: complete(messages, tool_defs, config)
+    end
+
+    assert {:ok, %{run_pid: runner}} =
+             Coordinator.add_message(
+               sid,
+               "crash owner",
+               opts(
+                 timeout_ms: 30_000,
+                 provider: provider,
+                 provider_config: %{shell_file: shell_file, child_file: child_file},
+                 tools: [Handbeam.Tool.Builtin.Bash],
+                 middleware: [],
+                 workspace_path: workspace,
+                 working_directory: workspace
+               )
+             )
+
+    assert_eventually(fn ->
+      assert File.exists?(shell_file) and File.exists?(child_file)
+    end)
+
+    shell_pid = shell_file |> File.read!() |> String.trim() |> String.to_integer()
+    child_pid = child_file |> File.read!() |> String.trim() |> String.to_integer()
+    Process.exit(runner, :kill)
+
+    assert_eventually(fn ->
+      refute alive_os?(shell_pid)
+      refute alive_os?(child_pid)
+    end)
+
+    File.rm(shell_file)
+    File.rm(child_file)
+  end
+
+  test "a finished bash command leaves no child process" do
+    sid = "runner-bash-done-#{System.unique_integer([:positive])}"
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
+    workspace = File.cwd!()
+    marker = Path.join(workspace, "tmp-bash-done-#{System.unique_integer([:positive])}.txt")
+
+    provider = Module.concat(__MODULE__, "DoneBash#{System.unique_integer([:positive])}")
+
+    defmodule provider do
+      @behaviour Handbeam.Agent.Provider
+
+      def complete(messages, _tool_defs, config) do
+        if Enum.any?(messages, &(&1.role == :tool_result)) do
+          {:ok,
+           %{
+             stop_reason: :end_turn,
+             messages: [Handbeam.Agent.Message.assistant("done")],
+             usage: %{input_tokens: 1, output_tokens: 1}
+           }}
+        else
+          {:ok,
+           %{
+             stop_reason: :tool_use,
+             messages: [
+               Handbeam.Agent.Message.assistant([
+                 %{
+                   type: "tool_use",
+                   id: "bash-done",
+                   name: "bash",
+                   input: %{"command" => "echo done > #{config.marker}"}
+                 }
+               ])
+             ],
+             usage: %{input_tokens: 1, output_tokens: 1}
+           }}
+        end
+      end
+
+      def stream(messages, tool_defs, config, _on_chunk),
+        do: complete(messages, tool_defs, config)
+    end
+
+    :ok = Session.subscribe(sid)
+
+    assert {:ok, _} =
+             Coordinator.add_message(
+               sid,
+               "finish",
+               opts(
+                 provider: provider,
+                 provider_config: %{marker: marker},
+                 tools: [Handbeam.Tool.Builtin.Bash],
+                 middleware: [],
+                 workspace_path: workspace,
+                 working_directory: workspace
+               )
+             )
+
+    assert_receive {:agent_event, %{kind: :run_end, payload: %{status: status}}}, 2_000
+    assert status in [:completed, "completed"]
+    assert File.read!(marker) == "done\n"
+    File.rm(marker)
+  end
+
+  test "a late completed from the previous run does not rewrite the next run" do
+    sid = "runner-late-completed-#{System.unique_integer([:positive])}"
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
+    :ok = Session.subscribe(sid)
+    release = :counters.new(1, [])
+
+    assert {:ok, %{run_id: first_run, run_pid: first_runner}} =
+             Coordinator.add_message(
+               sid,
+               "old",
+               opts(
+                 provider: LateProvider,
+                 provider_config: %{notify: self(), release: release}
+               )
+             )
+
+    assert_receive {:late_provider_started, old_task}, 1_000
+    Process.exit(old_task, :kill)
+
+    assert_eventually(fn ->
+      %{events: events} = Session.snapshot(sid)
+
+      assert Enum.any?(
+               events,
+               &match?(%{kind: :run_end, payload: %{status: "error", run_id: ^first_run}}, &1)
+             )
+    end)
+
+    assert {:ok, %{run_id: second_run, run_pid: second_runner}} =
+             Coordinator.add_message(
+               sid,
+               "new",
+               opts(provider: BlockingProvider, provider_config: %{notify: self()})
+             )
+
+    assert second_run != first_run
+    assert_receive {:blocking_provider_started, _new_task}, 1_000
+    send(old_task, :finish)
+
+    refute_receive {:agent_event, %{kind: :run_end, payload: %{run_id: ^second_run}}}, 150
+
+    assert {:ok, %{running?: true, run_id: ^second_run}} = Coordinator.status(sid)
+    assert Process.alive?(second_runner)
+    send(second_runner, :ignore)
+    Coordinator.cancel(sid)
+  end
+
+  test "run deadline ends a stuck provider and ignores a late result" do
+    sid = "runner-deadline-#{System.unique_integer([:positive])}"
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
+    :ok = Session.subscribe(sid)
+    entered = :counters.new(1, [])
+
+    assert {:ok, %{run_pid: runner}} =
+             Coordinator.add_message(
+               sid,
+               "stuck",
+               opts(
+                 timeout_ms: 50,
+                 provider: BlockingProvider,
+                 provider_config: %{notify: self(), counter: entered}
+               )
+             )
+
+    assert_receive {:agent_event,
+                    %{kind: :run_end, payload: %{status: "timeout", reason: :run_timeout}}},
+                   1_000
+
+    refute_receive {:agent_event, %{kind: :run_end, payload: %{status: :completed}}}, 100
+    refute Process.alive?(runner)
+    assert {:error, :not_found} = Handbeam.Agent.Runner.status(sid)
+    _ = entered
+  end
+
   test "unavailable transcript owner during crash closure does not restart Runner" do
     {:ok, conversation} = Handbeam.ConversationStore.create("default")
     sid = conversation["id"]
@@ -321,6 +831,10 @@ defmodule Handbeam.Agent.RunnerTest do
 
       assert Enum.any?(events, &match?(%{kind: :run_end}, &1))
     end)
+  end
+
+  defp alive_os?(pid) when is_integer(pid) do
+    :os.cmd('ps -p #{pid} -o pid=') |> to_string() |> String.contains?(Integer.to_string(pid))
   end
 
   defp assert_eventually(fun, attempts \\ 50)

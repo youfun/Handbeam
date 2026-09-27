@@ -13,7 +13,7 @@ defmodule Handbeam.Agent.RunSupervisor do
       id: __MODULE__,
       start: {__MODULE__, :start_link, [opts]},
       type: :supervisor,
-      restart: if(get_in(opts, [:run_opts, :delegated?]), do: :temporary, else: :permanent)
+      restart: :temporary
     }
   end
 
@@ -40,21 +40,24 @@ defmodule Handbeam.Agent.RunSupervisor do
       opts
       |> Keyword.put(:queue_name, queue_name)
 
-    restart = if get_in(opts, [:run_opts, :delegated?]), do: :temporary, else: :transient
-
+    # A crashed runner, queue, or this tree must not be restarted with the
+    # original input. DynamicSupervisor also uses the temporary child_spec.
+    # Stopping a local process does not undo remote side effects already
+    # committed; the terminal event records that the outcome is unknown.
     Supervisor.init(
       [
         Supervisor.child_spec({Handbeam.Agent.CandidateQueue, queue_opts},
           id: Handbeam.Agent.CandidateQueue,
-          restart: restart
+          restart: :temporary
         ),
         Supervisor.child_spec({Handbeam.Agent.Runner, runner_opts},
           id: Handbeam.Agent.Runner,
-          restart: restart
+          restart: :temporary
         )
       ],
       strategy: :one_for_all,
-      max_restarts: 1,
+      auto_shutdown: :any_significant,
+      max_restarts: 0,
       max_seconds: 5
     )
   end

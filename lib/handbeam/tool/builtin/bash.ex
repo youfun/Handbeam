@@ -187,6 +187,11 @@ defmodule Handbeam.Tool.Builtin.Bash do
     sandboxed? = working_directory != nil and not unsandboxed?
     opts = if sandboxed?, do: [workspace_path: working_directory], else: []
 
+    opts =
+      if is_pid(Process.get(:tool_owner)),
+        do: Keyword.put(opts, :owner, Process.get(:tool_owner)),
+        else: opts
+
     case Handbeam.Platform.ProcessRunner.run_bash(command, cwd, timeout_ms, opts) do
       {:ok, output, %{exit_code: code} = meta} when sandboxed? and code != 0 ->
         {:ok, output <> sandbox_hint(output), meta}

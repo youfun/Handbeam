@@ -22,7 +22,11 @@ defmodule Handbeam.Agent.Runner do
     :error,
     :result,
     :interrupted_state,
-    :delegation_monitor
+    :delegation_monitor,
+    :started_at,
+    :deadline,
+    :deadline_timer,
+    os_processes: []
   ]
 
   def start_link(opts) do
@@ -150,9 +154,15 @@ defmodule Handbeam.Agent.Runner do
         model: Keyword.get(state.opts, :model)
       )
 
+    started_at = System.monotonic_time(:millisecond)
+    timeout_ms = Keyword.get(state.opts, :timeout_ms, 300_000)
+    deadline = started_at + timeout_ms
+    timer = Process.send_after(self(), {:run_deadline, deadline}, timeout_ms)
+
     run_opts =
       state.opts
       |> Keyword.put(:candidate_queue, state.queue_pid)
+      |> Keyword.put(:run_deadline, deadline)
       |> put_persistence_callback(state.conversation_id)
 
     start_task = if state.opts[:delegated?], do: :async, else: :async_nolink
@@ -173,7 +183,15 @@ defmodule Handbeam.Agent.Runner do
         end
       ])
 
-    {:noreply, %{state | status: :running, task: task}}
+    {:noreply,
+     %{
+       state
+       | status: :running,
+         task: task,
+         started_at: started_at,
+         deadline: deadline,
+         deadline_timer: timer
+     }}
   end
 
   @impl true
@@ -187,6 +205,7 @@ defmodule Handbeam.Agent.Runner do
         run_pid: self(),
         run_id: state.opts[:run_id],
         queue_pid: state.queue_pid,
+        deadline: state.deadline,
         error: state.error,
         interrupt_type: interrupt_type(state)
       }}, state}
@@ -194,11 +213,18 @@ defmodule Handbeam.Agent.Runner do
 
   def handle_call(:cancel, from, %{status: status, task: task} = state)
       when status in [:running, :awaiting_approval] do
+    cleanup_os_processes(state)
     close_scope(state)
     shutdown_run_task(task)
     persist_cancelled_run(state)
     Handbeam.Agent.CandidateQueue.seal(state.queue_pid)
-    Session.broadcast_event(state.conversation_id, :run_end, %{status: "cancelled", turns: 0})
+
+    Session.broadcast_event(state.conversation_id, :run_end, %{
+      status: "cancelled",
+      turns: 0,
+      run_id: state.opts[:run_id]
+    })
+
     Session.mark_run_finished(state.conversation_id)
     # Teardown may terminate this Runner immediately; acknowledge before launching it.
     GenServer.reply(from, :ok)
@@ -211,9 +237,11 @@ defmodule Handbeam.Agent.Runner do
   end
 
   def handle_call({:resume, decisions}, _from, %{status: :awaiting_approval} = state) do
+    # Approval does not reset the wall-clock budget accepted at run start.
     run_opts =
       state.opts
       |> Keyword.put(:candidate_queue, state.queue_pid)
+      |> Keyword.put(:run_deadline, state.deadline)
       |> put_persistence_callback(state.conversation_id)
 
     resume = resume_fun(state)
@@ -247,6 +275,12 @@ defmodule Handbeam.Agent.Runner do
     {:stop, :normal, %{state | task: nil}}
   end
 
+  def handle_info({ref, {:ok, _result}}, %{task: %{ref: ref}, status: :timeout} = state) do
+    Process.demonitor(ref, [:flush])
+    Logger.debug("[Runner] dropped late result after run deadline ref=#{inspect(ref)}")
+    {:noreply, %{state | task: nil}}
+  end
+
   def handle_info({ref, {:ok, result}}, %{task: %{ref: ref}} = state) do
     Process.demonitor(ref, [:flush])
 
@@ -274,7 +308,68 @@ defmodule Handbeam.Agent.Runner do
     finish_error(state, reason)
   end
 
+  def handle_info({:os_process_started, os_pid, invocation}, state)
+      when is_integer(os_pid) do
+    {:noreply, %{state | os_processes: [{os_pid, invocation} | state.os_processes]}}
+  end
+
+  def handle_info({:run_deadline, deadline}, %{deadline: deadline} = state)
+      when state.status in [:running, :awaiting_approval] do
+    cleanup_os_processes(state)
+    shutdown_run_task(state.task)
+
+    payload = %{
+      status: "timeout",
+      turns: 0,
+      error: "run deadline exceeded",
+      reason: :run_timeout,
+      execution: :unknown,
+      run_id: state.opts[:run_id]
+    }
+
+    persist_terminal_event(state, payload)
+    Session.broadcast_event(state.conversation_id, :run_end, payload)
+    Session.mark_run_finished(state.conversation_id)
+    Handbeam.Agent.CandidateQueue.seal(state.queue_pid)
+    conversation_id = state.conversation_id
+
+    Task.Supervisor.start_child(Handbeam.AgentRunTaskSupervisor, fn ->
+      Process.sleep(50)
+      Handbeam.AgentRunSupervisor.stop_run(conversation_id)
+    end)
+
+    {:stop, :shutdown, %{state | status: :timeout, task: nil, deadline_timer: nil}}
+  end
+
+  def handle_info({:run_deadline, _stale}, state), do: {:noreply, state}
+
+  def handle_info({:EXIT, _pid, reason}, state) when reason not in [:normal, :shutdown] do
+    abort_unreplayable(state, {:run_tree_exit, reason})
+  end
+
   def handle_info(_message, state), do: {:noreply, state}
+
+  @doc false
+  def abort_unreplayable(state, reason) do
+    shutdown_run_task(state.task)
+    Handbeam.Agent.CandidateQueue.seal(state.queue_pid)
+
+    payload = %{
+      status: "error",
+      turns: 0,
+      error: inspect(reason),
+      execution: :unknown,
+      replayed: false,
+      run_id: state.opts[:run_id]
+    }
+
+    persist_terminal_event(state, payload)
+    Session.broadcast_event(state.conversation_id, :run_end, payload)
+    Session.mark_run_finished(state.conversation_id)
+    Logger.error("[Runner] run aborted without replay: #{inspect(reason)}")
+    stop_run_supervisor(state)
+    {:stop, :normal, %{state | status: :error, error: reason, task: nil}}
+  end
 
   defp finish_terminal(state, result, status) do
     Handbeam.Agent.Provider.Cursor.Session.stop_for_conversation(state.conversation_id)
@@ -304,15 +399,22 @@ defmodule Handbeam.Agent.Runner do
     end
   end
 
+  defp cleanup_os_processes(state) do
+    Enum.each(state.os_processes, fn {os_pid, invocation} ->
+      Handbeam.Platform.ProcessRunner.cleanup_owned(os_pid, invocation)
+    end)
+  end
+
   defp shutdown_run_task(nil), do: :ok
 
   defp shutdown_run_task(%Task{} = task) do
+    if is_pid(task.pid), do: send(task.pid, :run_cancelled)
     _ = Task.shutdown(task, :brutal_kill)
     :ok
   end
 
   defp persist_cancelled_run(state) do
-    payload = %{status: "cancelled", turns: 0}
+    payload = %{status: "cancelled", turns: 0, run_id: state.opts[:run_id]}
 
     payload =
       case state.interrupted_state do
@@ -358,7 +460,8 @@ defmodule Handbeam.Agent.Runner do
     payload = %{
       status: "error",
       turns: 0,
-      error: message
+      error: message,
+      run_id: state.opts[:run_id]
     }
 
     persist_terminal_event(state, payload)
@@ -453,15 +556,33 @@ defmodule Handbeam.Agent.Runner do
     log_runner_event(conversation_id, event)
 
     case Handbeam.Agent.TranscriptPersistence.handle_event(conversation_id, event, opts) do
-      :ok -> :ok
-      {:error, reason} -> raise "Transcript persistence failed: #{inspect(reason)}"
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        dir = Handbeam.ConversationStore.storage_dir()
+
+        raise "Transcript persistence failed: #{inspect(reason)} dir=#{dir} exists=#{File.exists?(Path.join([dir, "items", conversation_id, "meta.json"]))}"
     end
 
     # 3. User callback (if any)
     if is_function(user_on_event, 1) do
       user_on_event.(event)
     end
+
+    broadcast_session_event(conversation_id, event, opts)
   end
+
+  defp broadcast_session_event(conversation_id, {kind, payload}, opts) do
+    payload = stamp_run_id(payload, opts)
+    Session.broadcast_event(conversation_id, kind, payload)
+  end
+
+  defp stamp_run_id(payload, opts) when is_map(payload) do
+    Map.put_new(payload, :run_id, Keyword.get(opts, :run_id))
+  end
+
+  defp stamp_run_id(payload, _opts), do: payload
 
   defp log_runner_event(_conversation_id, {:message_delta, %{chunk: chunk}})
        when is_binary(chunk) do
