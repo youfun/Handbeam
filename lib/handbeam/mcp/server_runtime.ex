@@ -87,7 +87,7 @@ defmodule Handbeam.MCP.ServerRuntime do
 
     with {:ok, _} <-
            stdio_rpc(state, "initialize", %{
-             protocolVersion: Protocol.latest_version(),
+             protocolVersion: Protocol.latest_legacy_version(),
              clientInfo: %{"name" => "Handbeam", "version" => app_version()},
              capabilities: %{}
            }),

@@ -19,13 +19,30 @@ defmodule Handbeam.MCP.WorkspaceRuntimeTest do
       assert Plug.Conn.get_req_header(conn, "accept") == ["application/json, text/event-stream"]
 
       case message["method"] do
+        "server/discover" ->
+          if conn.host == "modern.example" do
+            assert Plug.Conn.get_req_header(conn, "mcp-protocol-version") == ["2026-07-28"]
+            assert Plug.Conn.get_req_header(conn, "mcp-method") == ["server/discover"]
+
+            Req.Test.json(conn, %{
+              jsonrpc: "2.0",
+              id: message["id"],
+              result: %{
+                resultType: "complete",
+                supportedVersions: ["2026-07-28"]
+              }
+            })
+          else
+            Plug.Conn.send_resp(conn, 400, "")
+          end
+
         "initialize" ->
           conn
           |> Plug.Conn.put_resp_header("mcp-session-id", "session-#{conn.host}")
           |> Req.Test.json(%{
             jsonrpc: "2.0",
             id: message["id"],
-            result: %{protocolVersion: "2025-06-18"}
+            result: %{protocolVersion: "2025-11-25"}
           })
 
         "notifications/initialized" ->
@@ -33,7 +50,10 @@ defmodule Handbeam.MCP.WorkspaceRuntimeTest do
           Plug.Conn.send_resp(conn, 202, "")
 
         "tools/list" ->
-          assert Plug.Conn.get_req_header(conn, "mcp-protocol-version") == ["2025-06-18"]
+          version =
+            if conn.host == "modern.example", do: "2026-07-28", else: "2025-11-25"
+
+          assert Plug.Conn.get_req_header(conn, "mcp-protocol-version") == [version]
 
           Req.Test.json(conn, %{
             jsonrpc: "2.0",
@@ -44,7 +64,16 @@ defmodule Handbeam.MCP.WorkspaceRuntimeTest do
           })
 
         "tools/call" ->
-          assert Plug.Conn.get_req_header(conn, "mcp-session-id") == ["session-#{conn.host}"]
+          if conn.host == "modern.example" do
+            assert Plug.Conn.get_req_header(conn, "mcp-protocol-version") == ["2026-07-28"]
+            assert Plug.Conn.get_req_header(conn, "mcp-method") == ["tools/call"]
+            assert Plug.Conn.get_req_header(conn, "mcp-name") == ["echo"]
+
+            assert message["params"]["_meta"]["io.modelcontextprotocol/protocolVersion"] ==
+                     "2026-07-28"
+          else
+            assert Plug.Conn.get_req_header(conn, "mcp-session-id") == ["session-#{conn.host}"]
+          end
 
           result = %{
             content: [%{type: "text", text: conn.host}],
@@ -126,6 +155,19 @@ defmodule Handbeam.MCP.WorkspaceRuntimeTest do
     [pid] = second.runtime_pids
     assert {:ok, "two.example", _} = ServerRuntime.call_tool(pid, "echo", %{})
     assert {:error, "two.example", _} = ServerRuntime.call_tool(pid, "echo", %{"fail" => true})
+  end
+
+  test "a 2026-07-28 server is used without the initialize handshake", %{opts: opts} do
+    form =
+      Settings.new_form("a")
+      |> Map.merge(%{"name" => "Modern", "url" => "https://modern.example/mcp"})
+
+    {:ok, _} = Settings.save(form, opts)
+    {:ok, result} = Handbeam.MCP.bootstrap(Keyword.put(opts, :workspace_id, "a"))
+    assert_received {:request, "modern.example", "server/discover"}
+    refute_received {:request, "modern.example", "initialize"}
+    [pid] = result.runtime_pids
+    assert {:ok, "modern.example", _} = ServerRuntime.call_tool(pid, "echo", %{})
   end
 
   test "test connection uses draft credentials but never registers or persists tools", %{

@@ -73,11 +73,35 @@ defmodule Handbeam.MCP.Protocol do
     end)
   end
 
+  @legacy_versions ["2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25"]
+  @modern_version "2026-07-28"
+  @supported_versions [@modern_version | @legacy_versions]
+
   @doc """
-  Returns the protocol version used for initialize.
+  Protocol version sent on a stateless `2026-07-28` request.
   """
-  @spec latest_version() :: binary()
-  def latest_version, do: "2025-06-18"
+  @spec modern_version() :: binary()
+  def modern_version, do: @modern_version
+
+  @doc """
+  Newest handshake revision advertised to a legacy server.
+  """
+  @spec latest_legacy_version() :: binary()
+  def latest_legacy_version, do: "2025-11-25"
+
+  @doc """
+  Versions Handbeam can continue with after the server picks one.
+  """
+  @spec supported_version?(binary()) :: boolean()
+  def supported_version?(version) when is_binary(version), do: version in @supported_versions
+  def supported_version?(_), do: false
+
+  @doc """
+  Handshake revisions. `2026-07-28` is not negotiated through `initialize`.
+  """
+  @spec legacy_version?(binary()) :: boolean()
+  def legacy_version?(version) when is_binary(version), do: version in @legacy_versions
+  def legacy_version?(_), do: false
 
   @doc """
   Generates a unique request ID (combination of timestamp + random).

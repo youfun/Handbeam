@@ -17,6 +17,7 @@ defmodule Handbeam.MCP.ServerConfig do
     url: nil,
     headers: %{},
     runtime_headers: %{},
+    protocol_era: nil,
     source: nil,
     raw: %{}
   ]
@@ -34,6 +35,7 @@ defmodule Handbeam.MCP.ServerConfig do
           url: String.t() | nil,
           headers: %{String.t() => String.t()},
           runtime_headers: %{String.t() => String.t()},
+          protocol_era: :modern | :legacy | nil,
           source: String.t() | nil,
           raw: map()
         }
