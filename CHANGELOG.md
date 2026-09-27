@@ -1,5 +1,12 @@
 # 更新日志 (CHANGELOG)
 
+## [0.2.2] - 打包发布
+
+### 版本
+- Handbeam 与 Handbeam Probe 升至 `0.2.2`。
+- Android `versionCode` 升至 `6`，iOS `CFBundleVersion` 升至 `5`，macOS `CFBundleVersion` 升至 `3`。
+- 打 `v0.2.2` 标签触发 Pack。`0.2.1` 只提交到 `dev`，没有对应标签。
+
 ## [0.2.1] - macOS 原生客户端
 
 ### 新增与改进
