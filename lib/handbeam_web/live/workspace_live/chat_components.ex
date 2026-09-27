@@ -1011,6 +1011,7 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
                   id="send-button"
                   type="submit"
                   form="composer"
+                  phx-disable-with="…"
                   class={["composer-send-btn", if(@running, do: "steer", else: "primary")]}
                   title={gettext("Send")}
                 >

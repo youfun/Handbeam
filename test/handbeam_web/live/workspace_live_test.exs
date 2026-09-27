@@ -609,6 +609,11 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       end)
     end
 
+    test "send button prevents duplicate submission while the server acknowledges", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+      assert has_element?(view, "#send-button[phx-disable-with='…']")
+    end
+
     test "sending a message persists user-visible history before run_end", %{conn: conn} do
       isolate_conversation_home!()
 

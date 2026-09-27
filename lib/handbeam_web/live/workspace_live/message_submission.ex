@@ -549,7 +549,6 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
           |> assign(:current_assistant_entry_id, nil)
           |> append_user_message(message, attachments, msg_id)
           |> assign(:pending_attachments, [])
-          |> ConversationState.schedule_auto_title(message)
           |> RuntimeProjection.update_status(%{
             status: :running,
             input_tokens: 0,
@@ -561,6 +560,10 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
           })
           |> RuntimeProjection.subscribe_session()
           |> push_event("user-message-sent", %{})
+
+        # Title persistence can take long enough to make the submit look inert.
+        # Run it after LiveView has acknowledged and rendered the user message.
+        send(self(), {:schedule_auto_title, conv_id, message})
 
         om_opts = ModelSelection.om_from_effective(socket.assigns.effective_settings)
 

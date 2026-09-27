@@ -1194,6 +1194,15 @@ defmodule HandbeamWeb.WorkspaceLive do
      |> ConversationState.maybe_patch_page_title(conv_id, title)}
   end
 
+  def handle_info({:schedule_auto_title, conv_id, message}, socket)
+      when is_binary(conv_id) and is_binary(message) do
+    if socket.assigns.current_conversation_id == conv_id do
+      {:noreply, ConversationState.schedule_auto_title(socket, message)}
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_info({:conversation_handoffs, conv_id}, socket) do
     socket =
       if socket.assigns.current_conversation_id == conv_id do

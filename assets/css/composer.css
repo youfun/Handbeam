@@ -254,6 +254,11 @@
   background: var(--sig-warning);
 }
 
+.composer-send-btn[disabled] {
+  cursor: wait;
+  opacity: 0.68;
+}
+
 .composer-stop-btn {
   color: var(--sig-text-primary);
 }
