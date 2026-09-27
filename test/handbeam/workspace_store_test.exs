@@ -387,6 +387,21 @@ defmodule Handbeam.WorkspaceStoreTest do
     end
   end
 
+  describe "rename/2" do
+    test "renames a workspace without changing its path", %{storage_path: _storage_path} do
+      {:ok, _} = WorkspaceStore.ensure_default!()
+      dir = Path.join(System.tmp_dir!(), "hb-rename-#{System.unique_integer([:positive])}")
+      File.mkdir_p!(dir)
+
+      {:ok, ws} = WorkspaceStore.add(dir, name: "Old Name")
+      assert {:ok, renamed} = WorkspaceStore.rename(ws["id"], "  New   Name  ")
+      assert renamed["name"] == "New Name"
+      assert renamed["path"] == Path.expand(dir)
+      assert {:error, :empty} = WorkspaceStore.rename(ws["id"], "   ")
+      assert {:error, :not_found} = WorkspaceStore.rename("missing", "Name")
+    end
+  end
+
   describe "corrupted JSON" do
     test "returns an error without overwriting the corrupted file", %{storage_path: storage_path} do
       corrupted = "this is not valid json {{{"

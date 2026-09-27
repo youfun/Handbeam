@@ -29,6 +29,10 @@ defmodule HandbeamWeb.ConversationHoverTest do
     assert ConversationSwitching.hover_context([], nil) == %{folder: nil, branch: nil}
   end
 
+  test "repo name is absent when the path is not a repository" do
+    assert ConversationSwitching.repo_name(nil) == nil
+  end
+
   defp iso(now, offset_seconds) do
     now |> DateTime.add(offset_seconds, :second) |> DateTime.to_iso8601()
   end

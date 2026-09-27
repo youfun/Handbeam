@@ -685,6 +685,54 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
     System.system_time(:second) |> div(30)
   end
 
+  @doc "Git remote repository name for a workspace path, e.g. `Handbeam`."
+  def repo_name(path) when is_binary(path) and path != "" do
+    key = {path, branch_cache_bucket()}
+
+    case :persistent_term.get({__MODULE__, :repo, key}, :miss) do
+      :miss ->
+        name = read_repo_name(path)
+        :persistent_term.put({__MODULE__, :repo, key}, name)
+        name
+
+      name ->
+        name
+    end
+  end
+
+  def repo_name(_path), do: nil
+
+  defp read_repo_name(path) do
+    case Handbeam.Git.CLI.remotes({:cli, path}) do
+      {:ok, remotes} ->
+        remotes
+        |> Enum.find(&(&1.name == "origin"))
+        |> Kernel.||(List.first(remotes))
+        |> then(&repo_name_from_remote/1)
+
+      _ ->
+        nil
+    end
+  end
+
+  defp repo_name_from_remote(nil), do: nil
+  defp repo_name_from_remote(%{url: url}), do: repo_name_from_url(url)
+
+  defp repo_name_from_url(url) when is_binary(url) do
+    url
+    |> String.trim()
+    |> String.trim_trailing("/")
+    |> String.replace(~r/\.git$/, "")
+    |> String.split(["/", ":"])
+    |> List.last()
+    |> case do
+      name when is_binary(name) and name != "" -> name
+      _ -> nil
+    end
+  end
+
+  defp repo_name_from_url(_url), do: nil
+
   defp read_branch(path) do
     case Handbeam.Git.CLI.branches({:cli, path}) do
       {:ok, branches} ->

@@ -18,6 +18,7 @@ defmodule HandbeamWeb.WorkspaceLive.ViewComponents do
     to: ConversationSwitching
 
   defdelegate hover_context(workspaces, workspace_id), to: ConversationSwitching
+  defdelegate repo_name(path), to: ConversationSwitching
 
   defdelegate pinned_conversations(workspaces, conversations_by_workspace),
     to: ConversationSwitching

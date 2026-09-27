@@ -186,9 +186,25 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
           ]}
         >
           <div class="workspace-title-row">
-            <div class="workspace-header min-w-0 text-left px-2 py-1.5 text-xs flex items-center gap-1.5">
+            <button
+              type="button"
+              phx-click="toggle_workspace_group"
+              phx-value-id="pinned"
+              aria-expanded={
+                to_string(not workspace_group_collapsed?(@collapsed_workspace_ids, "pinned"))
+              }
+              aria-controls="pinned-conversations"
+              title={
+                if(workspace_group_collapsed?(@collapsed_workspace_ids, "pinned"),
+                  do: gettext("展开"),
+                  else: gettext("收起")
+                )
+              }
+              class="workspace-header min-w-0 text-left px-2 py-1.5 text-xs flex items-center gap-1.5"
+            >
               <span class="truncate flex-1">{gettext("已置顶")}</span>
-            </div>
+            </button>
+            <span class="workspace-title-rule" aria-hidden="true"></span>
             <button
               type="button"
               id="pinned-workspace-toggle"
@@ -285,9 +301,25 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
             "workspace-title-row",
             @chat_scope == :free && "is-active"
           ]}>
-            <div class="workspace-header min-w-0 text-left px-2 py-1.5 text-xs flex items-center gap-1.5">
+            <button
+              type="button"
+              phx-click="toggle_workspace_group"
+              phx-value-id="free"
+              aria-expanded={
+                to_string(not workspace_group_collapsed?(@collapsed_workspace_ids, "free"))
+              }
+              aria-controls="free-conversations"
+              title={
+                if(workspace_group_collapsed?(@collapsed_workspace_ids, "free"),
+                  do: gettext("展开"),
+                  else: gettext("收起")
+                )
+              }
+              class="workspace-header min-w-0 text-left px-2 py-1.5 text-xs flex items-center gap-1.5"
+            >
               <span class="truncate flex-1">{gettext("对话")}</span>
-            </div>
+            </button>
+            <span class="workspace-title-rule" aria-hidden="true"></span>
             <button
               id="new-free-conversation"
               phx-click="new_free_conversation"
@@ -388,14 +420,29 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
             "workspace-group",
             workspace_group_collapsed?(@collapsed_workspace_ids, ws["id"]) && "is-collapsed"
           ]}
+          data-workspace-id={ws["id"]}
+          data-workspace-name={ws["name"]}
+          data-workspace-path={ws["path"]}
+          data-workspace-repo={repo_name(ws["path"])}
         >
           <div class={[
             "workspace-title-row",
             @current_workspace_id == ws["id"] && @chat_scope != :free && "is-active"
           ]}>
             <button
-              phx-click="select_workspace"
+              type="button"
+              phx-click="toggle_workspace_group"
               phx-value-id={ws["id"]}
+              aria-expanded={
+                to_string(not workspace_group_collapsed?(@collapsed_workspace_ids, ws["id"]))
+              }
+              aria-controls={"workspace-conversations-#{ws["id"]}"}
+              title={
+                if(workspace_group_collapsed?(@collapsed_workspace_ids, ws["id"]),
+                  do: gettext("展开"),
+                  else: gettext("收起")
+                )
+              }
               class={[
                 "workspace-header min-w-0 text-left px-2 py-1.5 text-xs flex items-center gap-1.5 transition-colors",
                 if(@current_workspace_id == ws["id"],
@@ -421,6 +468,7 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
               <span class="truncate flex-1">{ws["name"]}</span>
               <span :if={ws["default"]} class="text-tertiary text-[0.6rem]">default</span>
             </button>
+            <span class="workspace-title-rule" aria-hidden="true"></span>
             <div class="workspace-row-actions">
               <button
                 phx-click="new_conversation_in_workspace"
@@ -570,7 +618,7 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
         </div>
 
         <!-- Archived conversations -->
-        <div class="workspace-group mt-2 border-t pt-2">
+        <div class="workspace-group">
           <button
             phx-click="toggle_archive"
             class="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-xs text-tertiary hover:bg-surface-hover transition-colors rounded"
@@ -651,6 +699,51 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
         </div>
       </div>
       <.conversation_hover_card workspaces={@workspaces} />
+      <.workspace_hover_card />
+    </div>
+    """
+  end
+
+  defp workspace_hover_card(assigns) do
+    ~H"""
+    <div id="workspace-hover-card" class="workspace-hover" role="tooltip" hidden>
+      <div class="workspace-hover-head">
+        <div class="min-w-0">
+          <div class="workspace-hover-name" data-workspace-hover-name></div>
+          <div class="workspace-hover-path" data-workspace-hover-path></div>
+          <div class="workspace-hover-repo" data-workspace-hover-repo hidden>
+            <span>{gettext("仓库")}</span>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <line x1="6" y1="3" x2="6" y2="15" />
+              <circle cx="18" cy="6" r="3" /><circle cx="6" cy="18" r="3" />
+              <path d="M18 9a9 9 0 0 1-9 9" />
+            </svg>
+            <span class="truncate" data-workspace-hover-repo-name></span>
+          </div>
+        </div>
+        <button
+          type="button"
+          class="workspace-hover-rename"
+          data-workspace-hover-rename
+          title={gettext("重命名")}
+          aria-label={gettext("重命名")}
+        >
+          <svg width="13" height="13" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+            <path
+              d="M7.2 2.1 9.9 4.8 4.4 10.3 1.5 10.5l.2-2.9L7.2 2.1Z"
+              stroke="currentColor"
+              stroke-width="1.1"
+              stroke-linejoin="round"
+            />
+            <path
+              d="M6.4 2.9 9.1 5.6"
+              stroke="currentColor"
+              stroke-width="1.1"
+              stroke-linecap="round"
+            />
+          </svg>
+        </button>
+      </div>
     </div>
     """
   end

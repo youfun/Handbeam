@@ -27,7 +27,12 @@ const ConversationSidebar = {
   place: ConversationHover.place,
   hide: ConversationHover.hide,
   scheduleHide: ConversationHover.scheduleHide,
-  clearHide: ConversationHover.clearHide
+  clearHide: ConversationHover.clearHide,
+  showWorkspace: ConversationHover.showWorkspace,
+  placeWorkspace: ConversationHover.placeWorkspace,
+  hideWorkspace: ConversationHover.hideWorkspace,
+  scheduleHideWorkspace: ConversationHover.scheduleHideWorkspace,
+  clearHideWorkspace: ConversationHover.clearHideWorkspace
 };
 import { LocalWebGPUProbe } from "./hooks/local_webgpu_probe.js";
 import { GhosttyTerminal } from "../vendor/ghostty.js";

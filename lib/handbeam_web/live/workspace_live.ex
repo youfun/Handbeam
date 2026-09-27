@@ -140,6 +140,7 @@ defmodule HandbeamWeb.WorkspaceLive do
       |> assign(:collapsed_workspace_ids, MapSet.new())
       |> assign(:workspace_menu_id, nil)
       |> assign(:remove_workspace, nil)
+      |> assign(:rename_workspace, nil)
       |> assign(:conversation_menu_id, nil)
       |> assign(:rename_conversation, nil)
       |> assign(:pending_approval, nil)
@@ -799,6 +800,62 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   def handle_event("close_workspace_menu", _params, socket) do
     {:noreply, WorkspaceNavigation.close_workspace_menu(socket)}
+  end
+
+  def handle_event("open_rename_workspace", %{"id" => ws_id}, socket) do
+    case Handbeam.WorkspaceStore.get(ws_id) do
+      {:ok, ws} ->
+        {:noreply,
+         socket
+         |> assign(:workspace_menu_id, nil)
+         |> assign(:rename_workspace, %{id: ws["id"], name: ws["name"] || "", error: nil})}
+
+      {:error, :not_found} ->
+        {:noreply, assign(socket, :workspace_menu_id, nil)}
+    end
+  end
+
+  def handle_event("cancel_rename_workspace", _params, socket) do
+    {:noreply, assign(socket, :rename_workspace, nil)}
+  end
+
+  def handle_event("confirm_rename_workspace", %{"name" => name}, socket) do
+    case socket.assigns.rename_workspace do
+      %{id: ws_id} = rename ->
+        case Handbeam.WorkspaceStore.rename(ws_id, name) do
+          {:ok, ws} ->
+            socket =
+              socket
+              |> assign(:workspaces, Handbeam.WorkspaceStore.list())
+              |> assign(:rename_workspace, nil)
+
+            socket =
+              if socket.assigns.current_workspace_id == ws_id,
+                do: assign(socket, :workspace_label, ws["name"]),
+                else: socket
+
+            {:noreply, socket}
+
+          {:error, :empty} ->
+            {:noreply,
+             assign(socket, :rename_workspace, %{rename | name: name, error: gettext("名称不能为空")})}
+
+          {:error, :too_long} ->
+            {:noreply,
+             assign(socket, :rename_workspace, %{
+               rename
+               | name: name,
+                 error: gettext("名称不能超过 80 个字符")
+             })}
+
+          {:error, _reason} ->
+            {:noreply,
+             assign(socket, :rename_workspace, %{rename | name: name, error: gettext("重命名失败")})}
+        end
+
+      _ ->
+        {:noreply, socket}
+    end
   end
 
   @impl true

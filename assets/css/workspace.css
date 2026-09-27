@@ -1799,18 +1799,25 @@ button.workspace-file-row:hover,
 
 /* ── Workspace group ── */
 .workspace-group {
-  padding: 0.35rem 0.5rem 0.35rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--color-border-light) 82%, transparent);
+  padding: 0.15rem 0.5rem 0.2rem;
 }
 
 .workspace-title-row {
   display: flex;
   align-items: center;
-  align-self: flex-start;
-  width: fit-content;
+  align-self: stretch;
+  width: 100%;
   max-width: 100%;
   min-width: 0;
   border-radius: var(--sig-radius-lg);
+}
+
+.workspace-title-rule {
+  flex: 1 0 16px;
+  height: 1px;
+  min-width: 16px;
+  margin: 0 8px;
+  background: var(--sig-border-default);
 }
 
 .workspace-title-row.is-active {
@@ -1829,12 +1836,17 @@ button.workspace-file-row:hover,
 .workspace-row-actions {
   display: flex;
   align-items: center;
+  order: 3;
   flex: 0 0 0;
   width: 0;
   min-width: 0;
   overflow: hidden;
   opacity: 0;
   pointer-events: none;
+}
+
+.workspace-add-btn {
+  order: 3;
 }
 
 .workspace-title-row:hover .workspace-row-actions,
@@ -1907,6 +1919,7 @@ button.workspace-file-row:hover,
 .workspace-header {
   position: relative;
   flex: 0 1 auto;
+  max-width: calc(100% - 4.5rem);
   min-width: 0;
   min-height: 2rem;
   color: var(--color-text-secondary);
@@ -1951,9 +1964,10 @@ button.workspace-file-row:hover,
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
+  order: 4;
   gap: 3px;
   height: 1.5rem;
-  margin-left: 0.1rem;
+  margin-left: 0;
   margin-right: 0.15rem;
   padding: 0 0.1rem;
   border: none;
@@ -1971,7 +1985,17 @@ button.workspace-file-row:hover,
 
 .workspace-chevron-icon {
   flex-shrink: 0;
-  transition: transform 0.15s ease;
+  width: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: transform 0.15s ease, opacity 0.15s ease, width 0.15s ease;
+}
+
+.workspace-title-row:hover .workspace-chevron-icon,
+.workspace-title-row:focus-within .workspace-chevron-icon,
+.workspace-count-toggle:hover .workspace-chevron-icon {
+  width: 10px;
+  opacity: 1;
 }
 
 .workspace-chevron-icon.is-collapsed {
@@ -2106,6 +2130,81 @@ button.workspace-file-row:hover,
 
 .conversation-hover-branch-icon {
   color: #7c6bb5;
+}
+
+.workspace-hover {
+  position: fixed;
+  z-index: 80;
+  display: none;
+  width: max-content;
+  max-width: 320px;
+  padding: 10px 12px;
+  border: 1px solid var(--sig-border-subtle);
+  border-radius: var(--sig-radius-lg);
+  background: var(--sig-bg-elevated);
+  box-shadow: 0 8px 24px rgba(26, 24, 21, 0.1);
+  color: var(--sig-text-primary);
+  pointer-events: none;
+}
+
+.workspace-hover.is-open {
+  display: block;
+  pointer-events: auto;
+}
+
+.workspace-hover-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.workspace-hover-name {
+  color: var(--sig-text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.workspace-hover-path {
+  margin-top: 2px;
+  color: var(--sig-text-tertiary);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.workspace-hover-repo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  color: var(--sig-text-secondary);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.workspace-hover-repo svg {
+  flex: 0 0 auto;
+  color: var(--sig-text-tertiary);
+}
+
+.workspace-hover-rename {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: var(--sig-radius-md);
+  background: transparent;
+  color: var(--sig-text-tertiary);
+  cursor: pointer;
+}
+
+.workspace-hover-rename:hover {
+  background: var(--sig-bg-surface-hover);
+  color: var(--sig-text-primary);
 }
 
 .conversation-row:has(.conversation-action.is-open) {
@@ -2262,8 +2361,7 @@ button.workspace-file-row:hover,
 }
 
 .pinned-group {
-  padding: 0.35rem 0.5rem 0.35rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--color-border-light) 82%, transparent);
+  padding: 0.15rem 0.5rem 0.2rem;
 }
 
 .conversation-pin-icon {

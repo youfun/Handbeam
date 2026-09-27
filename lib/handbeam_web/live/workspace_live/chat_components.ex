@@ -24,6 +24,7 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
   attr :pending_messages, :any, required: true
   attr :permission_mode, :any, required: true
   attr :remove_workspace, :any, required: true
+  attr :rename_workspace, :any, required: true
   attr :rename_conversation, :any, required: true
   attr :revert_confirm_change_id, :any, required: true
   attr :revert_message, :any, required: true
@@ -105,6 +106,69 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
             <button
               type="submit"
               id="rename-conversation-submit"
+              class="text-xs bg-user text-white rounded px-4 py-1.5 transition-colors hover:bg-user-hover"
+            >
+              {gettext("保存")}
+            </button>
+          </div>
+        </form>
+      </div>
+
+      <div
+        :if={@rename_workspace}
+        id="rename-workspace-overlay"
+        class="absolute inset-0 z-50 flex items-center justify-center"
+        phx-window-keydown="cancel_rename_workspace"
+        phx-key="Escape"
+      >
+        <button
+          type="button"
+          class="absolute inset-0 bg-transparent border-0"
+          phx-click="cancel_rename_workspace"
+          aria-label={gettext("取消")}
+        >
+        </button>
+        <form
+          id="rename-workspace-dialog"
+          phx-submit="confirm_rename_workspace"
+          class="relative add-project-dialog bg-surface border rounded-xl shadow-2xl w-[420px] p-5"
+        >
+          <h3 class="text-base font-semibold text-primary mb-4">{gettext("重命名工作区")}</h3>
+          <div class="space-y-3 mb-4">
+            <div>
+              <label for="rename-workspace-input" class="text-xs text-secondary block mb-1">
+                {gettext("工作区名称")}
+              </label>
+              <input
+                id="rename-workspace-input"
+                type="text"
+                name="name"
+                value={@rename_workspace.name}
+                phx-mounted={JS.focus()}
+                maxlength="80"
+                autocomplete="off"
+                class="w-full bg-main border rounded px-2 py-1.5 text-xs text-primary focus:outline-none focus:border-accent"
+              />
+            </div>
+            <div
+              :if={@rename_workspace.error}
+              id="rename-workspace-error"
+              class="text-xs text-error bg-error-subtle rounded px-3 py-2"
+            >
+              {@rename_workspace.error}
+            </div>
+          </div>
+          <div class="flex justify-end gap-3">
+            <button
+              type="button"
+              phx-click="cancel_rename_workspace"
+              class="text-xs text-secondary border rounded px-3 py-1.5 transition-colors hover:text-primary hover:border-hover"
+            >
+              {gettext("取消")}
+            </button>
+            <button
+              type="submit"
+              id="rename-workspace-submit"
               class="text-xs bg-user text-white rounded px-4 py-1.5 transition-colors hover:bg-user-hover"
             >
               {gettext("保存")}

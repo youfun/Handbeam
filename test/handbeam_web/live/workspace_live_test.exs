@@ -3683,7 +3683,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
 
         view
         |> element(
-          ".workspace-header[phx-click='select_workspace'][phx-value-id='#{added_ws["id"]}']"
+          "button[phx-click='new_conversation_in_workspace'][phx-value-ws_id='#{added_ws["id"]}']"
         )
         |> render_click()
 
@@ -3725,6 +3725,19 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert has_element?(view, "#sheet-free-conversations")
       assert has_element?(view, "#free-workspace-toggle[aria-expanded='true']")
       assert has_element?(view, "#free-conversations")
+
+      view
+      |> element(".workspace-header[phx-click='toggle_workspace_group'][phx-value-id='#{ws_id}']")
+      |> render_click()
+
+      refute has_element?(view, "#workspace-conversations-#{ws_id}")
+      assert has_element?(view, "#workspace-toggle-#{ws_id}[aria-expanded='false']")
+
+      view
+      |> element(".workspace-header[phx-click='toggle_workspace_group'][phx-value-id='#{ws_id}']")
+      |> render_click()
+
+      assert has_element?(view, "#workspace-conversations-#{ws_id}")
 
       view |> element("#workspace-toggle-#{ws_id}") |> render_click()
 

@@ -239,6 +239,45 @@ defmodule Handbeam.WorkspaceStore do
   end
 
   @doc """
+  Rename a workspace. The directory on disk is not changed.
+  """
+  @spec rename(String.t(), String.t()) ::
+          {:ok, map()} | {:error, :not_found | :empty | :too_long}
+  def rename(id, name) when is_binary(id) and is_binary(name) do
+    with {:ok, normalized} <- normalize_name(name) do
+      data = load_storage!()
+      workspaces = Map.get(data, "workspaces", [])
+
+      case Enum.find_index(workspaces, &(&1["id"] == id)) do
+        nil ->
+          {:error, :not_found}
+
+        idx ->
+          updated_ws = Enum.at(workspaces, idx) |> Map.put("name", normalized)
+          updated_data = Map.put(data, "workspaces", List.replace_at(workspaces, idx, updated_ws))
+          write_storage(storage_path(), updated_data)
+          {:ok, updated_ws}
+      end
+    end
+  end
+
+  @doc false
+  def normalize_name(name) when is_binary(name) do
+    normalized =
+      name
+      |> String.replace(~r/[\r\n\t]+/u, " ")
+      |> String.replace(~r/[[:cntrl:]]/u, "")
+      |> String.replace(~r/\s+/u, " ")
+      |> String.trim()
+
+    cond do
+      normalized == "" -> {:error, :empty}
+      String.length(normalized) > 80 -> {:error, :too_long}
+      true -> {:ok, normalized}
+    end
+  end
+
+  @doc """
   Remove a workspace from the list.
 
   Does not delete the directory on disk. The default workspace cannot be
