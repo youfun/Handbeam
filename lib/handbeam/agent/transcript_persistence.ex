@@ -110,6 +110,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
         "role" => "tool",
         "direction" => "internal",
         "tool_use_id" => tool_use_id,
+        "parent_tool_call_id" => payload_value(payload, :parent_tool_call_id),
         "tool_name" => tool_name,
         "tool_status" => "running",
         "input" => Handbeam.Log.Redactor.redact(payload_value(payload, :input, %{})),
@@ -148,7 +149,8 @@ defmodule Handbeam.Agent.TranscriptPersistence do
         "message_type" => "tool",
         "role" => "tool",
         "direction" => "internal",
-        "tool_use_id" => tool_use_id
+        "tool_use_id" => tool_use_id,
+        "parent_tool_call_id" => payload_value(payload, :parent_tool_call_id)
       })
       |> Map.merge(patch)
 

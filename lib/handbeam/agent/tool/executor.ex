@@ -10,10 +10,12 @@ defmodule Handbeam.Agent.Tool.Executor do
 
   alias Handbeam.Agent.{Message, State}
   alias Handbeam.Agent.Tool.Result
+  alias Handbeam.Extension.HookPipeline
 
   require Logger
 
   @default_max_result_chars 50_000
+  @spill_head_chars 2_000
 
   @doc """
   Execute all tool calls and return a result message or halt signal.
@@ -47,7 +49,61 @@ defmodule Handbeam.Agent.Tool.Executor do
   """
   @spec execute_all_with_details([map()], State.t()) :: {:ok, Message.t(), [map()]}
   def execute_all_with_details(tool_calls, %State{} = state) do
-    context = build_context(state)
+    execute_all_with_details(tool_calls, state, caller: :model)
+  end
+
+  @doc """
+  Run one registered tool from the executor, including nested-only tools.
+
+  This is not a model-facing tool. Session active-set, MCP scope, workspace
+  access, and run authorization still apply. A nested call carries
+  `parent_tool_call_id` on the existing `tool_call`, `tool_start`, and
+  `tool_end` events.
+  """
+  @spec execute_nested(String.t(), map(), State.t(), keyword()) ::
+          {:ok, String.t(), map()} | {:error, String.t(), map()}
+  def execute_nested(name, input, %State{} = state, opts \\ []) when is_binary(name) do
+    parent_tool_call_id = Keyword.get(opts, :parent_tool_call_id)
+    id = Keyword.get(opts, :tool_call_id) || nested_call_id(parent_tool_call_id)
+    call = %{id: id, name: name, input: input || %{}}
+    context = build_context(state, caller: :nested, parent_tool_call_id: parent_tool_call_id)
+
+    tool_fns =
+      Handbeam.Tool.Registry.tool_fns()
+      |> Map.take(authorized_tools(state.config))
+
+    session_id = context[:conversation_id] || context[:session_id] || "nested"
+    hook_payload = tool_hook_payload(call, session_id, parent_tool_call_id)
+
+    case authorize_nested(name, tool_fns, context, state) do
+      :ok ->
+        case run_tool_hook(state, session_id, {:tool_call, hook_payload}) do
+          {:block, reason} ->
+            {:error, "Tool call blocked: #{reason}", %{}}
+
+          hook_result ->
+            call = apply_hook_args(call, hook_result)
+            emit_nested(opts, :tool_start, hook_payload)
+
+            block =
+              execute_one_with_timeout(
+                call,
+                tool_fns,
+                context,
+                timeout_for(call, tool_fns, state)
+              )
+
+            emit_nested(opts, :tool_end, nested_end_payload(call, block, parent_tool_call_id))
+            nested_outcome(block)
+        end
+
+      {:error, reason} ->
+        {:error, reason, %{}}
+    end
+  end
+
+  defp execute_all_with_details(tool_calls, %State{} = state, exec_opts) do
+    context = build_context(state, exec_opts)
 
     tool_fns =
       Handbeam.Tool.Registry.tool_fns()
@@ -123,9 +179,13 @@ defmodule Handbeam.Agent.Tool.Executor do
     Logger.debug("[Executor] start tool=#{name} id=#{id}")
 
     authorized = name in authorized_tools(context.delegation_config)
+    nested_caller? = context[:tool_caller] == :nested
 
     result =
       case if(authorized, do: fetch_tool(tool_fns, name), else: :error) do
+        {:ok, %{nested_only?: true}} when not nested_caller? ->
+          unknown_tool(name, id, input)
+
         {:ok, entry} ->
           try do
             outcome =
@@ -156,18 +216,11 @@ defmodule Handbeam.Agent.Tool.Executor do
           end
 
         :error ->
-          msg = "Unknown tool: #{name}"
-          Logger.warning(fn -> msg end)
-
-          dev_log(
-            "[Executor] unknown tool call raw=#{inspect(%{id: id, name: name, input: input})}"
-          )
-
-          Result.error(msg)
+          unknown_tool(name, id, input)
       end
 
     max_chars = get_max_result_chars(tool_fns, name)
-    truncated = truncate_result(result, max_chars)
+    truncated = bound_result(result, max_chars, context)
     duration_ms = System.monotonic_time(:millisecond) - t0
 
     Logger.debug(
@@ -191,6 +244,7 @@ defmodule Handbeam.Agent.Tool.Executor do
       apply(Task.Supervisor, start_task, [
         Handbeam.AgentRunTaskSupervisor,
         fn ->
+          Process.put(:tool_owner, context[:runner_pid])
           execute_one(call, tool_fns, context)
         end
       ])
@@ -263,16 +317,74 @@ defmodule Handbeam.Agent.Tool.Executor do
 
   def truncate_result(%Result{content: content} = result, max_chars)
       when is_integer(max_chars) and byte_size(content) > max_chars do
-    trunc_result = Handbeam.Utils.Truncate.truncate_head_tail(content, max_bytes: max_chars)
-
-    %Result{
-      result
-      | content: trunc_result.content,
-        details: Map.put(result.details || %{}, :original_content, content)
-    }
+    spill_success(result, max_chars, nil)
   end
 
   def truncate_result(result, _max_chars), do: result
+
+  defp bound_result(%Result{is_error: true} = result, _max_chars, _context), do: result
+
+  defp bound_result(%Result{content: content} = result, max_chars, context)
+       when is_integer(max_chars) and byte_size(content) > max_chars do
+    spill_success(result, max_chars, context[:working_directory])
+  end
+
+  defp bound_result(result, _max_chars, _context), do: result
+
+  defp spill_success(%Result{content: content} = result, max_chars, working_directory) do
+    case spill_path(working_directory) do
+      {:ok, relative, absolute} ->
+        File.write!(absolute, content)
+        head = String.slice(content, 0, min(@spill_head_chars, max_chars))
+
+        preview =
+          head <>
+            "\n\n[Full result written to #{relative} (#{byte_size(content)} bytes). " <>
+            "Read it with the read tool using offset and limit. " <>
+            "Do not assume the omitted tail.]\n"
+
+        %Result{
+          result
+          | content: preview,
+            details:
+              Map.merge(result.details || %{}, %{
+                original_content: content,
+                spill_path: relative
+              })
+        }
+
+      :error ->
+        trunc_result = Handbeam.Utils.Truncate.truncate_head_tail(content, max_bytes: max_chars)
+
+        %Result{
+          result
+          | content: trunc_result.content,
+            details: Map.put(result.details || %{}, :original_content, content)
+        }
+    end
+  end
+
+  defp spill_path(working_directory)
+       when is_binary(working_directory) and working_directory != "" do
+    relative =
+      Path.join([
+        ".handbeam",
+        "tool-results",
+        "spill-#{System.unique_integer([:positive])}.txt"
+      ])
+
+    absolute = Path.expand(relative, working_directory)
+
+    with :ok <- File.mkdir_p(Path.dirname(absolute)),
+         :ok <-
+           Handbeam.Security.PathValidator.validate_within_workspace(absolute, working_directory) do
+      {:ok, relative, absolute}
+    else
+      _ -> :error
+    end
+  end
+
+  defp spill_path(_working_directory), do: :error
 
   @doc """
   Convert a ToolResult to a provider-facing tool_result_block map.
@@ -302,11 +414,26 @@ defmodule Handbeam.Agent.Tool.Executor do
   defp timeout_for(call, tool_fns, state) do
     name = call[:name] || call["name"]
 
-    case Map.get(tool_fns, name) do
-      %{timeout_ms: timeout} when is_integer(timeout) and timeout > 0 -> timeout
-      _ -> state.config.tool_timeout
-    end
+    tool_cap =
+      case Map.get(tool_fns, name) do
+        %{timeout_ms: timeout} when is_integer(timeout) and timeout > 0 -> timeout
+        _ -> state.config.tool_timeout
+      end
+
+    remaining = remaining_run_ms(state)
+
+    if is_integer(remaining), do: min(tool_cap, remaining), else: tool_cap
   end
+
+  defp context_run_deadline(%{context: %{run_deadline: deadline}}), do: deadline
+  defp context_run_deadline(_config), do: nil
+
+  defp remaining_run_ms(%{config: %{context: %{run_deadline: deadline}}})
+       when is_integer(deadline) do
+    max(deadline - System.monotonic_time(:millisecond), 0)
+  end
+
+  defp remaining_run_ms(_state), do: nil
 
   defp partition_by_concurrency(tool_calls, tool_fns) do
     Enum.split_with(tool_calls, fn call ->
@@ -345,6 +472,106 @@ defmodule Handbeam.Agent.Tool.Executor do
     end)
   end
 
+  defp unknown_tool(name, id, input) do
+    msg = "Unknown tool: #{name}"
+    Logger.warning(fn -> msg end)
+
+    dev_log("[Executor] unknown tool call raw=#{inspect(%{id: id, name: name, input: input})}")
+
+    Result.error(msg)
+  end
+
+  defp authorize_nested(name, tool_fns, context, state) do
+    cond do
+      name not in authorized_tools(context.delegation_config) ->
+        {:error, "Unknown tool: #{name}"}
+
+      match?(:error, fetch_tool(tool_fns, name)) ->
+        {:error, "Unknown tool: #{name}"}
+
+      not Handbeam.Threads.Collaboration.tool_allowed?(name, context) ->
+        {:error, "Delegated thread is read-only; tool execution denied"}
+
+      active_set_blocks?(name, state) ->
+        {:error, "Unknown tool: #{name}"}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp active_set_blocks?(name, %State{config: config}) do
+    session_id = config.context[:conversation_id] || config.context[:session_id]
+    active = if session_id, do: Handbeam.Tool.Registry.active_for_session(session_id)
+    is_list(active) and name not in active
+  end
+
+  defp nested_call_id(parent) when is_binary(parent) and parent != "" do
+    "nested-" <> parent <> "-" <> Integer.to_string(System.unique_integer([:positive]))
+  end
+
+  defp nested_call_id(_parent) do
+    "nested-" <> Integer.to_string(System.unique_integer([:positive]))
+  end
+
+  defp tool_hook_payload(call, session_id, parent_tool_call_id) do
+    %{
+      tool_use_id: call.id,
+      tool_name: call.name,
+      args: call.input || %{},
+      session_id: session_id,
+      parent_tool_call_id: parent_tool_call_id
+    }
+  end
+
+  defp apply_hook_args(call, {:transform, %{args: args}}) when is_map(args) do
+    %{call | input: Map.merge(call.input || %{}, args)}
+  end
+
+  defp apply_hook_args(call, _hook_result), do: call
+
+  defp run_tool_hook(%State{config: %{delegated?: true}}, _session_id, _event), do: :ok
+  defp run_tool_hook(_state, session_id, event), do: HookPipeline.run(session_id, event)
+
+  defp emit_nested(opts, kind, payload) do
+    case Keyword.get(opts, :on_event) do
+      fun when is_function(fun, 1) -> fun.({kind, payload})
+      _ -> :ok
+    end
+  end
+
+  defp nested_end_payload(call, block, parent_tool_call_id) do
+    details = block[:details] || %{}
+
+    payload = %{
+      tool_use_id: call.id,
+      tool: call.name,
+      parent_tool_call_id: parent_tool_call_id,
+      duration_ms: 0,
+      details: details,
+      output: block[:content]
+    }
+
+    if block[:is_error], do: Map.put(payload, :error, block[:content]), else: payload
+  end
+
+  defp nested_outcome(block) do
+    details = block[:details] || %{}
+
+    if block[:is_error] do
+      {:error, block[:content], details}
+    else
+      {:ok, block[:content], details}
+    end
+  end
+
+  defp build_context(%State{} = state, opts) do
+    state
+    |> build_context()
+    |> Map.put(:tool_caller, Keyword.get(opts, :caller, :model))
+    |> Map.put(:parent_tool_call_id, Keyword.get(opts, :parent_tool_call_id))
+  end
+
   defp build_context(%State{
          config: config,
          run_metadata: run_metadata,
@@ -359,6 +586,7 @@ defmodule Handbeam.Agent.Tool.Executor do
       working_directory: config.working_directory,
       skill_paths: config.skill_paths,
       tool_timeout: config.tool_timeout,
+      run_deadline: context_run_deadline(config),
       run_id: config.run_id,
       runner_pid: config.runner_pid,
       delegation_config: config,

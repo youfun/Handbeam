@@ -194,6 +194,143 @@ defmodule Handbeam.Agent.Tool.ExecutorTest do
     end
   end
 
+  defmodule NestedOnlyExecutorTool do
+    @behaviour Handbeam.Agent.Tool
+
+    def name, do: "nested_executor_probe"
+    def description, do: "hidden from the model"
+    def input_schema, do: %{type: "object", properties: %{text: %{type: "string"}}}
+    def nested_only?, do: true
+    def max_result_chars, do: 80
+
+    def execute(%{"mode" => "huge"}, _context) do
+      {:ok, String.duplicate("spill-line\n", 40)}
+    end
+
+    def execute(%{"text" => text}, context) do
+      {:ok, "ran:#{text}:caller=#{context[:tool_caller]}:parent=#{context[:parent_tool_call_id]}"}
+    end
+
+    def execute(_input, _context), do: {:ok, "ran"}
+  end
+
+  defmodule SpillFixtureTool do
+    @behaviour Handbeam.Agent.Tool
+
+    def name, do: "spill_fixture"
+    def description, do: "returns an oversized success"
+    def input_schema, do: %{type: "object", properties: %{}}
+    def max_result_chars, do: 80
+    def execute(_input, _context), do: {:ok, String.duplicate("spill-line\n", 40)}
+  end
+
+  describe "nested-only execution" do
+    setup do
+      ensure_registered(NestedOnlyExecutorTool)
+      :ok
+    end
+
+    test "a model-issued call fails as an unknown tool" do
+      config = %Config{working_directory: @fixtures_dir}
+      state = State.init(config, "call hidden")
+
+      {{:ok, result_msg}, _log} =
+        with_log(fn ->
+          Executor.execute_all(
+            [%{id: "model-1", name: "nested_executor_probe", input: %{"text" => "x"}}],
+            state
+          )
+        end)
+
+      [block] = result_msg.content
+      assert block[:is_error] == true
+      assert block[:content] == "Unknown tool: nested_executor_probe"
+      refute block[:content] =~ "nested-only"
+    end
+
+    test "an executor nested call succeeds and carries the parent tool-call id" do
+      config = %Config{
+        working_directory: @fixtures_dir,
+        context: %{conversation_id: "conv-nested"}
+      }
+
+      state = State.init(config, "nested")
+      parent = self()
+
+      assert {:ok, text, _details} =
+               Executor.execute_nested("nested_executor_probe", %{"text" => "ok"}, state,
+                 parent_tool_call_id: "parent-1",
+                 on_event: fn event -> send(parent, {:nested_event, event}) end
+               )
+
+      assert text == "ran:ok:caller=nested:parent=parent-1"
+      assert_receive {:nested_event, {:tool_start, start_payload}}
+      assert start_payload.parent_tool_call_id == "parent-1"
+      assert start_payload.tool_name == "nested_executor_probe"
+      assert_receive {:nested_event, {:tool_end, end_payload}}
+      assert end_payload.parent_tool_call_id == "parent-1"
+      assert end_payload.tool == "nested_executor_probe"
+    end
+
+    test "nested execution still honors the session active set" do
+      session_id = "nested-active-set"
+      :ok = Handbeam.Tool.Registry.set_active_for_session(session_id, ["read"])
+
+      config = %Config{
+        working_directory: @fixtures_dir,
+        context: %{conversation_id: session_id}
+      }
+
+      state = State.init(config, "blocked nested")
+
+      assert {:error, "Unknown tool: nested_executor_probe", %{}} =
+               Executor.execute_nested("nested_executor_probe", %{"text" => "no"}, state,
+                 parent_tool_call_id: "parent-2"
+               )
+    after
+      Handbeam.Tool.Registry.set_active_for_session("nested-active-set", nil)
+    end
+  end
+
+  describe "large result spill" do
+    setup do
+      ensure_registered(SpillFixtureTool)
+
+      tmp_dir =
+        Path.join(System.tmp_dir!(), "handbeam_spill_#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(tmp_dir)
+      on_exit(fn -> File.rm_rf!(tmp_dir) end)
+      %{tmp_dir: tmp_dir}
+    end
+
+    test "oversized success spills to a workspace file with a short preview", %{tmp_dir: tmp_dir} do
+      config = %Config{working_directory: tmp_dir}
+      state = State.init(config, "spill")
+
+      {:ok, result_msg, ui_blocks} =
+        Executor.execute_all_with_details(
+          [%{id: "spill-1", name: "spill_fixture", input: %{}}],
+          state
+        )
+
+      [block] = result_msg.content
+      refute block[:is_error]
+      assert byte_size(block[:content]) < 4_000
+      assert block[:content] =~ "Read it with the read tool using offset and limit"
+      refute Map.has_key?(block, :details)
+
+      [ui_block] = ui_blocks
+      relative = ui_block[:details].spill_path
+      assert relative =~ ".handbeam/tool-results/spill-"
+      absolute = Path.expand(relative, tmp_dir)
+      assert File.exists?(absolute)
+      assert File.read!(absolute) =~ "spill-line"
+      assert String.starts_with?(Path.relative_to(absolute, tmp_dir), ".handbeam/")
+      assert Path.dirname(absolute) != System.tmp_dir!()
+    end
+  end
+
   describe "truncate_result/2" do
     test "does not truncate content within limit" do
       result = Result.new("short text", %{exit_code: 0})
