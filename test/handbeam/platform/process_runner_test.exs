@@ -150,9 +150,7 @@ defmodule Handbeam.Platform.ProcessRunnerTest do
       Process.exit(owner, :kill)
       send(invocation, :release_open)
       assert_receive {:DOWN, ^ref, :process, ^invocation, _reason}, 1_000
-      result = Task.await(task, 2_000)
-      refute File.exists?(marker)
-      assert result == {:error, :cancelled} or match?({:error, _}, result)
+      assert Task.await(task, 2_000) == {:error, :cancelled}
       refute File.exists?(marker)
     end
 
