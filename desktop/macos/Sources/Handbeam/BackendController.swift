@@ -197,9 +197,12 @@ final class BackendController {
         onChange?(state)
     }
 
-    private func probe(port: Int? = nil) async -> Bool {
+    private func probe(port: Int? = nil, timeout: TimeInterval = 3) async -> Bool {
         let candidatePort = port ?? self.port
-        var request = URLRequest(url: DesktopConfig.healthURL(port: candidatePort), timeoutInterval: 3)
+        var request = URLRequest(
+            url: DesktopConfig.healthURL(port: candidatePort),
+            timeoutInterval: timeout
+        )
         request.cachePolicy = .reloadIgnoringLocalCacheData
         do {
             let (data, response) = try await URLSession(configuration: .ephemeral).data(for: request)
@@ -234,9 +237,26 @@ final class BackendController {
             ["-nP", "-a", "-p", ownerPID, "-iTCP", "-sTCP:LISTEN", "-Fn"]
         )
         let candidates = DesktopConfig.loopbackListenerPorts(lsofOutput: listenerOutput)
+        var declaredPort: Int?
 
+        if let pid = Int32(ownerPID),
+           let rawPort = environmentValue(pid: pid, key: "PORT"),
+           let port = Int(rawPort),
+           candidates.contains(port) {
+            declaredPort = port
+            for attempt in 0..<3 {
+                if await probe(port: port, timeout: 5) {
+                    return port
+                }
+                if attempt < 2 {
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                }
+            }
+        }
+
+        let fallbackCandidates = candidates.filter { $0 != declaredPort }
         for attempt in 0..<3 {
-            if let port = await firstHandbeamServer(in: candidates) {
+            if let port = await firstHandbeamServer(in: fallbackCandidates) {
                 return port
             }
             if attempt < 2 {
