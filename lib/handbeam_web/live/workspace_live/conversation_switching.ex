@@ -288,6 +288,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
     include_archived? = Keyword.get(opts, :include_archived?, false)
 
     Handbeam.ConversationStore.list_free_summaries()
+    |> Enum.filter(&persisted_conversation?/1)
     |> filter_archived(include_archived?)
     |> Enum.sort_by(&(&1["updated_at"] || ""), :desc)
     |> Enum.reject(fn conv ->
@@ -496,6 +497,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
 
       convs =
         Handbeam.ConversationStore.list_summaries(ws_id)
+        |> Enum.filter(&persisted_conversation?/1)
         |> filter_archived(include_archived?)
         |> Enum.sort_by(&(&1["updated_at"] || ""), :desc)
         |> Enum.reject(fn conv ->
@@ -513,6 +515,13 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
       {ws_id, maybe_sort_conversations(convs, include_archived?)}
     end)
     |> Map.new()
+  end
+
+  defp persisted_conversation?(conversation) do
+    conversation
+    |> ConversationState.conversation_id()
+    |> Handbeam.ConversationStore.meta_path()
+    |> File.regular?()
   end
 
   def ensure_active_conversation(socket, workspace_id) do

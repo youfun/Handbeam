@@ -444,6 +444,18 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       refute html =~ ~s(data-session-id="#{foreign_conversation["id"]}")
     end
 
+    test "does not render sidebar entries whose persisted item was removed", %{conn: conn} do
+      {:ok, conversation} =
+        Handbeam.ConversationStore.create("default", title: "Missing conversation")
+
+      File.rm_rf!(Handbeam.ConversationStore.conversation_dir(conversation["id"]))
+
+      {:ok, _view, html} = live(conn, "/")
+
+      refute html =~ "Missing conversation"
+      refute html =~ ~s(data-conversation-id="#{conversation["id"]}")
+    end
+
     test "renders AI input area with input box and send button", %{conn: conn} do
       {:ok, _view, html} = live(conn, "/")
 
