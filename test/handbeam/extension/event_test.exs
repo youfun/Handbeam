@@ -34,11 +34,12 @@ defmodule Handbeam.Extension.EventTest do
     end
 
     test "rejects non-map payload" do
-      assert {:error, _} = Event.new(:turn_start, "session-1", "not a map")
+      assert {:error, %{message: "event payload must be a map"}} =
+               Event.new(:turn_start, "session-1", "not a map")
     end
 
     test "rejects non-map context" do
-      assert {:error, _} =
+      assert {:error, %{message: "event context must be a map"}} =
                Event.new(:turn_start, "session-1", %{}, "not a map")
     end
 

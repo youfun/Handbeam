@@ -42,48 +42,28 @@ defmodule ExFff.IndexTest do
     end
 
     test "rejects non-existent root_path" do
-      # init returns {:stop, reason} for non-directory
       name =
         Module.concat(ExFff.Index, String.to_atom("Nope_#{System.unique_integer([:positive])}"))
 
       Process.flag(:trap_exit, true)
 
-      result =
-        try do
-          Index.start_link(root_path: "/nonexistent/path/xyz", name: name)
-        catch
-          :exit, _reason -> {:error, :exit}
-        end
-
-      Process.flag(:trap_exit, false)
-
-      # Either {:error, reason} or the linked process exits; both mean failure
-      case result do
-        {:error, _} ->
-          assert true
-
-        {:ok, pid} ->
-          Process.sleep(10)
-          refute Process.alive?(pid)
-      end
+      assert {:error, "root_path is not a directory: /nonexistent/path/xyz"} =
+               Index.start_link(root_path: "/nonexistent/path/xyz", name: name)
     end
   end
 
   describe "search/3" do
     test "returns results with paths and scores", %{name: name} do
       {:ok, result} = Index.search(name, "app")
-      assert is_list(result.paths)
-      assert length(result.paths) > 0
-
-      for entry <- result.paths do
-        assert is_binary(entry.path)
-        assert is_float(entry.score)
-      end
+      paths = Enum.map(result.paths, & &1.path)
+      assert "lib/app.ex" in paths
+      assert Enum.all?(result.paths, &is_float(&1.score))
     end
 
     test "empty query returns files", %{name: name} do
       {:ok, result} = Index.search(name, "*.ex")
-      assert length(result.paths) > 0
+      paths = Enum.map(result.paths, & &1.path)
+      assert "lib/app.ex" in paths
     end
   end
 
@@ -101,9 +81,9 @@ defmodule ExFff.IndexTest do
     end
 
     test "touch on non-existent path does not crash", %{name: name} do
-      Index.touch(name, "nonexistent/path.ex")
-      # Should not crash
-      assert true
+      assert :ok = Index.touch(name, "nonexistent/path.ex")
+      {:ok, result} = Index.search(name, "app")
+      assert "lib/app.ex" in Enum.map(result.paths, & &1.path)
     end
   end
 
@@ -270,7 +250,9 @@ defmodule ExFff.IndexTest do
       File.write!(Path.join(dir1, "old_file.ex"), "old")
       File.write!(Path.join(dir2, "new_file.ex"), "new")
 
-      name = Module.concat(ExFff.Index, String.to_atom("Cancel_#{System.unique_integer([:positive])}"))
+      name =
+        Module.concat(ExFff.Index, String.to_atom("Cancel_#{System.unique_integer([:positive])}"))
+
       {:ok, pid} = Index.start_link(root_path: dir1, name: name)
       assert :ok = Index.await_index(pid)
 
@@ -294,7 +276,9 @@ defmodule ExFff.IndexTest do
       File.mkdir_p!(dir)
       File.write!(Path.join(dir, "visible.ex"), "visible")
 
-      name = Module.concat(ExFff.Index, String.to_atom("Fail_#{System.unique_integer([:positive])}"))
+      name =
+        Module.concat(ExFff.Index, String.to_atom("Fail_#{System.unique_integer([:positive])}"))
+
       {:ok, pid} = Index.start_link(root_path: dir, name: name)
       assert :ok = Index.await_index(pid)
 

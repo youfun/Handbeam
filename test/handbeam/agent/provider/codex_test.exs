@@ -363,7 +363,9 @@ defmodule Handbeam.Agent.Provider.CodexTest do
           %{"type" => "computer_call", "action" => "click"}
         ] do
       Req.Test.stub(__MODULE__, &sse(&1, completed([item])))
-      assert {:error, _} = Codex.complete([Message.user("hi")], [], config())
+
+      assert {:error, "Invalid Codex output item. No tools were executed."} =
+               Codex.complete([Message.user("hi")], [], config())
     end
   end
 

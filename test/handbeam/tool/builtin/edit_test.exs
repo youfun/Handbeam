@@ -769,7 +769,7 @@ defmodule Handbeam.Tool.Builtin.EditTest do
     end
 
     test "declares max_result_chars" do
-      assert is_integer(Edit.max_result_chars())
+      assert Edit.max_result_chars() == 5_000
     end
 
     test "has input_schema with diff mode fields" do

@@ -52,18 +52,20 @@ defmodule Handbeam.Extension.PermissionTest do
     end
 
     test "rejects non-map permissions" do
-      assert {:error, _} = Permission.validate("not a map")
-      assert {:error, _} = Permission.validate(nil)
+      assert {:error, %{message: "permissions must be a map"}} = Permission.validate("not a map")
+      assert {:error, %{message: "permissions must be a map"}} = Permission.validate(nil)
     end
 
     test "rejects network value that is not a list" do
       perms = %{"network" => "http://localhost", "filesystem" => "none", "tools" => []}
-      assert {:error, _} = Permission.validate(perms)
+
+      assert {:error, %{message: "network permission must be a list of URLs"}} =
+               Permission.validate(perms)
     end
 
     test "rejects tools value that is not a list" do
       perms = %{"network" => [], "filesystem" => "none", "tools" => "read"}
-      assert {:error, _} = Permission.validate(perms)
+      assert {:error, %{message: "tools permission must be a list"}} = Permission.validate(perms)
     end
   end
 

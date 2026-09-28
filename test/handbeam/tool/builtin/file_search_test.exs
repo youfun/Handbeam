@@ -41,9 +41,8 @@ defmodule Handbeam.Tool.Builtin.FileSearchTest do
       assert FileSearch.name() == "file_search"
     end
 
-    test "description is non-empty" do
-      assert is_binary(FileSearch.description())
-      assert byte_size(FileSearch.description()) > 0
+    test "description names fuzzy search" do
+      assert FileSearch.description() =~ "fuzzy file search"
     end
 
     test "input_schema requires query" do

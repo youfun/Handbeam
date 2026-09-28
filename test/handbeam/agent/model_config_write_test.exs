@@ -278,8 +278,8 @@ defmodule Handbeam.Agent.ModelConfigWriteTest do
 
     test "write_config validates and rejects invalid config" do
       # Missing providers key
-      assert {:error, reason} = ModelConfig.write_config(%{"defaultProvider" => "x"})
-      assert reason =~ "providers" or reason =~ "required"
+      assert {:error, "At least one provider is required"} =
+               ModelConfig.write_config(%{"defaultProvider" => "x"})
 
       # Empty providers
       assert {:error, _} =
@@ -297,7 +297,7 @@ defmodule Handbeam.Agent.ModelConfigWriteTest do
                  }
                })
 
-      assert reason =~ "array" or reason =~ "models"
+      assert reason == "Provider models must be a JSON array"
 
       assert :ok =
                ModelConfig.write_config(%{
@@ -442,11 +442,11 @@ defmodule Handbeam.Agent.ModelConfigWriteTest do
                  "models" => [%{"id" => "x", "name" => "X"}]
                })
 
-      assert reason =~ "already exists" or reason =~ "duplicate"
+      assert reason == "Provider 'existing' already exists"
     end
 
     test "rejects adding provider with invalid name" do
-      assert {:error, _} =
+      assert {:error, "Provider id must match " <> _} =
                ModelConfig.add_provider("bad name!", %{
                  "api" => "openai-chat-completions",
                  "models" => [%{"id" => "x", "name" => "X"}]
@@ -523,8 +523,8 @@ defmodule Handbeam.Agent.ModelConfigWriteTest do
     end
 
     test "handle removing non-existent provider gracefully" do
-      assert {:error, reason} = ModelConfig.remove_provider("no-such")
-      assert reason =~ "not found" or reason =~ "does not exist"
+      assert {:error, "Provider 'no-such' does not exist"} =
+               ModelConfig.remove_provider("no-such")
     end
 
     test "cannot remove the last provider" do
@@ -540,8 +540,7 @@ defmodule Handbeam.Agent.ModelConfigWriteTest do
         }
       })
 
-      assert {:error, reason} = ModelConfig.remove_provider("only")
-      assert reason =~ "least one" or reason =~ "required"
+      assert {:error, "At least one provider is required"} = ModelConfig.remove_provider("only")
     end
 
     test "changing defaultProvider if the removed provider was the default" do
@@ -617,25 +616,22 @@ defmodule Handbeam.Agent.ModelConfigWriteTest do
                  "input" => ["text"]
                })
 
-      assert reason =~ "already exists" or reason =~ "duplicate"
+      assert reason == "Model 'existing' already exists in provider 'p'"
     end
 
     test "rejects adding model to non-existent provider" do
-      assert {:error, reason} =
+      assert {:error, "Provider 'ghost' does not exist"} =
                ModelConfig.add_model("ghost", "m", %{"name" => "Ghost"})
-
-      assert reason =~ "not found" or reason =~ "does not exist"
     end
 
     test "rejects adding model without name" do
-      assert {:error, _} = ModelConfig.add_model("p", "m", %{"input" => ["text"]})
+      assert {:error, "Model name is required"} =
+               ModelConfig.add_model("p", "m", %{"input" => ["text"]})
     end
 
-    test "automatically creates provider if it does not exist" do
-      # Well, we said reject. But let's add this test to handle the case
-      # where we want to add model to non-existent provider.
-      # Current decision: reject. Changed to requiring explicit add_provider first.
-      assert {:error, _} = ModelConfig.add_model("no-such-provider", "m", %{"name" => "M"})
+    test "rejects adding a model when the provider does not exist" do
+      assert {:error, "Provider 'no-such-provider' does not exist"} =
+               ModelConfig.add_model("no-such-provider", "m", %{"name" => "M"})
     end
   end
 
@@ -668,7 +664,8 @@ defmodule Handbeam.Agent.ModelConfigWriteTest do
     end
 
     test "rejects removing non-existent model" do
-      assert {:error, _} = ModelConfig.remove_model("p", "no-such")
+      assert {:error, "Model 'no-such' does not exist in provider 'p'"} =
+               ModelConfig.remove_model("p", "no-such")
     end
 
     test "removing the last model leaves a configured empty provider" do
@@ -756,7 +753,8 @@ defmodule Handbeam.Agent.ModelConfigWriteTest do
     end
 
     test "rejects updating non-existent provider" do
-      assert {:error, _} = ModelConfig.update_provider("ghost", %{"apiKey" => "x"})
+      assert {:error, "Provider 'ghost' does not exist"} =
+               ModelConfig.update_provider("ghost", %{"apiKey" => "x"})
     end
   end
 
@@ -812,11 +810,13 @@ defmodule Handbeam.Agent.ModelConfigWriteTest do
     end
 
     test "rejects updating non-existent model" do
-      assert {:error, _} = ModelConfig.update_model("p", "ghost", %{"name" => "X"})
+      assert {:error, "Model 'ghost' does not exist in provider 'p'"} =
+               ModelConfig.update_model("p", "ghost", %{"name" => "X"})
     end
 
     test "rejects updating non-existent provider" do
-      assert {:error, _} = ModelConfig.update_model("ghost", "m", %{"name" => "X"})
+      assert {:error, "Provider 'ghost' does not exist"} =
+               ModelConfig.update_model("ghost", "m", %{"name" => "X"})
     end
   end
 
@@ -857,7 +857,8 @@ defmodule Handbeam.Agent.ModelConfigWriteTest do
     end
 
     test "rejects updating api key for non-existent provider" do
-      assert {:error, _} = ModelConfig.update_api_key("ghost", "sk-x")
+      assert {:error, "Provider 'ghost' does not exist"} =
+               ModelConfig.update_api_key("ghost", "sk-x")
     end
   end
 
@@ -922,7 +923,7 @@ defmodule Handbeam.Agent.ModelConfigWriteTest do
     end
 
     test "rejects invalid input types" do
-      assert {:error, _} =
+      assert {:error, "Invalid input types: " <> _} =
                ModelConfig.write_config(%{
                  "defaultProvider" => "p",
                  "providers" => %{
@@ -935,7 +936,7 @@ defmodule Handbeam.Agent.ModelConfigWriteTest do
     end
 
     test "rejects empty input array" do
-      assert {:error, _} =
+      assert {:error, "Model input must be a non-empty list"} =
                ModelConfig.write_config(%{
                  "defaultProvider" => "p",
                  "providers" => %{

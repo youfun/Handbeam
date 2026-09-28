@@ -4,8 +4,8 @@ defmodule Handbeam.PlatformTest do
   alias Handbeam.Platform
 
   describe "windows?/0" do
-    test "returns boolean" do
-      assert is_boolean(Platform.windows?())
+    test "matches the host os type" do
+      assert Platform.windows?() == match?({:win32, _}, :os.type())
     end
 
     test "is opposite of unix?/0" do
@@ -14,33 +14,28 @@ defmodule Handbeam.PlatformTest do
   end
 
   describe "unix?/0" do
-    test "returns boolean" do
-      assert is_boolean(Platform.unix?())
+    test "matches the host os type" do
+      assert Platform.unix?() == match?({:unix, _}, :os.type())
     end
   end
 
   describe "path_env_key/1" do
     test "returns PATH on unix-like systems" do
-      # On macOS/Linux, PATH is uppercase
-      key = Platform.path_env_key(%{"PATH" => "/usr/bin"})
-      assert key in ["PATH", "Path", "path"]
+      assert Platform.path_env_key(%{"PATH" => "/usr/bin"}) == "PATH"
     end
 
     test "handles Windows-style Path env var" do
-      key = Platform.path_env_key(%{"Path" => "C:\\Windows"})
-      assert key in ["PATH", "Path", "path"]
+      assert Platform.path_env_key(%{"Path" => "C:\\Windows"}) == "Path"
     end
 
     test "handles empty env" do
-      key = Platform.path_env_key(%{})
-      assert is_binary(key)
+      assert Platform.path_env_key(%{}) == "PATH"
     end
   end
 
   describe "os_type/0" do
     test "returns known tuple" do
-      {os, _name} = Platform.os_type()
-      assert os in [:unix, :win32]
+      assert Platform.os_type() == :os.type()
     end
   end
 end

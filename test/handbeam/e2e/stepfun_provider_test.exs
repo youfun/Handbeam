@@ -77,23 +77,6 @@ defmodule Handbeam.E2E.StepFunProviderTest do
         end)
 
       assert {:ok, response} = result
-
-      IO.puts("stop_reason: #{inspect(response.stop_reason)}")
-      IO.puts("messages count: #{length(response.messages)}")
-
-      Enum.each(response.messages, fn msg ->
-        case msg do
-          %{role: :assistant, content: content} when is_binary(content) ->
-            IO.puts("message text: #{String.slice(content, 0, 200)}")
-
-          %{role: :assistant, content: blocks} when is_list(blocks) ->
-            IO.puts("message blocks: #{length(blocks)}")
-
-          _ ->
-            IO.puts("message role=#{msg.role}")
-        end
-      end)
-
       assert response.stop_reason == :end_turn
 
       [assistant] = response.messages
@@ -105,12 +88,7 @@ defmodule Handbeam.E2E.StepFunProviderTest do
 
       # Verify streaming worked — we should have received chunks
       chunks = Process.get(chunks_ref, [])
-
-      IO.puts(
-        "chunks received: #{length(chunks)}, total length: #{Enum.sum(Enum.map(chunks, &byte_size/1))}"
-      )
-
-      # At minimum, the full text should contain some response
+      assert chunks != []
       assert byte_size(text) > 0
     end
   end
@@ -144,12 +122,6 @@ defmodule Handbeam.E2E.StepFunProviderTest do
           end)
 
         assert {:ok, state} = result
-        IO.puts("run status: #{state.status}, turns: #{state.turn}")
-
-        if state.error do
-          IO.puts("run error: #{state.error}")
-        end
-
         assert state.status == :completed
         assert Enum.any?(state.messages, &(&1.role == :tool_result))
 
@@ -196,8 +168,6 @@ defmodule Handbeam.E2E.StepFunProviderTest do
       assert {:ok, %{stop_reason: :tool_use, messages: [tool_use_msg]}} = result
 
       commands = bash_commands([tool_use_msg])
-      IO.puts("bash commands: #{inspect(commands)}")
-
       assert Enum.any?(commands, &String.contains?(&1, "git"))
 
       refute Enum.any?(commands, fn command ->
@@ -241,22 +211,6 @@ defmodule Handbeam.E2E.StepFunProviderTest do
           end)
 
         assert {:ok, state} = result
-        IO.puts("multi-turn status: #{state.status}, turns: #{state.turn}")
-        IO.puts("message count: #{length(state.messages)}")
-
-        Enum.each(state.messages, fn msg ->
-          case msg do
-            %{role: :assistant, content: content} when is_binary(content) ->
-              IO.puts("assistant: #{String.slice(content, 0, 100)}")
-
-            %{role: :tool_result, content: _content} ->
-              IO.puts("tool_result present")
-
-            _ ->
-              :ok
-          end
-        end)
-
         assert state.status == :completed
 
         # At least one tool_result means a tool call happened

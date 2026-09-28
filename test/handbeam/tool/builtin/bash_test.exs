@@ -82,19 +82,13 @@ defmodule Handbeam.Tool.Builtin.BashTest do
     end
 
     test "returns error for non-existent cwd" do
-      # Note: resolve_cwd checks File.exists?, but some OS/port behaviors may
-      # let bash attempt the cd anyway, resulting in exit 2.
       result =
         Bash.execute(
           %{"command" => "echo x", "cwd" => "/nonexistent/path"},
           %{working_directory: "/nonexistent/path"}
         )
 
-      # Either the path validation or bash itself should report the error
-      case result do
-        {:error, _reason} -> assert true
-        {:ok, _output, data} -> assert data.exit_code != 0
-      end
+      assert {:error, "cwd /nonexistent/path is not a directory"} = result
     end
 
     test "rejects file as cwd" do
@@ -110,8 +104,7 @@ defmodule Handbeam.Tool.Builtin.BashTest do
             %{working_directory: System.tmp_dir!()}
           )
 
-        # Error either from path traversal (outside workspace) or "Not a directory"
-        assert match?({:error, _}, result)
+        assert {:error, "cwd " <> _} = result
       after
         File.rm(tmp_file)
       end
@@ -164,8 +157,7 @@ defmodule Handbeam.Tool.Builtin.BashTest do
           %{working_directory: File.cwd!()}
         )
 
-      # Output should be truncated or complete — at minimum not crash
-      assert is_binary(output)
+      assert output =~ "head"
     end
   end
 

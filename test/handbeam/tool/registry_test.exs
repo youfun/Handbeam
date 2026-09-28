@@ -184,10 +184,9 @@ defmodule Handbeam.Tool.RegistryTest do
       assert "bash" in names
     end
 
-    test "returns names when tools are registered" do
-      names = Registry.list()
-      # At minimum, should be a list (may have tools from other tests)
-      assert is_list(names)
+    test "returns the name of a tool registered in this test" do
+      Registry.register(Handbeam.Tool.Builtin.Grep)
+      assert "grep" in Registry.list()
     end
   end
 

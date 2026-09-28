@@ -238,8 +238,10 @@ defmodule Handbeam.Security.PathValidator.Test do
       File.ln_s!(b, a)
       File.ln_s!(a, b)
 
-      assert {:error, _} = PathValidator.validate_under_root(Path.join(a, "tail"), @allowed_root)
-      assert {:error, _} = PathValidator.validate_under_root(@allowed_root, a)
+      assert {:error, "Path traversal blocked: " <> _} =
+               PathValidator.validate_under_root(Path.join(a, "tail"), @allowed_root)
+
+      assert {:error, :symlink_loop} = PathValidator.canonicalize(a)
     end
   end
 

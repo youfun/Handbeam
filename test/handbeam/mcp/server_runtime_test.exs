@@ -128,9 +128,10 @@ defmodule Handbeam.MCP.ServerRuntimeTest do
       File.rm_rf!(dir)
     end
 
-    test "bootstrap does not raise on server failure" do
+    test "bootstrap records a server failure instead of raising" do
       dir = setup_temp_project(%{"broken" => %{"command" => "nonexistent_cmd_xyz"}})
-      assert {:ok, _} = Handbeam.MCP.bootstrap(project: dir, user_config_path: nil)
+      assert {:ok, result} = Handbeam.MCP.bootstrap(project: dir, user_config_path: nil)
+      assert Enum.any?(result.server_errors, &(&1.server == "broken"))
       File.rm_rf!(dir)
     end
   end

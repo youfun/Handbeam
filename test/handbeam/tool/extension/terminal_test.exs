@@ -55,7 +55,8 @@ defmodule Handbeam.Tool.Extension.TerminalTest do
           %{}
         )
 
-      assert {:error, _} = result
+      assert {:error, message} = result
+      assert message =~ "workspace"
     end
   end
 
@@ -67,7 +68,8 @@ defmodule Handbeam.Tool.Extension.TerminalTest do
           ctx
         )
 
-      assert {:error, _} = result
+      assert {:error, message} = result
+      assert message =~ "not found"
     end
 
     test "rejects empty input", %{context: ctx} do
@@ -99,7 +101,8 @@ defmodule Handbeam.Tool.Extension.TerminalTest do
           ctx
         )
 
-      assert {:error, _} = result
+      assert {:error, message} = result
+      assert message =~ "terminal name is required"
     end
   end
 

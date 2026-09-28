@@ -179,9 +179,9 @@ defmodule Handbeam.Agent.Provider.OpenAICompatibleTest do
 
       set_responses([mock_response(200, success_body())])
 
-      result = OpenAICompat.complete([user_msg()], tool_defs(), config)
-
-      assert {:ok, _} = result
+      assert {:ok, response} = OpenAICompat.complete([user_msg()], tool_defs(), config)
+      assert response.stop_reason == :end_turn
+      assert hd(response.messages).content == "Hello from OpenAI!"
 
       System.delete_env("OPENAI_API_KEY")
     end
@@ -666,12 +666,12 @@ defmodule Handbeam.Agent.Provider.OpenAICompatibleTest do
         mock_response(200, success_body())
       ])
 
-      result =
-        with_captured_log(fn ->
-          OpenAICompat.complete([user_msg()], tool_defs(), base_config())
-        end)
+      assert {:ok, response} =
+               with_captured_log(fn ->
+                 OpenAICompat.complete([user_msg()], tool_defs(), base_config())
+               end)
 
-      assert {:ok, _} = result
+      assert hd(response.messages).content == "Hello from OpenAI!"
     end
 
     test "retries 504 and succeeds" do
@@ -680,12 +680,12 @@ defmodule Handbeam.Agent.Provider.OpenAICompatibleTest do
         mock_response(200, success_body())
       ])
 
-      result =
-        with_captured_log(fn ->
-          OpenAICompat.complete([user_msg()], tool_defs(), base_config())
-        end)
+      assert {:ok, response} =
+               with_captured_log(fn ->
+                 OpenAICompat.complete([user_msg()], tool_defs(), base_config())
+               end)
 
-      assert {:ok, _} = result
+      assert hd(response.messages).content == "Hello from OpenAI!"
     end
 
     test "retries 500 and succeeds" do
@@ -694,12 +694,12 @@ defmodule Handbeam.Agent.Provider.OpenAICompatibleTest do
         mock_response(200, success_body())
       ])
 
-      result =
-        with_captured_log(fn ->
-          OpenAICompat.complete([user_msg()], tool_defs(), base_config())
-        end)
+      assert {:ok, response} =
+               with_captured_log(fn ->
+                 OpenAICompat.complete([user_msg()], tool_defs(), base_config())
+               end)
 
-      assert {:ok, _} = result
+      assert hd(response.messages).content == "Hello from OpenAI!"
     end
 
     test "summarizes html 500 body instead of returning full page" do

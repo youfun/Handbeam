@@ -2233,9 +2233,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       )
 
       rendered = render(view)
-      assert rendered =~ "error"
-      assert rendered =~ "Run error"
-      assert rendered =~ "timeout"
+      assert rendered =~ "Run error: timeout"
     end
 
     test "run_end clears running indicator", %{conn: conn} do
@@ -3168,12 +3166,8 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       )
 
       rendered = render(view)
-      assert rendered =~ "error"
-      assert rendered =~ "Run error"
-      assert rendered =~ "OPENAI_API_KEY"
-
-      # View should still render (not crash)
-      assert rendered =~ "id=\"status-bar\""
+      assert rendered =~ "Run error: OPENAI_API_KEY not configured"
+      assert has_element?(view, "#status-bar")
     end
   end
 

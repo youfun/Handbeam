@@ -238,12 +238,9 @@ defmodule Handbeam.Extension.ManifestTest do
     end
 
     test "returns error for invalid names" do
-      assert {:error, _} = Manifest.validate_name("")
-      assert {:error, _} = Manifest.validate_name("-start")
-      assert {:error, _} = Manifest.validate_name("end-")
-      assert {:error, _} = Manifest.validate_name("double--dash")
-      assert {:error, _} = Manifest.validate_name("UpperCase")
-      assert {:error, _} = Manifest.validate_name("special@char")
+      for name <- ["", "-start", "end-", "double--dash", "UpperCase", "special@char"] do
+        assert {:error, %{type: :validation_error}} = Manifest.validate_name(name)
+      end
     end
   end
 end

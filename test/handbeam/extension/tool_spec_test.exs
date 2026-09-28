@@ -34,15 +34,18 @@ defmodule Handbeam.Extension.ToolSpecTest do
     end
 
     test "rejects empty tool name" do
-      assert {:error, _} = ToolSpec.new("my-ext", "", %{description: "desc"})
+      assert {:error, %{type: :validation_error, message: "invalid tool name: " <> _}} =
+               ToolSpec.new("my-ext", "", %{description: "desc"})
     end
 
     test "rejects nil tool name" do
-      assert {:error, _} = ToolSpec.new("my-ext", nil, %{description: "desc"})
+      assert {:error, %{type: :validation_error, message: "tool name must not be nil"}} =
+               ToolSpec.new("my-ext", nil, %{description: "desc"})
     end
 
     test "rejects tool name with invalid characters" do
-      assert {:error, _} = ToolSpec.new("my-ext", "my tool!", %{description: "desc"})
+      assert {:error, %{type: :validation_error, message: "invalid tool name: " <> _}} =
+               ToolSpec.new("my-ext", "my tool!", %{description: "desc"})
     end
 
     test "description is optional" do
@@ -97,10 +100,14 @@ defmodule Handbeam.Extension.ToolSpecTest do
     end
 
     test "invalid names" do
-      assert {:error, _} = ToolSpec.validate_name("")
-      assert {:error, _} = ToolSpec.validate_name(nil)
-      assert {:error, _} = ToolSpec.validate_name("my tool")
-      assert {:error, _} = ToolSpec.validate_name("tool!")
+      assert {:error, %{message: "invalid tool name: " <> _}} = ToolSpec.validate_name("")
+      assert {:error, %{message: "tool name must not be nil"}} = ToolSpec.validate_name(nil)
+
+      assert {:error, %{message: "invalid tool name: \"my tool\"" <> _}} =
+               ToolSpec.validate_name("my tool")
+
+      assert {:error, %{message: "invalid tool name: \"tool!\"" <> _}} =
+               ToolSpec.validate_name("tool!")
     end
   end
 
@@ -128,7 +135,8 @@ defmodule Handbeam.Extension.ToolSpecTest do
     end
 
     test "rejects empty command name" do
-      assert {:error, _} = CommandSpec.new("my-ext", "", %{description: "desc"})
+      assert {:error, %{message: "command name must not be empty"}} =
+               CommandSpec.new("my-ext", "", %{description: "desc"})
     end
   end
 
@@ -147,7 +155,8 @@ defmodule Handbeam.Extension.ToolSpecTest do
     end
 
     test "rejects empty provider name" do
-      assert {:error, _} = ProviderSpec.new("my-ext", "", %{base_url: "http://localhost:8000"})
+      assert {:error, %{message: "provider name must not be empty"}} =
+               ProviderSpec.new("my-ext", "", %{base_url: "http://localhost:8000"})
     end
 
     test "base_url is optional" do

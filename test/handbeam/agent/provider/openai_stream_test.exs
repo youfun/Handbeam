@@ -300,7 +300,7 @@ defmodule Handbeam.Agent.Provider.OpenAIStreamTest do
       acc = new_acc()
       event = %{"choices" => [%{"index" => 0, "delta" => nil}]}
       acc = OpenAIStream.process_event(acc, event)
-      assert is_map(acc)
+      assert acc.content == ""
     end
   end
 

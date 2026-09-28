@@ -73,9 +73,7 @@ defmodule ExFff.CjkTest do
   describe "tokenize/1 robustness against invalid UTF-8" do
     test "does not raise on invalid UTF-8 binary" do
       bad = <<0xFF, 0xFE, "abc">>
-      # The contract: tokenize must return a list and must NOT raise.
-      result = Matcher.tokenize(bad)
-      assert is_list(result)
+      assert Matcher.tokenize(bad) == []
     end
   end
 

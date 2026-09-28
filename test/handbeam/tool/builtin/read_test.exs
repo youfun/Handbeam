@@ -472,7 +472,7 @@ defmodule Handbeam.Tool.Builtin.ReadTest do
     end
 
     test "has description" do
-      assert is_binary(Read.description())
+      assert Read.description() =~ "Read file contents"
     end
 
     test "has input_schema with file_path required" do
@@ -482,7 +482,7 @@ defmodule Handbeam.Tool.Builtin.ReadTest do
     end
 
     test "declares max_result_chars" do
-      assert is_integer(Read.max_result_chars()) || Read.max_result_chars() == :unlimited
+      assert Read.max_result_chars() == 51_000
     end
   end
 end

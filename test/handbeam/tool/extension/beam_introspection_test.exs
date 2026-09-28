@@ -65,7 +65,7 @@ defmodule Handbeam.Tool.Extension.BeamIntrospectionTest do
           build_context()
         )
 
-      assert reason =~ "boom" or reason =~ "error" or reason =~ "RuntimeError"
+      assert reason =~ "RuntimeError" and reason =~ "boom"
     end
 
     test "code is required" do
@@ -95,7 +95,7 @@ defmodule Handbeam.Tool.Extension.BeamIntrospectionTest do
           build_context()
         )
 
-      assert reason =~ "not allowed" or reason =~ "rpc"
+      assert reason == ":rpc is not allowed in ext__beam__eval"
     end
 
     test "rejects File write" do
@@ -109,7 +109,7 @@ defmodule Handbeam.Tool.Extension.BeamIntrospectionTest do
         )
 
       refute File.exists?(path)
-      assert reason =~ "not allowed" or reason =~ "File"
+      assert reason == "File is not allowed in ext__beam__eval"
     end
 
     test "rejects System.cmd" do
@@ -119,7 +119,7 @@ defmodule Handbeam.Tool.Extension.BeamIntrospectionTest do
           build_context()
         )
 
-      assert reason =~ "not allowed" or reason =~ "System.cmd"
+      assert reason == "System is not allowed in ext__beam__eval"
     end
 
     test "has proper tool metadata" do
@@ -138,7 +138,6 @@ defmodule Handbeam.Tool.Extension.BeamIntrospectionTest do
         )
 
       assert output =~ "Enum"
-      assert output =~ "Sets" or output =~ "Functions" or output != ""
     end
 
     test "gets docs for a known function" do
@@ -159,7 +158,7 @@ defmodule Handbeam.Tool.Extension.BeamIntrospectionTest do
           build_context()
         )
 
-      assert reason =~ "not found" or reason =~ "could not" or reason =~ "error"
+      assert reason =~ "not found"
     end
 
     test "resolves a nested module function instead of treating the first segment as the module" do
@@ -207,7 +206,7 @@ defmodule Handbeam.Tool.Extension.BeamIntrospectionTest do
           build_context()
         )
 
-      assert output != ""
+      assert output =~ "Enum.map"
     end
 
     test "reference is required" do
@@ -274,8 +273,7 @@ defmodule Handbeam.Tool.Extension.BeamIntrospectionTest do
   describe "ext__beam__schemas" do
     test "lists Ecto schemas including project modules" do
       {:ok, output} = Handbeam.Tool.Extension.Beam.Schemas.execute(%{}, build_context())
-      # Should find project schemas (Engram, Synapse are Ecto schemas)
-      assert is_binary(output)
+      assert output =~ "Engram" or output =~ "Synapse"
     end
   end
 
@@ -310,7 +308,8 @@ defmodule Handbeam.Tool.Extension.BeamIntrospectionTest do
           build_context()
         )
 
-      assert output != ""
+      assert output =~ "PID"
+      assert output =~ "Sort: reductions"
     end
 
     test "has proper tool metadata" do
@@ -327,7 +326,7 @@ defmodule Handbeam.Tool.Extension.BeamIntrospectionTest do
         )
 
       assert output =~ "Handbeam.Tool.Registry"
-      assert output =~ "GenServer State" or output =~ "alive"
+      assert output =~ "GenServer State"
     end
 
     test "process argument is required" do

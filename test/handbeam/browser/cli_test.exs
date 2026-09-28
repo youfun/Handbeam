@@ -79,7 +79,7 @@ defmodule Handbeam.Browser.CliTest do
         {:ok, %{stdout: "", stderr: "", exit_code: 0, timed_out: false}}
       end
 
-      assert {:ok, _} =
+      assert {:ok, %{exit_code: 0}} =
                Cli.run(["--help"], runner: runner, executable: "/usr/bin/agent-browser")
 
       assert_received {:timeout, 35_000}

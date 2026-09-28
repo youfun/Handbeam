@@ -14,8 +14,7 @@ defmodule Handbeam.Tool.Extension.BeamSessionsTest do
   describe "ext__beam__sessions" do
     test "lists active sessions including the test session" do
       {:ok, output} = Handbeam.Tool.Extension.Beam.Sessions.execute(%{}, build_context())
-      assert is_binary(output)
-      # Should find at least the test process session if any are active
+      assert output =~ "session" or output =~ "No active"
     end
 
     test "has proper tool metadata" do

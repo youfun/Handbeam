@@ -180,18 +180,12 @@ defmodule Handbeam.Log.StoreTest do
   end
 
   describe "store resilience" do
-    test "does not crash when appending non-event struct" do
+    test "ignores a non-event struct and keeps the store empty" do
       {:ok, store} = Store.start_link(name: :resilient_store)
       on_exit(fn -> stop_store(store) end)
 
-      # Should not crash; should either skip or error gracefully
-      try do
-        Store.append(store, %{bad: "data"})
-      catch
-        _, _ -> :ok
-      end
-
-      # Store should still be alive
+      assert :ok = Store.append(store, %{bad: "data"})
+      assert Store.list(store) == []
       assert Process.alive?(store)
     end
 
