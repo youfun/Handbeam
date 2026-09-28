@@ -42,6 +42,7 @@ defmodule Handbeam.Application do
         {Handbeam.Extension.Registry, name: Handbeam.Extension.Registry},
         Handbeam.Extension.Supervisor,
         Handbeam.Extension.Mount,
+        Handbeam.Search.Watcher,
         {Handbeam.Extension.HotReloader,
          enabled: Application.get_env(:handbeam, :extension_hot_reload, true),
          trusted_project?: Handbeam.ProjectTrust.enabled?()}

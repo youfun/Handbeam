@@ -5,14 +5,14 @@ defmodule ExFff.Config do
   ## Fields
 
   - `:root_path` — project root directory to scan
-  - `:max_files` — max files to index (default 50_000)
+  - `:max_files` — max files to index (default 100_001, one beyond the backend-switch threshold)
   - `:ignore_patterns` — regex patterns for paths to exclude. Defaults also cover
     build-product directories pruned by name (`build/`, `_build/`, `deps/`,
     `.git/`, `node_modules/`, `.gradle/`, `target/`, `cover/`, and editor caches).
   """
 
   defstruct root_path: nil,
-            max_files: 50_000,
+            max_files: 100_001,
             ignore_patterns: nil
 
   @type t :: %__MODULE__{
@@ -34,6 +34,11 @@ defmodule ExFff.Config do
     ~r{zig-out/},
     ~r{\.cxx/},
     ~r{cover/},
+    ~r{tmp/},
+    ~r{artifacts/},
+    ~r{\.handbeam/},
+    ~r{\.local-archive/},
+    ~r{mix_toolchain/},
     ~r{\.idea/},
     ~r{\.vscode/}
   ]

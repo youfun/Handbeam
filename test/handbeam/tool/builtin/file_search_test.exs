@@ -19,6 +19,9 @@ defmodule Handbeam.Tool.Builtin.FileSearchTest do
     File.write!(Path.join(tmp_dir, "lib/user_controller.ex"), "module")
     File.write!(Path.join(tmp_dir, "test/user_test.exs"), "module")
 
+    {:ok, index} = ExFff.Index.ensure_started(tmp_dir)
+    assert :ok = ExFff.Index.await_index(index)
+
     on_exit(fn ->
       case ExFff.Index.ensure_started(tmp_dir) do
         {:ok, pid} ->
@@ -95,6 +98,39 @@ defmodule Handbeam.Tool.Builtin.FileSearchTest do
       refute output =~ "2."
     end
 
+    test "supports path, exclude, and cursor pagination", %{tmp_dir: tmp_dir} do
+      assert {:ok, first} =
+               FileSearch.execute(%{"query" => "user", "path" => "lib", "limit" => 1}, %{
+                 working_directory: tmp_dir
+               })
+
+      assert first =~ "next_cursor:"
+      refute first =~ "test/user_test.exs"
+      [_, cursor] = Regex.run(~r/next_cursor: (\S+)/, first)
+      first_result = first |> String.split("\n") |> Enum.find(&String.starts_with?(&1, "1.\t"))
+
+      assert {:ok, second} =
+               FileSearch.execute(
+                 %{
+                   "query" => "user",
+                   "path" => "lib",
+                   "limit" => 1,
+                   "cursor" => cursor
+                 },
+                 %{working_directory: tmp_dir}
+               )
+
+      refute second =~ first_result
+
+      assert {:ok, excluded} =
+               FileSearch.execute(
+                 %{"query" => "user", "path" => "lib", "exclude" => ["controller"]},
+                 %{working_directory: tmp_dir}
+               )
+
+      refute excluded =~ "lib/user_controller.ex"
+    end
+
     test "supports extension filter", %{tmp_dir: tmp_dir} do
       {:ok, output} = FileSearch.execute(%{"query" => "user *.ex"}, %{working_directory: tmp_dir})
 
@@ -124,6 +160,17 @@ defmodule Handbeam.Tool.Builtin.FileSearchTest do
         FileSearch.execute(%{"query" => "zzz_nonexistent_xyz"}, %{working_directory: tmp_dir})
 
       assert output =~ "No files found"
+    end
+
+    test "marks partial results while the background index is still building", %{tmp_dir: tmp_dir} do
+      {:ok, index} = ExFff.Index.ensure_started(tmp_dir)
+      :sys.replace_state(index, &%{&1 | status: :indexing})
+
+      assert {:ok, output} =
+               FileSearch.execute(%{"query" => "user"}, %{working_directory: tmp_dir})
+
+      assert output =~ "indexing"
+      assert output =~ "user"
     end
   end
 end

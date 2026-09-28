@@ -10,6 +10,7 @@ defmodule ExFff.Matcher do
   @boost 100
   @similarity_weight 0.7
   @frecency_weight 0.3
+  @git_weight 50.0
 
   @doc """
   Tokenize a file path into unique trigrams.
@@ -63,12 +64,24 @@ defmodule ExFff.Matcher do
   - `trigram_tab` — ETS table id for Trigrams
   - `frecency_tab` — ETS table id for Frecency
   """
-  @spec match(ExFff.Query.t(), :ets.tid(), :ets.tid(), :ets.tid()) :: [%{path: String.t(), score: float()}]
+  @spec match(ExFff.Query.t(), :ets.tid(), :ets.tid(), :ets.tid()) :: [
+          %{path: String.t(), score: float()}
+        ]
   def match(query, _files_tab, trigram_tab, frecency_tab) do
+    do_match(query, trigram_tab, frecency_tab, nil)
+  end
+
+  @doc false
+  @spec match(ExFff.Query.t(), :ets.tid(), :ets.tid(), :ets.tid(), :ets.tid() | nil) :: [map()]
+  def match(query, _files_tab, trigram_tab, frecency_tab, git_tab) do
+    do_match(query, trigram_tab, frecency_tab, git_tab)
+  end
+
+  defp do_match(query, trigram_tab, frecency_tab, git_tab) do
     candidates = find_candidates(query, trigram_tab)
 
     candidates
-    |> Enum.map(&score_candidate(&1, query, frecency_tab))
+    |> Enum.map(&score_candidate(&1, query, frecency_tab, git_tab))
     |> apply_filters(query)
     |> Enum.sort_by(& &1.score, :desc)
     |> Enum.take(query.limit)
@@ -136,14 +149,27 @@ defmodule ExFff.Matcher do
 
   # ── Scoring ──
 
-  defp score_candidate(path, query, frecency_tab) do
+  defp score_candidate(path, query, frecency_tab, git_tab) do
     sim = compute_similarity(path, query.terms)
     freq = fetch_frecency(path, frecency_tab)
+    git_status = fetch_git_status(path, git_tab)
 
-    score = sim * @similarity_weight + freq * @frecency_weight
+    score = sim * @similarity_weight + freq * @frecency_weight + git_boost(git_status)
 
-    %{path: path, score: score}
+    %{path: path, score: score, git_status: git_status}
   end
+
+  defp fetch_git_status(_path, nil), do: nil
+
+  defp fetch_git_status(path, git_tab) do
+    case :ets.lookup(git_tab, path) do
+      [{^path, status}] -> status
+      [] -> nil
+    end
+  end
+
+  defp git_boost(nil), do: 0.0
+  defp git_boost(_status), do: @git_weight
 
   defp compute_similarity(path, terms) do
     normalized_path = safe_downcase(path)

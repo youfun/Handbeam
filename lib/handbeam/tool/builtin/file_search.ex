@@ -36,6 +36,13 @@ defmodule Handbeam.Tool.Builtin.FileSearch do
           type: "string",
           description: "Search query with optional filters (e.g. 'user *.ex !test/')"
         },
+        path: %{type: "string", description: "Workspace-relative directory prefix"},
+        exclude: %{
+          type: "array",
+          items: %{type: "string"},
+          description: "Path substrings to exclude"
+        },
+        cursor: %{type: "string", description: "Opaque next_cursor from a previous result"},
         limit: %{type: "integer", description: "Max results to return", default: 20}
       },
       required: ["query"]
@@ -51,8 +58,16 @@ defmodule Handbeam.Tool.Builtin.FileSearch do
     working_directory = Map.get(context, :working_directory)
 
     with {:ok, root} <- resolve_root(working_directory),
-         {:ok, pid} <- ExFff.Index.ensure_started(root),
-         {:ok, result} <- ExFff.Index.search(pid, query, limit: limit) do
+         {:ok, path} <- resolve_path_filter(root, input["path"]),
+         {:ok, index} <- Handbeam.Search.ensure_started(root),
+         {:ok, result} <-
+           Handbeam.Search.search(index, query,
+             limit: limit,
+             path: path,
+             exclude: List.wrap(input["exclude"] || []),
+             cursor: input["cursor"],
+             await: false
+           ) do
       paths =
         Enum.filter(result.paths, fn %{path: path} ->
           Handbeam.Security.PathValidator.allowed_result?(root, path)
@@ -85,19 +100,45 @@ defmodule Handbeam.Tool.Builtin.FileSearch do
     {:error, "working_directory is required"}
   end
 
-  defp format_results(%{paths: [], query: query, duration_ms: ms}) do
-    "# No files found for: #{query} (#{ms}ms)"
+  defp resolve_path_filter(_root, nil), do: {:ok, nil}
+  defp resolve_path_filter(_root, ""), do: {:ok, nil}
+
+  defp resolve_path_filter(root, path) when is_binary(path) do
+    expanded = if Path.type(path) == :absolute, do: path, else: Path.expand(path, root)
+
+    case Handbeam.Security.PathValidator.validate_within_workspace(expanded, root) do
+      :ok -> {:ok, Path.relative_to(expanded, root)}
+      {:error, reason} -> {:error, reason}
+    end
   end
 
-  defp format_results(%{paths: paths, query: query, duration_ms: ms}) do
+  defp resolve_path_filter(_root, _path), do: {:error, "path must be a string"}
+
+  defp format_results(%{paths: [], query: query, duration_ms: ms} = result) do
+    "# No files found for: #{query} (#{ms}ms)#{indexing_suffix(result)}"
+  end
+
+  defp format_results(%{paths: paths, query: query, duration_ms: ms} = result) do
     lines =
       paths
       |> Enum.with_index(1)
-      |> Enum.map(fn {%{path: path, score: score}, i} ->
-        "#{i}.\t#{path}\t(#{Float.round(score, 1)})"
+      |> Enum.map(fn {%{path: path, score: score} = entry, i} ->
+        git = if entry[:git_status], do: "\t[git:#{entry.git_status}]", else: ""
+        "#{i}.\t#{path}\t(#{Float.round(score, 1)})#{git}"
       end)
 
-    header = "# Found #{length(paths)} file(s) for: #{query} (#{ms}ms)\n"
+    continuation = if result[:cursor], do: "next_cursor: #{result.cursor}\n", else: ""
+
+    header =
+      continuation <>
+        "# Found #{length(paths)} file(s) for: #{query} (#{ms}ms)#{indexing_suffix(result)}\n"
+
     header <> Enum.join(lines, "\n")
   end
+
+  defp indexing_suffix(%{status: :indexing, indexed_count: count}),
+    do: " — indexing (#{count} files scanned so far)"
+
+  defp indexing_suffix(%{status: :indexing}), do: " — indexing"
+  defp indexing_suffix(_result), do: ""
 end

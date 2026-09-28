@@ -11,6 +11,8 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
   @free_key :free
 
   def assign_current(socket, ws, conversation_id) do
+    _ = Handbeam.Search.prewarm(ws["path"])
+
     socket
     |> assign(:chat_scope, :workspace)
     |> assign(:current_workspace_id, ws["id"])

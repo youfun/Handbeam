@@ -28,6 +28,9 @@ defmodule ExFff.Index do
             frecency_ref: nil,
             trigram_ref: nil,
             files_ref: nil,
+            git_ref: nil,
+            frecency_path: nil,
+            persist_timer: nil,
             indexed_count: 0,
             status: :indexing,
             task: nil,
@@ -43,6 +46,9 @@ defmodule ExFff.Index do
           frecency_ref: :ets.tid() | atom() | nil,
           trigram_ref: :ets.tid() | atom() | nil,
           files_ref: :ets.tid() | atom() | nil,
+          git_ref: :ets.tid() | atom() | nil,
+          frecency_path: String.t() | nil,
+          persist_timer: reference() | nil,
           indexed_count: non_neg_integer(),
           status: :indexing | :ready | :failed,
           task: Task.t() | nil,
@@ -69,7 +75,7 @@ defmodule ExFff.Index do
 
   Options:
   - `:root_path` — project root to scan (required)
-  - `:max_files` — max files to index (default 50_000)
+  - `:max_files` — max files to index (default 100_001)
   - `:ignore_patterns` — additional regex patterns to ignore
   - `:name` — GenServer name (default `__MODULE__`)
 
@@ -106,10 +112,11 @@ defmodule ExFff.Index do
 
   Options:
   - `:limit` — max results to return
-  - `:await` — if true (default), waits for initial index build if in progress
+  - `:await` — if true, waits for initial index build (default: false)
   - `:timeout` — call timeout in ms (default 5000)
 
-  Returns `{:ok, %{paths: [...], query: query, duration_ms: ms}}` or `{:error, reason}`.
+  Returns the currently indexed results immediately by default. The result's
+  `:status` is `:indexing` until the background scan completes.
   """
   @spec search(GenServer.server(), String.t(), keyword()) ::
           {:ok, map()} | {:error, String.t()}
@@ -126,6 +133,25 @@ defmodule ExFff.Index do
   @spec touch(GenServer.server(), String.t()) :: :ok | {:error, String.t()}
   def touch(pid \\ __MODULE__, path) do
     GenServer.cast(pid, {:touch, path})
+  end
+
+  @doc "Return the indexed file inventory in stable lexical pages."
+  @spec files(GenServer.server(), keyword()) :: {:ok, map()} | {:error, String.t()}
+  def files(pid \\ __MODULE__, opts \\ []) do
+    timeout = Keyword.get(opts, :timeout, 5000)
+    GenServer.call(pid, {:files, opts}, timeout)
+  end
+
+  @doc "Apply incremental filesystem changes to the inventory."
+  @spec update_paths(GenServer.server(), [String.t()]) :: :ok
+  def update_paths(pid \\ __MODULE__, paths) when is_list(paths) do
+    GenServer.call(pid, {:update_paths, paths})
+  end
+
+  @doc "Replace Git status annotations used by path ranking."
+  @spec set_git_status(GenServer.server(), map() | [{String.t(), atom()}]) :: :ok
+  def set_git_status(pid \\ __MODULE__, entries) do
+    GenServer.cast(pid, {:set_git_status, entries})
   end
 
   @doc """
@@ -174,7 +200,7 @@ defmodule ExFff.Index do
       config =
         ExFff.Config.new(
           root_path: root_path,
-          max_files: Keyword.get(opts, :max_files, 50_000),
+          max_files: Keyword.get(opts, :max_files, 100_001),
           ignore_patterns: Keyword.get(opts, :ignore_patterns, ExFff.Config.new().ignore_patterns)
         )
 
@@ -183,15 +209,21 @@ defmodule ExFff.Index do
         :ets.new(:ex_fff_trigrams, [:duplicate_bag, :public, {:read_concurrency, true}])
 
       files_tab = :ets.new(:ex_fff_files, [:set, :public, {:read_concurrency, true}])
+      git_tab = :ets.new(:ex_fff_git_status, [:set, :public, {:read_concurrency, true}])
 
       frecency_tab =
         :ets.new(:ex_fff_frecency, [:ordered_set, :public, {:read_concurrency, true}])
+
+      frecency_path = frecency_path(root_path, Keyword.get(opts, :frecency_dir))
+      load_frecency(frecency_tab, frecency_path)
 
       state = %__MODULE__{
         root_path: root_path,
         config: config,
         trigram_ref: trigram_tab,
         files_ref: files_tab,
+        git_ref: git_tab,
+        frecency_path: frecency_path,
         frecency_ref: frecency_tab,
         indexed_count: 0,
         status: :indexing,
@@ -214,13 +246,24 @@ defmodule ExFff.Index do
       state.status == :failed ->
         {:reply, {:error, "Indexing failed for #{state.root_path}"}, state}
 
-      state.status == :indexing and Keyword.get(opts, :await, true) ->
+      state.status == :indexing and Keyword.get(opts, :await, false) ->
         pending = {from, query_string, opts, state.generation}
         {:noreply, %{state | pending_searches: [pending | state.pending_searches]}}
 
       true ->
         {:reply, do_search(query_string, opts, state), state}
     end
+  end
+
+  @impl true
+  def handle_call({:files, opts}, _from, state) do
+    {:reply, {:ok, list_files(opts, state)}, state}
+  end
+
+  def handle_call({:update_paths, paths}, _from, state) do
+    Enum.each(paths, &update_path(&1, state))
+    count = :ets.info(state.files_ref, :size) || 0
+    {:reply, :ok, %{state | indexed_count: count}}
   end
 
   @impl true
@@ -251,14 +294,20 @@ defmodule ExFff.Index do
       {:reply, {:error, "root_path is not a directory: #{root_path}"}, state}
     else
       state = cancel_indexing(state, {:error, "index root changed"})
-      clear_tables(state)
+      persist_frecency(state.frecency_ref, state.frecency_path)
+      clear_inventory(state)
+      :ets.delete_all_objects(state.frecency_ref)
+      :ets.delete_all_objects(state.git_ref)
 
       config = %{state.config | root_path: expanded}
+      path = frecency_path(expanded, Path.dirname(state.frecency_path))
+      load_frecency(state.frecency_ref, path)
 
       new_state = %{
         state
         | root_path: expanded,
           config: config,
+          frecency_path: path,
           indexed_count: 0,
           status: :indexing,
           task: nil
@@ -285,8 +334,10 @@ defmodule ExFff.Index do
 
   @impl true
   def handle_cast({:touch, path}, state) do
-    if :ets.member(state.files_ref, path) do
-      objects = :ets.match_object(state.frecency_ref, {{:_, path}, :_})
+    relative = relative_path(path, state.root_path)
+
+    if is_binary(relative) and :ets.member(state.files_ref, relative) do
+      objects = :ets.match_object(state.frecency_ref, {{:_, relative}, :_})
 
       score =
         case objects do
@@ -296,10 +347,22 @@ defmodule ExFff.Index do
 
       new_score = ExFff.Matcher.compute_frecency(score)
 
-      :ets.match_delete(state.frecency_ref, {{:_, path}, :_})
-      :ets.insert(state.frecency_ref, {{new_score, path}, true})
+      :ets.match_delete(state.frecency_ref, {{:_, relative}, :_})
+      :ets.insert(state.frecency_ref, {{new_score, relative}, true})
     end
 
+    {:noreply, schedule_frecency_persist(state)}
+  end
+
+  def handle_cast({:set_git_status, entries}, state) do
+    :ets.delete_all_objects(state.git_ref)
+
+    rows =
+      entries
+      |> Enum.map(fn {path, status} -> {relative_path(path, state.root_path), status} end)
+      |> Enum.filter(fn {path, status} -> is_binary(path) and not is_nil(status) end)
+
+    if rows != [], do: :ets.insert(state.git_ref, rows)
     {:noreply, state}
   end
 
@@ -313,18 +376,31 @@ defmodule ExFff.Index do
     {:noreply, start_indexing(state)}
   end
 
+  def handle_info(:persist_frecency, state) do
+    persist_frecency(state.frecency_ref, state.frecency_path)
+    {:noreply, %{state | persist_timer: nil}}
+  end
+
+  def handle_info(
+        {:index_batch, generation, files_entries, trig_entries},
+        %{generation: generation, status: :indexing} = state
+      ) do
+    if files_entries != [], do: :ets.insert(state.files_ref, files_entries)
+    if trig_entries != [], do: :ets.insert(state.trigram_ref, trig_entries)
+
+    {:noreply, %{state | indexed_count: :ets.info(state.files_ref, :size) || 0}}
+  end
+
+  def handle_info({:index_batch, _generation, _files_entries, _trig_entries}, state) do
+    {:noreply, state}
+  end
+
   @impl true
   def handle_info(
-        {ref, {:ok, generation, count, files_entries, trig_entries}},
+        {ref, {:ok, generation, count}},
         %{task: %Task{ref: ref}, generation: generation} = state
       ) do
     Process.demonitor(ref, [:flush])
-
-    :ets.delete_all_objects(state.files_ref)
-    :ets.delete_all_objects(state.trigram_ref)
-
-    if files_entries != [], do: :ets.insert(state.files_ref, files_entries)
-    if trig_entries != [], do: :ets.insert(state.trigram_ref, trig_entries)
 
     prune_frecency(state.frecency_ref, state.files_ref)
 
@@ -336,6 +412,7 @@ defmodule ExFff.Index do
       end
 
     Logger.info("[ExFff.Index] Indexed #{count} files in #{elapsed}ms for #{state.root_path}")
+    emit_index_telemetry(state.root_path, elapsed, count, :ready)
 
     new_state = %{
       state
@@ -389,6 +466,8 @@ defmodule ExFff.Index do
       Task.shutdown(state.task, :brutal_kill)
     end
 
+    persist_frecency(state.frecency_ref, state.frecency_path)
+
     :ok
   end
 
@@ -396,20 +475,23 @@ defmodule ExFff.Index do
 
   defp start_indexing(state) do
     state = if state.task, do: cancel_indexing(state, {:error, "index restarted"}), else: state
-    clear_tables(state)
+    clear_inventory(state)
     generation = state.generation + 1
     root = state.root_path
     config = state.config
 
     Logger.info("[ExFff.Index] Building file index for #{root}...")
     started_at = System.monotonic_time(:millisecond)
+    owner = self()
 
     task =
       Task.async(fn ->
-        {:ok, count, files_entries, trig_entries} =
-          ExFff.Scanner.scan_and_prepare(root, config)
+        {:ok, count} =
+          ExFff.Scanner.scan_and_prepare(root, config, fn files_entries, trig_entries ->
+            send(owner, {:index_batch, generation, files_entries, trig_entries})
+          end)
 
-        {:ok, generation, count, files_entries, trig_entries}
+        {:ok, generation, count}
       end)
 
     %{
@@ -432,12 +514,21 @@ defmodule ExFff.Index do
   end
 
   defp fail_indexing(state, generation, reason) do
-    Logger.error(
-      "[ExFff.Index] Indexing task failed for #{state.root_path}: #{inspect(reason)}"
-    )
+    Logger.error("[ExFff.Index] Indexing task failed for #{state.root_path}: #{inspect(reason)}")
 
     if generation == state.generation do
-      reply_pending(state.pending_searches, generation, {:error, "Indexing failed: #{inspect(reason)}"})
+      elapsed =
+        if state.index_started_at,
+          do: System.monotonic_time(:millisecond) - state.index_started_at,
+          else: 0
+
+      emit_index_telemetry(state.root_path, elapsed, state.indexed_count, :failed)
+
+      reply_pending(
+        state.pending_searches,
+        generation,
+        {:error, "Indexing failed: #{inspect(reason)}"}
+      )
 
       {:stop, {:indexing_failed, reason},
        %{
@@ -452,10 +543,9 @@ defmodule ExFff.Index do
     end
   end
 
-  defp clear_tables(state) do
+  defp clear_inventory(state) do
     :ets.delete_all_objects(state.files_ref)
     :ets.delete_all_objects(state.trigram_ref)
-    :ets.delete_all_objects(state.frecency_ref)
   end
 
   defp reply_pending(pending, generation, reply) do
@@ -479,20 +569,41 @@ defmodule ExFff.Index do
     )
   end
 
+  defp emit_index_telemetry(root, elapsed, count, status) do
+    if Code.ensure_loaded?(:telemetry) do
+      apply(:telemetry, :execute, [
+        [:ex_fff, :index, :build],
+        %{duration_ms: elapsed, file_count: count},
+        %{root: root, status: status}
+      ])
+    end
+  end
+
   defp do_search(query_string, opts, state) do
     start_time = System.monotonic_time(:millisecond)
     parsed_query = ExFff.Query.parse(query_string)
 
     limit = Keyword.get(opts, :limit, parsed_query.limit)
-    parsed_query = %{parsed_query | limit: max(limit, 1)}
+    offset = decode_offset(Keyword.get(opts, :cursor))
+    parsed_query = %{parsed_query | limit: max(state.indexed_count, max(limit + offset + 1, 1))}
+    prefix = normalize_prefix(Keyword.get(opts, :path))
+    excludes = opts |> Keyword.get(:exclude, []) |> List.wrap() |> Enum.reject(&(&1 in [nil, ""]))
 
-    results =
+    matches =
       ExFff.Matcher.match(
         parsed_query,
         state.files_ref,
         state.trigram_ref,
-        state.frecency_ref
+        state.frecency_ref,
+        state.git_ref
       )
+      |> Enum.filter(&inventory_path?(&1.path, prefix, excludes, nil))
+
+    page = matches |> Enum.drop(offset) |> Enum.take(limit + 1)
+    results = Enum.take(page, limit)
+
+    next_cursor =
+      if length(page) > length(results), do: encode_offset(offset + length(results)), else: nil
 
     duration_ms = System.monotonic_time(:millisecond) - start_time
 
@@ -500,8 +611,174 @@ defmodule ExFff.Index do
      %{
        paths: results,
        query: query_string,
-       duration_ms: duration_ms
+       duration_ms: duration_ms,
+       status: state.status,
+       indexed_count: state.indexed_count,
+       cursor: next_cursor
      }}
+  end
+
+  defp encode_offset(offset), do: Base.url_encode64(Integer.to_string(offset), padding: false)
+
+  defp decode_offset(nil), do: 0
+
+  defp decode_offset(cursor) when is_binary(cursor) do
+    with {:ok, value} <- Base.url_decode64(cursor, padding: false),
+         {offset, ""} when offset >= 0 <- Integer.parse(value) do
+      offset
+    else
+      _ -> 0
+    end
+  end
+
+  defp decode_offset(_), do: 0
+
+  defp list_files(opts, state) do
+    prefix = normalize_prefix(Keyword.get(opts, :path))
+    excludes = opts |> Keyword.get(:exclude, []) |> List.wrap() |> Enum.reject(&(&1 in [nil, ""]))
+    after_path = decode_cursor(Keyword.get(opts, :cursor))
+    limit = opts |> Keyword.get(:limit, 1_000) |> max(1) |> min(10_000)
+
+    matching =
+      state.files_ref
+      |> :ets.tab2list()
+      |> Enum.map(&elem(&1, 0))
+      |> Enum.filter(&inventory_path?(&1, prefix, excludes, after_path))
+      |> Enum.sort()
+
+    page = Enum.take(matching, limit)
+    more? = length(matching) > length(page)
+
+    %{
+      paths: page,
+      cursor: if(more?, do: encode_cursor(List.last(page)), else: nil),
+      status: state.status,
+      indexed_count: state.indexed_count
+    }
+  end
+
+  defp inventory_path?(path, prefix, excludes, after_path) do
+    (prefix == "" or path == prefix or String.starts_with?(path, prefix <> "/")) and
+      (is_nil(after_path) or path > after_path) and
+      Enum.all?(excludes, &(not String.contains?(path, &1)))
+  end
+
+  defp normalize_prefix(nil), do: ""
+  defp normalize_prefix("."), do: ""
+
+  defp normalize_prefix(path) when is_binary(path),
+    do: path |> String.trim("/") |> Path.expand("/") |> Path.relative_to("/")
+
+  defp normalize_prefix(_), do: ""
+
+  defp encode_cursor(path), do: Base.url_encode64(path, padding: false)
+
+  defp decode_cursor(nil), do: nil
+
+  defp decode_cursor(cursor) when is_binary(cursor) do
+    case Base.url_decode64(cursor, padding: false) do
+      {:ok, path} -> path
+      :error -> nil
+    end
+  end
+
+  defp decode_cursor(_), do: nil
+
+  defp update_path(path, state) do
+    case relative_path(path, state.root_path) do
+      nil ->
+        :ok
+
+      relative ->
+        remove_path(relative, state)
+
+        case ExFff.Scanner.prepare_path(state.root_path, relative, state.config) do
+          {:ok, file_entry, trigrams} ->
+            if :ets.info(state.files_ref, :size) < state.config.max_files do
+              :ets.insert(state.files_ref, file_entry)
+              if trigrams != [], do: :ets.insert(state.trigram_ref, trigrams)
+            end
+
+          :ignore ->
+            :ok
+        end
+    end
+  end
+
+  defp remove_path(relative, state) do
+    prefix = relative <> "/"
+
+    state.files_ref
+    |> :ets.tab2list()
+    |> Enum.each(fn {path, _metadata} ->
+      if path == relative or String.starts_with?(path, prefix) do
+        :ets.delete(state.files_ref, path)
+        :ets.match_delete(state.trigram_ref, {:_, path})
+        :ets.match_delete(state.frecency_ref, {{:_, path}, :_})
+        :ets.delete(state.git_ref, path)
+      end
+    end)
+  end
+
+  defp relative_path(path, root) when is_binary(path) do
+    expanded =
+      if Path.type(path) == :absolute, do: Path.expand(path), else: Path.expand(path, root)
+
+    expanded_root = Path.expand(root)
+
+    if expanded != expanded_root and String.starts_with?(expanded, expanded_root <> "/") do
+      Path.relative_to(expanded, expanded_root)
+    end
+  end
+
+  defp relative_path(_, _), do: nil
+
+  defp schedule_frecency_persist(%{persist_timer: nil} = state) do
+    %{state | persist_timer: Process.send_after(self(), :persist_frecency, 200)}
+  end
+
+  defp schedule_frecency_persist(state), do: state
+
+  defp frecency_path(root, nil) do
+    frecency_path(root, Path.join([System.user_home!(), ".handbeam", "fff"]))
+  end
+
+  defp frecency_path(root, dir) do
+    digest = :crypto.hash(:sha256, Path.expand(root)) |> Base.url_encode64(padding: false)
+    Path.join(dir, digest <> ".term")
+  end
+
+  defp load_frecency(table, path) do
+    with {:ok, binary} <- File.read(path),
+         entries when is_list(entries) <- :erlang.binary_to_term(binary, [:safe]) do
+      entries
+      |> Enum.filter(fn
+        {score, rel} when is_number(score) and is_binary(rel) -> true
+        _ -> false
+      end)
+      |> Enum.each(fn {score, rel} -> :ets.insert(table, {{score * 1.0, rel}, true}) end)
+    else
+      _ -> :ok
+    end
+  rescue
+    _ -> :ok
+  end
+
+  defp persist_frecency(nil, _path), do: :ok
+
+  defp persist_frecency(table, path) do
+    entries = Enum.map(:ets.tab2list(table), fn {{score, rel}, true} -> {score, rel} end)
+    tmp = path <> ".tmp"
+
+    with :ok <- File.mkdir_p(Path.dirname(path)),
+         :ok <- File.write(tmp, :erlang.term_to_binary(entries)),
+         :ok <- File.rename(tmp, path) do
+      :ok
+    else
+      _ -> File.rm(tmp)
+    end
+  rescue
+    _ -> :ok
   end
 
   defp flush_pending_searches(state, generation) do

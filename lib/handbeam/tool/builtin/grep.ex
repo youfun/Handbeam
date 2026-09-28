@@ -1,32 +1,27 @@
 defmodule Handbeam.Tool.Builtin.Grep do
   @moduledoc """
-  Search file contents in the workspace.
+  Search workspace file contents over the shared ExFff inventory.
 
-  Desktop uses ripgrep when `rg` is on PATH. On-device Mob (and any host
-  without `rg`) falls back to a pure-Elixir walk so grep still works.
-
-  Accepts both Handbeam-style arguments (`pattern`, `path`, `context`) and common
-  Claude-style grep arguments (`-n`, `-A`, `output_mode`).
+  Results are grouped by file and paged with an opaque cursor. Ripgrep is used
+  when available, but receives explicit inventory paths and cannot widen the
+  search scope. Other hosts use the same inventory with an Elixir matcher.
   """
 
   @behaviour Handbeam.Agent.Tool
 
   @default_limit 100
+  @inventory_page 10_000
   @max_result_chars 20_000
-  @max_fallback_file_bytes 5_000_000
-  @fallback_ignored_dirs MapSet.new(
-                           ~w(.cxx .git .gradle .handbeam .local-archive .zig-cache _build artifacts build cover deps doc mix_toolchain node_modules tmp zig-out)
-                         )
+  @max_file_bytes 5_000_000
+  @rg_batch_size 200
 
   @impl true
   def name, do: "grep"
 
   @impl true
   def description do
-    "Search file contents for a pattern. " <>
-      "Use this to locate symbols or text before reading/editing files. " <>
-      "Supports pattern, path, glob, ignore_case, literal, context, before_context, " <>
-      "after_context, limit, and Claude-style -n/-A/-B/-C arguments."
+    "Search indexed workspace files for a regex or literal pattern. " <>
+      "Results are grouped by file; pass next_cursor as cursor to continue."
   end
 
   @impl true
@@ -35,23 +30,22 @@ defmodule Handbeam.Tool.Builtin.Grep do
       type: "object",
       properties: %{
         pattern: %{type: "string", description: "Search pattern (regex by default)"},
-        path: %{type: "string", description: "Directory or file to search, defaults to workspace"},
-        glob: %{type: "string", description: "Optional glob filter such as *.ex"},
-        ignore_case: %{type: "boolean", description: "Case-insensitive search", default: false},
-        literal: %{
-          type: "boolean",
-          description: "Treat pattern as a literal string",
-          default: false
+        path: %{type: "string", description: "Workspace-relative file or directory"},
+        glob: %{type: "string", description: "Optional glob such as *.{ex,exs}"},
+        exclude: %{
+          type: "array",
+          items: %{type: "string"},
+          description: "Path substrings to exclude"
         },
-        context: %{type: "integer", description: "Lines before and after each match", default: 0},
-        before_context: %{type: "integer", description: "Lines before each match", default: 0},
-        after_context: %{type: "integer", description: "Lines after each match", default: 0},
+        cursor: %{type: "string", description: "Opaque next_cursor from a previous result"},
+        ignore_case: %{type: "boolean", default: false},
+        literal: %{type: "boolean", default: false},
+        context: %{type: "integer", default: 0},
+        before_context: %{type: "integer", default: 0},
+        after_context: %{type: "integer", default: 0},
         limit: %{type: "integer", description: "Maximum matching lines", default: @default_limit},
-        output_mode: %{
-          type: "string",
-          description: "Accepted for compatibility; content is returned"
-        },
-        "-n": %{type: "boolean", description: "Show line numbers; accepted for compatibility"},
+        output_mode: %{type: "string", description: "Accepted for compatibility"},
+        "-n": %{type: "boolean", description: "Accepted for compatibility"},
         "-A": %{type: "integer", description: "Lines after each match"},
         "-B": %{type: "integer", description: "Lines before each match"},
         "-C": %{type: "integer", description: "Context lines around each match"}
@@ -69,133 +63,287 @@ defmodule Handbeam.Tool.Builtin.Grep do
   @impl true
   def execute(input, context) when is_map(input) do
     with {:ok, pattern} <- fetch_pattern(input),
-         {:ok, root} <- resolve_search_root(input, context),
-         :ok <- validate_readable(root) do
-      search_contents(pattern, root, input)
+         {:ok, workspace, prefix} <- resolve_scope(input, context),
+         {:ok, regex} <- compile_pattern(pattern, input),
+         {:ok, index} <- Handbeam.Search.ensure_started(workspace),
+         {:ok, inventory} <- inventory(index, workspace, prefix, input) do
+      search(pattern, regex, inventory, workspace, input)
     end
   rescue
-    e -> {:error, "grep failed: #{Exception.message(e)}"}
+    error -> {:error, "grep failed: #{Exception.message(error)}"}
   end
 
   def execute(_input, _context), do: {:error, "pattern is required"}
 
-  defp search_contents(pattern, root, input) do
-    if System.find_executable("rg") do
-      args = build_rg_args(pattern, root, input)
+  defp inventory(index, workspace, prefix, input) do
+    excludes = input["exclude"] || input[:exclude] || []
+    collect_inventory(index, workspace, prefix, List.wrap(excludes), nil, [], nil)
+  end
 
-      case System.cmd("rg", args, stderr_to_stdout: true) do
-        {output, 0} ->
-          {:ok, normalize_output(strip_sensitive_lines(output, root))}
+  defp collect_inventory(index, workspace, prefix, excludes, cursor, acc, status) do
+    opts = [path: prefix, exclude: excludes, cursor: cursor, limit: @inventory_page]
 
-        {"", 1} ->
-          {:ok, "No matches found"}
+    with {:ok, page} <- Handbeam.Search.files(index, opts) do
+      paths =
+        Enum.filter(page.paths, fn path ->
+          Handbeam.Security.PathValidator.allowed_result?(workspace, path) and
+            regular_file?(Path.join(workspace, path))
+        end)
 
-        {output, 1} ->
-          {:ok, normalize_output(strip_sensitive_lines(output, root))}
+      next_acc = acc ++ paths
 
-        {output, code} ->
-          {:error, "rg exited with #{code}: #{String.trim(strip_sensitive_lines(output, root))}"}
+      if page.cursor do
+        collect_inventory(index, workspace, prefix, excludes, page.cursor, next_acc, page.status)
+      else
+        {:ok,
+         %{paths: next_acc, status: status || page.status, indexed_count: page.indexed_count}}
       end
-    else
-      elixir_search(pattern, root, input)
     end
   end
 
-  defp elixir_search(pattern, root, input) do
-    with {:ok, regex} <- compile_pattern(pattern, input),
-         {:ok, files} <- grep_files(root, input["glob"] || input[:glob]) do
-      before_n = context_before(input)
-      after_n = context_after(input)
-      max_hits = limit(input)
+  defp search(pattern, regex, inventory, workspace, input) do
+    started_at = System.monotonic_time(:millisecond)
+    cursor = decode_cursor(input["cursor"] || input[:cursor])
+    wanted = limit(input) + 1
+    files = Enum.filter(inventory.paths, &glob_match?(&1, input["glob"] || input[:glob]))
 
-      {lines, _count} =
-        Enum.reduce_while(files, {[], 0}, fn path, {acc, count} ->
-          if count >= max_hits do
-            {:halt, {acc, count}}
-          else
-            {chunk, added} = search_file(path, root, regex, before_n, after_n, max_hits - count)
-            {:cont, {acc ++ chunk, count + added}}
+    {matcher, hits} =
+      case System.find_executable("rg") do
+        nil ->
+          {:elixir, elixir_hits(files, workspace, regex, cursor, wanted)}
+
+        rg ->
+          case rg_hits(rg, files, workspace, pattern, input, cursor, wanted) do
+            {:ok, hits} -> {:ripgrep, hits}
+            {:error, _code} -> {:elixir, elixir_hits(files, workspace, regex, cursor, wanted)}
           end
-        end)
+      end
 
-      {:ok, normalize_output(Enum.join(lines, "\n"))}
+    page = Enum.take(hits, limit(input))
+    next_cursor = if length(hits) > length(page), do: encode_cursor(List.last(page)), else: nil
+    emit_telemetry(started_at, length(files), length(page), matcher, inventory.status)
+
+    {:ok, format_results(page, next_cursor, inventory, workspace, input)}
+  end
+
+  defp elixir_hits(files, workspace, regex, cursor, wanted) do
+    Enum.reduce_while(files, [], fn relative, acc ->
+      hits = file_hits(relative, workspace, regex, cursor)
+      next = acc ++ hits
+      if length(next) >= wanted, do: {:halt, next}, else: {:cont, next}
+    end)
+  end
+
+  defp file_hits(relative, workspace, regex, cursor) do
+    path = Path.join(workspace, relative)
+
+    with {:ok, %{size: size}} when size <= @max_file_bytes <- File.stat(path),
+         {:ok, content} <- File.read(path),
+         true <- String.valid?(content) do
+      content
+      |> String.split("\n")
+      |> Enum.with_index(1)
+      |> Enum.flat_map(fn {line, number} ->
+        hit = %{path: relative, line: number, text: line}
+        if Regex.match?(regex, line) and after_cursor?(hit, cursor), do: [hit], else: []
+      end)
+    else
+      _ -> []
     end
+  end
+
+  defp rg_hits(rg, files, workspace, pattern, input, cursor, wanted) do
+    result =
+      files
+      |> Enum.chunk_every(@rg_batch_size)
+      |> Enum.reduce_while({:ok, []}, fn batch, {:ok, acc} ->
+        args = rg_args(pattern, input) ++ batch
+        {output, code} = System.cmd(rg, args, cd: workspace, stderr_to_stdout: true)
+
+        if code in [0, 1] do
+          next =
+            output
+            |> parse_rg_output()
+            |> Enum.filter(&after_cursor?(&1, cursor))
+            |> then(&(acc ++ &1))
+
+          if length(next) >= wanted, do: {:halt, {:ok, next}}, else: {:cont, {:ok, next}}
+        else
+          {:halt, {:error, code}}
+        end
+      end)
+
+    case result do
+      {:ok, hits} -> {:ok, hits |> Enum.sort_by(&{&1.path, &1.line}) |> Enum.take(wanted)}
+      {:error, _code} = error -> error
+    end
+  end
+
+  defp rg_args(pattern, input) do
+    # ripgrep omits the filename when only one path is searched unless this is
+    # explicit. The parser and cursor contract always require path:line:text.
+    base = ["--line-number", "--color=never", "--no-heading", "--with-filename"]
+    base = if truthy?(input["ignore_case"] || input[:ignore_case]), do: base ++ ["-i"], else: base
+    base = if truthy?(input["literal"] || input[:literal]), do: base ++ ["-F"], else: base
+    base ++ ["--", pattern]
+  end
+
+  defp parse_rg_output(output) do
+    output
+    |> String.split("\n", trim: true)
+    |> Enum.flat_map(fn line ->
+      case Regex.run(~r/^(.+?):(\d+):(.*)$/u, line) do
+        [_, path, number, text] ->
+          [%{path: path, line: String.to_integer(number), text: text}]
+
+        _ ->
+          []
+      end
+    end)
+  end
+
+  defp format_results([], _cursor, inventory, _workspace, _input) do
+    "No matches found" <> indexing_suffix(inventory)
+  end
+
+  defp format_results(hits, next_cursor, inventory, workspace, input) do
+    before_n = context_before(input)
+    after_n = context_after(input)
+
+    body =
+      hits
+      |> Enum.group_by(& &1.path)
+      |> Enum.sort_by(&elem(&1, 0))
+      |> Enum.map_join("\n", fn {path, file_hits} ->
+        lines = read_lines(Path.join(workspace, path))
+
+        rendered =
+          file_hits
+          |> Enum.sort_by(& &1.line)
+          |> Enum.flat_map(&format_hit(path, lines, &1.line, before_n, after_n))
+          |> Enum.uniq()
+          |> Enum.join("\n")
+
+        "== #{path} ==\n" <> rendered
+      end)
+
+    continuation = if next_cursor, do: "next_cursor: #{next_cursor}\n", else: ""
+    continuation <> body <> indexing_suffix(inventory)
+  end
+
+  defp read_lines(path) do
+    case File.read(path) do
+      {:ok, content} when is_binary(content) -> String.split(content, "\n")
+      _ -> []
+    end
+  end
+
+  defp format_hit(path, lines, index, before_n, after_n) do
+    start_i = max(1, index - before_n)
+    end_i = min(length(lines), index + after_n)
+
+    for i <- start_i..end_i do
+      separator = if i == index, do: ":", else: "-"
+      "#{path}#{separator}#{i}#{separator}#{Enum.at(lines, i - 1) || ""}"
+    end
+  end
+
+  defp indexing_suffix(%{status: :indexing, indexed_count: count}) do
+    "\n[indexing: #{count} files scanned so far]"
+  end
+
+  defp indexing_suffix(_inventory), do: ""
+
+  defp after_cursor?(_hit, nil), do: true
+  defp after_cursor?(hit, {path, line}), do: {hit.path, hit.line} > {path, line}
+
+  defp encode_cursor(%{path: path, line: line}) do
+    Base.url_encode64(:erlang.term_to_binary({path, line}), padding: false)
+  end
+
+  defp decode_cursor(nil), do: nil
+
+  defp decode_cursor(cursor) when is_binary(cursor) do
+    with {:ok, binary} <- Base.url_decode64(cursor, padding: false),
+         {path, line} when is_binary(path) and is_integer(line) <-
+           :erlang.binary_to_term(binary, [:safe]) do
+      {path, line}
+    else
+      _ -> nil
+    end
+  rescue
+    _ -> nil
   end
 
   defp compile_pattern(pattern, input) do
     source =
-      if truthy?(input["literal"] || input[:literal]),
-        do: Regex.escape(pattern),
-        else: pattern
+      if truthy?(input["literal"] || input[:literal]), do: Regex.escape(pattern), else: pattern
 
-    opts = if truthy?(input["ignore_case"] || input[:ignore_case]), do: "i", else: ""
+    options = if truthy?(input["ignore_case"] || input[:ignore_case]), do: "i", else: ""
 
-    case Regex.compile(source, opts) do
+    case Regex.compile(source, options) do
       {:ok, regex} -> {:ok, regex}
       {:error, {reason, _}} -> {:error, "invalid pattern: #{reason}"}
     end
   end
 
-  defp grep_files(root, glob) do
-    cond do
-      sensitive_fs_path?(root) ->
-        {:ok, []}
+  defp fetch_pattern(input) do
+    pattern = input["pattern"] || input[:pattern] || input["query"] || input[:query]
 
-      File.regular?(root) ->
-        if safe_regular_file?(root, root) and glob_match?(root, root, glob),
-          do: {:ok, [root]},
-          else: {:ok, []}
+    if is_binary(pattern) and String.trim(pattern) != "",
+      do: {:ok, pattern},
+      else: {:error, "pattern is required"}
+  end
 
-      File.dir?(root) ->
-        files = walk_files(root, root, glob)
+  defp resolve_scope(input, context) do
+    workspace = context[:working_directory] || context["working_directory"] || File.cwd!()
+    raw_path = input["path"] || input[:path] || input["file_path"] || input[:file_path] || "."
+    raw_path = Handbeam.Agent.Tool.Helpers.expand_tilde(raw_path)
 
-        {:ok, files}
+    path =
+      if Path.type(raw_path) == :absolute, do: raw_path, else: Path.expand(raw_path, workspace)
 
-      true ->
-        {:ok, []}
+    with :ok <- Handbeam.Security.PathValidator.validate_within_workspace(path, workspace),
+         :ok <- Handbeam.Security.PathValidator.reject_resolved(path),
+         true <- File.exists?(path) do
+      {:ok, Path.expand(workspace), Path.relative_to(path, workspace)}
+    else
+      false -> {:error, "Path not found: #{path}"}
+      {:error, reason} -> {:error, reason}
     end
   end
 
-  defp glob_match?(_path, _root, glob) when glob in [nil, ""], do: true
+  defp regular_file?(path), do: match?({:ok, %{type: :regular}}, File.lstat(path))
 
-  defp glob_match?(path, root, glob) when is_binary(glob) do
-    relative = Path.relative_to(path, root) |> String.replace("\\", "/")
+  defp glob_match?(_path, glob) when glob in [nil, ""], do: true
+
+  defp glob_match?(path, glob) when is_binary(glob) do
     basename = Path.basename(path)
-    patterns = expand_braces(glob |> String.replace("\\", "/") |> String.trim_leading("/"))
 
-    Enum.any?(patterns, fn pattern ->
-      match_glob?(relative, pattern) or match_glob?(basename, pattern) or
-        match_glob?(relative, "**/" <> pattern)
+    glob
+    |> expand_braces()
+    |> Enum.any?(fn pattern ->
+      regex = glob_regex(pattern)
+      Regex.match?(regex, path) or Regex.match?(regex, basename)
     end)
   end
 
-  defp glob_match?(_path, _root, _glob), do: true
+  defp glob_match?(_path, _glob), do: true
 
-  defp match_glob?(path, pattern) do
-    regex =
+  defp glob_regex(pattern) do
+    source =
       pattern
-      |> String.split("/")
-      |> Enum.map(&glob_segment_to_regex/1)
-      |> Enum.join("/")
-      |> then(&("^" <> &1 <> "$"))
-      |> Regex.compile!()
+      |> String.replace("\\", "/")
+      |> String.trim_leading("/")
+      |> String.graphemes()
+      |> Enum.map(fn
+        "*" -> ".*"
+        "?" -> "."
+        char -> Regex.escape(char)
+      end)
+      |> IO.iodata_to_binary()
 
-    Regex.match?(regex, path)
-  end
-
-  defp glob_segment_to_regex("**"), do: ".*"
-  defp glob_segment_to_regex("*"), do: "[^/]*"
-  defp glob_segment_to_regex("?"), do: "[^/]"
-
-  defp glob_segment_to_regex(segment) do
-    segment
-    |> String.graphemes()
-    |> Enum.map(fn
-      "*" -> "[^/]*"
-      "?" -> "[^/]"
-      char -> Regex.escape(char)
-    end)
-    |> IO.iodata_to_binary()
+    Regex.compile!("^" <> source <> "$")
   end
 
   defp expand_braces(pattern) do
@@ -215,119 +363,10 @@ defmodule Handbeam.Tool.Builtin.Grep do
     end
   end
 
-  defp walk_files(dir, root, glob) do
-    if sensitive_fs_path?(dir) do
-      []
-    else
-      walk_files_listing(dir, root, glob)
-    end
-  end
-
-  defp walk_files_listing(dir, root, glob) do
-    case File.ls(dir) do
-      {:ok, names} ->
-        Enum.flat_map(names, fn name ->
-          path = Path.join(dir, name)
-
-          case File.lstat(path) do
-            {:ok, %{type: :directory}} ->
-              if MapSet.member?(@fallback_ignored_dirs, name) or sensitive_fs_path?(path),
-                do: [],
-                else: walk_files(path, root, glob)
-
-            {:ok, %{type: :regular}} ->
-              if safe_regular_file?(path, root) and not sensitive_fs_path?(path) and
-                   glob_match?(path, root, glob),
-                 do: [path],
-                 else: []
-
-            _ ->
-              []
-          end
-        end)
-
-      _ ->
-        []
-    end
-  end
-
-  defp safe_regular_file?(path, root) do
-    inside_workspace?(path, root) and
-      match?({:ok, %{type: :regular}}, File.lstat(path))
-  end
-
-  defp search_file(path, root, regex, before_n, after_n, remaining) do
-    if not inside_workspace?(path, root) or sensitive_fs_path?(path) do
-      {[], 0}
-    else
-      read_and_search(path, root, regex, before_n, after_n, remaining)
-    end
-  end
-
-  defp read_and_search(path, root, regex, before_n, after_n, remaining) do
-    with {:ok, %{size: size}} when size <= @max_fallback_file_bytes <- File.stat(path),
-         {:ok, content} <- File.read(path) do
-      if String.valid?(content) do
-        lines = String.split(content, "\n")
-        rel = Path.relative_to(path, root)
-        hits = matching_indexes(lines, regex)
-
-        formatted =
-          hits
-          |> Enum.take(remaining)
-          |> Enum.flat_map(&format_hit(rel, lines, &1, before_n, after_n))
-
-        {formatted, min(length(hits), remaining)}
-      else
-        {[], 0}
-      end
-    else
-      _ -> {[], 0}
-    end
-  end
-
-  defp inside_workspace?(path, root) do
-    expanded_root = Path.expand(root)
-    expanded_path = Path.expand(path)
-
-    expanded_path == expanded_root or
-      String.starts_with?(expanded_path, expanded_root <> "/")
-  end
-
-  defp inside_workspace_resolved?(path, root) do
-    resolved_root = root |> Path.expand() |> Handbeam.Security.PathValidator.resolve_symlink()
-    resolved_path = path |> Path.expand() |> Handbeam.Security.PathValidator.resolve_symlink()
-
-    resolved_path == resolved_root or
-      String.starts_with?(resolved_path, resolved_root <> "/")
-  end
-
-  defp matching_indexes(lines, regex) do
-    lines
-    |> Enum.with_index(1)
-    |> Enum.filter(fn {line, _} -> Regex.match?(regex, line) end)
-    |> Enum.map(&elem(&1, 1))
-  end
-
-  defp format_hit(rel, lines, index, before_n, after_n) do
-    start_i = max(1, index - before_n)
-    end_i = min(length(lines), index + after_n)
-
-    for i <- start_i..end_i do
-      line = Enum.at(lines, i - 1) || ""
-
-      if i == index do
-        "#{rel}:#{i}:#{line}"
-      else
-        "#{rel}-#{i}-#{line}"
-      end
-    end
-  end
-
   defp context_before(input) do
     context = int_value(input, ["context", :context, "-C"])
-    before_context = int_value(input, ["before_context", :before_context, "-B"])
-    if context > 0, do: context, else: before_context
+    before = int_value(input, ["before_context", :before_context, "-B"])
+    if context > 0, do: context, else: before
   end
 
   defp context_after(input) do
@@ -336,122 +375,9 @@ defmodule Handbeam.Tool.Builtin.Grep do
     if context > 0, do: context, else: after_context
   end
 
-  defp fetch_pattern(input) do
-    pattern = input["pattern"] || input[:pattern] || input["query"] || input[:query]
-
-    if is_binary(pattern) and String.trim(pattern) != "" do
-      {:ok, pattern}
-    else
-      {:error, "pattern is required"}
-    end
-  end
-
-  defp resolve_search_root(input, context) do
-    raw_path = input["path"] || input[:path] || input["file_path"] || input[:file_path] || "."
-    raw_path = Handbeam.Agent.Tool.Helpers.expand_tilde(raw_path)
-
-    working_directory =
-      Map.get(context, :working_directory) || Map.get(context, "working_directory") || File.cwd!()
-
-    path =
-      if Path.type(raw_path) == :absolute do
-        raw_path
-      else
-        Path.expand(raw_path, working_directory)
-      end
-
-    result =
-      with :ok <- ensure_inside_workspace(path, working_directory),
-           :ok <- Handbeam.Security.PathValidator.reject_resolved(path) do
-        {:ok, path}
-      end
-
-    case result do
-      {:ok, path} ->
-        {:ok, path}
-
-      {:error, reason} ->
-        if sensitive_fs_path?(path) or
-             Handbeam.Security.PathValidator.reject_sensitive(raw_path) != :ok do
-          {:error, Handbeam.Security.PathValidator.sensitive_reason()}
-        else
-          {:error, reason}
-        end
-    end
-  end
-
-  defp sensitive_fs_path?(path) do
-    Handbeam.Security.PathValidator.reject_resolved(path) != :ok
-  end
-
-  defp ensure_inside_workspace(path, working_directory) do
-    if inside_workspace_resolved?(path, working_directory) do
-      :ok
-    else
-      {:error, "Path outside workspace: #{path}"}
-    end
-  end
-
-  defp validate_readable(path) do
-    if not File.exists?(path) do
-      {:error, "Path not found: #{path}"}
-    else
-      :ok
-    end
-  end
-
-  defp build_rg_args(pattern, root, input) do
-    args = ["--line-number", "--color=never", "--hidden", "--max-count", to_string(limit(input))]
-
-    args =
-      if truthy?(input["ignore_case"] || input[:ignore_case]),
-        do: args ++ ["--ignore-case"],
-        else: args
-
-    args =
-      if truthy?(input["literal"] || input[:literal]), do: args ++ ["--fixed-strings"], else: args
-
-    args =
-      case input["glob"] || input[:glob] do
-        glob when is_binary(glob) and glob != "" -> args ++ ["--glob", glob]
-        _ -> args
-      end
-
-    args = add_context_args(args, input)
-
-    excludes =
-      Enum.flat_map(Handbeam.Security.PathValidator.rg_exclude_globs(), fn glob ->
-        ["--glob", glob]
-      end)
-
-    args ++ excludes ++ ["--", pattern, root]
-  end
-
-  defp add_context_args(args, input) do
-    context = int_value(input, ["context", :context, "-C"])
-    before_context = int_value(input, ["before_context", :before_context, "-B"])
-    after_context = int_value(input, ["after_context", :after_context, "-A"])
-
-    cond do
-      context > 0 ->
-        args ++ ["-C", to_string(context)]
-
-      before_context > 0 or after_context > 0 ->
-        args
-        |> maybe_add_context("-B", before_context)
-        |> maybe_add_context("-A", after_context)
-
-      true ->
-        args
-    end
-  end
-
-  defp maybe_add_context(args, _flag, value) when value <= 0, do: args
-  defp maybe_add_context(args, flag, value), do: args ++ [flag, to_string(value)]
-
   defp limit(input) do
     case int_value(input, ["limit", :limit]) do
-      n when n > 0 -> n
+      value when value > 0 -> min(value, 1_000)
       _ -> @default_limit
     end
   end
@@ -459,8 +385,8 @@ defmodule Handbeam.Tool.Builtin.Grep do
   defp int_value(input, keys) do
     Enum.find_value(keys, 0, fn key ->
       case Map.get(input, key) do
-        n when is_integer(n) -> n
-        s when is_binary(s) -> parse_int(s)
+        value when is_integer(value) -> value
+        value when is_binary(value) -> parse_int(value)
         _ -> nil
       end
     end)
@@ -468,37 +394,22 @@ defmodule Handbeam.Tool.Builtin.Grep do
 
   defp parse_int(value) do
     case Integer.parse(value) do
-      {n, _} -> n
+      {integer, _} -> integer
       :error -> nil
     end
   end
 
-  defp truthy?(true), do: true
-  defp truthy?("true"), do: true
-  defp truthy?("1"), do: true
-  defp truthy?(1), do: true
-  defp truthy?(_), do: false
+  defp truthy?(value), do: value in [true, "true", "1", 1]
 
-  defp normalize_output(output) do
-    output = String.trim_trailing(output)
-    if output == "", do: "No matches found", else: output
-  end
-
-  defp strip_sensitive_lines(output, root) do
-    output
-    |> String.split("\n")
-    |> Enum.reject(&sensitive_rg_line?(&1, root))
-    |> Enum.join("\n")
-  end
-
-  defp sensitive_rg_line?(line, root) do
-    case Regex.run(~r/^(.+?)[-:]\d+[-:]/, line) do
-      [_, path] ->
-        full = if Path.type(path) == :absolute, do: path, else: Path.expand(path, root)
-        sensitive_fs_path?(full) or Handbeam.Security.PathValidator.reject_sensitive(path) != :ok
-
-      _ ->
-        false
-    end
+  defp emit_telemetry(started_at, file_count, result_count, matcher, status) do
+    :telemetry.execute(
+      [:handbeam, :search, :grep],
+      %{
+        duration_ms: System.monotonic_time(:millisecond) - started_at,
+        file_count: file_count,
+        result_count: result_count
+      },
+      %{matcher: matcher, status: status}
+    )
   end
 end

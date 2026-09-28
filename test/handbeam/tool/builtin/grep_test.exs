@@ -18,17 +18,45 @@ defmodule Handbeam.Tool.Builtin.GrepTest do
     )
 
     {:ok, output} =
-      Grep.execute(%{"pattern" => "def hello", "path" => "."}, %{working_directory: @work_dir})
+      grep(%{"pattern" => "def hello", "path" => "."}, %{working_directory: @work_dir})
 
     assert output =~ "sample.ex:2:"
     assert output =~ "def hello"
+  end
+
+  test "ripgrep keeps the filename when path selects one file" do
+    File.write!(Path.join(@work_dir, "sample.ex"), "one\nsingle_file_marker\n")
+    bin = Path.join(@work_dir, "bin")
+    File.mkdir_p!(bin)
+    rg = Path.join(bin, "rg")
+
+    File.write!(
+      rg,
+      "#!/bin/sh\ncase \" $* \" in *\" --with-filename \"*) printf 'sample.ex:2:single_file_marker\\n'; exit 0;; *) printf '2:single_file_marker\\n'; exit 0;; esac\n"
+    )
+
+    File.chmod!(rg, 0o755)
+    original_path = System.get_env("PATH")
+
+    try do
+      System.put_env("PATH", bin)
+
+      assert {:ok, output} =
+               grep(%{"pattern" => "single_file_marker", "path" => "sample.ex"}, %{
+                 working_directory: @work_dir
+               })
+
+      assert output =~ "sample.ex:2:single_file_marker"
+    after
+      if original_path, do: System.put_env("PATH", original_path)
+    end
   end
 
   test "accepts Claude-style -A and -n arguments" do
     File.write!(Path.join(@work_dir, "sample.ex"), "one\ntwo\nthree\nfour\n")
 
     {:ok, output} =
-      Grep.execute(
+      grep(
         %{"pattern" => "two", "path" => ".", "-n" => true, "-A" => 2, "output_mode" => "content"},
         %{working_directory: @work_dir}
       )
@@ -42,14 +70,38 @@ defmodule Handbeam.Tool.Builtin.GrepTest do
     File.write!(Path.join(@work_dir, "sample.ex"), "abc\n")
 
     assert {:ok, "No matches found"} =
-             Grep.execute(%{"pattern" => "missing", "path" => "."}, %{
+             grep(%{"pattern" => "missing", "path" => "."}, %{
                working_directory: @work_dir
              })
   end
 
+  test "groups results and continues with an opaque cursor" do
+    File.write!(Path.join(@work_dir, "one.txt"), "marker one\nmarker two\n")
+    File.write!(Path.join(@work_dir, "two.txt"), "marker three\nmarker four\n")
+
+    assert {:ok, first} =
+             grep(%{"pattern" => "marker", "path" => ".", "limit" => 2}, %{
+               working_directory: @work_dir
+             })
+
+    assert first =~ "== one.txt =="
+    assert first =~ "next_cursor:"
+    [_, cursor] = Regex.run(~r/next_cursor: (\S+)/, first)
+
+    assert {:ok, second} =
+             grep(%{"pattern" => "marker", "path" => ".", "limit" => 2, "cursor" => cursor}, %{
+               working_directory: @work_dir
+             })
+
+    refute second =~ "marker one"
+    refute second =~ "marker two"
+    assert second =~ "marker three"
+    assert second =~ "marker four"
+  end
+
   test "rejects paths outside workspace" do
     assert {:error, reason} =
-             Grep.execute(%{"pattern" => "root", "path" => "/etc"}, %{
+             grep(%{"pattern" => "root", "path" => "/etc"}, %{
                working_directory: @work_dir
              })
 
@@ -75,7 +127,7 @@ defmodule Handbeam.Tool.Builtin.GrepTest do
       System.put_env("PATH", "/nonexistent")
 
       {:ok, output} =
-        Grep.execute(%{"pattern" => "def hello", "path" => "."}, %{working_directory: @work_dir})
+        grep(%{"pattern" => "def hello", "path" => "."}, %{working_directory: @work_dir})
 
       assert output =~ "sample.ex:2:"
       assert output =~ "def hello"
@@ -95,7 +147,7 @@ defmodule Handbeam.Tool.Builtin.GrepTest do
       System.put_env("PATH", "/nonexistent")
 
       {:ok, output} =
-        Grep.execute(%{"pattern" => "def hello", "path" => ".", "glob" => "*.ex"}, %{
+        grep(%{"pattern" => "def hello", "path" => ".", "glob" => "*.ex"}, %{
           working_directory: @work_dir
         })
 
@@ -113,7 +165,7 @@ defmodule Handbeam.Tool.Builtin.GrepTest do
 
     without_rg(fn ->
       assert {:ok, output} =
-               Grep.execute(
+               grep(
                  %{"pattern" => "shared_marker", "path" => ".", "glob" => "*.{ex,heex}"},
                  %{working_directory: @work_dir}
                )
@@ -132,10 +184,45 @@ defmodule Handbeam.Tool.Builtin.GrepTest do
 
     without_rg(fn ->
       assert {:ok, "No matches found"} =
-               Grep.execute(%{"pattern" => "ignored_vendor_marker", "path" => "."}, %{
+               grep(%{"pattern" => "ignored_vendor_marker", "path" => "."}, %{
                  working_directory: @work_dir
                })
     end)
+  end
+
+  test "uses the same ExFff inventory instead of a separate git file list" do
+    git = System.find_executable("git")
+
+    if git do
+      File.mkdir_p!(Path.join([@work_dir, "desktop", "Resources", "generated"]))
+      File.write!(Path.join(@work_dir, "visible.ex"), "visible_inventory_marker\n")
+
+      File.write!(
+        Path.join([@work_dir, "desktop", "Resources", "generated", "bundle.js"]),
+        "ignored_inventory_marker\n"
+      )
+
+      File.write!(
+        Path.join([@work_dir, "desktop", ".gitignore"]),
+        "Resources/generated/**\n"
+      )
+
+      {_output, 0} = System.cmd(git, ["init", "-q", @work_dir])
+
+      assert {:ok, indexed} =
+               grep(%{"pattern" => "ignored_inventory_marker", "path" => "."}, %{
+                 working_directory: @work_dir
+               })
+
+      assert indexed =~ "desktop/Resources/generated/bundle.js"
+
+      assert {:ok, visible} =
+               grep(%{"pattern" => "visible_inventory_marker", "path" => "."}, %{
+                 working_directory: @work_dir
+               })
+
+      assert visible =~ "visible.ex"
+    end
   end
 
   test "elixir fallback does not follow workspace symlinks" do
@@ -149,7 +236,7 @@ defmodule Handbeam.Tool.Builtin.GrepTest do
     try do
       without_rg(fn ->
         assert {:ok, "No matches found"} =
-                 Grep.execute(%{"pattern" => "symlink_secret_marker", "path" => "."}, %{
+                 grep(%{"pattern" => "symlink_secret_marker", "path" => "."}, %{
                    working_directory: @work_dir
                  })
       end)
@@ -172,7 +259,7 @@ defmodule Handbeam.Tool.Builtin.GrepTest do
       System.put_env("PATH", "/nonexistent")
 
       {:ok, output} =
-        Grep.execute(
+        grep(
           %{"pattern" => "outside_workspace_marker", "path" => ".", "glob" => "../secret.txt"},
           %{working_directory: @work_dir}
         )
@@ -183,6 +270,14 @@ defmodule Handbeam.Tool.Builtin.GrepTest do
       if original_path, do: System.put_env("PATH", original_path)
       File.rm_rf(outside_dir)
     end
+  end
+
+  defp grep(input, context) do
+    workspace = context[:working_directory]
+    {:ok, index} = ExFff.Index.ensure_started(workspace)
+    ExFff.Index.refresh(index)
+    assert :ok = ExFff.Index.await_index(index, 5_000)
+    Grep.execute(input, context)
   end
 
   defp without_rg(fun) do
@@ -204,17 +299,21 @@ defmodule Handbeam.Tool.Builtin.GrepTest do
     File.write!(Path.join(ssh, "id_rsa"), "SECRET_KEY_DO_NOT_LEAK\n")
 
     assert {:error, "sensitive path blocked"} =
-             Grep.execute(%{"pattern" => "SECRET", "path" => ".ssh"}, %{
+             grep(%{"pattern" => "SECRET", "path" => ".ssh"}, %{
                working_directory: @work_dir
              })
 
     {:ok, visible} =
-      Grep.execute(%{"pattern" => "visible_marker", "path" => "."}, %{working_directory: @work_dir})
+      grep(%{"pattern" => "visible_marker", "path" => "."}, %{
+        working_directory: @work_dir
+      })
 
     assert visible =~ "visible_marker"
     refute visible =~ "SECRET_MARKER_DO_NOT_LEAK"
 
     assert {:ok, "No matches found"} =
-             Grep.execute(%{"pattern" => "SECRET_", "path" => "."}, %{working_directory: @work_dir})
+             grep(%{"pattern" => "SECRET_", "path" => "."}, %{
+               working_directory: @work_dir
+             })
   end
 end

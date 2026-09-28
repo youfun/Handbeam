@@ -135,6 +135,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
       case validate_within(path, workspace_root) do
         :ok ->
           abs_path = Path.expand(path)
+          _ = Handbeam.Search.touch(workspace_root, abs_path)
 
           conv
           |> put_conversation_value("active_file", abs_path)

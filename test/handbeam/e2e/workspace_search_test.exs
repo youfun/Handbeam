@@ -29,6 +29,13 @@ defmodule Handbeam.E2E.WorkspaceSearchTest do
       "defmodule Marker do\n  @value \"ORCHID-7711\"\nend\n"
     )
 
+    File.mkdir_p!(Path.join([workspace, "_build", "generated", "assets"]))
+
+    File.write!(
+      Path.join([workspace, "_build", "generated", "assets", "bundle.js"]),
+      "defmodule Marker do // ignored generated duplicate\n"
+    )
+
     {:ok, conversation} = ConversationStore.create("search-ws")
     id = conversation["id"]
     :ok = Session.subscribe(id)
@@ -87,12 +94,85 @@ defmodule Handbeam.E2E.WorkspaceSearchTest do
     assert payload[:status] in ["completed", :completed]
 
     entries = E2EHarness.transcript(id)
-    assert Enum.any?(entries, &(&1["tool_name"] == "grep" and &1["tool_status"] == "done"))
+
+    assert Enum.any?(entries, fn entry ->
+             entry["tool_name"] == "grep" and entry["tool_status"] == "done" and
+               entry["output"] =~ "defmodule Marker" and
+               not String.contains?(entry["output"], "bundle.js")
+           end)
+
     assert Enum.any?(entries, &(&1["tool_name"] == "read" and &1["output"] =~ "ORCHID-7711"))
 
     assert Enum.any?(
              entries,
              &(&1["role"] == "assistant" and &1["content"] == "Found ORCHID-7711")
            )
+  end
+
+  test "a tool write is visible to the next grep without a full rebuild" do
+    %{workspace: workspace} = E2EHarness.isolate_home!("workspace-search-update")
+    {:ok, conversation} = ConversationStore.create("search-update-ws")
+    id = conversation["id"]
+    :ok = Session.subscribe(id)
+    ExUnit.Callbacks.on_exit(fn -> E2EHarness.cancel!(id) end)
+
+    step = :atomics.new(1, [])
+
+    script = fn _messages, _tools ->
+      case :atomics.add_get(step, 1, 1) do
+        1 ->
+          {:tools,
+           [
+             %{
+               name: "grep",
+               input: %{"pattern" => "INCREMENTAL-991", "path" => ".", "literal" => true}
+             }
+           ]}
+
+        2 ->
+          {:tools,
+           [
+             %{
+               name: "write",
+               input: %{"file_path" => "incremental.txt", "content" => "INCREMENTAL-991\n"}
+             }
+           ]}
+
+        3 ->
+          {:tools,
+           [
+             %{
+               name: "grep",
+               input: %{"pattern" => "INCREMENTAL-991", "path" => ".", "literal" => true}
+             }
+           ]}
+
+        _ ->
+          "Incremental search updated"
+      end
+    end
+
+    assert {:ok, %{action: :started}} =
+             Coordinator.add_message(id, "Write and find the marker",
+               workspace_path: workspace,
+               model: "fake-model",
+               provider: Handbeam.TestSupport.FakeProvider,
+               provider_config: %{scenario: {:script, script}},
+               tools: Handbeam.Agent.default_tools(),
+               source: :cli,
+               max_turns: 6,
+               streaming: false
+             )
+
+    payload = E2EHarness.await_run_end(id)
+    assert payload[:status] in ["completed", :completed]
+
+    entries = E2EHarness.transcript(id)
+    assert File.read!(Path.join(workspace, "incremental.txt")) == "INCREMENTAL-991\n"
+
+    assert Enum.any?(entries, fn entry ->
+             entry["tool_name"] == "grep" and entry["tool_status"] == "done" and
+               entry["output"] =~ "incremental.txt:1:INCREMENTAL-991"
+           end)
   end
 end

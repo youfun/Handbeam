@@ -57,6 +57,7 @@ defmodule ExFff.IndexTest do
       {:ok, result} = Index.search(name, "app")
       paths = Enum.map(result.paths, & &1.path)
       assert "lib/app.ex" in paths
+      assert result.status == :ready
       assert Enum.all?(result.paths, &is_float(&1.score))
     end
 
@@ -64,6 +65,34 @@ defmodule ExFff.IndexTest do
       {:ok, result} = Index.search(name, "*.ex")
       paths = Enum.map(result.paths, & &1.path)
       assert "lib/app.ex" in paths
+    end
+
+    test "returns currently indexed paths without waiting for the scan", %{pid: pid, name: name} do
+      generation = :sys.get_state(pid).generation
+      path = "lib/partial_result.ex"
+
+      trigrams =
+        path
+        |> String.downcase()
+        |> ExFff.Matcher.tokenize()
+        |> Enum.map(&{&1, path})
+
+      :sys.replace_state(pid, &%{&1 | status: :indexing, indexed_count: 0})
+
+      send(
+        pid,
+        {:index_batch, generation, [{path, %{mtime: {{2026, 1, 1}, {0, 0, 0}}, size: 1}}],
+         trigrams}
+      )
+
+      started_at = System.monotonic_time(:millisecond)
+      assert {:ok, result} = Index.search(name, "partial")
+      elapsed = System.monotonic_time(:millisecond) - started_at
+
+      assert elapsed < 100
+      assert result.status == :indexing
+      assert result.indexed_count >= 1
+      assert Enum.any?(result.paths, &(&1.path == path))
     end
   end
 
@@ -84,6 +113,78 @@ defmodule ExFff.IndexTest do
       assert :ok = Index.touch(name, "nonexistent/path.ex")
       {:ok, result} = Index.search(name, "app")
       assert "lib/app.ex" in Enum.map(result.paths, & &1.path)
+    end
+
+    test "frecency survives an index restart", %{tmp_dir: tmp_dir} do
+      frecency_dir = Path.join(tmp_dir, "frecency")
+
+      first =
+        Module.concat(
+          ExFff.Index,
+          String.to_atom("PersistA_#{System.unique_integer([:positive])}")
+        )
+
+      second =
+        Module.concat(
+          ExFff.Index,
+          String.to_atom("PersistB_#{System.unique_integer([:positive])}")
+        )
+
+      {:ok, first_pid} =
+        Index.start_link(root_path: tmp_dir, name: first, frecency_dir: frecency_dir)
+
+      assert :ok = Index.await_index(first)
+      Index.touch(first, "lib/app.ex")
+      Process.sleep(250)
+      GenServer.stop(first_pid)
+
+      {:ok, second_pid} =
+        Index.start_link(root_path: tmp_dir, name: second, frecency_dir: frecency_dir)
+
+      assert :ok = Index.await_index(second)
+      assert {:ok, result} = Index.search(second, "app", limit: 3)
+      assert hd(result.paths).path == "lib/app.ex"
+      GenServer.stop(second_pid)
+    end
+  end
+
+  describe "inventory and incremental updates" do
+    test "lists stable cursor pages", %{name: name} do
+      assert {:ok, first} = Index.files(name, limit: 2)
+      assert length(first.paths) == 2
+      assert is_binary(first.cursor)
+
+      assert {:ok, second} = Index.files(name, limit: 20, cursor: first.cursor)
+      assert MapSet.disjoint?(MapSet.new(first.paths), MapSet.new(second.paths))
+      assert first.paths ++ second.paths == Enum.sort(first.paths ++ second.paths)
+    end
+
+    test "adds and removes a changed file without rebuilding", %{name: name, tmp_dir: tmp_dir} do
+      path = Path.join(tmp_dir, "lib/incremental.ex")
+      File.write!(path, "incremental")
+      Index.update_paths(name, [path])
+
+      assert_eventually(fn ->
+        {:ok, files} = Index.files(name, limit: 100)
+        "lib/incremental.ex" in files.paths
+      end)
+
+      File.rm!(path)
+      Index.update_paths(name, [path])
+
+      assert_eventually(fn ->
+        {:ok, files} = Index.files(name, limit: 100)
+        "lib/incremental.ex" not in files.paths
+      end)
+    end
+
+    test "Git status boosts and annotates matching files", %{name: name} do
+      Index.set_git_status(name, [{"lib/app_test.exs", :modified}])
+
+      assert_eventually(fn ->
+        {:ok, result} = Index.search(name, "app", limit: 3)
+        hd(result.paths).path == "lib/app_test.exs" and hd(result.paths).git_status == :modified
+      end)
     end
   end
 
@@ -257,7 +358,7 @@ defmodule ExFff.IndexTest do
       assert :ok = Index.await_index(pid)
 
       :sys.replace_state(pid, fn state -> %{state | status: :indexing} end)
-      task = Task.async(fn -> Index.search(pid, "old", timeout: 2_000) end)
+      task = Task.async(fn -> Index.search(pid, "old", await: true, timeout: 2_000) end)
       Process.sleep(20)
       assert :ok = Index.set_root(pid, dir2)
 
@@ -280,6 +381,7 @@ defmodule ExFff.IndexTest do
         Module.concat(ExFff.Index, String.to_atom("Fail_#{System.unique_integer([:positive])}"))
 
       {:ok, pid} = Index.start_link(root_path: dir, name: name)
+      Process.unlink(pid)
       assert :ok = Index.await_index(pid)
 
       ref = Process.monitor(pid)
@@ -295,4 +397,17 @@ defmodule ExFff.IndexTest do
       File.rm_rf(dir)
     end
   end
+
+  defp assert_eventually(fun, attempts \\ 50)
+
+  defp assert_eventually(fun, attempts) when attempts > 0 do
+    if fun.() do
+      :ok
+    else
+      Process.sleep(10)
+      assert_eventually(fun, attempts - 1)
+    end
+  end
+
+  defp assert_eventually(_fun, 0), do: flunk("condition did not become true")
 end

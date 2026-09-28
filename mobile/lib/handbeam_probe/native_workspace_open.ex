@@ -61,11 +61,14 @@ defmodule HandbeamProbe.NativeWorkspaceOpen do
     else
       case result do
         {:ok, %{status: :external, identity: identity} = state} ->
+          touch_file(identity)
+
           socket
           |> assign(:file_viewer, NativeFileViewer.close(state))
           |> NativeArtifactDelivery.start_file_action(:open_file, identity.relative_path)
 
-        {:ok, %{status: :ready} = state} ->
+        {:ok, %{status: :ready, identity: identity} = state} ->
+          touch_file(identity)
           socket |> assign(:file_viewer, state) |> Notice.clear()
 
         {:ok, %{status: :error} = state} ->
@@ -172,6 +175,12 @@ defmodule HandbeamProbe.NativeWorkspaceOpen do
     do: identity
 
   defp identity(_), do: nil
+
+  defp touch_file(%NativeFileViewer.Identity{} = identity) do
+    path = Path.join(identity.workspace_root, identity.relative_path)
+    _ = Handbeam.Search.touch(identity.workspace_root, path)
+    :ok
+  end
 
   defp authorize(socket, spec) do
     workspace = socket.assigns[:workspace]
