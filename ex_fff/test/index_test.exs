@@ -178,6 +178,29 @@ defmodule ExFff.IndexTest do
       end)
     end
 
+    test "keeps a newly changed file searchable when the inventory is full", %{tmp_dir: tmp_dir} do
+      name =
+        Module.concat(
+          ExFff.Index,
+          String.to_atom("Full_#{System.unique_integer([:positive])}")
+        )
+
+      {:ok, pid} = Index.start_link(root_path: tmp_dir, name: name, max_files: 2)
+      assert :ok = Index.await_index(name)
+      assert {:ok, %{indexed_count: 2}} = Index.files(name, limit: 10)
+
+      path = Path.join(tmp_dir, "newly_changed.ex")
+      File.write!(path, "changed at capacity")
+      assert :ok = Index.update_paths(name, [path])
+
+      assert_eventually(fn ->
+        {:ok, files} = Index.files(name, limit: 10)
+        files.indexed_count == 2 and "newly_changed.ex" in files.paths
+      end)
+
+      GenServer.stop(pid)
+    end
+
     test "update_paths never waits on index work", %{pid: pid, name: name, tmp_dir: tmp_dir} do
       path = Path.join(tmp_dir, "lib/nonblocking.ex")
       File.write!(path, "nonblocking")

@@ -714,14 +714,24 @@ defmodule ExFff.Index do
 
         case ExFff.Scanner.prepare_path(state.root_path, relative, state.config) do
           {:ok, file_entry, trigrams} ->
-            if :ets.info(state.files_ref, :size) < state.config.max_files do
-              :ets.insert(state.files_ref, file_entry)
-              if trigrams != [], do: :ets.insert(state.trigram_ref, trigrams)
-            end
+            make_room_for_incremental_file(state)
+            :ets.insert(state.files_ref, file_entry)
+            if trigrams != [], do: :ets.insert(state.trigram_ref, trigrams)
 
           :ignore ->
             :ok
         end
+    end
+  end
+
+  defp make_room_for_incremental_file(state) do
+    # Keep the hard memory cap, but prioritize the path that just changed so a
+    # successful write is immediately discoverable even in a capped workspace.
+    if :ets.info(state.files_ref, :size) >= state.config.max_files do
+      case :ets.last(state.files_ref) do
+        :"$end_of_table" -> :ok
+        path -> remove_file(path, state)
+      end
     end
   end
 
