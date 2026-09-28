@@ -30,6 +30,7 @@
     />
     <.chat_panel
       add_project_form={@add_project_form}
+      available_clis={@available_clis}
       available_models={@available_models}
       available_reasoning_levels={@available_reasoning_levels}
       chat_scope={@chat_scope}
@@ -53,6 +54,8 @@
       right_panel_collapsed={@right_panel_collapsed}
       running={@running}
       sandbox_workspace?={@sandbox_workspace?}
+      cli_models_error={@cli_models_error}
+      selected_cli={@selected_cli}
       selected_model={@selected_model}
       selected_reasoning_level={@selected_reasoning_level}
       show_add_project={@show_add_project}
@@ -85,6 +88,7 @@
     />
     <.mobile_sheets
       available_models={@available_models}
+      selected_cli={@selected_cli}
       available_reasoning_levels={@available_reasoning_levels}
       chat_scope={@chat_scope}
       collapsed_workspace_ids={@collapsed_workspace_ids}

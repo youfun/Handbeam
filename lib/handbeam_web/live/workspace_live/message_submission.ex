@@ -9,7 +9,7 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
   alias HandbeamWeb.WorkspaceLive.Composer
   alias HandbeamWeb.WorkspaceLive.ConversationState
   alias HandbeamWeb.WorkspaceLive.ConversationSwitching
-  alias HandbeamWeb.WorkspaceLive.ModelSelection
+  alias HandbeamWeb.WorkspaceLive.{CliSelection, ModelSelection}
   alias HandbeamWeb.WorkspaceLive.RuntimeProjection
   alias HandbeamWeb.WorkspaceLive.WorkspaceNavigation
 
@@ -156,17 +156,22 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
         {:ok, socket, content, attachments} ->
           conv_id = socket.assigns.current_conversation_id
 
-          if running_for_current? do
-            queue_running_agent_message(
-              socket,
-              conv_id,
-              content,
-              message,
-              attachments,
-              :steer
-            )
-          else
-            start_new_agent_run(socket, conv_id, content, message, attachments)
+          cond do
+            CliSelection.cli_selected?(socket.assigns) ->
+              start_cli_turn(socket, conv_id, message)
+
+            running_for_current? ->
+              queue_running_agent_message(
+                socket,
+                conv_id,
+                content,
+                message,
+                attachments,
+                :steer
+              )
+
+            true ->
+              start_new_agent_run(socket, conv_id, content, message, attachments)
           end
 
         {:error, socket} ->
@@ -513,6 +518,223 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
       "The previous run is no longer accepting input. Send again to start a new run in this conversation."
     )
   end
+
+  def start_cli_turn(socket, conv_id, message) do
+    opts = CliSelection.run_opts(socket, conv_id)
+
+    cond do
+      is_nil(opts) ->
+        {:noreply, assign(socket, :composer_error, gettext("Select a CLI model before sending."))}
+
+      socket.assigns[:cli_models_error] ->
+        {:noreply,
+         assign(socket, :composer_error, cli_models_error(socket.assigns.cli_models_error))}
+
+      true ->
+        msg_id = RuntimeProjection.unique_id("msg-user")
+
+        socket =
+          socket
+          |> assign(:input_value, "")
+          |> assign(:running, true)
+          |> assign(:running_conversation_id, conv_id)
+          |> assign(:stream_suppressed, false)
+          |> assign(:pending_attachments, [])
+          |> append_user_message(message, [], msg_id)
+          |> RuntimeProjection.update_status(%{status: :running, turns: 0})
+          |> RuntimeProjection.subscribe_session()
+          |> push_event("user-message-sent", %{})
+
+        send(self(), {:schedule_auto_title, conv_id, message})
+        send(self(), {:start_cli_turn, conv_id, message, opts})
+        {:noreply, socket}
+    end
+  end
+
+  def handle_cli_turn(socket, conv_id, message, opts) do
+    case Handbeam.Agent.CliAgent.Run.turn(message, opts) do
+      {:ok, text, meta} ->
+        {:noreply, finish_cli_turn(socket, conv_id, text, meta)}
+
+      {:awaiting, kind, meta} ->
+        {:noreply, hold_cli_approval(socket, conv_id, message, opts, kind, meta)}
+
+      {:error, reason} ->
+        Logger.warning("[WorkspaceLive] CLI turn failed: #{inspect(reason)}")
+
+        {:noreply,
+         socket
+         |> assign(:running, false)
+         |> assign(:running_conversation_id, nil)
+         |> assign(:composer_error, cli_turn_error(reason))}
+    end
+  end
+
+  def resume_cli_approval(socket, pending, {:approve, option}) when is_binary(option) do
+    resume_with_decision(socket, pending, {:permission, option})
+  end
+
+  def resume_cli_approval(socket, pending, action) when action in [:approve, :deny] do
+    decision = cli_decision(pending, action)
+    resume_with_decision(socket, pending, decision)
+  end
+
+  defp resume_with_decision(socket, pending, decision) do
+    socket =
+      socket
+      |> assign(:pending_approval, nil)
+      |> assign(:running, true)
+      |> RuntimeProjection.update_status(%{status: :running})
+
+    if offered_decision?(pending, decision) do
+      opts = Keyword.put(pending.opts, :decision, decision)
+      send(self(), {:start_cli_turn, pending.conversation_id, pending.message, opts})
+      {:noreply, socket}
+    else
+      {:noreply,
+       socket
+       |> assign(:running, false)
+       |> assign(:running_conversation_id, nil)
+       |> assign(:composer_error, gettext("CLI turn stopped."))}
+    end
+  end
+
+  defp finish_cli_turn(socket, conv_id, text, meta) do
+    socket =
+      if is_binary(meta[:session_id]) and is_binary(meta[:backend]) do
+        CliSelection.remember_session(socket, conv_id, meta.backend, meta.session_id)
+      else
+        socket
+      end
+
+    socket
+    |> assign(:running, false)
+    |> assign(:running_conversation_id, nil)
+    |> assign(:pending_approval, nil)
+    |> RuntimeProjection.update_status(%{status: :idle, model: meta[:backend]})
+    |> append_cli_result(text)
+  end
+
+  defp hold_cli_approval(socket, conv_id, message, opts, kind, meta) do
+    request = meta.request || %{}
+
+    pending = %{
+      kind: :cli_agent,
+      request_kind: kind,
+      conversation_id: conv_id,
+      message: message,
+      opts: opts,
+      backend: meta.backend,
+      session_id: meta.session_id,
+      options: meta.options || request[:options] || [],
+      action_requests: cli_action_requests(kind, request)
+    }
+
+    socket
+    |> assign(:running, false)
+    |> assign(:pending_approval, pending)
+    |> RuntimeProjection.update_status(%{status: :awaiting_approval})
+  end
+
+  defp cli_action_requests(:permission, request) do
+    Enum.map(request[:tools] || [], fn tool ->
+      %{
+        tool_name: tool[:name] || "cli",
+        tool_call_id: tool[:id] || request[:id],
+        arguments: %{options: request[:options] || []}
+      }
+    end)
+    |> case do
+      [] ->
+        [
+          %{
+            tool_name: "cli",
+            tool_call_id: request[:id],
+            arguments: %{options: request[:options] || []}
+          }
+        ]
+
+      requests ->
+        requests
+    end
+  end
+
+  defp cli_action_requests(:ask_user, request) do
+    [
+      %{
+        tool_name: "ask_user",
+        tool_call_id: request[:id],
+        arguments: %{questions: request[:questions] || []}
+      }
+    ]
+  end
+
+  defp offered_decision?(_pending, nil), do: false
+
+  defp offered_decision?(pending, {:permission, value}) do
+    Enum.any?(pending.options || [], &(&1["value"] == value and value != "cancel"))
+  end
+
+  defp offered_decision?(_pending, {:ask_user, answers}) when is_list(answers), do: true
+  defp offered_decision?(_pending, _), do: false
+
+  defp cli_decision(%{request_kind: :permission, options: options}, :approve) do
+    case Enum.find(options, &(&1["value"] not in [nil, "cancel"])) do
+      %{"value" => value} -> {:permission, value}
+      _ -> nil
+    end
+  end
+
+  defp cli_decision(%{request_kind: :ask_user, action_requests: [request | _]}, :approve) do
+    questions = request[:arguments][:questions] || request["arguments"]["questions"] || []
+
+    answers =
+      Enum.map(questions, fn question ->
+        %{
+          "index" => question["index"] || question[:index],
+          "question" => question["question"] || question[:question],
+          "answer" => List.first(question["options"] || question[:options] || []) || ""
+        }
+      end)
+
+    if answers == [], do: nil, else: {:ask_user, answers}
+  end
+
+  defp cli_decision(_pending, :deny), do: nil
+
+  defp append_cli_result(socket, text) when is_binary(text) and text != "" do
+    entry = %{
+      "id" => RuntimeProjection.unique_id("msg-cli"),
+      "role" => "assistant",
+      "content" => text,
+      "content_type" => "text"
+    }
+
+    timeline = socket.assigns.timeline ++ [entry]
+
+    socket
+    |> assign(:timeline, timeline)
+    |> stream(:timeline, timeline, reset: true)
+  end
+
+  defp append_cli_result(socket, _text), do: socket
+
+  defp cli_models_error(:models_unavailable),
+    do: gettext("This CLI cannot list models.")
+
+  defp cli_models_error(:empty), do: gettext("This CLI has no selectable models.")
+  defp cli_models_error(_), do: gettext("This CLI cannot list models.")
+
+  defp cli_turn_error(:not_available), do: gettext("CLI is not available on this host.")
+
+  defp cli_turn_error(:permission_unanswered),
+    do: gettext("CLI asked for permission. The turn stopped.")
+
+  defp cli_turn_error(:ask_user_unanswered),
+    do: gettext("CLI asked a question. The turn stopped.")
+
+  defp cli_turn_error(reason) when is_binary(reason), do: reason
+  defp cli_turn_error(reason), do: gettext("CLI turn failed: %{reason}", reason: inspect(reason))
 
   def start_new_agent_run(socket, conv_id, content, message, attachments) do
     {selected_model, selected_reasoning_level} =

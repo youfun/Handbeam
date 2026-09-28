@@ -24,7 +24,7 @@ defmodule HandbeamWeb.WorkspaceLive do
   alias HandbeamWeb.WorkspaceLive.ConversationSwitching
   alias HandbeamWeb.WorkspaceLive.EditorProjection
   alias HandbeamWeb.WorkspaceLive.MessageSubmission
-  alias HandbeamWeb.WorkspaceLive.ModelSelection
+  alias HandbeamWeb.WorkspaceLive.{CliSelection, ModelSelection}
   alias HandbeamWeb.WorkspaceLive.RuntimeProjection
   alias HandbeamWeb.WorkspaceLive.Skills
   alias HandbeamWeb.WorkspaceLive.ChatComponents
@@ -57,6 +57,7 @@ defmodule HandbeamWeb.WorkspaceLive do
 
     workspace_root = default_ws["path"]
     Handbeam.Workspace.ensure_root!()
+    prewarm_search(workspace_root)
     workspace_label = default_ws["name"]
 
     models = ModelSelection.boot(workspace_root)
@@ -159,6 +160,7 @@ defmodule HandbeamWeb.WorkspaceLive do
       # Mobile UI overlays
       |> assign(:show_workspace_sheet, false)
       |> assign(:show_model_sheet, false)
+      |> CliSelection.assign_boot()
       |> assign(:show_reasoning_sheet, false)
       |> assign(:show_settings_sheet, false)
       |> assign(:show_file_drawer, false)
@@ -230,6 +232,16 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   def handle_params(_params, _uri, socket), do: {:noreply, socket}
+
+  defp prewarm_search(workspace) do
+    case Handbeam.Search.prewarm(workspace) do
+      :ok ->
+        :ok
+
+      {:error, reason} ->
+        Logger.warning("[WorkspaceLive] search prewarm failed: #{inspect(reason)}")
+    end
+  end
 
   def handle_progress(:images, entry, socket) do
     errors =
@@ -331,6 +343,16 @@ defmodule HandbeamWeb.WorkspaceLive do
   @impl true
   def handle_event("stop_run", _params, socket), do: MessageSubmission.stop(socket)
 
+  def handle_event("approve_cli_option", %{"option" => option}, socket) do
+    pending = socket.assigns.pending_approval
+
+    if is_map(pending) and pending[:kind] == :cli_agent and is_binary(option) do
+      MessageSubmission.resume_cli_approval(socket, pending, {:approve, option})
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_event("approve_all_tools", params, socket) do
     resume_tool_approval(socket, :approve, Approval.remember_scope(params))
   end
@@ -340,8 +362,19 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   @impl true
+  def handle_event("select_cli", params, socket) do
+    {:noreply, CliSelection.select(socket, params["cli"] || params["value"])}
+  end
+
   def handle_event("select_model", params, socket) do
-    {:noreply, ModelSelection.select(socket, params["model"] || params["value"])}
+    model = params["model"] || params["value"]
+
+    socket =
+      if CliSelection.cli_selected?(socket.assigns),
+        do: CliSelection.select_model(socket, model),
+        else: ModelSelection.select(socket, model)
+
+    {:noreply, socket}
   end
 
   @impl true
@@ -1186,6 +1219,14 @@ defmodule HandbeamWeb.WorkspaceLive do
      |> ConversationState.maybe_patch_page_title(conv_id, title)}
   end
 
+  def handle_info({:start_cli_turn, conv_id, message, opts}, socket) do
+    if socket.assigns.current_conversation_id == conv_id do
+      MessageSubmission.handle_cli_turn(socket, conv_id, message, opts)
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_info({:schedule_auto_title, conv_id, message}, socket)
       when is_binary(conv_id) and is_binary(message) do
     if socket.assigns.current_conversation_id == conv_id do
@@ -1501,6 +1542,16 @@ defmodule HandbeamWeb.WorkspaceLive do
   defdelegate format_arguments(arguments), to: Approval
 
   defp resume_tool_approval(socket, action, remember) when action in [:approve, :deny] do
+    pending = socket.assigns.pending_approval
+
+    if is_map(pending) and pending[:kind] == :cli_agent do
+      MessageSubmission.resume_cli_approval(socket, pending, action)
+    else
+      resume_handbeam_approval(socket, action, remember)
+    end
+  end
+
+  defp resume_handbeam_approval(socket, action, remember) when action in [:approve, :deny] do
     conv_id = socket.assigns.current_conversation_id
     pending = socket.assigns.pending_approval
 

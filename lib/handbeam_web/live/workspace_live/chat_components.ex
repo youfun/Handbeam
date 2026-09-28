@@ -8,6 +8,7 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
   import HandbeamWeb.WorkspaceLive.ViewComponents
 
   attr :add_project_form, :any, required: true
+  attr :available_clis, :any, default: []
   attr :available_models, :any, required: true
   attr :available_reasoning_levels, :any, required: true
   attr :chat_scope, :any, required: true
@@ -31,6 +32,8 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
   attr :right_panel_collapsed, :any, required: true
   attr :running, :any, required: true
   attr :sandbox_workspace?, :any, required: true
+  attr :cli_models_error, :any, default: nil
+  attr :selected_cli, :any, default: nil
   attr :selected_model, :any, required: true
   attr :selected_reasoning_level, :any, required: true
   attr :show_add_project, :any, required: true
@@ -126,8 +129,7 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
           class="absolute inset-0 bg-transparent border-0"
           phx-click="cancel_rename_workspace"
           aria-label={gettext("取消")}
-        >
-        </button>
+        ></button>
         <form
           id="rename-workspace-dialog"
           phx-submit="confirm_rename_workspace"
@@ -783,8 +785,31 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
             <div class="composer-turn-label">
               {if(@running, do: gettext("下一条使用"), else: gettext("本对话使用"))}
             </div>
-            <div :if={@available_models != []} class="composer-turn-pickers">
-              <div class="model-control">
+            <div class="composer-turn-pickers">
+              <div :if={@available_clis != []} class="model-control">
+                <select
+                  id="cli-picker"
+                  name="cli"
+                  phx-change="select_cli"
+                  aria-label={gettext("CLI")}
+                  title={gettext("Handbeam owns the turn unless a CLI is selected")}
+                >
+                  <option value="" selected={is_nil(@selected_cli)}>
+                    {gettext("Handbeam")}
+                  </option>
+                  <option
+                    :for={cli <- @available_clis}
+                    value={cli.id}
+                    selected={is_binary(@selected_cli) and cli.id == @selected_cli}
+                  >
+                    {cli.id}
+                  </option>
+                </select>
+              </div>
+              <div :if={@cli_models_error} id="cli-models-error" class="composer-model-error">
+                {HandbeamWeb.WorkspaceLive.CliSelection.error_message(@cli_models_error)}
+              </div>
+              <div :if={is_nil(@selected_cli) and @available_models != []} class="model-control">
                 <select
                   id="model-picker"
                   name="model"
@@ -808,6 +833,22 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
                   </optgroup>
                 </select>
               </div>
+              <div :if={is_binary(@selected_cli) and @available_models != []} class="model-control">
+                <select
+                  id="cli-model-picker"
+                  name="model"
+                  phx-change="select_model"
+                  aria-label={gettext("CLI model")}
+                >
+                  <option
+                    :for={m <- @available_models}
+                    value={m.id}
+                    selected={m.id == @selected_model}
+                  >
+                    {m.display_name || m.id}
+                  </option>
+                </select>
+              </div>
               <div :if={@available_reasoning_levels != []} class="model-control">
                 <select
                   id="reasoning-picker"
@@ -827,7 +868,10 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
                 </select>
               </div>
             </div>
-            <div :if={@available_models == []} class="composer-model-error">
+            <div
+              :if={@available_models == [] and is_nil(@cli_models_error)}
+              class="composer-model-error"
+            >
               {model_empty_message(@workspace_root)}
             </div>
             <div class="permission-menu-container">
@@ -1066,5 +1110,4 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
     </button>
     """
   end
-
 end

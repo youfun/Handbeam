@@ -13,6 +13,7 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
   attr :current_conversation_id, :any, required: true
   attr :current_workspace_id, :any, required: true
   attr :mcp_count, :any, required: true
+  attr :selected_cli, :any, default: nil
   attr :selected_model, :any, required: true
   attr :selected_reasoning_level, :any, required: true
   attr :show_model_sheet, :any, required: true
@@ -273,21 +274,33 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
     <div id="model-sheet" class={["bottom-sheet", if(@show_model_sheet, do: "open", else: "")]}>
       <div class="sheet-handle"></div>
       <div class="bottom-sheet-inner">
-        <%= for {provider_id, models} <- models_by_provider(@available_models) do %>
-          <div class="sheet-section-title">{provider_display_name(provider_id)}</div>
-          <%= for m <- models do %>
+        <%= if is_nil(@selected_cli) do %>
+          <%= for {provider_id, models} <- models_by_provider(@available_models) do %>
+            <div class="sheet-section-title">{provider_display_name(provider_id)}</div>
+            <%= for m <- models do %>
+              <button
+                phx-click="select_model_from_sheet"
+                phx-value-model={m.id}
+                class={["sheet-select-row", if(m.id == @selected_model, do: "active", else: "")]}
+              >
+                <span>{model_option_label(m, models)}</span>
+                <span
+                  class="sheet-select-check"
+                  style={"opacity: #{if m.id == @selected_model, do: "1", else: "0"}"}
+                >
+                  ✓
+                </span>
+              </button>
+            <% end %>
+          <% end %>
+        <% else %>
+          <%= for m <- @available_models do %>
             <button
               phx-click="select_model_from_sheet"
               phx-value-model={m.id}
               class={["sheet-select-row", if(m.id == @selected_model, do: "active", else: "")]}
             >
-              <span>{model_option_label(m, models)}</span>
-              <span
-                class="sheet-select-check"
-                style={"opacity: #{if m.id == @selected_model, do: "1", else: "0"}"}
-              >
-                ✓
-              </span>
+              <span>{m.display_name || m.id}</span>
             </button>
           <% end %>
         <% end %>
@@ -371,7 +384,10 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
         <div class="approval-card bg-surface border rounded-xl shadow-2xl">
           <div class="approval-card-header">
             <h3 class="text-base font-semibold text-primary">
-              ⚠ {gettext("Tool Approval Required")}
+              ⚠ {if(@pending_approval[:kind] == :cli_agent,
+                do: gettext("CLI approval required"),
+                else: gettext("Tool Approval Required")
+              )}
             </h3>
             <p class="text-xs text-secondary">
               {gettext("The agent wants to run the following tools. Review and approve or deny.")}
@@ -397,7 +413,11 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
               <% end %>
             </div>
 
-            <details id="approval-more-options" class="text-xs text-secondary">
+            <details
+              :if={@pending_approval[:kind] != :cli_agent}
+              id="approval-more-options"
+              class="text-xs text-secondary"
+            >
               <summary class="cursor-pointer py-2">{gettext("More approval options")}</summary>
               <div class="space-y-3 border rounded-lg p-3 mt-2">
                 <p>{gettext("Session approval allows these tools for the rest of this run.")}</p>
@@ -435,12 +455,25 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
             >
               {gettext("Deny")}
             </button>
-            <button
-              phx-click="approve_all_tools"
-              class="text-xs bg-primary text-user rounded px-3 py-2 transition-colors"
-            >
-              {gettext("Allow once")}
-            </button>
+            <%= if @pending_approval[:kind] == :cli_agent do %>
+              <button
+                :for={option <- @pending_approval[:options] || []}
+                :if={option["value"] not in [nil, "cancel"]}
+                id={"cli-approval-#{option["value"]}"}
+                phx-click="approve_cli_option"
+                phx-value-option={option["value"]}
+                class="text-xs bg-primary text-user rounded px-3 py-2 transition-colors"
+              >
+                {option["label"] || option["value"]}
+              </button>
+            <% else %>
+              <button
+                phx-click="approve_all_tools"
+                class="text-xs bg-primary text-user rounded px-3 py-2 transition-colors"
+              >
+                {gettext("Allow once")}
+              </button>
+            <% end %>
           </div>
         </div>
       </div>
