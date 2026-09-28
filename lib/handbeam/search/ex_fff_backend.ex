@@ -5,7 +5,8 @@ defmodule Handbeam.Search.ExFffBackend do
 
   @impl true
   def ensure_started(workspace) do
-    with {:ok, index} <- ExFff.Index.ensure_started(workspace) do
+    with {:ok, index} <-
+           ExFff.Index.ensure_started(workspace, path_filter: &lexically_allowed?/1) do
       Handbeam.Search.Watcher.watch(workspace, index)
       {:ok, index}
     end
@@ -25,4 +26,17 @@ defmodule Handbeam.Search.ExFffBackend do
 
   @impl true
   def set_git_status(index, entries), do: ExFff.Index.set_git_status(index, entries)
+
+  @impl true
+  def ignored_path?(workspace, path) do
+    config = ExFff.Config.new(root_path: workspace, path_filter: &lexically_allowed?/1)
+    ExFff.Scanner.ignored_path?(workspace, path, config)
+  end
+
+  @impl true
+  def refresh(index), do: ExFff.Index.refresh(index)
+
+  defp lexically_allowed?(path) do
+    Handbeam.Security.PathValidator.reject_sensitive(path) == :ok
+  end
 end

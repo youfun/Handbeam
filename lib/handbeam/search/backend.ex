@@ -21,4 +21,6 @@ defmodule Handbeam.Search.Backend do
   @callback touch(index(), path :: String.t()) :: :ok
   @callback update_paths(index(), paths :: [String.t()]) :: :ok
   @callback set_git_status(index(), [{String.t(), atom()}]) :: :ok
+  @callback ignored_path?(workspace :: String.t(), path :: String.t()) :: boolean()
+  @callback refresh(index()) :: :ok
 end

@@ -178,12 +178,48 @@ defmodule ExFff.IndexTest do
       end)
     end
 
+    test "update_paths never waits on index work", %{pid: pid, name: name, tmp_dir: tmp_dir} do
+      path = Path.join(tmp_dir, "lib/nonblocking.ex")
+      File.write!(path, "nonblocking")
+      :sys.suspend(pid)
+
+      try do
+        assert :ok = Index.update_paths(name, [path])
+      after
+        :sys.resume(pid)
+      end
+
+      assert_eventually(fn ->
+        {:ok, files} = Index.files(name, path: "lib", limit: 100)
+        "lib/nonblocking.ex" in files.paths
+      end)
+    end
+
     test "Git status boosts and annotates matching files", %{name: name} do
       Index.set_git_status(name, [{"lib/app_test.exs", :modified}])
 
       assert_eventually(fn ->
         {:ok, result} = Index.search(name, "app", limit: 3)
         hd(result.paths).path == "lib/app_test.exs" and hd(result.paths).git_status == :modified
+      end)
+    end
+
+    test "incremental updates use the same anchored ignore rules as the full scan", %{
+      name: name,
+      tmp_dir: tmp_dir
+    } do
+      path = Path.join([tmp_dir, "lib", "foo_tmp", "kept.ex"])
+      File.mkdir_p!(Path.dirname(path))
+      File.write!(path, "first")
+      Index.refresh(name)
+      assert :ok = Index.await_index(name)
+
+      File.write!(path, "second")
+      assert :ok = Index.update_paths(name, [path])
+
+      assert_eventually(fn ->
+        {:ok, files} = Index.files(name, path: "lib/foo_tmp", limit: 20)
+        "lib/foo_tmp/kept.ex" in files.paths
       end)
     end
   end
@@ -270,6 +306,27 @@ defmodule ExFff.IndexTest do
       GenServer.stop(pid)
       File.rm_rf(tmp_dir)
     end
+
+    test "respects nested gitignore rules including double-star patterns" do
+      tmp_dir =
+        Path.join(
+          System.tmp_dir!(),
+          "ex_fff_gitignore_test_#{System.unique_integer([:positive])}"
+        )
+
+      ignored_dir = Path.join([tmp_dir, "desktop", "Resources", "generated"])
+      File.mkdir_p!(ignored_dir)
+      File.write!(Path.join([tmp_dir, "desktop", ".gitignore"]), "Resources/generated/**\n")
+      File.write!(Path.join(ignored_dir, "bundle.js"), "ignored")
+      File.write!(Path.join([tmp_dir, "desktop", "kept.js"]), "kept")
+
+      config = ExFff.Config.new(root_path: tmp_dir)
+      paths = ExFff.Scanner.scan(tmp_dir, config)
+
+      assert "desktop/kept.js" in paths
+      refute "desktop/Resources/generated/bundle.js" in paths
+      File.rm_rf(tmp_dir)
+    end
   end
 
   describe "workspace switching and multi-workspace" do
@@ -341,6 +398,23 @@ defmodule ExFff.IndexTest do
       GenServer.stop(pid_b)
       File.rm_rf(dir_a)
       File.rm_rf(dir_b)
+    end
+
+    test "an idle index exits normally so the workspace can be reclaimed" do
+      dir = Path.join(System.tmp_dir!(), "idle_idx_#{System.unique_integer([:positive])}")
+      File.mkdir_p!(dir)
+      File.write!(Path.join(dir, "idle.ex"), "idle")
+
+      name =
+        Module.concat(ExFff.Index, String.to_atom("Idle_#{System.unique_integer([:positive])}"))
+
+      {:ok, pid} = Index.start_link(root_path: dir, name: name, idle_timeout_ms: 50)
+      Process.unlink(pid)
+      assert :ok = Index.await_index(pid)
+      ref = Process.monitor(pid)
+
+      assert_receive {:DOWN, ^ref, :process, ^pid, :normal}, 1_000
+      File.rm_rf(dir)
     end
 
     test "set_root replies to a search that was waiting on the old index" do

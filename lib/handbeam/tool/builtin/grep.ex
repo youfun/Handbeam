@@ -3,8 +3,8 @@ defmodule Handbeam.Tool.Builtin.Grep do
   Search workspace file contents over the shared ExFff inventory.
 
   Results are grouped by file and paged with an opaque cursor. Ripgrep is used
-  when available, but receives explicit inventory paths and cannot widen the
-  search scope. Other hosts use the same inventory with an Elixir matcher.
+  when available and its output is intersected with the shared inventory.
+  Other hosts read that inventory directly with an Elixir matcher.
   """
 
   @behaviour Handbeam.Agent.Tool
@@ -13,7 +13,6 @@ defmodule Handbeam.Tool.Builtin.Grep do
   @inventory_page 10_000
   @max_result_chars 20_000
   @max_file_bytes 5_000_000
-  @rg_batch_size 200
 
   @impl true
   def name, do: "grep"
@@ -22,6 +21,12 @@ defmodule Handbeam.Tool.Builtin.Grep do
   def description do
     "Search indexed workspace files for a regex or literal pattern. " <>
       "Results are grouped by file; pass next_cursor as cursor to continue."
+  end
+
+  @impl true
+  def hint do
+    "Fix the pattern or narrow path/glob from the error. A failed search is not an empty " <>
+      "result; do not repeat the same pattern unchanged."
   end
 
   @impl true
@@ -84,19 +89,18 @@ defmodule Handbeam.Tool.Builtin.Grep do
     opts = [path: prefix, exclude: excludes, cursor: cursor, limit: @inventory_page]
 
     with {:ok, page} <- Handbeam.Search.files(index, opts) do
-      paths =
-        Enum.filter(page.paths, fn path ->
-          Handbeam.Security.PathValidator.allowed_result?(workspace, path) and
-            regular_file?(Path.join(workspace, path))
-        end)
-
-      next_acc = acc ++ paths
+      next_acc = acc ++ page.paths
 
       if page.cursor do
         collect_inventory(index, workspace, prefix, excludes, page.cursor, next_acc, page.status)
       else
         {:ok,
-         %{paths: next_acc, status: status || page.status, indexed_count: page.indexed_count}}
+         %{
+           paths: next_acc,
+           prefix: prefix,
+           status: status || page.status,
+           indexed_count: page.indexed_count
+         }}
       end
     end
   end
@@ -113,79 +117,105 @@ defmodule Handbeam.Tool.Builtin.Grep do
           {:elixir, elixir_hits(files, workspace, regex, cursor, wanted)}
 
         rg ->
-          case rg_hits(rg, files, workspace, pattern, input, cursor, wanted) do
+          case rg_hits(rg, files, workspace, inventory.prefix, pattern, input, cursor) do
             {:ok, hits} -> {:ripgrep, hits}
             {:error, _code} -> {:elixir, elixir_hits(files, workspace, regex, cursor, wanted)}
           end
       end
 
-    page = Enum.take(hits, limit(input))
-    next_cursor = if length(hits) > length(page), do: encode_cursor(List.last(page)), else: nil
+    safe_hits = take_safe_hits(hits, workspace, wanted)
+    page = Enum.take(safe_hits, limit(input))
+
+    next_cursor =
+      if length(safe_hits) > length(page), do: encode_cursor(List.last(page)), else: nil
+
     emit_telemetry(started_at, length(files), length(page), matcher, inventory.status)
 
     {:ok, format_results(page, next_cursor, inventory, workspace, input)}
   end
 
   defp elixir_hits(files, workspace, regex, cursor, wanted) do
-    Enum.reduce_while(files, [], fn relative, acc ->
-      hits = file_hits(relative, workspace, regex, cursor)
-      next = acc ++ hits
-      if length(next) >= wanted, do: {:halt, next}, else: {:cont, next}
-    end)
+    validation = new_validation(workspace)
+
+    {hits, _validation} =
+      Enum.reduce_while(files, {[], validation}, fn relative, {acc, validation} ->
+        {hits, validation} = file_hits(relative, workspace, regex, cursor, validation)
+        next = acc ++ hits
+
+        if length(next) >= wanted,
+          do: {:halt, {next, validation}},
+          else: {:cont, {next, validation}}
+      end)
+
+    hits
   end
 
-  defp file_hits(relative, workspace, regex, cursor) do
-    path = Path.join(workspace, relative)
-
-    with {:ok, %{size: size}} when size <= @max_file_bytes <- File.stat(path),
-         {:ok, content} <- File.read(path),
+  defp file_hits(relative, workspace, regex, cursor, validation) do
+    with {:ok, content, validation} <- read_search_file(workspace, relative, validation),
          true <- String.valid?(content) do
-      content
-      |> String.split("\n")
-      |> Enum.with_index(1)
-      |> Enum.flat_map(fn {line, number} ->
-        hit = %{path: relative, line: number, text: line}
-        if Regex.match?(regex, line) and after_cursor?(hit, cursor), do: [hit], else: []
-      end)
+      hits =
+        content
+        |> String.split("\n")
+        |> Enum.with_index(1)
+        |> Enum.flat_map(fn {line, number} ->
+          hit = %{path: relative, line: number, text: line}
+          if Regex.match?(regex, line) and after_cursor?(hit, cursor), do: [hit], else: []
+        end)
+
+      {hits, validation}
     else
-      _ -> []
+      {:error, validation} -> {[], validation}
+      false -> {[], validation}
     end
   end
 
-  defp rg_hits(rg, files, workspace, pattern, input, cursor, wanted) do
-    result =
-      files
-      |> Enum.chunk_every(@rg_batch_size)
-      |> Enum.reduce_while({:ok, []}, fn batch, {:ok, acc} ->
-        args = rg_args(pattern, input) ++ batch
-        {output, code} = System.cmd(rg, args, cd: workspace, stderr_to_stdout: true)
+  defp rg_hits(rg, files, workspace, prefix, pattern, input, cursor) do
+    inventory = MapSet.new(files)
+    target = if prefix in [nil, "", "."], do: ".", else: prefix
+    args = rg_args(input) ++ rg_sensitive_globs() ++ ["--", pattern, target]
+    {output, code} = System.cmd(rg, args, cd: workspace, stderr_to_stdout: true)
 
-        if code in [0, 1] do
-          next =
-            output
-            |> parse_rg_output()
-            |> Enum.filter(&after_cursor?(&1, cursor))
-            |> then(&(acc ++ &1))
+    if code in [0, 1] do
+      hits =
+        output
+        |> parse_rg_output()
+        |> Enum.map(&normalize_rg_hit/1)
+        |> Enum.filter(fn hit ->
+          MapSet.member?(inventory, hit.path) and
+            glob_match?(hit.path, input["glob"] || input[:glob]) and
+            after_cursor?(hit, cursor)
+        end)
+        |> Enum.sort_by(&{&1.path, &1.line})
 
-          if length(next) >= wanted, do: {:halt, {:ok, next}}, else: {:cont, {:ok, next}}
-        else
-          {:halt, {:error, code}}
-        end
-      end)
-
-    case result do
-      {:ok, hits} -> {:ok, hits |> Enum.sort_by(&{&1.path, &1.line}) |> Enum.take(wanted)}
-      {:error, _code} = error -> error
+      {:ok, hits}
+    else
+      {:error, code}
     end
   end
 
-  defp rg_args(pattern, input) do
+  defp rg_args(input) do
     # ripgrep omits the filename when only one path is searched unless this is
     # explicit. The parser and cursor contract always require path:line:text.
-    base = ["--line-number", "--color=never", "--no-heading", "--with-filename"]
+    base = [
+      "--line-number",
+      "--color=never",
+      "--no-heading",
+      "--with-filename",
+      "--hidden",
+      "--max-filesize",
+      Integer.to_string(@max_file_bytes)
+    ]
+
     base = if truthy?(input["ignore_case"] || input[:ignore_case]), do: base ++ ["-i"], else: base
     base = if truthy?(input["literal"] || input[:literal]), do: base ++ ["-F"], else: base
-    base ++ ["--", pattern]
+    base
+  end
+
+  defp rg_sensitive_globs do
+    globs =
+      Handbeam.Security.PathValidator.rg_exclude_globs() ++ ExFff.Config.rg_exclude_globs()
+
+    Enum.flat_map(globs, &["--glob", &1])
   end
 
   defp parse_rg_output(output) do
@@ -202,6 +232,10 @@ defmodule Handbeam.Tool.Builtin.Grep do
     end)
   end
 
+  defp normalize_rg_hit(hit) do
+    %{hit | path: hit.path |> String.replace("\\", "/") |> String.trim_leading("./")}
+  end
+
   defp format_results([], _cursor, inventory, _workspace, _input) do
     "No matches found" <> indexing_suffix(inventory)
   end
@@ -215,7 +249,7 @@ defmodule Handbeam.Tool.Builtin.Grep do
       |> Enum.group_by(& &1.path)
       |> Enum.sort_by(&elem(&1, 0))
       |> Enum.map_join("\n", fn {path, file_hits} ->
-        lines = read_lines(Path.join(workspace, path))
+        lines = read_lines(workspace, path)
 
         rendered =
           file_hits
@@ -231,11 +265,103 @@ defmodule Handbeam.Tool.Builtin.Grep do
     continuation <> body <> indexing_suffix(inventory)
   end
 
-  defp read_lines(path) do
-    case File.read(path) do
+  defp read_lines(workspace, relative) do
+    case read_search_file(workspace, relative) do
       {:ok, content} when is_binary(content) -> String.split(content, "\n")
       _ -> []
     end
+  end
+
+  defp take_safe_hits(hits, workspace, wanted) do
+    {safe, _checked} =
+      Enum.reduce_while(hits, {[], %{}}, fn hit, {acc, checked} ->
+        path = hit.path
+
+        {allowed?, checked} =
+          case checked do
+            %{^path => allowed?} ->
+              {allowed?, checked}
+
+            _ ->
+              allowed? = safe_search_file?(workspace, path)
+              {allowed?, Map.put(checked, path, allowed?)}
+          end
+
+        next = if allowed?, do: [hit | acc], else: acc
+
+        if length(next) >= wanted,
+          do: {:halt, {next, checked}},
+          else: {:cont, {next, checked}}
+      end)
+
+    Enum.reverse(safe)
+  end
+
+  defp read_search_file(workspace, relative) do
+    path = Path.join(workspace, relative)
+
+    with true <- safe_search_file?(workspace, relative),
+         {:ok, %{size: size}} when size <= @max_file_bytes <- File.lstat(path),
+         {:ok, content} <- File.read(path) do
+      {:ok, content}
+    else
+      _ -> {:error, :unsafe_or_unreadable}
+    end
+  end
+
+  defp read_search_file(workspace, relative, validation) do
+    path = Path.join(workspace, relative)
+    {directory_allowed?, validation} = validate_directory(Path.dirname(path), validation)
+
+    with true <- directory_allowed?,
+         :ok <- Handbeam.Security.PathValidator.reject_sensitive(relative),
+         {:ok, %{type: :regular, size: size}} when size <= @max_file_bytes <- File.lstat(path),
+         {:ok, content} <- File.read(path) do
+      {:ok, content, validation}
+    else
+      _ -> {:error, validation}
+    end
+  end
+
+  defp new_validation(workspace) do
+    root =
+      case Handbeam.Security.PathValidator.canonicalize(workspace) do
+        {:ok, resolved} -> resolved
+        {:error, _reason} -> Path.expand(workspace)
+      end
+
+    %{root: root, directories: %{}}
+  end
+
+  defp validate_directory(directory, validation) do
+    case validation.directories do
+      %{^directory => allowed?} ->
+        {allowed?, validation}
+
+      _ ->
+        allowed? =
+          case Handbeam.Security.PathValidator.canonicalize(directory) do
+            {:ok, resolved} ->
+              contained?(resolved, validation.root) and
+                Handbeam.Security.PathValidator.reject_sensitive(resolved) == :ok
+
+            {:error, _reason} ->
+              false
+          end
+
+        {allowed?, put_in(validation.directories[directory], allowed?)}
+    end
+  end
+
+  defp contained?(path, root), do: path == root or String.starts_with?(path, root <> "/")
+
+  defp safe_search_file?(workspace, relative) do
+    path = Path.join(workspace, relative)
+
+    Handbeam.Security.PathValidator.reject_sensitive(relative) == :ok and
+      Handbeam.Security.PathValidator.validate_within_workspace(path, workspace) == :ok and
+      Handbeam.Security.PathValidator.reject_resolved(path) == :ok and
+      regular_file?(path)
   end
 
   defp format_hit(path, lines, index, before_n, after_n) do

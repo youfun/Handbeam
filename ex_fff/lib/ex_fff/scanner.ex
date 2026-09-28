@@ -8,37 +8,13 @@ defmodule ExFff.Scanner do
 
   require Logger
 
-  @default_pruned_dirs MapSet.new([
-                         "_build",
-                         "build",
-                         "deps",
-                         ".git",
-                         "node_modules",
-                         ".gradle",
-                         ".elixir_ls",
-                         "target",
-                         ".zig-cache",
-                         "zig-out",
-                         ".cxx",
-                         "cover",
-                         "tmp",
-                         "artifacts",
-                         ".handbeam",
-                         ".local-archive",
-                         "mix_toolchain",
-                         ".idea",
-                         ".vscode",
-                         ".hg",
-                         ".svn"
-                       ])
-
   @doc """
   Returns true if the directory name or relative directory path should be pruned
   immediately without recursing.
   """
   @spec prune_dir?(String.t(), String.t(), ExFff.Config.t()) :: boolean()
   def prune_dir?(dir_name, rel_path, config) do
-    MapSet.member?(@default_pruned_dirs, dir_name) or
+    ExFff.Config.default_ignored_dir?(dir_name) or
       ExFff.Config.ignored?(config, rel_path <> "/")
   end
 
@@ -59,7 +35,8 @@ defmodule ExFff.Scanner do
   """
   @spec scan(String.t(), ExFff.Config.t(), ([String.t()] -> any())) :: [String.t()]
   def scan(root_path, config, on_batch) when is_function(on_batch, 1) do
-    walk([{"", root_path}], root_path, config, 0, [], on_batch)
+    ignore = ExFff.Ignore.root(root_path)
+    walk([{"", root_path, ignore}], root_path, config, 0, [], on_batch)
   end
 
   @doc """
@@ -99,9 +76,10 @@ defmodule ExFff.Scanner do
           {:ok, {String.t(), map()}, [{String.t(), String.t()}]} | :ignore
   def prepare_path(root_path, rel_path, config) do
     full_path = Path.join(root_path, rel_path)
+    ignore = ExFff.Ignore.for_path(root_path, rel_path)
 
-    with true <- valid_file?(rel_path, config),
-         {:ok, %{type: :regular} = stat} <- File.stat(full_path) do
+    with true <- valid_file?(rel_path, config, ignore),
+         {:ok, %{type: :regular} = stat} <- File.lstat(full_path) do
       file_entry = {rel_path, %{mtime: stat.mtime, size: stat.size}}
 
       trigram_entries =
@@ -118,9 +96,7 @@ defmodule ExFff.Scanner do
 
   defp prepare(paths, root_path) do
     Enum.reduce(paths, {[], []}, fn rel_path, {f_acc, t_acc} ->
-      config = %ExFff.Config{root_path: root_path, max_files: 1, ignore_patterns: []}
-
-      case prepare_path(root_path, rel_path, config) do
+      case prepare_scanned_path(root_path, rel_path) do
         {:ok, file_entry, trig_entries} ->
           {[file_entry | f_acc], trig_entries ++ t_acc}
 
@@ -130,6 +106,26 @@ defmodule ExFff.Scanner do
     end)
   end
 
+  defp prepare_scanned_path(root_path, rel_path) do
+    full_path = Path.join(root_path, rel_path)
+
+    case File.lstat(full_path) do
+      {:ok, %{type: :regular} = stat} ->
+        file_entry = {rel_path, %{mtime: stat.mtime, size: stat.size}}
+
+        trigrams =
+          rel_path
+          |> String.downcase()
+          |> ExFff.Matcher.tokenize()
+          |> Enum.map(&{&1, rel_path})
+
+        {:ok, file_entry, trigrams}
+
+      _ ->
+        :ignore
+    end
+  end
+
   # ── Helpers ──
 
   defp walk([], _root, _config, _count, acc, _on_batch), do: Enum.reverse(acc)
@@ -137,11 +133,18 @@ defmodule ExFff.Scanner do
   defp walk(_dirs, _root, config, count, acc, _on_batch) when count >= config.max_files,
     do: Enum.reverse(acc)
 
-  defp walk([{rel, full_dir} | rest_dirs], root, config, count, acc, on_batch) do
+  defp walk([{rel, full_dir, inherited_ignore} | rest_dirs], root, config, count, acc, on_batch) do
+    ignore =
+      if rel == "" do
+        inherited_ignore
+      else
+        ExFff.Ignore.extend(inherited_ignore, full_dir, rel)
+      end
+
     case File.ls(full_dir) do
       {:ok, entries} ->
         {next_dirs, next_files, new_count} =
-          process_entries(Enum.sort(entries), rel, full_dir, config, count)
+          process_entries(Enum.sort(entries), rel, full_dir, config, ignore, count)
 
         if next_files != [], do: on_batch.(Enum.reverse(next_files))
 
@@ -160,7 +163,7 @@ defmodule ExFff.Scanner do
     end
   end
 
-  defp process_entries(entries, rel, full_dir, config, count) do
+  defp process_entries(entries, rel, full_dir, config, ignore, count) do
     max_files = config.max_files
 
     Enum.reduce_while(entries, {[], [], count}, fn entry, {dirs_acc, files_acc, cur_count} ->
@@ -168,7 +171,7 @@ defmodule ExFff.Scanner do
       child_full = Path.join(full_dir, entry)
 
       cond do
-        prune_dir?(entry, child_rel, config) and directory?(child_full) ->
+        prune_dir?(entry, child_rel, config, ignore) and directory?(child_full) ->
           {:cont, {dirs_acc, files_acc, cur_count}}
 
         cur_count >= max_files ->
@@ -178,26 +181,13 @@ defmodule ExFff.Scanner do
           next =
             case File.lstat(child_full) do
               {:ok, %{type: :directory}} ->
-                {[{child_rel, child_full} | dirs_acc], files_acc, cur_count}
+                {[{child_rel, child_full, ignore} | dirs_acc], files_acc, cur_count}
 
               {:ok, %{type: :regular}} ->
-                if valid_file?(child_rel, config) do
+                if valid_file?(child_rel, config, ignore) do
                   {dirs_acc, [child_rel | files_acc], cur_count + 1}
                 else
                   {dirs_acc, files_acc, cur_count}
-                end
-
-              {:ok, %{type: :symlink}} ->
-                case File.stat(child_full) do
-                  {:ok, %{type: :regular}} ->
-                    if valid_file?(child_rel, config) do
-                      {dirs_acc, [child_rel | files_acc], cur_count + 1}
-                    else
-                      {dirs_acc, files_acc, cur_count}
-                    end
-
-                  _ ->
-                    {dirs_acc, files_acc, cur_count}
                 end
 
               _ ->
@@ -216,11 +206,37 @@ defmodule ExFff.Scanner do
     end
   end
 
-  defp valid_file?(rel_path, config) do
+  @doc false
+  def ignored_path?(root_path, path, config) do
+    case relative_path(root_path, path) do
+      nil -> true
+      relative -> not valid_file?(relative, config, ExFff.Ignore.for_path(root_path, relative))
+    end
+  end
+
+  defp prune_dir?(dir_name, rel_path, config, ignore) do
+    prune_dir?(dir_name, rel_path, config) or ExFff.Ignore.prune?(ignore, rel_path)
+  end
+
+  defp valid_file?(rel_path, config, ignore) do
     try do
-      String.valid?(rel_path) and not ExFff.Config.ignored?(config, rel_path)
+      String.valid?(rel_path) and
+        not ExFff.Config.ignored?(config, rel_path) and
+        not ExFff.Ignore.ignored?(ignore, rel_path) and
+        ExFff.Config.allowed?(config, rel_path)
     rescue
       _ -> false
+    end
+  end
+
+  defp relative_path(root_path, path) do
+    root = Path.expand(root_path)
+
+    expanded =
+      if Path.type(path) == :absolute, do: Path.expand(path), else: Path.expand(path, root)
+
+    if expanded != root and String.starts_with?(expanded, root <> "/") do
+      Path.relative_to(expanded, root)
     end
   end
 end

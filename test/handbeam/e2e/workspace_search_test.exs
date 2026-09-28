@@ -29,10 +29,11 @@ defmodule Handbeam.E2E.WorkspaceSearchTest do
       "defmodule Marker do\n  @value \"ORCHID-7711\"\nend\n"
     )
 
-    File.mkdir_p!(Path.join([workspace, "_build", "generated", "assets"]))
+    File.mkdir_p!(Path.join([workspace, "generated", "assets"]))
+    File.write!(Path.join(workspace, ".gitignore"), "generated/**\n")
 
     File.write!(
-      Path.join([workspace, "_build", "generated", "assets", "bundle.js"]),
+      Path.join([workspace, "generated", "assets", "bundle.js"]),
       "defmodule Marker do // ignored generated duplicate\n"
     )
 

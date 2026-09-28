@@ -52,6 +52,39 @@ defmodule Handbeam.Tool.Builtin.GrepTest do
     end
   end
 
+  test "ripgrep traverses the scope once instead of spawning per inventory batch" do
+    for index <- 1..250 do
+      File.write!(Path.join(@work_dir, "file-#{index}.txt"), "bulk_marker\n")
+    end
+
+    bin = Path.join(@work_dir, "bin")
+    counter = Path.join(@work_dir, "rg-count")
+    File.mkdir_p!(bin)
+    rg = Path.join(bin, "rg")
+
+    File.write!(
+      rg,
+      "#!/bin/sh\necho x >> '#{counter}'\nprintf 'file-250.txt:1:bulk_marker\\n'\n"
+    )
+
+    File.chmod!(rg, 0o755)
+    original_path = System.get_env("PATH")
+
+    try do
+      System.put_env("PATH", bin)
+
+      assert {:ok, output} =
+               grep(%{"pattern" => "bulk_marker", "path" => "."}, %{
+                 working_directory: @work_dir
+               })
+
+      assert output =~ "file-250.txt:1:bulk_marker"
+      assert counter |> File.read!() |> String.split("\n", trim: true) |> length() == 1
+    after
+      if original_path, do: System.put_env("PATH", original_path)
+    end
+  end
+
   test "accepts Claude-style -A and -n arguments" do
     File.write!(Path.join(@work_dir, "sample.ex"), "one\ntwo\nthree\nfour\n")
 
@@ -190,7 +223,7 @@ defmodule Handbeam.Tool.Builtin.GrepTest do
     end)
   end
 
-  test "uses the same ExFff inventory instead of a separate git file list" do
+  test "uses the same gitignore-aware ExFff inventory" do
     git = System.find_executable("git")
 
     if git do
@@ -209,12 +242,12 @@ defmodule Handbeam.Tool.Builtin.GrepTest do
 
       {_output, 0} = System.cmd(git, ["init", "-q", @work_dir])
 
-      assert {:ok, indexed} =
+      assert {:ok, ignored} =
                grep(%{"pattern" => "ignored_inventory_marker", "path" => "."}, %{
                  working_directory: @work_dir
                })
 
-      assert indexed =~ "desktop/Resources/generated/bundle.js"
+      assert ignored == "No matches found"
 
       assert {:ok, visible} =
                grep(%{"pattern" => "visible_inventory_marker", "path" => "."}, %{
@@ -243,6 +276,49 @@ defmodule Handbeam.Tool.Builtin.GrepTest do
     after
       File.rm_rf!(outside_dir)
     end
+  end
+
+  test "a native file watcher crash does not terminate the shared watcher" do
+    index_name =
+      Module.concat(
+        ExFff.Index,
+        String.to_atom("WatcherIndex_#{System.unique_integer([:positive])}")
+      )
+
+    watcher_name =
+      Module.concat(
+        Handbeam.Search.Watcher,
+        String.to_atom("Isolated_#{System.unique_integer([:positive])}")
+      )
+
+    {:ok, index} = ExFff.Index.start_link(root_path: @work_dir, name: index_name)
+    assert :ok = ExFff.Index.await_index(index)
+    {:ok, watcher} = Handbeam.Search.Watcher.start_link(name: watcher_name)
+    GenServer.cast(watcher, {:watch, Path.expand(@work_dir), index})
+
+    first =
+      eventually(fn ->
+        case :sys.get_state(watcher).workspaces[Path.expand(@work_dir)] do
+          %{watcher: pid} when is_pid(pid) -> {:ok, pid}
+          _ -> :retry
+        end
+      end)
+
+    watcher_ref = Process.monitor(watcher)
+    Process.exit(first, :kill)
+
+    second =
+      eventually(fn ->
+        case :sys.get_state(watcher).workspaces[Path.expand(@work_dir)] do
+          %{watcher: pid} when is_pid(pid) and pid != first -> {:ok, pid}
+          _ -> :retry
+        end
+      end)
+
+    assert Process.alive?(second)
+    refute_receive {:DOWN, ^watcher_ref, :process, ^watcher, _reason}, 50
+    GenServer.stop(watcher)
+    GenServer.stop(index)
   end
 
   test "elixir fallback glob cannot escape the workspace" do
@@ -276,9 +352,20 @@ defmodule Handbeam.Tool.Builtin.GrepTest do
     workspace = context[:working_directory]
     {:ok, index} = ExFff.Index.ensure_started(workspace)
     ExFff.Index.refresh(index)
-    assert :ok = ExFff.Index.await_index(index, 5_000)
+    assert :ok = await_current_index(index)
     Grep.execute(input, context)
   end
+
+  defp await_current_index(index, attempts \\ 3)
+
+  defp await_current_index(index, attempts) when attempts > 0 do
+    case ExFff.Index.await_index(index, 5_000) do
+      {:error, "index restarted"} -> await_current_index(index, attempts - 1)
+      result -> result
+    end
+  end
+
+  defp await_current_index(_index, 0), do: {:error, "index kept restarting"}
 
   defp without_rg(fun) do
     original_path = System.get_env("PATH")
@@ -316,4 +403,21 @@ defmodule Handbeam.Tool.Builtin.GrepTest do
                working_directory: @work_dir
              })
   end
+
+  defp eventually(fun, attempts \\ 60)
+
+  defp eventually(fun, attempts) when attempts > 0 do
+    case fun.() do
+      {:ok, value} ->
+        value
+
+      :retry ->
+        receive do
+        after
+          50 -> eventually(fun, attempts - 1)
+        end
+    end
+  end
+
+  defp eventually(_fun, 0), do: flunk("condition did not become true")
 end

@@ -37,7 +37,10 @@ defmodule ExFff.Index do
             generation: 0,
             pending_searches: [],
             index_started_at: nil,
-            last_indexed_at: nil
+            last_indexed_at: nil,
+            idle_timeout_ms: nil,
+            idle_timer: nil,
+            idle_token: nil
 
   @typedoc false
   @type state :: %__MODULE__{
@@ -55,7 +58,10 @@ defmodule ExFff.Index do
           generation: non_neg_integer(),
           pending_searches: list(),
           index_started_at: integer() | nil,
-          last_indexed_at: integer() | nil
+          last_indexed_at: integer() | nil,
+          idle_timeout_ms: pos_integer() | :infinity,
+          idle_timer: reference() | nil,
+          idle_token: reference() | nil
         }
 
   # ── Public API ──
@@ -94,8 +100,8 @@ defmodule ExFff.Index do
   is already running, returns its PID. Otherwise starts a new instance under
   `ExFff.IndexSupervisor` (or linked directly if supervisor is unavailable).
   """
-  @spec ensure_started(String.t()) :: {:ok, pid()} | {:error, String.t()}
-  def ensure_started(root_path) when is_binary(root_path) do
+  @spec ensure_started(String.t(), keyword()) :: {:ok, pid()} | {:error, String.t()}
+  def ensure_started(root_path, opts \\ []) when is_binary(root_path) do
     expanded = Path.expand(root_path)
 
     case lookup_index(expanded) do
@@ -103,7 +109,7 @@ defmodule ExFff.Index do
         {:ok, pid}
 
       :not_found ->
-        start_index_for_root(expanded)
+        start_index_for_root(expanded, opts)
     end
   end
 
@@ -145,7 +151,7 @@ defmodule ExFff.Index do
   @doc "Apply incremental filesystem changes to the inventory."
   @spec update_paths(GenServer.server(), [String.t()]) :: :ok
   def update_paths(pid \\ __MODULE__, paths) when is_list(paths) do
-    GenServer.call(pid, {:update_paths, paths})
+    GenServer.cast(pid, {:update_paths, paths})
   end
 
   @doc "Replace Git status annotations used by path ranking."
@@ -201,14 +207,16 @@ defmodule ExFff.Index do
         ExFff.Config.new(
           root_path: root_path,
           max_files: Keyword.get(opts, :max_files, 100_001),
-          ignore_patterns: Keyword.get(opts, :ignore_patterns, ExFff.Config.new().ignore_patterns)
+          ignore_patterns:
+            Keyword.get(opts, :ignore_patterns, ExFff.Config.new().ignore_patterns),
+          path_filter: Keyword.get(opts, :path_filter)
         )
 
       # Create isolated ETS tables per index instance
       trigram_tab =
         :ets.new(:ex_fff_trigrams, [:duplicate_bag, :public, {:read_concurrency, true}])
 
-      files_tab = :ets.new(:ex_fff_files, [:set, :public, {:read_concurrency, true}])
+      files_tab = :ets.new(:ex_fff_files, [:ordered_set, :public, {:read_concurrency, true}])
       git_tab = :ets.new(:ex_fff_git_status, [:set, :public, {:read_concurrency, true}])
 
       frecency_tab =
@@ -231,10 +239,13 @@ defmodule ExFff.Index do
         generation: 0,
         pending_searches: [],
         index_started_at: nil,
-        last_indexed_at: nil
+        last_indexed_at: nil,
+        idle_timeout_ms: Keyword.get(opts, :idle_timeout_ms, 30 * 60 * 1_000),
+        idle_timer: nil,
+        idle_token: nil
       }
 
-      state = start_indexing(state)
+      state = state |> start_indexing() |> mark_used()
 
       {:ok, state}
     end
@@ -251,19 +262,13 @@ defmodule ExFff.Index do
         {:noreply, %{state | pending_searches: [pending | state.pending_searches]}}
 
       true ->
-        {:reply, do_search(query_string, opts, state), state}
+        {:reply, do_search(query_string, opts, state), mark_used(state)}
     end
   end
 
   @impl true
   def handle_call({:files, opts}, _from, state) do
-    {:reply, {:ok, list_files(opts, state)}, state}
-  end
-
-  def handle_call({:update_paths, paths}, _from, state) do
-    Enum.each(paths, &update_path(&1, state))
-    count = :ets.info(state.files_ref, :size) || 0
-    {:reply, :ok, %{state | indexed_count: count}}
+    {:reply, {:ok, list_files(opts, state)}, mark_used(state)}
   end
 
   @impl true
@@ -351,7 +356,13 @@ defmodule ExFff.Index do
       :ets.insert(state.frecency_ref, {{new_score, relative}, true})
     end
 
-    {:noreply, schedule_frecency_persist(state)}
+    {:noreply, state |> schedule_frecency_persist() |> mark_used()}
+  end
+
+  def handle_cast({:update_paths, paths}, state) do
+    Enum.each(paths, &update_path(&1, state))
+    count = :ets.info(state.files_ref, :size) || 0
+    {:noreply, %{state | indexed_count: count}}
   end
 
   def handle_cast({:set_git_status, entries}, state) do
@@ -380,6 +391,16 @@ defmodule ExFff.Index do
     persist_frecency(state.frecency_ref, state.frecency_path)
     {:noreply, %{state | persist_timer: nil}}
   end
+
+  def handle_info({:idle_timeout, token}, %{idle_token: token, status: status} = state) do
+    if status == :indexing do
+      {:noreply, mark_used(%{state | idle_timer: nil, idle_token: nil})}
+    else
+      {:stop, :normal, %{state | idle_timer: nil, idle_token: nil}}
+    end
+  end
+
+  def handle_info({:idle_timeout, _token}, state), do: {:noreply, state}
 
   def handle_info(
         {:index_batch, generation, files_entries, trig_entries},
@@ -644,7 +665,6 @@ defmodule ExFff.Index do
       |> :ets.tab2list()
       |> Enum.map(&elem(&1, 0))
       |> Enum.filter(&inventory_path?(&1, prefix, excludes, after_path))
-      |> Enum.sort()
 
     page = Enum.take(matching, limit)
     more? = length(matching) > length(page)
@@ -707,17 +727,32 @@ defmodule ExFff.Index do
 
   defp remove_path(relative, state) do
     prefix = relative <> "/"
+    if :ets.member(state.files_ref, relative), do: remove_file(relative, state)
+    remove_descendants(:ets.next(state.files_ref, relative), prefix, state)
+  end
 
-    state.files_ref
-    |> :ets.tab2list()
-    |> Enum.each(fn {path, _metadata} ->
-      if path == relative or String.starts_with?(path, prefix) do
-        :ets.delete(state.files_ref, path)
-        :ets.match_delete(state.trigram_ref, {:_, path})
-        :ets.match_delete(state.frecency_ref, {{:_, path}, :_})
-        :ets.delete(state.git_ref, path)
-      end
-    end)
+  defp remove_descendants(:"$end_of_table", _prefix, _state), do: :ok
+
+  defp remove_descendants(path, prefix, state) do
+    if String.starts_with?(path, prefix) do
+      next = :ets.next(state.files_ref, path)
+      remove_file(path, state)
+      remove_descendants(next, prefix, state)
+    else
+      :ok
+    end
+  end
+
+  defp remove_file(path, state) do
+    :ets.delete(state.files_ref, path)
+
+    path
+    |> String.downcase()
+    |> ExFff.Matcher.tokenize()
+    |> Enum.each(&:ets.delete_object(state.trigram_ref, {&1, path}))
+
+    :ets.match_delete(state.frecency_ref, {{:_, path}, :_})
+    :ets.delete(state.git_ref, path)
   end
 
   defp relative_path(path, root) when is_binary(path) do
@@ -738,6 +773,15 @@ defmodule ExFff.Index do
   end
 
   defp schedule_frecency_persist(state), do: state
+
+  defp mark_used(%{idle_timeout_ms: :infinity} = state), do: state
+
+  defp mark_used(state) do
+    if is_reference(state.idle_timer), do: Process.cancel_timer(state.idle_timer)
+    token = make_ref()
+    timer = Process.send_after(self(), {:idle_timeout, token}, state.idle_timeout_ms)
+    %{state | idle_timer: timer, idle_token: token}
+  end
 
   defp frecency_path(root, nil) do
     frecency_path(root, Path.join([System.user_home!(), ".handbeam", "fff"]))
@@ -820,10 +864,10 @@ defmodule ExFff.Index do
     end
   end
 
-  defp start_index_for_root(root) do
+  defp start_index_for_root(root, opts) do
     case Process.whereis(ExFff.IndexSupervisor) do
       nil ->
-        case start_link(root_path: root) do
+        case start_link(Keyword.merge(opts, root_path: root)) do
           {:ok, pid} -> {:ok, pid}
           {:error, {:already_started, pid}} -> {:ok, pid}
           {:error, reason} -> {:error, "Failed to start ExFff.Index: #{inspect(reason)}"}
@@ -832,7 +876,10 @@ defmodule ExFff.Index do
       _sup ->
         child_spec = {
           __MODULE__,
-          [root_path: root, name: {:via, Registry, {ExFff.Registry, root}}]
+          Keyword.merge(opts,
+            root_path: root,
+            name: {:via, Registry, {ExFff.Registry, root}}
+          )
         }
 
         case DynamicSupervisor.start_child(ExFff.IndexSupervisor, child_spec) do
