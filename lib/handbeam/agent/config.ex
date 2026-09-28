@@ -364,7 +364,7 @@ defmodule Handbeam.Agent.Config do
       system_prompt
     else
       workspace = Keyword.get(opts, :working_directory, File.cwd!())
-      paths = ContextLoader.discover(workspace, workspace: workspace)
+      paths = ContextLoader.discover(workspace)
       {:ok, context} = ContextLoader.load(paths)
       {context, _truncated?} = ContextLoader.truncate(context)
       ContextLoader.inject(system_prompt, context)
