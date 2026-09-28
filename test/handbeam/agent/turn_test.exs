@@ -72,6 +72,25 @@ defmodule Handbeam.Agent.TurnTest do
     def stream(messages, tools, config, _on_chunk), do: complete(messages, tools, config)
   end
 
+  defmodule FinalTurnProvider do
+    @behaviour Handbeam.Agent.Provider
+
+    @impl true
+    def complete(_messages, tools, config) do
+      send(config.notify, {:final_turn_request, tools, config.system_prompt})
+
+      {:ok,
+       %{
+         stop_reason: :end_turn,
+         messages: [Handbeam.Agent.Message.assistant("final summary")],
+         usage: %{input_tokens: 1, output_tokens: 1}
+       }}
+    end
+
+    @impl true
+    def stream(messages, tools, config, _on_chunk), do: complete(messages, tools, config)
+  end
+
   test "tool_start redacts secrets for every tool, not just browser" do
     config = %Config{
       provider: SensitiveInputProvider,
@@ -665,6 +684,24 @@ defmodule Handbeam.Agent.TurnTest do
       result = Turn.run_loop(state, [])
 
       assert result.status == :max_turns
+    end
+
+    test "final allowed turn disables tools and requests a closing summary" do
+      config = %Config{
+        provider: FinalTurnProvider,
+        model: "fake",
+        max_turns: 1,
+        system_prompt: "base prompt",
+        provider_config: %{notify: self()}
+      }
+
+      result = Turn.run_loop(State.init(config, "finish"), [])
+
+      assert_receive {:final_turn_request, [], system_prompt}
+      assert system_prompt =~ "base prompt"
+      assert system_prompt =~ "final agent step"
+      assert system_prompt =~ "Do not call tools"
+      assert result.status == :completed
     end
 
     test "recovers from prompt-too-long by compacting and retrying" do

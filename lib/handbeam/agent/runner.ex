@@ -12,6 +12,20 @@ defmodule Handbeam.Agent.Runner do
 
   alias Handbeam.PubSub.Session
 
+  @default_inactivity_timeout_ms 300_000
+  @progress_events [
+    :message_delta,
+    :thinking_delta,
+    :provider_items,
+    :tool_start,
+    :tool_end,
+    :turn_start,
+    :turn_end,
+    :candidate_message_injected,
+    :tool_approval_requested,
+    :stall_check_requested
+  ]
+
   defstruct [
     :conversation_id,
     :content,
@@ -136,6 +150,8 @@ defmodule Handbeam.Agent.Runner do
 
   @impl true
   def handle_continue(:start_task, state) do
+    prewarm_search(state)
+
     Registry.update_value(Handbeam.AgentRunRegistry, state.conversation_id, fn _ ->
       %{run_id: state.opts[:run_id], active?: true}
     end)
@@ -155,14 +171,12 @@ defmodule Handbeam.Agent.Runner do
       )
 
     started_at = System.monotonic_time(:millisecond)
-    timeout_ms = Keyword.get(state.opts, :timeout_ms, 300_000)
-    deadline = started_at + timeout_ms
-    timer = Process.send_after(self(), {:run_deadline, deadline}, timeout_ms)
+    {deadline, timer} = arm_timeout(state)
 
     run_opts =
       state.opts
       |> Keyword.put(:candidate_queue, state.queue_pid)
-      |> Keyword.put(:run_deadline, deadline)
+      |> maybe_put_run_deadline(state, deadline)
       |> put_persistence_callback(state.conversation_id)
 
     start_task = if state.opts[:delegated?], do: :async, else: :async_nolink
@@ -237,11 +251,12 @@ defmodule Handbeam.Agent.Runner do
   end
 
   def handle_call({:resume, decisions}, _from, %{status: :awaiting_approval} = state) do
-    # Approval does not reset the wall-clock budget accepted at run start.
+    {deadline, timer} = resume_timeout(state)
+
     run_opts =
       state.opts
       |> Keyword.put(:candidate_queue, state.queue_pid)
-      |> Keyword.put(:run_deadline, state.deadline)
+      |> maybe_put_run_deadline(state, deadline)
       |> put_persistence_callback(state.conversation_id)
 
     resume = resume_fun(state)
@@ -253,7 +268,15 @@ defmodule Handbeam.Agent.Runner do
         resume.(state.interrupted_state, decisions, run_opts)
       end)
 
-    {:reply, :ok, %{state | status: :running, task: task, interrupted_state: nil}}
+    {:reply, :ok,
+     %{
+       state
+       | status: :running,
+         task: task,
+         interrupted_state: nil,
+         deadline: deadline,
+         deadline_timer: timer
+     }}
   end
 
   def handle_call({:resume, _decisions}, _from, state) do
@@ -286,8 +309,22 @@ defmodule Handbeam.Agent.Runner do
 
     case result do
       %Handbeam.Agent.State{status: :interrupted} = interrupted ->
-        {:noreply,
-         %{state | status: :awaiting_approval, interrupted_state: interrupted, task: nil}}
+        if absolute_timeout?(state) do
+          {:noreply,
+           %{state | status: :awaiting_approval, interrupted_state: interrupted, task: nil}}
+        else
+          cancel_timeout(state.deadline_timer)
+
+          {:noreply,
+           %{
+             state
+             | status: :awaiting_approval,
+               interrupted_state: interrupted,
+               task: nil,
+               deadline: nil,
+               deadline_timer: nil
+           }}
+        end
 
       %Handbeam.Agent.State{status: :halted} = halted ->
         finish_terminal(state, halted, :halted)
@@ -311,6 +348,17 @@ defmodule Handbeam.Agent.Runner do
   def handle_info({:os_process_started, os_pid, invocation}, state)
       when is_integer(os_pid) do
     {:noreply, %{state | os_processes: [{os_pid, invocation} | state.os_processes]}}
+  end
+
+  def handle_info({:run_progress, run_id, kind}, state)
+      when state.status == :running and kind in @progress_events do
+    if state.opts[:run_id] == run_id and not absolute_timeout?(state) do
+      cancel_timeout(state.deadline_timer)
+      {deadline, timer} = arm_timeout(state)
+      {:noreply, %{state | deadline: deadline, deadline_timer: timer}}
+    else
+      {:noreply, state}
+    end
   end
 
   def handle_info({:run_deadline, deadline}, %{deadline: deadline} = state)
@@ -342,6 +390,36 @@ defmodule Handbeam.Agent.Runner do
   end
 
   def handle_info({:run_deadline, _stale}, state), do: {:noreply, state}
+
+  def handle_info({:run_inactivity, deadline}, %{deadline: deadline, status: :running} = state) do
+    timeout_ms = timeout_ms(state)
+    cleanup_os_processes(state)
+    shutdown_run_task(state.task)
+
+    payload = %{
+      status: "timeout",
+      turns: 0,
+      error: "run stalled: no progress for #{timeout_ms}ms",
+      reason: :run_inactivity_timeout,
+      execution: :unknown,
+      run_id: state.opts[:run_id]
+    }
+
+    persist_terminal_event(state, payload)
+    Session.broadcast_event(state.conversation_id, :run_end, payload)
+    Session.mark_run_finished(state.conversation_id)
+    Handbeam.Agent.CandidateQueue.seal(state.queue_pid)
+    conversation_id = state.conversation_id
+
+    Task.Supervisor.start_child(Handbeam.AgentRunTaskSupervisor, fn ->
+      Process.sleep(50)
+      Handbeam.AgentRunSupervisor.stop_run(conversation_id)
+    end)
+
+    {:stop, :shutdown, %{state | status: :timeout, task: nil, deadline_timer: nil}}
+  end
+
+  def handle_info({:run_inactivity, _stale}, state), do: {:noreply, state}
 
   def handle_info({:EXIT, _pid, reason}, state) when reason not in [:normal, :shutdown] do
     abort_unreplayable(state, {:run_tree_exit, reason})
@@ -412,6 +490,38 @@ defmodule Handbeam.Agent.Runner do
     _ = Task.shutdown(task, :brutal_kill)
     :ok
   end
+
+  defp arm_timeout(state) do
+    timeout = timeout_ms(state)
+    deadline = System.monotonic_time(:millisecond) + timeout
+
+    message =
+      if absolute_timeout?(state),
+        do: {:run_deadline, deadline},
+        else: {:run_inactivity, deadline}
+
+    {deadline, Process.send_after(self(), message, timeout)}
+  end
+
+  defp resume_timeout(state) do
+    if absolute_timeout?(state),
+      do: {state.deadline, state.deadline_timer},
+      else: arm_timeout(state)
+  end
+
+  defp timeout_ms(state),
+    do: Keyword.get(state.opts, :timeout_ms, @default_inactivity_timeout_ms)
+
+  defp absolute_timeout?(state), do: Keyword.get(state.opts, :delegated?, false)
+
+  defp maybe_put_run_deadline(opts, state, deadline) do
+    if absolute_timeout?(state),
+      do: Keyword.put(opts, :run_deadline, deadline),
+      else: Keyword.delete(opts, :run_deadline)
+  end
+
+  defp cancel_timeout(ref) when is_reference(ref), do: Process.cancel_timer(ref)
+  defp cancel_timeout(_), do: false
 
   defp persist_cancelled_run(state) do
     payload = %{status: "cancelled", turns: 0, run_id: state.opts[:run_id]}
@@ -492,6 +602,15 @@ defmodule Handbeam.Agent.Runner do
     Handbeam.Agent.Provider.Cursor.Session.stop_for_conversation(state.conversation_id)
   end
 
+  defp prewarm_search(state) do
+    workspace = state.opts[:working_directory] || state.opts[:workspace_path]
+
+    case Handbeam.Search.prewarm(workspace) do
+      :ok -> :ok
+      {:error, reason} -> Logger.warning("[Runner] search prewarm failed: #{inspect(reason)}")
+    end
+  end
+
   defp job_context_present?(state) do
     dir = state.opts[:working_directory] || state.opts[:workspace_path]
     is_binary(dir) and dir != ""
@@ -509,6 +628,8 @@ defmodule Handbeam.Agent.Runner do
 
   defp put_persistence_callback(opts, conversation_id) do
     user_on_event = Keyword.get(opts, :on_event)
+    progress = fn kind -> notify_progress_owner({kind, %{}}, opts) end
+    opts = Keyword.put(opts, :on_progress, progress)
 
     Keyword.put(opts, :on_event, fn event ->
       {kind, payload} = event
@@ -552,6 +673,9 @@ defmodule Handbeam.Agent.Runner do
   end
 
   defp persist_and_callback(conversation_id, event, opts, user_on_event) do
+    notify_progress_owner(event, opts)
+    track_search_access(event, opts)
+
     # 2. Normal persistence + session broadcast
     log_runner_event(conversation_id, event)
 
@@ -572,6 +696,36 @@ defmodule Handbeam.Agent.Runner do
 
     broadcast_session_event(conversation_id, event, opts)
   end
+
+  defp track_search_access({:tool_end, payload}, opts) do
+    tool = payload[:tool] || payload["tool"]
+    path = payload[:file_path] || payload["file_path"]
+    workspace = opts[:working_directory] || opts[:workspace_path]
+    successful? = is_nil(payload[:error]) and is_nil(payload["error"])
+    normalized_tool = if is_binary(tool), do: String.downcase(tool), else: ""
+
+    if successful? and normalized_tool in ["read", "edit", "write"] and
+         is_binary(workspace) and is_binary(path) do
+      Handbeam.Search.touch(workspace, path)
+
+      if normalized_tool in ["edit", "write"] do
+        Handbeam.Search.notify_path(workspace, path)
+      end
+    end
+
+    :ok
+  end
+
+  defp track_search_access(_event, _opts), do: :ok
+
+  defp notify_progress_owner({kind, _payload}, opts) when kind in @progress_events do
+    case Keyword.get(opts, :runner_pid) do
+      pid when is_pid(pid) -> send(pid, {:run_progress, Keyword.get(opts, :run_id), kind})
+      _ -> :ok
+    end
+  end
+
+  defp notify_progress_owner(_event, _opts), do: :ok
 
   defp broadcast_session_event(conversation_id, {kind, payload}, opts) do
     payload = stamp_run_id(payload, opts)

@@ -359,11 +359,12 @@ defmodule Handbeam.Agent.Config do
   defp maybe_inject_project_context(system_prompt, opts) do
     # If the user explicitly provided a system_prompt, skip context injection
     # (host execution facts are still appended). Otherwise, inject AGENTS.md context.
-    # Free chats have no project root, so they never load workspace context.
+    # Free chats have no workspace, so they never load workspace context.
     if Keyword.has_key?(opts, :system_prompt) or Keyword.get(opts, :chat_scope) == :free do
       system_prompt
     else
-      paths = ContextLoader.discover(Keyword.get(opts, :working_directory, File.cwd!()))
+      workspace = Keyword.get(opts, :working_directory, File.cwd!())
+      paths = ContextLoader.discover(workspace, workspace: workspace)
       {:ok, context} = ContextLoader.load(paths)
       {context, _truncated?} = ContextLoader.truncate(context)
       ContextLoader.inject(system_prompt, context)
@@ -468,7 +469,7 @@ defmodule Handbeam.Agent.Config do
   defp channel_max_turns(opts) do
     cond do
       Keyword.get(opts, :source) in [:sns, :webhook, :cli] -> 200
-      Keyword.get(opts, :source) in [:live_view, :native] -> 1_000
+      Keyword.get(opts, :source) in [:live_view, :native] -> 200
       true -> @default_max_turns
     end
   end

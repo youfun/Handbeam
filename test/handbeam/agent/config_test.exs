@@ -90,6 +90,11 @@ defmodule Handbeam.Agent.ConfigTest do
     end
   end
 
+  test "interactive channels use a bounded 200-turn budget" do
+    assert Config.from_opts(source: :live_view).max_turns == 200
+    assert Config.from_opts(source: :native).max_turns == 200
+  end
+
   test "appends task_instructions after the default prompt and workspace contract" do
     workspace =
       Path.join(System.tmp_dir!(), "handbeam-config-task-#{System.unique_integer([:positive])}")

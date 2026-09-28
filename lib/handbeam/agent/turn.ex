@@ -17,6 +17,9 @@ defmodule Handbeam.Agent.Turn do
   require Logger
 
   @max_tool_event_output 16_000
+  @final_turn_prompt """
+  You have reached the final agent step. Do not call tools. Give the user the best complete answer you can now. Summarize completed work, verification, unresolved items, and the next concrete action when anything remains.
+  """
 
   @doc """
   Resume agent loop from an interrupted tool-approval state.
@@ -490,6 +493,13 @@ defmodule Handbeam.Agent.Turn do
     end
   end
 
+  defp notify_progress(opts, kind) do
+    case Keyword.get(opts, :on_progress) do
+      fun when is_function(fun, 1) -> fun.(kind)
+      _ -> :ok
+    end
+  end
+
   defp emit_provider_items(opts, messages) do
     items =
       messages
@@ -721,6 +731,7 @@ defmodule Handbeam.Agent.Turn do
           fn chunk ->
             track_chunk(chunk_tracker, chunk_text(chunk))
             track_streamed_text(streamed_text_tracker, chunk)
+            notify_progress(opts, :message_delta)
             user_on_chunk.(chunk_text(chunk))
           end
 
@@ -761,6 +772,9 @@ defmodule Handbeam.Agent.Turn do
     # context hook — extensions can filter/modify messages and system_prompt
     # for this provider call only (does NOT modify persistent state/transcript)
     {outbound_messages, provider_config} = apply_context_hook(state, provider_config, opts)
+    final_turn? = state.turn + 1 >= state.config.max_turns
+    provider_config = maybe_require_final_answer(provider_config, final_turn?)
+    tool_defs = if final_turn?, do: [], else: tool_defs
 
     Logger.debug(
       "[Turn] provider call provider=#{inspect(provider)} streaming=#{streaming?} " <>
@@ -1693,6 +1707,18 @@ defmodule Handbeam.Agent.Turn do
     |> Map.put(:working_directory, config.working_directory)
     |> maybe_put_context(config)
     |> apply_reasoning_level(config)
+  end
+
+  defp maybe_require_final_answer(provider_config, false), do: provider_config
+
+  defp maybe_require_final_answer(provider_config, true) do
+    prompt = Map.get(provider_config, :system_prompt) || ""
+
+    Map.put(
+      provider_config,
+      :system_prompt,
+      String.trim_trailing(prompt) <> "\n\n" <> @final_turn_prompt
+    )
   end
 
   defp apply_reasoning_level(provider_config, config) do

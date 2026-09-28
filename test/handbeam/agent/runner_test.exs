@@ -437,17 +437,17 @@ defmodule Handbeam.Agent.RunnerTest do
     assert :counters.get(counter, 1) == 1
   end
 
-  test "approval wait expires on the original deadline and a late resume is rejected" do
+  test "interactive approval wait pauses the inactivity watchdog" do
     sid = "runner-approval-deadline-#{System.unique_integer([:positive])}"
     {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
     :ok = Session.subscribe(sid)
 
-    assert {:ok, %{run_pid: runner, run_id: run_id}} =
+    assert {:ok, %{run_pid: runner}} =
              Coordinator.add_message(
                sid,
                "needs approval",
                opts(
-                 timeout_ms: 400,
+                 timeout_ms: 100,
                  provider: ApprovalProvider,
                  tools: [Handbeam.Tool.Builtin.RunElixirScript],
                  middleware: [Handbeam.Agent.Middleware.ToolGuard]
@@ -455,17 +455,17 @@ defmodule Handbeam.Agent.RunnerTest do
              )
 
     assert_receive {:agent_event, %{kind: :tool_approval_requested}}, 1_000
-    assert_receive {:agent_event, %{kind: :run_end, payload: %{status: "timeout"}}}, 1_500
-    Process.sleep(100)
-    refute Process.alive?(runner)
 
-    assert {:error, :not_awaiting_approval} =
-             Coordinator.resume(sid, [%{"tool_call_id" => "call-1", "action" => "approve"}],
-               expected_run_id: run_id
-             )
+    assert_eventually(fn ->
+      assert {:ok, %{status: :awaiting_approval, deadline: nil}} = Coordinator.status(sid)
+    end)
+
+    refute_receive {:agent_event, %{kind: :run_end, payload: %{status: "timeout"}}}, 200
+    assert Process.alive?(runner)
+    assert :ok = Coordinator.cancel(sid)
   end
 
-  test "resume before the deadline does not extend the original budget" do
+  test "resuming an interactive approval starts a fresh inactivity window" do
     sid = "runner-resume-budget-#{System.unique_integer([:positive])}"
     {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
     :ok = Session.subscribe(sid)
@@ -476,7 +476,7 @@ defmodule Handbeam.Agent.RunnerTest do
                sid,
                "approve then block",
                opts(
-                 timeout_ms: 700,
+                 timeout_ms: 300,
                  provider: ResumeBudgetProvider,
                  provider_config: %{notify: parent},
                  tools: [Handbeam.Tool.Builtin.RunElixirScript],
@@ -486,11 +486,9 @@ defmodule Handbeam.Agent.RunnerTest do
 
     assert_receive {:agent_event, %{kind: :tool_approval_requested}}, 1_000
 
-    original_deadline =
-      assert_eventually(fn ->
-        assert {:ok, %{deadline: deadline, status: :awaiting_approval}} = Coordinator.status(sid)
-        deadline
-      end)
+    assert_eventually(fn ->
+      assert {:ok, %{deadline: nil, status: :awaiting_approval}} = Coordinator.status(sid)
+    end)
 
     assert :ok =
              Coordinator.resume(sid, [%{"tool_call_id" => "call-1", "action" => "approve"}],
@@ -498,9 +496,15 @@ defmodule Handbeam.Agent.RunnerTest do
              )
 
     assert_receive {:resumed_deadline, received_deadline}, 1_000
-    assert received_deadline == original_deadline
+    assert received_deadline == nil
 
-    assert_receive {:agent_event, %{kind: :run_end, payload: %{status: "timeout"}}}, 1_200
+    assert_receive {:agent_event,
+                    %{
+                      kind: :run_end,
+                      payload: %{status: "timeout", reason: :run_inactivity_timeout}
+                    }},
+                   1_200
+
     refute_receive {:agent_event, %{kind: :run_end, payload: %{status: :completed}}}, 50
   end
 
@@ -760,7 +764,7 @@ defmodule Handbeam.Agent.RunnerTest do
     Coordinator.cancel(sid)
   end
 
-  test "run deadline ends a stuck provider and ignores a late result" do
+  test "delegated run deadline ends a stuck provider and ignores a late result" do
     sid = "runner-deadline-#{System.unique_integer([:positive])}"
     {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
     :ok = Session.subscribe(sid)
@@ -772,6 +776,7 @@ defmodule Handbeam.Agent.RunnerTest do
                "stuck",
                opts(
                  timeout_ms: 50,
+                 delegated?: true,
                  provider: BlockingProvider,
                  provider_config: %{notify: self(), counter: entered}
                )
