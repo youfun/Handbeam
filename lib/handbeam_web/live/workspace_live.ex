@@ -264,6 +264,10 @@ defmodule HandbeamWeb.WorkspaceLive do
     {:noreply, Composer.remove_attachment(socket, id)}
   end
 
+  def handle_event("cancel_upload", %{"ref" => ref}, socket) do
+    {:noreply, cancel_upload(socket, :images, ref)}
+  end
+
   @impl true
   def handle_event("clear_composer_error", _params, socket) do
     {:noreply, assign(socket, :composer_error, nil)}

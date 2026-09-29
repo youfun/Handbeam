@@ -993,6 +993,15 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
                 <div :for={entry <- @uploads.images.entries} class="composer-thumb">
                   <.live_img_preview entry={entry} />
                   <span class="sr-only">{entry.client_name}</span>
+                  <button
+                    type="button"
+                    phx-click="cancel_upload"
+                    phx-value-ref={entry.ref}
+                    class="composer-thumb-remove"
+                    aria-label={gettext("移除 %{name}", name: entry.client_name)}
+                  >
+                    ×
+                  </button>
                 </div>
                 <div :for={att <- @pending_attachments} class="composer-thumb">
                   <img
@@ -1004,7 +1013,9 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
                     phx-click="remove_attachment"
                     phx-value-id={att[:id] || att["id"]}
                     class="composer-thumb-remove"
-                    aria-label={gettext("移除")}
+                    aria-label={
+                      gettext("移除 %{name}", name: att[:filename] || att["filename"] || gettext("附件"))
+                    }
                   >
                     ×
                   </button>

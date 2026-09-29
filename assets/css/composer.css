@@ -174,7 +174,6 @@
   height: 32px;
   flex-shrink: 0;
   border-radius: var(--sig-radius-lg);
-  overflow: hidden;
   background: var(--sig-bg-input);
   border: 1px solid var(--sig-border-default);
 }
@@ -187,20 +186,22 @@
   height: 100%;
   object-fit: cover;
   display: block;
+  border-radius: inherit;
 }
 
 .composer-thumb-remove {
   position: absolute;
-  top: -4px;
-  right: -4px;
-  width: 14px;
-  height: 14px;
+  top: -5px;
+  right: -5px;
+  z-index: 1;
+  width: 16px;
+  height: 16px;
   border: none;
   border-radius: 50%;
   background: var(--sig-text-primary);
   color: var(--sig-text-inverse);
-  font-size: 11px;
-  line-height: 14px;
+  font-size: 12px;
+  line-height: 16px;
   padding: 0;
   cursor: pointer;
 }

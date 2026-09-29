@@ -449,6 +449,9 @@ msgstr "Attachments"
 msgid "移除"
 msgstr "Remove"
 
+msgid "移除 %{name}"
+msgstr "Remove %{name}"
+
 msgid "Diff: "
 msgstr "Diff: "
 

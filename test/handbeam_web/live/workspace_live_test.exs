@@ -1410,7 +1410,39 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
 
       assert has_element?(view, "#composer-attachments")
       assert has_element?(view, "#composer-attachments span.sr-only", "preview.png")
+      assert has_element?(view, "#composer-attachments button[phx-click='cancel_upload']")
       assert render(view) =~ "preview.png"
+
+      view
+      |> element("#composer-attachments button[phx-click='cancel_upload']")
+      |> render_click()
+
+      refute has_element?(view, "#composer-attachments span.sr-only", "preview.png")
+      refute has_element?(view, "#composer-attachments button[phx-click='cancel_upload']")
+    end
+
+    test "pending composer attachment can be removed from the thumbnail", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      :sys.replace_state(view.pid, fn %{socket: socket} = state ->
+        %{
+          state
+          | socket:
+              Phoenix.Component.assign(socket, :pending_attachments, [
+                %{"id" => "keep-web", "filename" => "keep.png", "url" => "/uploads/keep.png"}
+              ])
+        }
+      end)
+
+      render_click(view, "clear_composer_error", %{})
+      assert has_element?(view, "#composer-attachments button[phx-click='remove_attachment']")
+
+      view
+      |> element("#composer-attachments button[phx-click='remove_attachment']")
+      |> render_click()
+
+      assert :sys.get_state(view.pid).socket.assigns.pending_attachments == []
+      refute has_element?(view, "#composer-attachments button[phx-click='remove_attachment']")
     end
 
     test "sent image uses persistable string-key fields for timeline urls", %{conn: conn} do
