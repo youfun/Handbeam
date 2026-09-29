@@ -269,14 +269,14 @@ defmodule Handbeam.Agent.Turn do
         tool: call[:name] || call["name"],
         parent_tool_call_id: nil,
         duration_ms: 0,
-        details: details,
+        details: bounded_tool_details(details),
         file_path: file_path,
         output: bounded_tool_output(ui_block && (ui_block[:content] || ui_block["content"]))
       }
 
       payload =
         if ui_block && ui_block[:is_error] do
-          Map.put(payload, :error, ui_block[:content])
+          Map.put(payload, :error, bounded_tool_error(ui_block[:content] || ui_block["content"]))
         else
           payload
         end
@@ -1512,8 +1512,8 @@ defmodule Handbeam.Agent.Turn do
         tool_use_id: block[:tool_use_id],
         tool: get_in(block, [:details, :tool]) || "unknown",
         duration_ms: 0,
-        details: block[:details] || %{},
-        error: block[:content],
+        details: bounded_tool_details(block[:details] || %{}),
+        error: bounded_tool_error(block[:content]),
         output: bounded_tool_output(block[:content])
       })
     end)
@@ -1641,7 +1641,7 @@ defmodule Handbeam.Agent.Turn do
               tool: call[:name],
               parent_tool_call_id: nil,
               duration_ms: duration_ms,
-              details: details,
+              details: bounded_tool_details(details),
               file_path: file_path,
               output: bounded_tool_output(ui_block && ui_block[:content])
             }
@@ -1649,11 +1649,12 @@ defmodule Handbeam.Agent.Turn do
             # Add error if present
             payload =
               if ui_block && ui_block[:is_error] do
-                Map.put(payload, :error, ui_block[:content])
+                Map.put(payload, :error, bounded_tool_error(ui_block[:content]))
               else
                 payload
               end
 
+            record_tool_receipt(state, call, ui_block)
             emit(opts, :tool_end, payload)
           end)
 
@@ -1764,6 +1765,43 @@ defmodule Handbeam.Agent.Turn do
     do: String.slice(output, 0, @max_tool_event_output)
 
   defp bounded_tool_output(output), do: Handbeam.JsonSafe.normalize(output)
+
+  defp bounded_tool_error(error) when is_binary(error),
+    do: String.slice(error, 0, @max_tool_event_output)
+
+  defp bounded_tool_error(error), do: error
+
+  defp bounded_tool_details(details) do
+    Handbeam.Agent.Tool.ResultContract.project_details(details || %{})
+  end
+
+  defp record_tool_receipt(state, call, ui_block) do
+    conversation_id = state.config.context[:conversation_id]
+    call_id = call[:id]
+
+    if is_binary(conversation_id) and is_binary(call_id) do
+      details = (ui_block && ui_block[:details]) || %{}
+      side_effect = details[:side_effect] || details["side_effect"] || :unknown
+
+      Handbeam.Agent.OperationReceipt.reserve(
+        {:tool_effect, conversation_id},
+        call_id,
+        Handbeam.Agent.OperationReceipt.fingerprint({call[:name], side_effect})
+      )
+
+      Handbeam.Agent.OperationReceipt.complete(
+        {:tool_effect, conversation_id},
+        call_id,
+        %{
+          "tool" => call[:name],
+          "side_effect" => to_string(side_effect),
+          "operation_id" => details[:operation_id] || details["operation_id"]
+        }
+      )
+    end
+
+    :ok
+  end
 
   # ── Error formatting ──
 

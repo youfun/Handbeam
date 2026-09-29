@@ -314,6 +314,9 @@ defmodule Handbeam.Tool.Registry do
     else
       {:reply, :ok, %{state | tools: Map.put(state.tools, entry.name, entry)}}
     end
+  rescue
+    exception ->
+      {:reply, {:error, {:invalid_tool, Exception.message(exception)}}, state}
   end
 
   def handle_call({:replace_owner, owner, tool_mods}, _from, state) do
@@ -450,6 +453,7 @@ defmodule Handbeam.Tool.Registry do
       concurrent?:
         if(function_exported?(mod, :concurrent?, 0), do: mod.concurrent?(), else: true),
       timeout_ms: if(function_exported?(mod, :timeout_ms, 0), do: mod.timeout_ms(), else: nil),
+      hint: tool_hint(mod),
       nested_only?: nested_only?(mod, meta),
       meta: meta
     }
@@ -472,10 +476,24 @@ defmodule Handbeam.Tool.Registry do
       max_result_chars: Keyword.get(opts, :max_result_chars, :unlimited),
       concurrent?: Keyword.get(opts, :concurrent?, true),
       timeout_ms: Keyword.get(opts, :timeout_ms),
+      hint: tool_hint(Keyword.get(opts, :hint)),
       nested_only?: nested_only?(nil, meta) or Keyword.get(opts, :nested_only?, false),
       meta: meta
     }
   end
+
+  defp tool_hint(mod) when is_atom(mod) do
+    if function_exported?(mod, :hint, 0), do: tool_hint(mod.hint()), else: nil
+  end
+
+  defp tool_hint(hint) when is_binary(hint) do
+    case String.trim(hint) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp tool_hint(_hint), do: nil
 
   defp nested_only?(mod, meta) do
     module_flag =

@@ -157,7 +157,7 @@ defmodule Handbeam.Tool.Builtin.EditTest do
       {:ok, output, data} =
         Edit.execute(
           %{"file_path" => path, "old_string" => "AAA", "new_string" => "ZZZ"},
-          %{working_directory: @work_dir}
+          %{working_directory: @work_dir, conversation_id: "edit-test"}
         )
 
       assert output =~ "- AAA"
@@ -174,9 +174,13 @@ defmodule Handbeam.Tool.Builtin.EditTest do
       assert data.change_id
       assert data.reversible == true
       assert data.revert_status == "available"
-      assert data.before_content == "AAA\nBBB\n"
-      assert data.after_content == "ZZZ\nBBB\n"
-      assert data.change.diff_lines == data.diff_lines
+      refute Map.has_key?(data, :before_content)
+      refute Map.has_key?(data, :after_content)
+      refute Map.has_key?(data, :change)
+      assert {:ok, snapshot} = Handbeam.ChangeSnapshot.load(data.change_snapshot_ref)
+      assert snapshot["before_content"] == "AAA\nBBB\n"
+      assert snapshot["after_content"] == "ZZZ\nBBB\n"
+      assert snapshot["diff_lines"] == data.diff_lines
     end
 
     test "diff_lines preserves raw HTML text (HEEx will escape later)" do
@@ -540,7 +544,7 @@ defmodule Handbeam.Tool.Builtin.EditTest do
       {:ok, output, data} =
         Edit.execute(
           %{"file_path" => path, "mode" => "diff", "diff" => diff},
-          %{working_directory: @work_dir}
+          %{working_directory: @work_dir, conversation_id: "edit-test"}
         )
 
       assert output =~ "diff mode"
@@ -568,7 +572,7 @@ defmodule Handbeam.Tool.Builtin.EditTest do
       {:ok, output, data} =
         Edit.execute(
           %{"file_path" => path, "mode" => "diff", "diff" => diff},
-          %{working_directory: @work_dir}
+          %{working_directory: @work_dir, conversation_id: "edit-test"}
         )
 
       assert output =~ "diff mode"
@@ -701,7 +705,7 @@ defmodule Handbeam.Tool.Builtin.EditTest do
       {:ok, output, data} =
         Edit.execute(
           %{"file_path" => path, "mode" => "diff", "diff" => diff},
-          %{working_directory: @work_dir}
+          %{working_directory: @work_dir, conversation_id: "edit-test"}
         )
 
       # Output includes diff text
@@ -713,8 +717,11 @@ defmodule Handbeam.Tool.Builtin.EditTest do
       assert data.mode == "diff"
       assert data.replacements >= 1
       assert data.change_id
-      assert data.before_content == "AAA\nBBB\n"
-      assert data.after_content == "ZZZ\nBBB\n"
+      refute Map.has_key?(data, :before_content)
+      refute Map.has_key?(data, :after_content)
+      assert {:ok, snapshot} = Handbeam.ChangeSnapshot.load(data.change_snapshot_ref)
+      assert snapshot["before_content"] == "AAA\nBBB\n"
+      assert snapshot["after_content"] == "ZZZ\nBBB\n"
       assert data.diff_first_changed_line == 1
 
       # Diff lines should contain the changes

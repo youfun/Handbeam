@@ -29,6 +29,12 @@ defmodule Handbeam.Tool.Builtin.CodeSearch do
   end
 
   @impl true
+  def hint do
+    "This failure is not an empty result. Use grep for an exact pattern, or read a known path. " <>
+      "Do not repeat the same query unchanged."
+  end
+
+  @impl true
   def input_schema do
     %{
       type: "object",

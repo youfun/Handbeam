@@ -22,6 +22,12 @@ defmodule Handbeam.Tool.Builtin.Write do
   end
 
   @impl true
+  def hint do
+    "Use a workspace-relative file_path. A leading / is filesystem root, not the workspace. " <>
+      "For a precise change to an existing file, use edit instead of rewriting the whole file."
+  end
+
+  @impl true
   def input_schema do
     %{
       type: "object",
@@ -31,9 +37,14 @@ defmodule Handbeam.Tool.Builtin.Write do
           description:
             "File path inside the current workspace. Prefer a relative path such as workspace-check.txt or reports/summary.md. A leading / means filesystem root, not workspace root; absolute paths must remain inside the workspace."
         },
-        content: %{type: "string", description: "Content to write to the file"}
+        content: %{type: "string", description: "Content to write to the file"},
+        retry_of: %{
+          type: "string",
+          description:
+            "operation_id from a failed write. Reuses the saved content; send only the small field that changed. Mutually exclusive with content."
+        }
       },
-      required: ["file_path", "content"]
+      required: ["file_path"]
     }
   end
 
@@ -44,47 +55,74 @@ defmodule Handbeam.Tool.Builtin.Write do
   def concurrent?, do: false
 
   @impl true
-  def execute(%{"file_path" => file_path, "content" => content}, context) do
+  def execute(%{"file_path" => file_path, "content" => content} = input, context)
+      when is_binary(content) do
     with {:ok, path} <- Handbeam.Agent.Tool.resolve_path(Helpers.expand_tilde(file_path), context),
-         :ok <- validate_within_workspace(path, context),
-         :ok <- reject_directory_target(path),
-         :ok <- Handbeam.Security.PathValidator.validate_writeable(Path.dirname(path)),
-         {:ok, before_content} <- read_before_content(path),
-         :ok <- create_parent_dirs(path) do
-      case File.write(path, content) do
-        :ok ->
-          _ = Handbeam.Extension.HotReloader.notify_path(path)
-          bytes = byte_size(content)
-          lines = length(String.split(content, "\n"))
-          change = Handbeam.ChangeSnapshot.build_write_snapshot(path, before_content, content)
+         {:ok, _input, operation_id} <-
+           Handbeam.Agent.Tool.SavedInput.prepare("write", input, context, ["file_path"]) do
+      result = write_prepared(path, content, operation_id, context)
+      Handbeam.Agent.Tool.SavedInput.attach(operation_id, result, context)
+    end
+  end
 
-          {:ok, "Wrote #{path} (#{bytes} bytes, #{lines} lines)",
-           %{
-             file_path: path,
-             bytes: bytes,
-             lines: lines,
-             diff_lines: change.diff_lines,
-             change: change,
-             change_id: change.change_id,
-             change_type: change.change_type,
-             existed_before: change.existed_before,
-             before_sha256: change.before_sha256,
-             after_sha256: change.after_sha256,
-             before_content: change.before_content,
-             after_content: change.after_content,
-             reversible: change.reversible,
-             revert_status: change.revert_status,
-             revert_reason: change.revert_reason
-           }}
-
-        {:error, reason} ->
-          {:error, "Failed to write #{path}: #{reason}"}
-      end
+  def execute(%{"retry_of" => ref, "file_path" => _file_path} = input, context)
+      when is_binary(ref) do
+    with {:ok, input, operation_id} <-
+           Handbeam.Agent.Tool.SavedInput.prepare("write", input, context, ["file_path"]),
+         {:ok, content} <- fetch_content(input, operation_id),
+         {:ok, path} <-
+           Handbeam.Agent.Tool.resolve_path(Helpers.expand_tilde(input["file_path"]), context) do
+      result = write_prepared(path, content, operation_id, context)
+      Handbeam.Agent.Tool.SavedInput.attach(operation_id, result, context)
     end
   end
 
   def execute(_input, _context) do
-    {:error, "file_path and content are required"}
+    {:error, "file_path and either content or retry_of are required"}
+  end
+
+  defp write_prepared(path, content, operation_id, context) do
+    with :ok <- validate_within_workspace(path, context),
+         :ok <- reject_directory_target(path),
+         :ok <- Handbeam.Security.PathValidator.validate_writeable(Path.dirname(path)),
+         {:ok, before_content} <- read_before_content(path),
+         :ok <- create_parent_dirs(path) do
+      write_resolved(path, content, before_content, operation_id, context)
+    end
+  end
+
+  defp write_resolved(path, content, before_content, operation_id, context) do
+    case Handbeam.Agent.Tool.FileCommit.commit(path, content, context, operation_id: operation_id) do
+      {:ok, commit} ->
+        _ = Handbeam.Extension.HotReloader.notify_path(path)
+        bytes = byte_size(content)
+        lines = length(String.split(content, "\n"))
+        change = Handbeam.ChangeSnapshot.build_write_snapshot(path, before_content, content)
+        change_details = Handbeam.ChangeSnapshot.result_details(change, context)
+
+        {:ok, "Wrote #{path} (#{bytes} bytes, #{lines} lines)",
+         Map.merge(change_details, %{
+           operation_id: operation_id,
+           status: :succeeded,
+           side_effect: commit.side_effect,
+           file_path: path,
+           bytes: bytes,
+           lines: lines,
+           diff_lines: change.diff_lines
+         })}
+
+      {:error, reason, details} ->
+        {:error, reason, Map.merge(details, %{allowed_overrides: ["file_path"]})}
+    end
+  end
+
+  defp fetch_content(%{"content" => content}, _operation_id) when is_binary(content),
+    do: {:ok, content}
+
+  defp fetch_content(_input, operation_id) do
+    Handbeam.Agent.Tool.SavedInput.failure(operation_id, "file_path and content are required", %{
+      allowed_overrides: ["file_path"]
+    })
   end
 
   defp read_before_content(path) do

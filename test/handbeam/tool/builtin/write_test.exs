@@ -31,7 +31,7 @@ defmodule Handbeam.Tool.Builtin.WriteTest do
       {:ok, output, data} =
         Write.execute(
           %{"file_path" => path, "content" => "hello\nworld\n"},
-          %{working_directory: @work_dir}
+          %{working_directory: @work_dir, conversation_id: "write-test"}
         )
 
       assert output =~ "Wrote"
@@ -43,8 +43,11 @@ defmodule Handbeam.Tool.Builtin.WriteTest do
       assert data.existed_before == false
       assert data.reversible == true
       assert data.revert_status == "available"
-      assert data.before_content == nil
-      assert data.after_content == "hello\nworld\n"
+      refute Map.has_key?(data, :before_content)
+      refute Map.has_key?(data, :after_content)
+      assert {:ok, snapshot} = Handbeam.ChangeSnapshot.load(data.change_snapshot_ref)
+      assert snapshot["before_content"] == nil
+      assert snapshot["after_content"] == "hello\nworld\n"
       assert File.read!(path) == "hello\nworld\n"
     end
 
@@ -68,7 +71,10 @@ defmodule Handbeam.Tool.Builtin.WriteTest do
 
       {:ok, output, _data} =
         Write.execute(
-          %{"file_path" => "desktop/macos/Sources/Handbeam/main.swift", "content" => "import AppKit\n"},
+          %{
+            "file_path" => "desktop/macos/Sources/Handbeam/main.swift",
+            "content" => "import AppKit\n"
+          },
           %{working_directory: @work_dir}
         )
 
@@ -120,13 +126,16 @@ defmodule Handbeam.Tool.Builtin.WriteTest do
       {:ok, output, data} =
         Write.execute(
           %{"file_path" => path, "content" => "new content\n"},
-          %{working_directory: @work_dir}
+          %{working_directory: @work_dir, conversation_id: "write-test"}
         )
 
       assert output =~ "Wrote"
       assert data.existed_before == true
-      assert data.before_content == "old content\n"
-      assert data.after_content == "new content\n"
+      refute Map.has_key?(data, :before_content)
+      refute Map.has_key?(data, :after_content)
+      assert {:ok, snapshot} = Handbeam.ChangeSnapshot.load(data.change_snapshot_ref)
+      assert snapshot["before_content"] == "old content\n"
+      assert snapshot["after_content"] == "new content\n"
       assert is_list(data.diff_lines)
       assert File.read!(path) == "new content\n"
     end
@@ -295,7 +304,9 @@ defmodule Handbeam.Tool.Builtin.WriteTest do
     test "has input_schema with required fields" do
       schema = Write.input_schema()
       assert "file_path" in schema.required
-      assert "content" in schema.required
+      refute "content" in schema.required
+      assert schema.properties.content.type == "string"
+      assert schema.properties.retry_of.type == "string"
     end
 
     test "declares concurrent? as false" do

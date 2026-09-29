@@ -54,6 +54,18 @@ defmodule Handbeam.Tool.RegistryTest do
     after
       Registry.unregister("override_probe")
     end
+
+    test "stores a trimmed hint and omits it when the tool defines none" do
+      assert :ok = Registry.register(Handbeam.Tool.Builtin.Edit, override: true)
+      assert {:ok, edit} = Registry.get("edit")
+      assert edit.hint =~ "Re-read the file"
+
+      assert :ok = Registry.register(__MODULE__.OverrideProbeA, override: true)
+      assert {:ok, probe} = Registry.get("override_probe")
+      assert probe.hint == nil
+    after
+      Registry.unregister("override_probe")
+    end
   end
 
   describe "owner-aware replacement" do

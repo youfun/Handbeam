@@ -44,7 +44,16 @@ defmodule Handbeam.Agent.Tool do
 
   @callback timeout_ms() :: pos_integer()
 
-  @optional_callbacks [max_result_chars: 0, concurrent?: 0, timeout_ms: 0]
+  @doc """
+  Short recovery note appended to a failed result for this tool.
+
+  The model sees it only after a failure, next to the concrete error, so it
+  can change the next call instead of repeating the same one. Omit it when
+  the error text is already enough.
+  """
+  @callback hint() :: String.t()
+
+  @optional_callbacks [max_result_chars: 0, concurrent?: 0, timeout_ms: 0, hint: 0]
 
   @doc """
   Resolve a file path against the working directory from context.

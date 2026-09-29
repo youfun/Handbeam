@@ -104,15 +104,22 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
            tool_use_id: tool_use_id,
            tool: "edit",
            duration_ms: 42,
-           details: %{
-             file_path: file_path,
-             diff_lines: change.diff_lines,
-             change: change
-           }
+           details:
+             %{
+               file_path: file_path,
+               diff_lines: change.diff_lines
+             }
+             |> Map.merge(change_event_details(change))
          },
          2
        )}
     )
+  end
+
+  defp change_event_details(change) do
+    Handbeam.ChangeSnapshot.result_details(change, %{
+      conversation_id: "workspace-live-revert-test"
+    })
   end
 
   defp agent_event(kind, payload, seq \\ 1) do
@@ -2897,11 +2904,12 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
                tool_use_id: "tu_revert_1",
                tool: "edit",
                duration_ms: 42,
-               details: %{
-                 file_path: file_path,
-                 diff_lines: change.diff_lines,
-                 change: change
-               }
+               details:
+                 %{
+                   file_path: file_path,
+                   diff_lines: change.diff_lines
+                 }
+                 |> Map.merge(change_event_details(change))
              },
              2
            )}
@@ -3002,11 +3010,12 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
                tool_use_id: "tu_conflict_1",
                tool: "edit",
                duration_ms: 42,
-               details: %{
-                 file_path: file_path,
-                 diff_lines: change.diff_lines,
-                 change: change
-               }
+               details:
+                 %{
+                   file_path: file_path,
+                   diff_lines: change.diff_lines
+                 }
+                 |> Map.merge(change_event_details(change))
              },
              2
            )}

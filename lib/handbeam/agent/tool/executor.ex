@@ -9,7 +9,7 @@ defmodule Handbeam.Agent.Tool.Executor do
   """
 
   alias Handbeam.Agent.{Message, State}
-  alias Handbeam.Agent.Tool.Result
+  alias Handbeam.Agent.Tool.{Result, ResultContract}
   alias Handbeam.Extension.HookPipeline
 
   require Logger
@@ -24,6 +24,9 @@ defmodule Handbeam.Agent.Tool.Executor do
   and mapped to provider-compatible `tool_result_block` maps.
   UI details (exit_code, timed_out, file metadata, etc.) are preserved
   in the `"details"` key of each block and are not sent to the LLM.
+
+  A failed call keeps its concrete error and, when the tool defines one,
+  appends that tool's bounded recovery hint to the model-facing content.
 
   This is the main entry point used by the agent Turn loop.
   Internally calls `execute_all_with_details/2` and returns only the
@@ -93,7 +96,18 @@ defmodule Handbeam.Agent.Tool.Executor do
                 timeout_for(call, tool_fns, state)
               )
 
-            emit_nested(opts, :tool_end, nested_end_payload(call, block, parent_tool_call_id))
+            emit_nested(
+              opts,
+              :tool_end,
+              nested_end_payload(call, block, parent_tool_call_id)
+              |> Map.update(:details, %{}, &Handbeam.Agent.Tool.ResultContract.project_details/1)
+              |> Map.update(:output, nil, &String.slice(to_string(&1), 0, 16_000))
+              |> Map.update(:error, nil, fn
+                nil -> nil
+                error -> String.slice(to_string(error), 0, 16_000)
+              end)
+            )
+
             nested_outcome(block)
         end
 
@@ -148,7 +162,10 @@ defmodule Handbeam.Agent.Tool.Executor do
                 "reason=#{inspect(reason)}"
             end)
 
-            result_to_block(Result.error("Tool execution timed out"), tool_id)
+            result_to_block(
+              Result.error(failure_content("Tool execution timed out", tool_fns, tool_name)),
+              tool_id
+            )
         end)
       end
 
@@ -195,24 +212,12 @@ defmodule Handbeam.Agent.Tool.Executor do
                 {:error, "Delegated thread is read-only; tool execution denied"}
               end
 
-            case outcome do
-              {:ok, text} ->
-                Result.new(text)
-
-              {:ok, text, data} ->
-                Result.new(text, data)
-
-              {:error, reason, details} when is_map(details) ->
-                Result.error(reason, details)
-
-              {:error, reason} ->
-                Result.error(reason)
-            end
+            normalize_outcome(outcome, tool_fns, name)
           rescue
             e ->
               msg = "Tool #{name} crashed: #{Exception.message(e)}"
               Logger.warning(fn -> msg <> "\n" <> Exception.format(:error, e, __STACKTRACE__) end)
-              Result.error(msg)
+              Result.error(failure_content(msg, tool_fns, name))
           end
 
         :error ->
@@ -262,7 +267,12 @@ defmodule Handbeam.Agent.Tool.Executor do
             "reason=#{inspect(reason)}"
         end)
 
-        result_to_block(Result.error("Tool execution failed: #{inspect(reason)}"), tool_id)
+        result_to_block(
+          Result.error(
+            failure_content("Tool execution failed: #{inspect(reason)}", tool_fns, tool_name)
+          ),
+          tool_id
+        )
 
       nil ->
         Logger.warning(fn ->
@@ -271,7 +281,13 @@ defmodule Handbeam.Agent.Tool.Executor do
         end)
 
         result_to_block(
-          Result.error("Tool execution timed out after #{div(guard_ms, 1000)}s"),
+          Result.error(
+            failure_content(
+              "Tool execution timed out after #{div(guard_ms, 1000)}s",
+              tool_fns,
+              tool_name
+            )
+          ),
           tool_id
         )
     end
@@ -310,58 +326,63 @@ defmodule Handbeam.Agent.Tool.Executor do
   @doc """
   Apply truncation to a ToolResult's content using a unified strategy.
 
-  Uses `head_tail` strategy to preserve both beginning and end of output.
-  The original content is preserved in result.details when truncation occurs.
+  Oversized bodies are spilled to an artifact. Details never retain the
+  original text, including when the spill itself fails. Errors are bounded
+  the same way as successes.
   """
-  def truncate_result(%Result{is_error: true} = result, _max_chars), do: result
-
-  def truncate_result(%Result{content: content} = result, max_chars)
-      when is_integer(max_chars) and byte_size(content) > max_chars do
-    spill_success(result, max_chars, nil)
+  def truncate_result(%Result{} = result, max_chars) do
+    bound_result(result, max_chars, %{truncate_only?: true})
   end
 
-  def truncate_result(result, _max_chars), do: result
+  defp bound_result(%Result{} = result, max_chars, context) do
+    spilled =
+      if is_integer(max_chars) and byte_size(to_string(result.content)) > max_chars do
+        spill_body(result, max_chars, context[:working_directory])
+      else
+        result
+      end
 
-  defp bound_result(%Result{is_error: true} = result, _max_chars, _context), do: result
-
-  defp bound_result(%Result{content: content} = result, max_chars, context)
-       when is_integer(max_chars) and byte_size(content) > max_chars do
-    spill_success(result, max_chars, context[:working_directory])
+    if context[:truncate_only?], do: spilled, else: project_result(spilled, context)
   end
 
-  defp bound_result(result, _max_chars, _context), do: result
+  defp spill_body(%Result{content: content} = result, max_chars, working_directory) do
+    head = String.slice(content, 0, min(@spill_head_chars, max_chars))
 
-  defp spill_success(%Result{content: content} = result, max_chars, working_directory) do
     case spill_path(working_directory) do
       {:ok, relative, absolute} ->
-        File.write!(absolute, content)
-        head = String.slice(content, 0, min(@spill_head_chars, max_chars))
+        case File.write(absolute, content) do
+          :ok ->
+            preview =
+              head <>
+                "\n\n[Full result written to #{relative} (#{byte_size(content)} bytes). " <>
+                "Read it with the read tool using offset and limit. " <>
+                "Do not assume the omitted tail.]\n"
 
-        preview =
-          head <>
-            "\n\n[Full result written to #{relative} (#{byte_size(content)} bytes). " <>
-            "Read it with the read tool using offset and limit. " <>
-            "Do not assume the omitted tail.]\n"
+            %{
+              result
+              | content: preview,
+                details: Map.merge(result.details || %{}, %{spill_path: relative})
+            }
 
-        %Result{
-          result
-          | content: preview,
-            details:
-              Map.merge(result.details || %{}, %{
-                original_content: content,
-                spill_path: relative
-              })
-        }
+          {:error, _reason} ->
+            spill_unavailable(result, max_chars)
+        end
 
       :error ->
-        trunc_result = Handbeam.Utils.Truncate.truncate_head_tail(content, max_bytes: max_chars)
-
-        %Result{
-          result
-          | content: trunc_result.content,
-            details: Map.put(result.details || %{}, :original_content, content)
-        }
+        spill_unavailable(result, max_chars)
     end
+  end
+
+  defp spill_unavailable(%Result{content: content} = result, max_chars) do
+    trunc_result = Handbeam.Utils.Truncate.truncate_head_tail(content, max_bytes: max_chars)
+
+    %{
+      result
+      | content:
+          trunc_result.content <>
+            "\n[artifact unavailable; full body was not retained in the result]",
+        details: Map.put(result.details || %{}, :artifact_unavailable, true)
+    }
   end
 
   defp spill_path(working_directory)
@@ -393,16 +414,61 @@ defmodule Handbeam.Agent.Tool.Executor do
   and is NOT sent to the LLM — providers only look at `"content"` and `"is_error"`.
   """
   def result_to_block(%Result{} = result, tool_use_id) do
-    case result do
-      %{is_error: true} ->
-        Message.tool_result_block(tool_use_id, result.content, true, result.details)
+    result = project_result(result, %{})
+    details = result_details(result)
 
-      %{details: nil} ->
-        Message.tool_result_block(tool_use_id, result.content, false)
+    Message.tool_result_block(tool_use_id, result.content, result.is_error, details)
+  end
 
-      _ ->
-        Message.tool_result_block(tool_use_id, result.content, false, result.details)
-    end
+  defp normalize_outcome(%Result{} = result, _tool_fns, _name), do: result
+  defp normalize_outcome({:ok, text}, _tool_fns, _name) when is_binary(text), do: Result.new(text)
+
+  defp normalize_outcome({:ok, text, data}, _tool_fns, _name)
+       when is_binary(text) and is_map(data),
+       do: Result.new(text, data) |> with_contract(data)
+
+  defp normalize_outcome({:error, reason, details}, tool_fns, name) when is_map(details),
+    do:
+      Result.error(failure_content(reason, tool_fns, name), details)
+      |> with_contract(details)
+
+  defp normalize_outcome({:error, reason}, tool_fns, name),
+    do: Result.error(failure_content(reason, tool_fns, name))
+
+  defp normalize_outcome(other, tool_fns, name),
+    do:
+      Result.error(
+        failure_content(
+          "Tool returned an unexpected result: #{inspect(other, limit: 5)}",
+          tool_fns,
+          name
+        )
+      )
+
+  defp project_result(%Result{} = result, context) do
+    ResultContract.project(result, artifact: context[:artifact])
+  end
+
+  defp with_contract(%Result{} = result, details) do
+    %{
+      result
+      | operation_id: detail_value(details, :operation_id, result.operation_id),
+        status: detail_value(details, :status, result.status),
+        code: detail_value(details, :code, result.code),
+        side_effect: detail_value(details, :side_effect, result.side_effect),
+        recovery: detail_value(details, :recovery, result.recovery),
+        artifacts: detail_value(details, :artifacts, result.artifacts)
+    }
+  end
+
+  defp detail_value(details, key, default) do
+    Map.get(details, key, Map.get(details, Atom.to_string(key), default))
+  end
+
+  defp result_details(%Result{} = result) do
+    envelope = ResultContract.envelope(result)
+    details = Map.merge(result.details || %{}, envelope)
+    if details == %{}, do: nil, else: details
   end
 
   defp advisor_tool_allowed?("advisor", config) do
@@ -434,6 +500,35 @@ defmodule Handbeam.Agent.Tool.Executor do
   end
 
   defp remaining_run_ms(_state), do: nil
+
+  defp failure_content(reason, tool_fns, name) do
+    error = error_text(reason)
+
+    case tool_hint(tool_fns, name) do
+      nil -> error
+      hint -> error <> "\n\nTool hint: " <> hint
+    end
+  end
+
+  defp error_text(reason) when is_binary(reason) do
+    case String.trim(reason) do
+      "" -> "Tool execution failed"
+      text -> text
+    end
+  end
+
+  defp error_text(reason) when is_atom(reason) and not is_nil(reason) do
+    reason |> Atom.to_string() |> error_text()
+  end
+
+  defp error_text(reason), do: inspect(reason)
+
+  defp tool_hint(tool_fns, name) do
+    case Map.get(tool_fns, name) do
+      %{hint: hint} when is_binary(hint) and hint != "" -> hint
+      _ -> nil
+    end
+  end
 
   defp partition_by_concurrency(tool_calls, tool_fns) do
     Enum.split_with(tool_calls, fn call ->
@@ -548,8 +643,8 @@ defmodule Handbeam.Agent.Tool.Executor do
       tool: call.name,
       parent_tool_call_id: parent_tool_call_id,
       duration_ms: 0,
-      details: details,
-      output: block[:content]
+      details: Handbeam.Agent.Tool.ResultContract.project_details(details) || %{},
+      output: String.slice(to_string(block[:content] || ""), 0, 16_000)
     }
 
     if block[:is_error], do: Map.put(payload, :error, block[:content]), else: payload

@@ -346,22 +346,22 @@ defmodule Handbeam.Agent.Tool.ExecutorTest do
 
       truncated = Executor.truncate_result(result, 1_000)
 
-      # Content should be truncated to within max_chars
-      assert byte_size(truncated.content) <= 1_000
-      assert truncated.content =~ "省略"
-
-      # Original content preserved in details for UI
-      assert truncated.details[:original_content] == long_text
+      # Content should be truncated to a bounded preview. The full body is not
+      # retained in details; callers spill it to an artifact when a workspace exists.
+      assert byte_size(truncated.content) < 2_000
+      assert truncated.content =~ "artifact unavailable"
+      refute truncated.details[:original_content]
       assert truncated.details[:exit_code] == 0
     end
 
-    test "does not truncate error results" do
+    test "bounds error results without retaining the original body" do
       result = Result.error("err: " <> String.duplicate("x", 10_000))
       truncated = Executor.truncate_result(result, 100)
 
-      # Error results pass through without truncation
       assert truncated.is_error == true
-      assert truncated.content == result.content
+      assert byte_size(truncated.content) < 2_000
+      refute truncated.content == result.content
+      refute truncated.details[:original_content]
     end
 
     test "passes through when max_chars is nil (unlimited)" do
@@ -691,8 +691,26 @@ defmodule Handbeam.Agent.Tool.ExecutorTest do
 
       def execute(_input, _context) do
         {:error, "Browser command timed out",
-         %{result_category: "failure", failure_category: "timeout"}}
+         %{
+           result_category: "failure",
+           failure_category: "timeout",
+           operation_id: "probe-op",
+           status: :failed,
+           side_effect: :not_started,
+           recovery: %{action: :retry_saved_input, ref: "probe-op"}
+         }}
       end
+
+      def hint, do: "Change the arguments from this error and retry once."
+    end
+
+    defmodule NoHintErrorTool do
+      @behaviour Handbeam.Agent.Tool
+
+      def name, do: "context_probe_error"
+      def description, do: "probe"
+      def input_schema, do: %{type: "object", properties: %{}}
+      def execute(_input, _context), do: {:error, "plain failure"}
     end
 
     defmodule ContextProbeTool do
@@ -714,8 +732,46 @@ defmodule Handbeam.Agent.Tool.ExecutorTest do
 
     setup do
       ensure_registered(ErrorDetailsTool)
+      ensure_registered(NoHintErrorTool)
       ensure_registered(ContextProbeTool)
       :ok
+    end
+
+    test "appends the tool hint to a failed model-facing result" do
+      state = State.init(%Config{}, "probe")
+
+      {:ok, result_msg, ui_blocks} =
+        Executor.execute_all_with_details(
+          [%{id: "h1", name: "error_details_probe", input: %{}}],
+          state
+        )
+
+      [block] = result_msg.content
+      assert block[:is_error] == true
+      assert block[:content] =~ "Browser command timed out"
+      assert block[:content] =~ "Tool hint: Change the arguments from this error"
+      refute block[:content] =~ "Tool hint: Tool hint:"
+
+      [ui_block] = ui_blocks
+      assert ui_block[:content] == block[:content]
+      assert ui_block[:details].failure_category == "timeout"
+      assert ui_block[:details].operation_id == "probe-op"
+      assert ui_block[:details].side_effect == :not_started
+      assert ui_block[:details].recovery.action == :retry_saved_input
+    end
+
+    test "does not append a tool hint when the tool defines none" do
+      state = State.init(%Config{}, "probe")
+
+      {:ok, result_msg, _ui_blocks} =
+        Executor.execute_all_with_details(
+          [%{id: "n1", name: "context_probe_error", input: %{}}],
+          state
+        )
+
+      [block] = result_msg.content
+      assert block[:content] == "plain failure"
+      refute block[:content] =~ "Tool hint:"
     end
 
     test "preserves details from {:error, content, details} on ui blocks" do

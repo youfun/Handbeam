@@ -43,6 +43,7 @@ defmodule Handbeam.EventRecorder do
     line =
       event
       |> Map.from_struct()
+      |> bound_recorded_event()
       |> Redactor.redact()
       |> Handbeam.JsonSafe.normalize()
       |> Handbeam.JSON.encode!()
@@ -60,6 +61,33 @@ defmodule Handbeam.EventRecorder do
   end
 
   defp default_event_dir, do: Handbeam.Home.expand("~/.handbeam/events")
+
+  defp bound_recorded_event(%{payload: payload} = event) when is_map(payload) do
+    alias Handbeam.Agent.Tool.ResultContract
+
+    payload =
+      payload
+      |> Map.update(:details, nil, &ResultContract.project_details/1)
+      |> Map.update("details", nil, &ResultContract.project_details/1)
+      |> bound_recorded_text(:output)
+      |> bound_recorded_text(:error)
+      |> bound_recorded_text("output")
+      |> bound_recorded_text("error")
+
+    %{event | payload: payload}
+  end
+
+  defp bound_recorded_event(event), do: event
+
+  defp bound_recorded_text(payload, key) do
+    case Map.get(payload, key) do
+      text when is_binary(text) and byte_size(text) > 16_000 ->
+        Map.put(payload, key, String.slice(text, 0, 15_900) <> "\n[truncated]")
+
+      _ ->
+        payload
+    end
+  end
 
   defp safe_session_id(session_id) do
     session_id

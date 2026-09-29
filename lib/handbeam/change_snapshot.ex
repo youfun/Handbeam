@@ -8,6 +8,7 @@ defmodule Handbeam.ChangeSnapshot do
 
   @max_snapshot_bytes 1_000_000
   @diff_context_lines 3
+  @ref_prefix "change_snapshot:"
 
   @type snapshot :: map()
 
@@ -38,6 +39,71 @@ defmodule Handbeam.ChangeSnapshot do
       diff_lines,
       opts
     )
+  end
+
+  @doc """
+  Persists a reversible snapshot outside tool events and returns an opaque
+  reference suitable for the bounded result contract.
+  """
+  @spec persist(snapshot(), map()) :: {:ok, String.t()} | {:error, term()}
+  def persist(%{reversible: true, change_id: change_id} = snapshot, context)
+      when is_map(context) do
+    with conversation_id when is_binary(conversation_id) <- conversation_id(context),
+         true <- safe_id?(conversation_id) and safe_id?(change_id),
+         path <- snapshot_path(conversation_id, change_id),
+         :ok <- File.mkdir_p(Path.dirname(path)),
+         {:ok, encoded} <- encode_snapshot(snapshot),
+         :ok <- atomic_write(path, encoded) do
+      {:ok, encode_ref(conversation_id, change_id)}
+    else
+      nil -> {:error, :missing_conversation_id}
+      false -> {:error, :invalid_snapshot_id}
+      {:error, _reason} = error -> error
+    end
+  end
+
+  def persist(_snapshot, _context), do: {:error, :not_reversible}
+
+  @doc "Loads a persisted change snapshot from an opaque reference."
+  @spec load(String.t()) :: {:ok, snapshot()} | {:error, term()}
+  def load(@ref_prefix <> encoded) do
+    with {:ok, decoded} <- Base.url_decode64(encoded, padding: false),
+         [conversation_id, change_id] <- :binary.split(decoded, <<0>>, [:global]),
+         true <- safe_id?(conversation_id) and safe_id?(change_id),
+         {:ok, body} <- File.read(snapshot_path(conversation_id, change_id)),
+         {:ok, snapshot} <- Handbeam.JSON.decode(body),
+         true <- is_map(snapshot) do
+      {:ok, snapshot}
+    else
+      false -> {:error, :invalid_snapshot_ref}
+      [_single] -> {:error, :invalid_snapshot_ref}
+      {:error, _reason} = error -> error
+      _ -> {:error, :invalid_snapshot}
+    end
+  end
+
+  def load(_ref), do: {:error, :invalid_snapshot_ref}
+
+  @doc "Returns bounded result details and stores full revert data when possible."
+  @spec result_details(snapshot(), map()) :: map()
+  def result_details(snapshot, context) do
+    details = Map.take(snapshot, snapshot_metadata_keys())
+
+    case persist(snapshot, context) do
+      {:ok, ref} ->
+        Map.put(details, :change_snapshot_ref, ref)
+
+      {:error, :not_reversible} ->
+        details
+
+      {:error, _reason} ->
+        %{
+          details
+          | reversible: false,
+            revert_status: "unavailable",
+            revert_reason: "snapshot_unavailable"
+        }
+    end
   end
 
   @spec diff_lines(binary(), binary()) :: [map()] | nil
@@ -84,6 +150,67 @@ defmodule Handbeam.ChangeSnapshot do
       revert_reason: if(reversible, do: nil, else: "too_large")
     }
   end
+
+  defp snapshot_metadata_keys do
+    [
+      :change_id,
+      :change_type,
+      :file_path,
+      :existed_before,
+      :before_sha256,
+      :after_sha256,
+      :reversible,
+      :revert_status,
+      :revert_reason
+    ]
+  end
+
+  defp encode_snapshot(snapshot) do
+    {:ok, Handbeam.JSON.encode!(Handbeam.JsonSafe.normalize(snapshot))}
+  rescue
+    error -> {:error, error}
+  end
+
+  defp atomic_write(path, body) do
+    temp = path <> ".tmp-" <> Integer.to_string(System.unique_integer([:positive]))
+
+    with :ok <- File.write(temp, body),
+         :ok <- File.rename(temp, path) do
+      :ok
+    else
+      {:error, reason} ->
+        _ = File.rm(temp)
+        {:error, reason}
+    end
+  end
+
+  defp encode_ref(conversation_id, change_id) do
+    @ref_prefix <> Base.url_encode64(conversation_id <> <<0>> <> change_id, padding: false)
+  end
+
+  defp snapshot_path(conversation_id, change_id) do
+    Path.join([
+      snapshot_root(),
+      "items",
+      conversation_id,
+      "change-snapshots",
+      change_id <> ".json"
+    ])
+  end
+
+  defp snapshot_root do
+    Application.get_env(
+      :handbeam,
+      :conversation_root,
+      Path.join(Handbeam.Home.path(), ".handbeam/conversations")
+    )
+  end
+
+  defp conversation_id(context),
+    do: Map.get(context, :conversation_id) || Map.get(context, "conversation_id")
+
+  defp safe_id?(id) when is_binary(id), do: Regex.match?(~r/\A[A-Za-z0-9_.:-]+\z/, id)
+  defp safe_id?(_id), do: false
 
   defp diff(old, new) do
     old_lines = String.split(old, "\n")

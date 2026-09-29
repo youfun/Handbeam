@@ -40,7 +40,8 @@ File.mkdir_p!(fixture_workspace_path)
 
 config :handbeam,
   models_file: fixture_models_path,
-  workspace_root: fixture_workspace_path
+  workspace_root: fixture_workspace_path,
+  conversation_root: Path.join(fixture_workspace_path, ".handbeam/conversations")
 
 config :phoenix_test, :endpoint, HandbeamWeb.Endpoint
 

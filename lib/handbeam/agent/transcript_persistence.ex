@@ -127,8 +127,18 @@ defmodule Handbeam.Agent.TranscriptPersistence do
     tool_use_id = payload_value(payload, :tool_use_id, tool_name)
     error = payload_value(payload, :error)
     status = tool_status(payload, error)
-    details = payload |> payload_value(:details, %{}) |> Handbeam.JsonSafe.normalize()
-    output = payload |> payload_value(:output) |> Handbeam.JsonSafe.normalize()
+
+    details =
+      payload
+      |> payload_value(:details, %{})
+      |> Handbeam.Agent.Tool.ResultContract.project_details()
+      |> Handbeam.JsonSafe.normalize()
+
+    output =
+      payload
+      |> payload_value(:output)
+      |> bound_persisted_output()
+      |> Handbeam.JsonSafe.normalize()
 
     patch = %{
       "tool_name" => tool_name,
@@ -896,6 +906,12 @@ defmodule Handbeam.Agent.TranscriptPersistence do
   end
 
   defp sanitize_block(block), do: block
+
+  defp bound_persisted_output(output) when is_binary(output) and byte_size(output) > 16_000 do
+    String.slice(output, 0, 15_900) <> "\n[truncated]"
+  end
+
+  defp bound_persisted_output(output), do: output
 
   defp payload_value(payload, key, default \\ nil)
 

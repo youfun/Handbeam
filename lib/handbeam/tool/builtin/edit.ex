@@ -24,6 +24,12 @@ defmodule Handbeam.Tool.Builtin.Edit do
   end
 
   @impl true
+  def hint do
+    "Re-read the file and retry with the current exact text, including whitespace. " <>
+      "Do not repeat the same old_string."
+  end
+
+  @impl true
   def input_schema do
     %{
       type: "object",
@@ -69,6 +75,11 @@ defmodule Handbeam.Tool.Builtin.Edit do
         diff: %{
           type: "string",
           description: "Unified diff content (when mode=diff)"
+        },
+        retry_of: %{
+          type: "string",
+          description:
+            "operation_id from a failed edit. Reuses saved new_string/diff; override only old_string or file_path."
         }
       },
       required: ["file_path"]
@@ -83,10 +94,41 @@ defmodule Handbeam.Tool.Builtin.Edit do
 
   @impl true
   def execute(%{"mode" => "diff"} = input, context) do
-    run_diff_mode(input, context)
+    with {:ok, input, operation_id} <-
+           Handbeam.Agent.Tool.SavedInput.prepare("edit", input, context, ["file_path"]) do
+      result = run_prepared_diff(operation_id, input, context)
+
+      Handbeam.Agent.Tool.SavedInput.attach(
+        operation_id,
+        result,
+        context,
+        ["file_path"]
+      )
+    end
   end
 
   def execute(%{"file_path" => fp} = input, context) do
+    with {:ok, input, operation_id} <-
+           Handbeam.Agent.Tool.SavedInput.prepare("edit", input, context, [
+             "file_path",
+             "old_string"
+           ]) do
+      result = run_prepared_replace(input, fp, context, operation_id)
+
+      Handbeam.Agent.Tool.SavedInput.attach(
+        operation_id,
+        result,
+        context,
+        ["file_path", "old_string"]
+      )
+    end
+  end
+
+  def execute(_input, _context) do
+    {:error, "file_path and either old_string/new_string or edits are required"}
+  end
+
+  defp run_prepared_replace(input, fp, context, operation_id) do
     with {:ok, replacements} <- normalize_replacements(input),
          {:ok, path} <- Handbeam.Agent.Tool.resolve_path(fp, context),
          :ok <- Handbeam.Security.PathValidator.validate_writeable(path),
@@ -102,35 +144,30 @@ defmodule Handbeam.Tool.Builtin.Edit do
           restored = restore_line_endings(edited, line_ending)
           final = restore_bom(restored, bom)
 
-          case File.write(path, final) do
-            :ok ->
+          case Handbeam.Agent.Tool.FileCommit.commit(path, final, context,
+                 operation_id: operation_id
+               ) do
+            {:ok, commit} ->
               _ = Handbeam.Extension.HotReloader.notify_path(path)
               diff = compute_diff(normalized, edited)
               diff_lines = diff_to_lines(diff)
               change = Handbeam.ChangeSnapshot.build_edit_snapshot(path, raw, final, diff_lines)
+              change_details = Handbeam.ChangeSnapshot.result_details(change, context)
 
               {:ok, "Edited #{path}: #{count} replacement(s)\n#{diff_text(diff)}",
-               %{
+               Map.merge(change_details, %{
                  file_path: path,
+                 operation_id: commit.operation_id,
+                 status: :succeeded,
+                 side_effect: commit.side_effect,
                  replacements: count,
                  edit_count: length(replacements),
                  diff_first_changed_line: diff.first_changed_line,
-                 diff_lines: diff_lines,
-                 change: change,
-                 change_id: change.change_id,
-                 change_type: change.change_type,
-                 existed_before: change.existed_before,
-                 before_sha256: change.before_sha256,
-                 after_sha256: change.after_sha256,
-                 before_content: change.before_content,
-                 after_content: change.after_content,
-                 reversible: change.reversible,
-                 revert_status: change.revert_status,
-                 revert_reason: change.revert_reason
-               }}
+                 diff_lines: diff_lines
+               })}
 
-            {:error, reason} ->
-              {:error, "Failed to write #{path}: #{reason}"}
+            {:error, reason, details} ->
+              {:error, reason, details}
           end
 
         {:error, reason} ->
@@ -139,9 +176,8 @@ defmodule Handbeam.Tool.Builtin.Edit do
     end
   end
 
-  def execute(_input, _context) do
-    {:error, "file_path and either old_string/new_string or edits are required"}
-  end
+  defp run_prepared_diff(operation_id, input, context),
+    do: run_diff_mode(input, context, operation_id)
 
   # ── Validation ──
 
@@ -524,7 +560,7 @@ defmodule Handbeam.Tool.Builtin.Edit do
 
   # ── Diff mode ──
 
-  defp run_diff_mode(%{"file_path" => fp, "diff" => diff} = _input, context) do
+  defp run_diff_mode(%{"file_path" => fp, "diff" => diff}, context, operation_id) do
     with {:ok, path} <- Handbeam.Agent.Tool.resolve_path(fp, context),
          :ok <- Handbeam.Security.PathValidator.validate_writeable(path),
          :ok <- validate_diff_input(diff),
@@ -533,36 +569,33 @@ defmodule Handbeam.Tool.Builtin.Edit do
          {:ok, raw} <- File.read(path) do
       case apply_unified_diff(raw, diff) do
         {:ok, new_content, changes} ->
-          case atomic_write(path, new_content) do
-            :ok ->
+          case Handbeam.Agent.Tool.FileCommit.commit(path, new_content, context,
+                 operation_id: operation_id
+               ) do
+            {:ok, commit} ->
+              _ = Handbeam.Extension.HotReloader.notify_path(path)
               diff_map = compute_diff(raw, new_content)
               diff_lines = diff_to_lines(diff_map)
 
               change =
                 Handbeam.ChangeSnapshot.build_edit_snapshot(path, raw, new_content, diff_lines)
 
+              change_details = Handbeam.ChangeSnapshot.result_details(change, context)
+
               {:ok, "Edited #{path}: #{changes} change(s) (diff mode)\n#{diff_text(diff_map)}",
-               %{
+               Map.merge(change_details, %{
                  file_path: path,
+                 operation_id: operation_id,
+                 status: :succeeded,
+                 side_effect: commit.side_effect,
                  replacements: changes,
                  mode: "diff",
                  diff_first_changed_line: diff_map.first_changed_line,
-                 diff_lines: diff_lines,
-                 change: change,
-                 change_id: change.change_id,
-                 change_type: change.change_type,
-                 existed_before: change.existed_before,
-                 before_sha256: change.before_sha256,
-                 after_sha256: change.after_sha256,
-                 before_content: change.before_content,
-                 after_content: change.after_content,
-                 reversible: change.reversible,
-                 revert_status: change.revert_status,
-                 revert_reason: change.revert_reason
-               }}
+                 diff_lines: diff_lines
+               })}
 
-            {:error, reason} ->
-              {:error, "Failed to write #{path}: #{reason}"}
+            {:error, reason, details} ->
+              {:error, reason, details}
           end
 
         {:error, reason} ->
@@ -571,7 +604,7 @@ defmodule Handbeam.Tool.Builtin.Edit do
     end
   end
 
-  defp run_diff_mode(_input, _context) do
+  defp run_diff_mode(_input, _context, _operation_id) do
     {:error, "diff parameter is required when mode=diff"}
   end
 
@@ -720,25 +753,6 @@ defmodule Handbeam.Tool.Builtin.Edit do
   defp extract_hunk_counts([count_str, new_start | _]), do: {count_str, new_start}
   defp extract_hunk_counts([new_start | _]), do: {"", new_start}
   defp extract_hunk_counts(_), do: {"", ""}
-
-  # ── Atomic write ──
-
-  defp atomic_write(path, content) do
-    dir = Path.dirname(path)
-    base = Path.basename(path)
-    tmp = Path.join(dir, ".#{base}.#{System.unique_integer([:positive])}.tmp")
-
-    case File.write(tmp, content) do
-      :ok ->
-        case File.rename(tmp, path) do
-          :ok -> :ok
-          {:error, reason} -> {:error, "Failed to finalize write: #{reason}"}
-        end
-
-      {:error, reason} ->
-        {:error, "Failed to write temp file: #{reason}"}
-    end
-  end
 
   # ── Helpers ──
 

@@ -1,6 +1,7 @@
 defmodule HandbeamWeb.WorkspaceLive.ToolProjection do
   @moduledoc false
 
+  alias Handbeam.ChangeSnapshot
   alias HandbeamWeb.ChangeHelper
 
   def start(payload, summarize_input) do
@@ -32,10 +33,17 @@ defmodule HandbeamWeb.WorkspaceLive.ToolProjection do
     tool_name = value(payload, :tool) || value(payload, :name) || "unknown"
     duration_ms = value(payload, :duration_ms)
     error = value(payload, :error)
-    details = value(payload, :details) || %{}
+
+    details =
+      payload
+      |> value(:details)
+      |> Handbeam.Agent.Tool.ResultContract.project_details()
+      |> Kernel.||(%{})
+
     file_path = value(payload, :file_path) || value(details, :file_path)
     diff_lines = ChangeHelper.normalize_diff_lines(value(details, :diff_lines))
-    change = ChangeHelper.change_from_details(details, file_path, diff_lines, tool_name)
+    change_details = load_change_snapshot(details)
+    change = ChangeHelper.change_from_details(change_details, file_path, diff_lines, tool_name)
     status = if error, do: :error, else: :done
 
     entry =
@@ -75,6 +83,15 @@ defmodule HandbeamWeb.WorkspaceLive.ToolProjection do
     if Map.has_key?(payload, :tool_use_id) or Map.has_key?(payload, "tool_use_id"),
       do: "tool-#{tool_use_id}",
       else: "tool-event-#{tool_name}"
+  end
+
+  defp load_change_snapshot(details) do
+    with ref when is_binary(ref) <- value(details, :change_snapshot_ref),
+         {:ok, snapshot} <- ChangeSnapshot.load(ref) do
+      Map.put(details, :change, snapshot)
+    else
+      _ -> details
+    end
   end
 
   defp value(map, key), do: Map.get(map, key) || Map.get(map, Atom.to_string(key))

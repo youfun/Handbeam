@@ -24,6 +24,12 @@ defmodule Handbeam.Tool.Builtin.Read do
   end
 
   @impl true
+  def hint do
+    "Check file_path against the workspace. Use offset and limit to read another slice; " <>
+      "do not repeat a path or range that just failed."
+  end
+
+  @impl true
   def input_schema do
     %{
       type: "object",
