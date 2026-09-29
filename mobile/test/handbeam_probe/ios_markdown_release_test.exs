@@ -13,6 +13,7 @@ defmodule HandbeamProbe.IosMarkdownReleaseTest do
     assert patched =~ ~S(-c "$BUILD_DIR/mob_nif.m")
     assert patched =~ ~S("${SWIFT_SOURCES[@]}")
     assert patched =~ ~S|SWIFT_SOURCES+=("ios/HandbeamMarkdown.swift")|
+    assert patched =~ ~S(SWIFT_BRIDGING="$BUILD_DIR/MobDemo-Bridging-Header.h")
     assert patched =~ ~S(-I "$BUILD_DIR")
     refute patched =~ ~S(-c "$MOB_DIR/ios/MobNode.m")
     assert IosMarkdownRelease.patch_script(patched) == patched
@@ -29,6 +30,7 @@ defmodule HandbeamProbe.IosMarkdownReleaseTest do
       assert patched =~ "bash ios/patch_markdown_host.sh"
       assert patched =~ "solver-expression-time-threshold=20000"
       assert patched =~ ~S|SWIFT_SOURCES+=("ios/HandbeamMarkdown.swift")|
+    assert patched =~ ~S(SWIFT_BRIDGING="$BUILD_DIR/MobDemo-Bridging-Header.h")
       refute patched =~ ~S(-c "$MOB_DIR/ios/mob_nif.m")
       assert IosMarkdownRelease.patch_generator_source!(patched) == patched
       assert {:ok, _} = Code.string_to_quoted(patched)

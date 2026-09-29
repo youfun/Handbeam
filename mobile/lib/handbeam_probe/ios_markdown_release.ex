@@ -140,6 +140,19 @@ defmodule HandbeamProbe.IosMarkdownRelease do
         esac
     done
     SWIFT_SOURCES+=("ios/HandbeamMarkdown.swift")
+    # The stock bridging header sits next to the unpatched MobNode.h.
+    # A quoted #import resolves there before -I, so Swift never saw markdown.
+    python3 - "$MOB_DIR/ios/MobDemo-Bridging-Header.h" "$BUILD_DIR/MobDemo-Bridging-Header.h" "$BUILD_DIR" <<'PY'
+    import pathlib, sys
+    src, dest, build = sys.argv[1:]
+    text = pathlib.Path(src).read_text()
+    old = '#import "MobNode.h"'
+    new = '#import "%s/MobNode.h"' % build
+    if old not in text:
+        raise SystemExit('bridging header is missing #import "MobNode.h"')
+    pathlib.Path(dest).write_text(text.replace(old, new, 1))
+    PY
+    SWIFT_BRIDGING="$BUILD_DIR/MobDemo-Bridging-Header.h"
     """
     |> String.trim_trailing()
     |> String.replace("\n", "\n" <> indent)
