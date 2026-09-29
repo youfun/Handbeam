@@ -65,9 +65,14 @@ defmodule Handbeam.Agent.ProgressGuard do
     end
   end
 
+  @doc false
+  def observation_key(obs) when is_map(obs) do
+    {obs.tool, args_hash(obs.args), result_hash(obs.result)}
+  end
+
   defp apply_obs(progress, obs) do
-    result = result_hash(obs.result)
-    signature = {obs.tool, args_hash(obs.args), result}
+    signature = observation_key(obs)
+    result = elem(signature, 2)
     new? = not MapSet.member?(progress.seen, signature) or write?(obs)
     error? = obs.error == true
 
@@ -105,7 +110,7 @@ defmodule Handbeam.Agent.ProgressGuard do
       progress.failures >= @error_streak or progress.error_count >= @same_error ->
         {:repeated_failure, "连续失败：#{obs.tool}"}
 
-      repeat?(progress.recent) ->
+      repeat?(progress.recent, observation_key(obs)) ->
         {:repeated_call, "同一 #{obs.tool} 调用在最近 #{@recent} 次里重复 #{@repeat_threshold} 次，结果相同"}
 
       oscillation(progress, obs) ->
@@ -119,11 +124,7 @@ defmodule Handbeam.Agent.ProgressGuard do
     end
   end
 
-  defp repeat?(recent) do
-    recent
-    |> Enum.frequencies()
-    |> Enum.any?(fn {_signature, count} -> count >= @repeat_threshold end)
-  end
+  defp repeat?(recent, signature), do: Enum.count(recent, &(&1 == signature)) >= @repeat_threshold
 
   defp oscillation(progress, %{path: path}) when is_binary(path) do
     WorkDigest.returns(WorkDigest.history(progress.digest, path)) >= 2

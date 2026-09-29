@@ -17,7 +17,10 @@ defmodule Handbeam.Agent.Middleware.ProgressGuard do
         state
 
       true ->
-        Enum.reduce(observations(state), state, fn obs, acc ->
+        state
+        |> observations()
+        |> Enum.uniq_by(&ProgressGuard.observation_key/1)
+        |> Enum.reduce(state, fn obs, acc ->
           case ProgressGuard.observe(acc.progress, obs) do
             {progress, nil, nil} ->
               %{acc | progress: progress}
