@@ -804,8 +804,16 @@ defmodule Handbeam.ConversationStore do
 
   @doc "Record each child run's raw usage once, separately from parent provider usage."
   def record_delegated_usage(conversation_id, child_run_id, usage) do
-    with {:ok, meta} <- read_meta(conversation_id) do
-      write_meta_file(conversation_id, Map.put(meta, "delegated_usage", %{child_run_id => usage}))
+    transact_meta(conversation_id, fn existing ->
+      usage_key = to_string(child_run_id)
+
+      Map.update(existing, "delegated_usage", %{usage_key => usage}, fn current ->
+        Map.put_new(current || %{}, usage_key, usage)
+      end)
+    end)
+    |> case do
+      {:ok, _} -> :ok
+      other -> other
     end
   end
 
