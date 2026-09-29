@@ -242,33 +242,34 @@
                 />
                 <span>{gettext("All workspaces, including future workspaces")}</span>
               </label>
-              <label class="flex items-center gap-2 text-xs text-secondary cursor-pointer">
-                <input
-                  type="radio"
-                  name="server[access_mode]"
-                  value="selected"
-                  checked={@form["access_mode"] != "all"}
-                />
-                <span>{gettext("Selected workspaces")}</span>
-              </label>
-            </div>
-
-            <div
-              :if={@form["access_mode"] != "all"}
-              class="mt-2 pl-4 space-y-1.5 border-l border-subtle"
-            >
-              <label
-                :for={workspace <- @workspaces}
-                class="flex items-center gap-2 text-xs text-secondary cursor-pointer"
-              >
-                <input
-                  type="checkbox"
-                  name="server[workspace_ids][]"
-                  value={workspace["id"]}
-                  checked={workspace["id"] in @form["workspace_ids"]}
-                />
-                <span>{workspace["name"]}</span>
-              </label>
+              <div>
+                <label class="flex items-center gap-2 text-xs text-secondary cursor-pointer">
+                  <input
+                    type="radio"
+                    name="server[access_mode]"
+                    value="selected"
+                    checked={@form["access_mode"] != "all"}
+                  />
+                  <span>{gettext("Selected workspaces")}</span>
+                </label>
+                <div
+                  :if={@form["access_mode"] != "all"}
+                  class="mt-1.5 ml-6 space-y-1.5"
+                >
+                  <label
+                    :for={workspace <- @workspaces}
+                    class="flex items-center gap-2 text-xs text-secondary cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      name="server[workspace_ids][]"
+                      value={workspace["id"]}
+                      checked={workspace["id"] in @form["workspace_ids"]}
+                    />
+                    <span>{workspace["name"]}</span>
+                  </label>
+                </div>
+              </div>
             </div>
           </div>
 
