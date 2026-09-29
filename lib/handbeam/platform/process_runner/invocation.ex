@@ -13,6 +13,10 @@ defmodule Handbeam.Platform.ProcessRunner.Invocation do
 
   alias Handbeam.Platform.ProcessRunner
 
+  # The invocation keeps only a tail. Callers that want the body must consume
+  # `:invocation_data` promptly; unread data is dropped rather than queued.
+  @tail_bytes 50_000
+
   def start_link(opts) do
     GenServer.start_link(__MODULE__, opts)
   end
@@ -34,7 +38,10 @@ defmodule Handbeam.Platform.ProcessRunner.Invocation do
        port: nil,
        os_pid: nil,
        invocation: nil,
-       chunks: [],
+       tail: [],
+       tail_bytes: 0,
+       total_bytes: 0,
+       dropped_bytes: 0,
        cancelled: false
      }, {:continue, :open}}
   end
@@ -64,9 +71,18 @@ defmodule Handbeam.Platform.ProcessRunner.Invocation do
       {:DOWN, _ref, :process, pid, _reason} when pid == state.business or pid == caller ->
         drain_owner_down(%{state | cancelled: true})
     after
-      0 -> state
+      0 ->
+        if dead?(state.business) or dead?(caller) do
+          %{state | cancelled: true}
+        else
+          state
+        end
     end
   end
+
+  defp dead?(pid) when is_pid(pid), do: not Process.alive?(pid)
+
+  defp dead?(_pid), do: false
 
   defp hold_before_open(state) do
     send(state.opts[:hold_before_open], {:held_before_open, self()})
@@ -78,10 +94,24 @@ defmodule Handbeam.Platform.ProcessRunner.Invocation do
 
     receive do
       :release_open ->
-        state
+        drain_release(state)
 
       {:DOWN, _ref, :process, pid, _reason} when pid == state.business or pid == caller ->
         await_release(%{state | cancelled: true})
+    end
+  end
+
+  defp drain_release(state) do
+    caller = state.opts[:reply_to]
+
+    receive do
+      :release_open ->
+        drain_release(state)
+
+      {:DOWN, _ref, :process, pid, _reason} when pid == state.business or pid == caller ->
+        drain_release(%{state | cancelled: true})
+    after
+      50 -> state
     end
   end
 
@@ -120,7 +150,7 @@ defmodule Handbeam.Platform.ProcessRunner.Invocation do
   end
 
   def handle_info({port, {:exit_status, code}}, %{port: port} = state) do
-    output = IO.iodata_to_binary(Enum.reverse(state.chunks))
+    output = tail_output(state)
 
     result =
       if code == 0 do
@@ -135,11 +165,8 @@ defmodule Handbeam.Platform.ProcessRunner.Invocation do
   end
 
   def handle_info({port, {:data, data}}, %{port: port} = state) do
-    if is_pid(state.opts[:reply_to]) do
-      send(state.opts[:reply_to], {:invocation_data, self(), data})
-    end
-
-    {:noreply, %{state | chunks: [data | state.chunks]}}
+    maybe_forward(state, data)
+    {:noreply, remember_tail(state, data)}
   end
 
   @impl true
@@ -164,6 +191,55 @@ defmodule Handbeam.Platform.ProcessRunner.Invocation do
   end
 
   defp cleanup(_state), do: :ok
+
+  defp maybe_forward(state, data) do
+    caller = state.opts[:reply_to]
+
+    if is_pid(caller) and Process.alive?(caller) do
+      queued =
+        case Process.info(caller, :message_queue_len) do
+          {:message_queue_len, length} -> length
+          _ -> 0
+        end
+
+      if queued < 64 do
+        send(caller, {:invocation_data, self(), data})
+      end
+    end
+  end
+
+  defp remember_tail(state, data) do
+    size = byte_size(data)
+    tail = [data | state.tail]
+    bytes = state.tail_bytes + size
+    {tail, bytes, dropped} = trim_tail(tail, bytes, state.dropped_bytes)
+
+    %{
+      state
+      | tail: tail,
+        tail_bytes: bytes,
+        total_bytes: state.total_bytes + size,
+        dropped_bytes: dropped
+    }
+  end
+
+  defp trim_tail(tail, bytes, dropped) when bytes <= @tail_bytes, do: {tail, bytes, dropped}
+
+  defp trim_tail(tail, bytes, dropped) do
+    [oldest | rest] = Enum.reverse(tail)
+    size = byte_size(oldest)
+    trim_tail(Enum.reverse(rest), bytes - size, dropped + size)
+  end
+
+  defp tail_output(state) do
+    body = state.tail |> Enum.reverse() |> IO.iodata_to_binary()
+
+    if state.dropped_bytes > 0 do
+      "[#{state.dropped_bytes} earlier bytes omitted]\n" <> body
+    else
+      body
+    end
+  end
 
   defp reply(state, result) do
     if is_pid(state.opts[:reply_to]),

@@ -147,7 +147,9 @@ defmodule Handbeam.Platform.ProcessRunnerTest do
 
       assert_receive {:held_before_open, invocation}, 1_000
       ref = Process.monitor(invocation)
+      ref_owner = Process.monitor(owner)
       Process.exit(owner, :kill)
+      assert_receive {:DOWN, ^ref_owner, :process, ^owner, _reason}, 1_000
       send(invocation, :release_open)
       assert_receive {:DOWN, ^ref, :process, ^invocation, _reason}, 1_000
       assert Task.await(task, 2_000) == {:error, :cancelled}
