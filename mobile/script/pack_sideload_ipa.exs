@@ -58,6 +58,66 @@ unless String.contains?(script, "Ad-hoc signature") do
   Mix.raise("ad-hoc signing patch did not apply")
 end
 
+# The dev Zig build emits an empty mob_register_plugins and compiles the
+# static NIFs named by the driver table. mix mob.release does neither, so
+# the device link stops on those symbols.
+bootstrap = ~S"""
+cat > "$BUILD_DIR/mob_plugin_bootstrap.swift" <<'EOF'
+import Foundation
+import SwiftUI
+@_cdecl("mob_register_plugins")
+public func mob_register_plugins() {}
+EOF
+SWIFT_SOURCES+=("$BUILD_DIR/mob_plugin_bootstrap.swift")
+"""
+
+markdown_src = ~S[SWIFT_SOURCES+=("ios/HandbeamMarkdown.swift")]
+
+unless String.contains?(script, markdown_src) do
+  Mix.raise("could not find the markdown Swift source list")
+end
+
+script =
+  String.replace(
+    script,
+    markdown_src,
+    markdown_src <> "\n" <> String.trim_trailing(bootstrap),
+    global: false
+  )
+
+static_nifs = ~S"""
+echo "=== Static NIFs ==="
+compile_static_nif() {
+  local name="$1" src="$2"
+  echo "  static NIF: $name ($src)"
+  $CC $IFLAGS \
+    -DSTATIC_ERLANG_NIF -DSTATIC_ERLANG_NIF_LIBNAME="$name" \
+    -c "$src" -o "$BUILD_DIR/$name.o"
+  PLUGIN_OBJS="$PLUGIN_OBJS $BUILD_DIR/$name.o"
+}
+compile_static_nif handbeam_storage c_src/handbeam_storage.c
+compile_static_nif handbeam_ios c_src/handbeam_ios.c
+BCRYPT_SRC="deps/bcrypt_elixir/c_src"
+echo "  static NIF: bcrypt_nif ($BCRYPT_SRC)"
+$CC $IFLAGS -DSTATIC_ERLANG_NIF -DSTATIC_ERLANG_NIF_LIBNAME=bcrypt_nif \
+  -I "$BCRYPT_SRC" \
+  -c "$BCRYPT_SRC/bcrypt_nif.c" -o "$BUILD_DIR/bcrypt_nif.o"
+$CC $IFLAGS -I "$BCRYPT_SRC" \
+  -c "$BCRYPT_SRC/blowfish.c" -o "$BUILD_DIR/blowfish.o"
+PLUGIN_OBJS="$PLUGIN_OBJS $BUILD_DIR/bcrypt_nif.o $BUILD_DIR/blowfish.o"
+"""
+
+link_echo = ~S[echo "=== Linking $APP_NAME (release, no EPMD) ==="]
+
+unless String.contains?(script, link_echo) do
+  Mix.raise("could not find the iOS link step")
+end
+
+script =
+  String.replace(script, link_echo, String.trim_trailing(static_nifs) <> "\n" <> link_echo,
+    global: false
+  )
+
 script_path = Path.join(System.tmp_dir!(), "handbeam-sideload-release.sh")
 File.write!(script_path, script)
 File.chmod!(script_path, 0o755)
