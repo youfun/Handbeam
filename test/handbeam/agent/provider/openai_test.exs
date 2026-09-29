@@ -331,6 +331,34 @@ defmodule Handbeam.Agent.Provider.OpenAITest do
       assert reason =~ "invalid_request_error"
     end
 
+    test "extracts a bounded retryable error from a nested response.failed event" do
+      failed = %{
+        "type" => "response.failed",
+        "response" => %{
+          "error" => %{
+            "code" => "server_error",
+            "message" => "The model is currently at capacity due to high demand."
+          },
+          "tools" => List.duplicate(%{"description" => String.duplicate("internal", 1_000)}, 20)
+        }
+      }
+
+      config =
+        config_with_sse_stream([
+          "event: response.failed\ndata: #{Jason.encode!(failed)}\n\n",
+          "data: [DONE]\n\n"
+        ])
+
+      assert {:error, reason} =
+               OpenAI.stream([Message.user("Hi")], [], config, fn _ -> :ok end)
+
+      assert reason ==
+               "server_error: The model is currently at capacity due to high demand."
+
+      refute reason =~ "tools"
+      assert Handbeam.Agent.Provider.Retry.retryable?(reason)
+    end
+
     test "cancels a degenerate stream that repeats the same phrase" do
       phrase = "Hex 的版本号在页面源码里，我直接抓那一段。\n"
 

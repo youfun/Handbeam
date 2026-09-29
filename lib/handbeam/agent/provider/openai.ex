@@ -570,9 +570,12 @@ defmodule Handbeam.Agent.Provider.OpenAI do
   defp put_streamed_text(parsed, _content), do: parsed
 
   defp parse_stream_event_error(payload) do
-    payload
-    |> Map.get("error", payload)
-    |> format_error_payload()
+    error = Map.get(payload, "error") || get_in(payload, ["response", "error"])
+
+    case error do
+      nil -> "provider_error: Provider returned a failed response"
+      error -> format_error_payload(error)
+    end
   end
 
   defp prefer_longer_text(current, candidate) do
@@ -863,12 +866,13 @@ defmodule Handbeam.Agent.Provider.OpenAI do
   end
 
   defp format_error_payload(error) when is_map(error) do
-    type = Map.get(error, "type", "error")
-    message = Map.get(error, "message", inspect(error))
+    type = Map.get(error, "type") || Map.get(error, "code") || "error"
+    message = Map.get(error, "message") || "Provider request failed"
     "#{type}: #{message}"
   end
 
-  defp format_error_payload(error), do: inspect(error)
+  defp format_error_payload(error) when is_binary(error), do: error
+  defp format_error_payload(_error), do: "provider_error: Provider request failed"
 
   defp provider_state_from_response(%{"id" => id}) when is_binary(id) and id != "" do
     %{response_id: id}
