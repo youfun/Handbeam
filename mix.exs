@@ -63,7 +63,7 @@ defmodule Handbeam.MixProject do
       {:lazy_html, "~> 0.1.13", only: :test},
       {:phoenix_test, "~> 0.12.0", only: :test, runtime: false},
       {:req, "~> 0.7.4"},
-      {:mint, "~> 1.10.1"},
+      {:mint, "~> 1.11"},
       {:castore, "~> 1.0"},
       {:floki, "~> 0.38.4"},
       {:llm_db, "~> 2026.9"},
