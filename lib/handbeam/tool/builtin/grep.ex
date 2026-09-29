@@ -13,6 +13,10 @@ defmodule Handbeam.Tool.Builtin.Grep do
   @inventory_page 10_000
   @max_result_chars 20_000
   @max_file_bytes 5_000_000
+  @max_page_bytes 48_000
+  @max_line_bytes 2_000
+  @max_context 3
+  @scan_budget_ms 2_000
 
   @impl true
   def name, do: "grep"
@@ -76,6 +80,9 @@ defmodule Handbeam.Tool.Builtin.Grep do
     end
   rescue
     error -> {:error, "grep failed: #{Exception.message(error)}"}
+  catch
+    {:invalid_cursor, reason} ->
+      {:error, reason, %{code: :cursor_invalid, side_effect: :not_started, status: :failed}}
   end
 
   def execute(_input, _context), do: {:error, "pattern is required"}
@@ -107,60 +114,108 @@ defmodule Handbeam.Tool.Builtin.Grep do
 
   defp search(pattern, regex, inventory, workspace, input) do
     started_at = System.monotonic_time(:millisecond)
-    cursor = decode_cursor(input["cursor"] || input[:cursor])
+    cursor = decode_cursor(input["cursor"] || input[:cursor], input, workspace)
     wanted = limit(input) + 1
-    files = Enum.filter(inventory.paths, &glob_match?(&1, input["glob"] || input[:glob]))
 
-    {matcher, hits} =
+    if cursor == :invalid do
+      throw({:invalid_cursor, "cursor does not match this query and workspace"})
+    end
+
+    files =
+      inventory.paths
+      |> Enum.filter(&glob_match?(&1, input["glob"] || input[:glob]))
+      |> Enum.sort()
+
+    {matcher, hits, partial?} =
       case System.find_executable("rg") do
         nil ->
-          {:elixir, elixir_hits(files, workspace, regex, cursor, wanted)}
+          {hits, partial?} = elixir_hits(files, workspace, regex, cursor, wanted)
+          {:elixir, hits, partial?}
 
         rg ->
-          case rg_hits(rg, files, workspace, inventory.prefix, pattern, input, cursor) do
-            {:ok, hits} -> {:ripgrep, hits}
-            {:error, _code} -> {:elixir, elixir_hits(files, workspace, regex, cursor, wanted)}
+          case rg_hits(
+                 rg,
+                 files,
+                 workspace,
+                 inventory.prefix,
+                 pattern,
+                 input,
+                 cursor,
+                 wanted
+               ) do
+            {:ok, hits, partial?} ->
+              {:ripgrep, hits, partial?}
+
+            {:error, _code} ->
+              {hits, partial?} = elixir_hits(files, workspace, regex, cursor, wanted)
+              {:elixir, hits, partial?}
           end
       end
 
     safe_hits = take_safe_hits(hits, workspace, wanted)
-    page = Enum.take(safe_hits, limit(input))
+    page = safe_hits |> Enum.take(limit(input)) |> fit_page_bytes()
 
     next_cursor =
-      if length(safe_hits) > length(page), do: encode_cursor(List.last(page)), else: nil
+      if page != [] and (length(safe_hits) > length(page) or partial?) do
+        encode_cursor(Enum.max_by(page, &{&1.path, &1.line}), input, workspace)
+      end
 
     emit_telemetry(started_at, length(files), length(page), matcher, inventory.status)
 
-    {:ok, format_results(page, next_cursor, inventory, workspace, input)}
+    if partial? and page == [] do
+      {:error, "grep scan timed out before completion; narrow path or glob and retry",
+       %{code: :scan_timeout, status: :failed, side_effect: :not_started}}
+    else
+      {:ok,
+       format_results(page, next_cursor, Map.put(inventory, :partial, partial?), workspace, input)}
+    end
   end
 
   defp elixir_hits(files, workspace, regex, cursor, wanted) do
     validation = new_validation(workspace)
+    deadline = System.monotonic_time(:millisecond) + @scan_budget_ms
 
-    {hits, _validation} =
-      Enum.reduce_while(files, {[], validation}, fn relative, {acc, validation} ->
-        {hits, validation} = file_hits(relative, workspace, regex, cursor, validation)
-        next = acc ++ hits
+    {hits, _validation, partial?} =
+      Enum.reduce_while(files, {[], validation, false}, fn relative,
+                                                           {acc, validation, _partial?} ->
+        if System.monotonic_time(:millisecond) > deadline do
+          {:halt, {acc, validation, true}}
+        else
+          remaining = max(wanted - length(acc), 0)
 
-        if length(next) >= wanted,
-          do: {:halt, {next, validation}},
-          else: {:cont, {next, validation}}
+          {hits, validation} =
+            file_hits(relative, workspace, regex, cursor, validation, remaining)
+
+          next = acc ++ hits
+
+          if length(next) >= wanted,
+            do: {:halt, {next, validation, false}},
+            else: {:cont, {next, validation, false}}
+        end
       end)
 
-    hits
+    {hits, partial?}
   end
 
-  defp file_hits(relative, workspace, regex, cursor, validation) do
+  defp file_hits(relative, workspace, regex, cursor, validation, wanted) do
     with {:ok, content, validation} <- read_search_file(workspace, relative, validation),
          true <- String.valid?(content) do
       hits =
         content
         |> String.split("\n")
         |> Enum.with_index(1)
-        |> Enum.flat_map(fn {line, number} ->
-          hit = %{path: relative, line: number, text: line}
-          if Regex.match?(regex, line) and after_cursor?(hit, cursor), do: [hit], else: []
+        |> Enum.reduce_while([], fn {line, number}, acc ->
+          hit = bound_hit(%{path: relative, line: number, text: line})
+
+          if byte_size(line) <= @max_line_bytes and Regex.match?(regex, line) and
+               after_cursor?(hit, cursor) do
+            next = [hit | acc]
+            if length(next) >= wanted, do: {:halt, next}, else: {:cont, next}
+          else
+            {:cont, acc}
+          end
         end)
+        |> Enum.reverse()
 
       {hits, validation}
     else
@@ -169,28 +224,120 @@ defmodule Handbeam.Tool.Builtin.Grep do
     end
   end
 
-  defp rg_hits(rg, files, workspace, prefix, pattern, input, cursor) do
+  defp rg_hits(rg, files, workspace, prefix, pattern, input, cursor, wanted) do
     inventory = MapSet.new(files)
     target = if prefix in [nil, "", "."], do: ".", else: prefix
     args = rg_args(input) ++ rg_sensitive_globs() ++ ["--", pattern, target]
-    {output, code} = System.cmd(rg, args, cd: workspace, stderr_to_stdout: true)
 
-    if code in [0, 1] do
-      hits =
-        output
-        |> parse_rg_output()
-        |> Enum.map(&normalize_rg_hit/1)
-        |> Enum.filter(fn hit ->
-          MapSet.member?(inventory, hit.path) and
-            glob_match?(hit.path, input["glob"] || input[:glob]) and
-            after_cursor?(hit, cursor)
-        end)
-        |> Enum.sort_by(&{&1.path, &1.line})
+    case stream_rg(rg, args, workspace, inventory, input, cursor, wanted) do
+      {:ok, hits, partial?} ->
+        {:ok, hits, partial?}
 
-      {:ok, hits}
-    else
-      {:error, code}
+      {:error, code} ->
+        {:error, code}
     end
+  end
+
+  defp stream_rg(rg, args, workspace, inventory, input, cursor, wanted) do
+    port =
+      Port.open(
+        {:spawn_executable, rg},
+        [
+          :binary,
+          :exit_status,
+          :stderr_to_stdout,
+          {:cd, workspace},
+          {:args, args},
+          {:line, @max_line_bytes}
+        ]
+      )
+
+    collect_rg(
+      port,
+      inventory,
+      input,
+      cursor,
+      wanted,
+      [],
+      System.monotonic_time(:millisecond) + @scan_budget_ms,
+      false
+    )
+  end
+
+  defp collect_rg(port, inventory, input, cursor, wanted, acc, deadline, partial?) do
+    overtime? = System.monotonic_time(:millisecond) > deadline
+
+    cond do
+      length(acc) >= wanted or overtime? ->
+        close_rg(port)
+        {:ok, Enum.reverse(acc), true}
+
+      true ->
+        receive do
+          {^port, {:data, {:eol, line}}} ->
+            acc = maybe_add_rg_hit(acc, line_text(line), inventory, input, cursor)
+
+            collect_rg(
+              port,
+              inventory,
+              input,
+              cursor,
+              wanted,
+              acc,
+              deadline,
+              partial?
+            )
+
+          {^port, {:data, {:noeol, _line}}} ->
+            collect_rg(port, inventory, input, cursor, wanted, acc, deadline, true)
+
+          {^port, {:data, data}} when is_binary(data) ->
+            acc = maybe_add_rg_hit(acc, line_text(data), inventory, input, cursor)
+            collect_rg(port, inventory, input, cursor, wanted, acc, deadline, true)
+
+          {^port, {:exit_status, code}} when code in [0, 1] ->
+            {:ok, Enum.reverse(acc), partial?}
+
+          {^port, {:exit_status, code}} ->
+            {:error, code}
+        after
+          200 ->
+            if System.monotonic_time(:millisecond) > deadline do
+              close_rg(port)
+              {:ok, Enum.reverse(acc), true}
+            else
+              collect_rg(port, inventory, input, cursor, wanted, acc, deadline, partial?)
+            end
+        end
+    end
+  end
+
+  defp maybe_add_rg_hit(acc, line, inventory, input, cursor) do
+    case parse_rg_line(line) do
+      nil ->
+        acc
+
+      hit ->
+        hit = hit |> normalize_rg_hit() |> bound_hit()
+
+        if MapSet.member?(inventory, hit.path) and
+             glob_match?(hit.path, input["glob"] || input[:glob]) and
+             after_cursor?(hit, cursor) do
+          [hit | acc]
+        else
+          acc
+        end
+    end
+  end
+
+  defp line_text(line) when is_binary(line), do: String.slice(line, 0, @max_line_bytes)
+  defp line_text(line) when is_list(line), do: line |> IO.iodata_to_binary() |> line_text()
+  defp line_text(line), do: line |> to_string() |> line_text()
+
+  defp close_rg(port) do
+    if Port.info(port), do: Port.close(port)
+  catch
+    _, _ -> :ok
   end
 
   defp rg_args(input) do
@@ -201,6 +348,8 @@ defmodule Handbeam.Tool.Builtin.Grep do
       "--color=never",
       "--no-heading",
       "--with-filename",
+      "--sort",
+      "path",
       "--hidden",
       "--max-filesize",
       Integer.to_string(@max_file_bytes)
@@ -218,18 +367,11 @@ defmodule Handbeam.Tool.Builtin.Grep do
     Enum.flat_map(globs, &["--glob", &1])
   end
 
-  defp parse_rg_output(output) do
-    output
-    |> String.split("\n", trim: true)
-    |> Enum.flat_map(fn line ->
-      case Regex.run(~r/^(.+?):(\d+):(.*)$/u, line) do
-        [_, path, number, text] ->
-          [%{path: path, line: String.to_integer(number), text: text}]
-
-        _ ->
-          []
-      end
-    end)
+  defp parse_rg_line(line) when is_binary(line) do
+    case Regex.run(~r/^(.+?):(\d+):(.*)$/u, line) do
+      [_, path, number, text] -> %{path: path, line: String.to_integer(number), text: text}
+      _ -> nil
+    end
   end
 
   defp normalize_rg_hit(hit) do
@@ -378,27 +520,73 @@ defmodule Handbeam.Tool.Builtin.Grep do
     "\n[indexing: #{count} files scanned so far]"
   end
 
+  defp indexing_suffix(%{partial: true}) do
+    "\n[partial: scan budget reached; continue with next_cursor or narrow path/glob]"
+  end
+
   defp indexing_suffix(_inventory), do: ""
 
   defp after_cursor?(_hit, nil), do: true
-  defp after_cursor?(hit, {path, line}), do: {hit.path, hit.line} > {path, line}
 
-  defp encode_cursor(%{path: path, line: line}) do
-    Base.url_encode64(:erlang.term_to_binary({path, line}), padding: false)
+  defp after_cursor?(hit, {path, line, _query, _workspace}),
+    do: {hit.path, hit.line} > {path, line}
+
+  defp after_cursor?(_hit, :invalid), do: false
+
+  defp encode_cursor(%{path: path, line: line}, input, workspace) do
+    payload = {1, path, line, query_key(input), workspace_key(workspace)}
+    Base.url_encode64(:erlang.term_to_binary(payload), padding: false)
   end
 
-  defp decode_cursor(nil), do: nil
+  defp decode_cursor(nil, _input, _workspace), do: nil
 
-  defp decode_cursor(cursor) when is_binary(cursor) do
+  defp decode_cursor(cursor, input, workspace) when is_binary(cursor) do
     with {:ok, binary} <- Base.url_decode64(cursor, padding: false),
-         {path, line} when is_binary(path) and is_integer(line) <-
+         {1, path, line, query, workspace_key} when is_binary(path) and is_integer(line) <-
            :erlang.binary_to_term(binary, [:safe]) do
-      {path, line}
+      if query == query_key(input) and workspace_key == workspace_key(workspace) do
+        {path, line, query, workspace_key}
+      else
+        :invalid
+      end
     else
-      _ -> nil
+      _ -> :invalid
     end
   rescue
-    _ -> nil
+    _ -> :invalid
+  end
+
+  defp query_key(input) do
+    :crypto.hash(
+      :sha256,
+      :erlang.term_to_binary({
+        input["pattern"] || input[:pattern],
+        input["path"] || input[:path],
+        input["glob"] || input[:glob],
+        input["literal"] || input[:literal],
+        input["ignore_case"] || input[:ignore_case]
+      })
+    )
+    |> Base.encode16(case: :lower)
+  end
+
+  defp workspace_key(workspace), do: Path.expand(workspace || "")
+
+  defp bound_hit(hit), do: %{hit | text: String.slice(hit.text || "", 0, @max_line_bytes)}
+
+  defp fit_page_bytes(hits) do
+    {kept, _bytes} =
+      Enum.reduce_while(hits, {[], 0}, fn hit, {acc, bytes} ->
+        next = bytes + byte_size(hit.text || "") + byte_size(hit.path || "") + 16
+
+        if acc != [] and next > @max_page_bytes do
+          {:halt, {acc, bytes}}
+        else
+          {:cont, {[hit | acc], next}}
+        end
+      end)
+
+    Enum.reverse(kept)
   end
 
   defp compile_pattern(pattern, input) do
@@ -492,13 +680,13 @@ defmodule Handbeam.Tool.Builtin.Grep do
   defp context_before(input) do
     context = int_value(input, ["context", :context, "-C"])
     before = int_value(input, ["before_context", :before_context, "-B"])
-    if context > 0, do: context, else: before
+    min(if(context > 0, do: context, else: before), @max_context)
   end
 
   defp context_after(input) do
     context = int_value(input, ["context", :context, "-C"])
     after_context = int_value(input, ["after_context", :after_context, "-A"])
-    if context > 0, do: context, else: after_context
+    min(if(context > 0, do: context, else: after_context), @max_context)
   end
 
   defp limit(input) do

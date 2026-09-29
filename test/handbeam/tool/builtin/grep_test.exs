@@ -132,6 +132,41 @@ defmodule Handbeam.Tool.Builtin.GrepTest do
     assert second =~ "marker four"
   end
 
+  test "paginates 5000 fallback matches without duplicates or one huge result" do
+    body = Enum.map_join(1..5_000, "\n", &"bulk_page_marker #{&1}")
+    File.write!(Path.join(@work_dir, "bulk.txt"), body)
+
+    without_rg(fn ->
+      {seen, final_cursor} =
+        Enum.reduce(1..5, {MapSet.new(), nil}, fn _page, {seen, cursor} ->
+          input =
+            %{"pattern" => "bulk_page_marker", "path" => ".", "limit" => 1_000}
+            |> then(fn input -> if cursor, do: Map.put(input, "cursor", cursor), else: input end)
+
+          assert {:ok, output} = grep(input, %{working_directory: @work_dir})
+          assert byte_size(output) < 100_000
+
+          numbers =
+            Regex.scan(~r/bulk_page_marker (\d+)/, output, capture: :all_but_first)
+            |> Enum.map(fn [number] -> String.to_integer(number) end)
+
+          assert length(numbers) == 1_000
+          assert Enum.all?(numbers, &(not MapSet.member?(seen, &1)))
+
+          next_cursor =
+            case Regex.run(~r/next_cursor: (\S+)/, output) do
+              [_, value] -> value
+              nil -> nil
+            end
+
+          {Enum.reduce(numbers, seen, &MapSet.put(&2, &1)), next_cursor}
+        end)
+
+      assert MapSet.size(seen) == 5_000
+      assert final_cursor == nil
+    end)
+  end
+
   test "rejects paths outside workspace" do
     assert {:error, reason} =
              grep(%{"pattern" => "root", "path" => "/etc"}, %{
