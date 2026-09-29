@@ -36,6 +36,8 @@ defmodule HandbeamProbe.IosMarkdownHostTest do
     assert root =~ "HandbeamMarkdownText("
     assert root =~ "streaming: node.markdownStreaming"
     assert root =~ "Text(node.text ?? \"\")"
+    assert root =~ "#if compiler(>=6.2)"
+    assert root =~ "self.glassEffect(.clear.tint(fill), in: shape)"
 
     File.rm_rf!(out)
   end

@@ -123,6 +123,25 @@ root_new = """                let textShouldFill = node.fillWidth || node.textAl
 """
 
 root = load("MobRootView.swift")
+# macOS CI images often ship an SDK older than iOS 26. `#available` still
+# type-checks `glassEffect`, so hide it from compilers that do not have it.
+root = ensure(
+    root,
+    "            if #available(iOS 26.0, *) {\n"
+    "                // `Glass.tint` takes an Optional, so a box whose background failed\n"
+    "                // to resolve still gets plain untinted clear glass.\n"
+    "                self.glassEffect(.clear.tint(fill), in: shape)\n"
+    "            } else {\n",
+    "            if #available(iOS 26.0, *) {\n"
+    "                #if compiler(>=6.2)\n"
+    "                self.glassEffect(.clear.tint(fill), in: shape)\n"
+    "                #else\n"
+    "                self.background(.ultraThinMaterial, in: shape)\n"
+    "                    .background(fill ?? Color.clear, in: shape)\n"
+    "                #endif\n"
+    "            } else {\n",
+    "MobRootView.swift glass",
+)
 if "HandbeamMarkdownText(" not in root:
     if root.count(root_old) != 1:
         sys.exit(f"MobRootView.swift: expected 1 label anchor, found {root.count(root_old)}")

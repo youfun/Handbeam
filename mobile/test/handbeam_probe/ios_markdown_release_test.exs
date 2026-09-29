@@ -27,6 +27,7 @@ defmodule HandbeamProbe.IosMarkdownReleaseTest do
 
       assert patched =~ "defmodule MobDev.Release"
       assert patched =~ "bash ios/patch_markdown_host.sh"
+      assert patched =~ "solver-expression-time-threshold=20000"
       assert patched =~ ~S|SWIFT_SOURCES+=("ios/HandbeamMarkdown.swift")|
       refute patched =~ ~S(-c "$MOB_DIR/ios/mob_nif.m")
       assert IosMarkdownRelease.patch_generator_source!(patched) == patched

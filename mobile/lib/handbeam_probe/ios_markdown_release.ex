@@ -86,6 +86,28 @@ defmodule HandbeamProbe.IosMarkdownRelease do
         ~s(-I "$BUILD_DIR" \\\n) <> include_indent(text) <> ~s(-I "$MOB_DIR/ios"),
         "swift include"
       )
+      |> raise_solver_budget()
+    end
+  end
+
+  # MobRootView's body is one SwiftUI expression. The markdown branch pushes it
+  # past the type checker's default time limit ("unable to type-check this
+  # expression in reasonable time"). The limit is milliseconds.
+  defp raise_solver_budget(text) do
+    flag = "        -Xfrontend -solver-expression-time-threshold=20000 \\\n"
+
+    old =
+      "    xcrun -sdk iphoneos swiftc \\\n        -target arm64-apple-ios17.0 \\\n        -module-name \"$APP_NAME\" \\\n"
+
+    cond do
+      String.contains?(text, "solver-expression-time-threshold=") ->
+        text
+
+      String.contains?(text, old) ->
+        String.replace(text, old, old <> flag, global: false)
+
+      true ->
+        text
     end
   end
 
@@ -121,7 +143,7 @@ defmodule HandbeamProbe.IosMarkdownRelease do
     """
     |> String.trim_trailing()
     |> String.replace("\n", "\n" <> indent)
-    |> then(&((indent <> &1)))
+    |> then(&(indent <> &1))
   end
 
   defp include_indent(text) do
