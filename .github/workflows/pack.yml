@@ -1,7 +1,7 @@
 # Pack the Web UI OTP release for Linux x86_64, Windows amd64, and macOS
-# arm64, the native macOS WebKit app, plus both Android APKs. Packages are
-# published to GitHub Releases (moving tag web-latest, or the v* tag that
-# triggered the run).
+# arm64, the native macOS WebKit app, both Android APKs, and a re-signable
+# iOS IPA. Packages are published to GitHub Releases (moving tag web-latest,
+# or the v* tag that triggered the run).
 # Windows ARM64 is not built here: OTP has no ARM64 installer, and the
 # hosted ARM runner cannot install WSL without a reboot.
 name: Pack
@@ -133,7 +133,7 @@ jobs:
 
   publish-web:
     name: Publish release
-    needs: [web, android]
+    needs: [web, android, ios]
     if: >-
       always() &&
       (github.event_name == 'workflow_dispatch' ||
@@ -147,6 +147,8 @@ jobs:
       GH_REPO: ${{ github.repository }}
 
     steps:
+      - uses: actions/checkout@v5
+
       - uses: actions/download-artifact@v4
         with:
           pattern: handbeam-web-*
@@ -165,11 +167,17 @@ jobs:
           name: handbeam-macos-app-arm64
           path: dist
 
+      - uses: actions/download-artifact@v4
+        if: needs.ios.result == 'success'
+        with:
+          name: handbeam-ios-ipa
+          path: dist
+
       - name: Release notes
         run: |
           set -euo pipefail
           shopt -s nullglob
-          files=(dist/handbeam-web-* dist/Handbeam-macos-* dist/*.apk)
+          files=(dist/handbeam-web-* dist/Handbeam-macos-* dist/*.apk dist/*.ipa dist/*.ipa.sha256)
           if [[ ${#files[@]} -eq 0 ]]; then
             echo "No packages were built"
             exit 1
@@ -178,6 +186,9 @@ jobs:
             echo "Handbeam desktop, Web UI, and mobile packages."
             echo
             echo "macOS desktop: unpack \`Handbeam-macos-arm64.zip\` and open \`Handbeam.app\`."
+            if compgen -G "dist/*.ipa" >/dev/null; then
+              echo "iOS: \`Handbeam-ios-sideload.ipa\` is ad-hoc signed and has no provisioning profile. Re-sign it with your own Apple ID in Sideloadly or AltStore, then install it. Bundle id: \`com.example.handbeam_probe\`."
+            fi
             echo "Linux and macOS Web UI: unpack the platform tarball and run \`./start.sh\`."
             echo "Windows: unpack and run \`start.bat\`."
             echo "Default URL: http://localhost:5008"
@@ -202,7 +213,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          files=(dist/handbeam-web-* dist/Handbeam-macos-* dist/*.apk)
+          files=(dist/handbeam-web-* dist/Handbeam-macos-* dist/*.apk dist/*.ipa dist/*.ipa.sha256)
           if [[ ${#files[@]} -eq 0 ]]; then
             echo "No packages to upload"
             exit 1
@@ -212,15 +223,20 @@ jobs:
           else
             tag="web-latest"
           fi
+          version="$(sed -n 's/^      version: "\([^"]*\)".*/\1/p' mix.exs | head -1)"
+          if [[ -z "${version}" ]]; then
+            echo "Could not read version from mix.exs"
+            exit 1
+          fi
+          title="Handbeam ${version}"
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release upload "$tag" "${files[@]}" --clobber
-            gh release edit "$tag" --title "Handbeam ${tag}" --notes-file notes.md --prerelease
+            gh release edit "$tag" --title "$title" --notes-file notes.md --prerelease=false --latest
           else
             gh release create "$tag" "${files[@]}" \
-              --title "Handbeam ${tag}" \
+              --title "$title" \
               --notes-file notes.md \
-              --prerelease \
-              --latest=false
+              --latest
           fi
 
   android:
@@ -323,5 +339,50 @@ jobs:
         with:
           name: handbeam-android-apk
           path: mobile/artifacts/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+  ios:
+    name: iOS sideload IPA
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: macos-15
+    timeout-minutes: 90
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "29.0"
+          elixir-version: "1.20"
+
+      - name: libgit2
+        run: brew install libgit2
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.mob/cache
+            mobile/deps
+            mobile/_build
+            _build
+            ~/.mix
+            ~/.hex
+          key: pack-ipa-${{ runner.os }}-${{ hashFiles('mobile/mix.lock', 'mix.lock') }}
+          restore-keys: |
+            pack-ipa-${{ runner.os }}-
+
+      - name: Pack sideload IPA
+        run: bash script/pack_sideload_ipa.sh --artifacts artifacts
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: handbeam-ios-ipa
+          path: |
+            mobile/artifacts/Handbeam-ios-sideload.ipa
+            mobile/artifacts/Handbeam-ios-sideload.ipa.sha256
           if-no-files-found: error
           retention-days: 14
