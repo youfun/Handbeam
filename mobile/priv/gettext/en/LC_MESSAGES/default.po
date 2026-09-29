@@ -269,6 +269,12 @@ msgstr ""
 msgid "Read-only mode"
 msgstr ""
 
+msgid "yolo"
+msgstr "yolo"
+
+msgid "Runs tools without asking. Built-in env and credential-path intercepts still apply."
+msgstr ""
+
 #: lib/handbeam_probe/model_settings/render.ex:114
 #, elixir-autogen, elixir-format
 msgid "Reasoning"

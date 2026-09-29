@@ -169,10 +169,15 @@ defmodule HandbeamWeb.WorkspaceLive.ViewComponents do
   def permission_label(:prompt), do: "安全模式"
 
   def permission_label(:deny), do: "只读"
+  def permission_label(:yolo), do: "yolo"
   def permission_label(:auto_review), do: "智能审批"
   def permission_label(_), do: "完整存取"
 
   def permission_title(:auto_review), do: gettext("只自动复审本来要问的操作，不扩大权限。")
+
+  def permission_title(:yolo),
+    do: gettext("不限制操作，仅保留内置的 env 与敏感路径拦截。")
+
   def permission_title(mode), do: "#{gettext("当前权限:")}#{permission_label(mode)}"
 
   def assistant_message_final?(entry, running, current_assistant_entry_id) do

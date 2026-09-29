@@ -24,6 +24,7 @@ defmodule HandbeamProbe.NativeApproval do
 
   def mode_label(:auto), do: gettext("Full access")
   def mode_label(:prompt), do: gettext("Safe mode")
+  def mode_label(:yolo), do: gettext("yolo")
   def mode_label(:deny), do: gettext("Read-only mode")
 
   def render_modes(mode) do
@@ -43,8 +44,10 @@ defmodule HandbeamProbe.NativeApproval do
            gettext("Runs tools automatically by default. Use only in trusted workspaces.")},
           {:prompt,
            gettext("Asks for approval by default, so you decide whether to run each tool.")},
-          {:deny,
-           gettext("Denies tools by default; existing explicit rules may still allow operations.")}
+          {:yolo,
+           gettext(
+             "Runs tools without asking. Built-in env and credential-path intercepts still apply."
+           )}
         ],
         fn {value, description} ->
           [

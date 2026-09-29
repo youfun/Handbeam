@@ -266,6 +266,12 @@ msgstr "提供商：%{provider}"
 msgid "Read-only mode"
 msgstr "只读模式"
 
+msgid "yolo"
+msgstr "yolo"
+
+msgid "Runs tools without asking. Built-in env and credential-path intercepts still apply."
+msgstr "不询问直接运行。内置的 env 与敏感路径拦截仍然生效。"
+
 #: lib/handbeam_probe/model_settings/render.ex:114
 #, elixir-autogen, elixir-format
 msgid "Reasoning"

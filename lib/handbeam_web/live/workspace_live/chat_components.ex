@@ -913,13 +913,14 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
                 <button
                   type="button"
                   phx-click="select_permission_mode"
-                  phx-value-mode="deny"
+                  phx-value-mode="yolo"
                   class={[
                     "permission-dropdown-item",
-                    if(@permission_mode == :deny, do: "active")
+                    if(@permission_mode == :yolo, do: "active")
                   ]}
+                  title={gettext("不限制操作，仅保留内置的 env 与敏感路径拦截。")}
                 >
-                  {gettext("只读模式")}
+                  {gettext("yolo")}
                 </button>
                 <button
                   type="button"

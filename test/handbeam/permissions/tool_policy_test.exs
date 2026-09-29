@@ -402,6 +402,45 @@ defmodule Handbeam.Permissions.ToolPolicyTest do
     end
   end
 
+  describe "yolo" do
+    test "auto-approves prompts and capability denies, but not env or credential paths" do
+      policy = ToolPolicy.from_settings(%{"tools" => %{"default_mode" => "yolo"}})
+
+      assert ToolPolicy.decision(
+               policy,
+               call("bash", %{"command" => "mix test", "unsandboxed" => true})
+             ) == :auto
+
+      assert ToolPolicy.decision(
+               policy,
+               call("task_status", %{"action" => "apply"})
+             ) == :auto
+      assert ToolPolicy.decision(policy, call("run_elixir_script")) == :auto
+      assert ToolPolicy.decision(policy, call("mix_project")) == :auto
+      assert ToolPolicy.decision(policy, call("ext__term_send")) == :auto
+
+      assert ToolPolicy.decision(
+               policy,
+               call("bash", %{"command" => "agent-browser open https://example.com"})
+             ) == :auto
+
+      assert ToolPolicy.decision(policy, call("read", %{"file_path" => ".env"})) == :deny
+
+      assert ToolPolicy.decision(policy, call("bash", %{"command" => "cat ~/.ssh/id_rsa"})) ==
+               :deny
+    end
+
+    test "explicit deny rules still win" do
+      policy =
+        ToolPolicy.from_settings(%{
+          "tools" => %{"default_mode" => "yolo", "deny" => ["bash"]}
+        })
+
+      assert ToolPolicy.decision(policy, call("bash", %{"command" => "ls"})) == :deny
+      assert ToolPolicy.decision(policy, call("write")) == :auto
+    end
+  end
+
   describe "sensitive paths" do
     test "allow, session allow, and unsandboxed cannot turn a credential path into prompt or auto" do
       policy =

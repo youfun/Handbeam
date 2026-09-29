@@ -411,6 +411,12 @@ msgstr "安全模式"
 msgid "只读模式"
 msgstr "只读模式"
 
+msgid "yolo"
+msgstr "yolo"
+
+msgid "不限制操作，仅保留内置的 env 与敏感路径拦截。"
+msgstr "不限制操作，仅保留内置的 env 与敏感路径拦截。"
+
 msgid "智能审批"
 msgstr "智能审批"
 

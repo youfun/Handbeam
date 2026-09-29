@@ -400,6 +400,12 @@ msgstr "Safe Mode"
 msgid "只读模式"
 msgstr "Read-only"
 
+msgid "yolo"
+msgstr "yolo"
+
+msgid "不限制操作，仅保留内置的 env 与敏感路径拦截。"
+msgstr "Unrestricted except built-in env and credential-path intercepts."
+
 msgid "智能审批"
 msgstr "智能审批"
 

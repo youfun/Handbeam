@@ -3,14 +3,14 @@ defmodule Handbeam.Permissions.ApprovalMode do
   Workspace tool approval mode.
   """
 
-  @type t :: :auto | :prompt | :deny
-  @modes [:auto, :prompt, :deny]
+  @type t :: :auto | :prompt | :deny | :yolo
+  @modes [:auto, :prompt, :deny, :yolo]
 
   @spec parse(term(), t()) :: t()
   def parse(value, default \\ :auto)
   def parse(value, _default) when value in @modes, do: value
 
-  def parse(value, _default) when value in ["auto", "prompt", "deny"],
+  def parse(value, _default) when value in ["auto", "prompt", "deny", "yolo"],
     do: String.to_existing_atom(value)
 
   def parse(_value, default), do: default

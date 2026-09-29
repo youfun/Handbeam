@@ -86,14 +86,14 @@ defmodule Handbeam.Permissions.ToolPolicy do
       sensitive_call?(policy, call) ->
         :deny
 
-      # Allow rules and session grants were given for sandboxed execution;
-      # leaving the OS sandbox is always a fresh decision.
+      # Allow rules and session grants were given for sandboxed execution.
+      # Leaving the OS sandbox is a fresh decision, except in yolo.
       unsandboxed_bash?(name, call) ->
-        if policy.default_mode == :deny, do: :deny, else: :prompt
+        escalate(policy)
 
       # Applying a subagent worktree writes an unreviewed diff into the workspace.
       worktree_apply?(name, call) ->
-        if policy.default_mode == :deny, do: :deny, else: :prompt
+        escalate(policy)
 
       # Session grants remember a pattern, not the whole tool. They stay under
       # the unsandboxed and worktree gates, so one "this session" click cannot
@@ -102,13 +102,13 @@ defmodule Handbeam.Permissions.ToolPolicy do
         :auto
 
       Map.has_key?(policy.per_tool, name) ->
-        Map.fetch!(policy.per_tool, name)
+        release(Map.fetch!(policy.per_tool, name))
 
       Map.has_key?(policy.overrides, name) ->
-        Map.fetch!(policy.overrides, name)
+        release(Map.fetch!(policy.overrides, name))
 
       mcp_mode = mcp_decision(policy, name) ->
-        mcp_mode
+        release(mcp_mode)
 
       Enum.any?(policy.allow, &Matcher.match?(&1, call)) ->
         :auto
@@ -116,24 +116,35 @@ defmodule Handbeam.Permissions.ToolPolicy do
       browser_mode = browser_decision(policy, name, call) ->
         browser_mode
 
-      bash_browser_mode = bash_browser_decision(name, call) ->
+      bash_browser_mode = bash_browser_decision(policy, name, call) ->
         bash_browser_mode
 
       capability_prompt?(policy, name) ->
         :prompt
 
       true ->
-        policy.default_mode
+        release(policy.default_mode)
     end
   end
+
+  # YOLO auto-approves the gates that full access still asks about, and the
+  # capability denies full access keeps. Built-in sensitive-path intercepts
+  # (including `.env`) stay above this and still deny.
+  defp escalate(%__MODULE__{default_mode: :deny}), do: :deny
+  defp escalate(%__MODULE__{default_mode: :yolo}), do: :auto
+  defp escalate(%__MODULE__{}), do: :prompt
+
+  defp release(:yolo), do: :auto
+  defp release(mode), do: mode
 
   # Full access (`default_mode: :auto`) means capability-level prompts do not
   # interrupt. Capability denies (local file URLs, bash wrapping agent-browser)
   # still apply. Safe mode (`:prompt`) and read-only (`:deny`) keep asking.
-  # Host-privileged script execution and system UI (system browser,
-  # open/share exported files) ask even in full-access workspaces.
+  # YOLO skips those prompts and capability denies. Host-privileged script
+  # execution and system UI ask even in full-access workspaces.
   # Deny, per_tool, session overrides, and allow-list/always-allow stay above
   # this, so "allow for this session" / "always allow" are honored for them.
+  defp capability_prompt?(%__MODULE__{default_mode: :yolo}, _name), do: false
   defp capability_prompt?(_policy, "run_elixir_script"), do: true
   defp capability_prompt?(_policy, "mix_project"), do: true
 
@@ -150,15 +161,18 @@ defmodule Handbeam.Permissions.ToolPolicy do
   defp browser_decision(%__MODULE__{} = policy, "browser", call) do
     case classify_browser_call(call) do
       {:auto, _} -> nil
-      {:prompt, _} when policy.default_mode == :auto -> nil
+      {:prompt, _} when policy.default_mode in [:auto, :yolo] -> nil
       {:prompt, _} -> :prompt
+      {:deny, _} when policy.default_mode == :yolo -> nil
       {:deny, _} -> :deny
     end
   end
 
   defp browser_decision(_policy, _name, _call), do: nil
 
-  defp bash_browser_decision("bash", call) do
+  defp bash_browser_decision(%__MODULE__{default_mode: :yolo}, _name, _call), do: nil
+
+  defp bash_browser_decision(_policy, "bash", call) do
     command = bash_command(call)
 
     if agent_browser_command?(command) do
@@ -166,7 +180,7 @@ defmodule Handbeam.Permissions.ToolPolicy do
     end
   end
 
-  defp bash_browser_decision(_name, _call), do: nil
+  defp bash_browser_decision(_policy, _name, _call), do: nil
 
   defp unsandboxed_bash?("bash", call) do
     input = call[:input] || call["input"] || %{}

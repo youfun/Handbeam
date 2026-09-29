@@ -142,7 +142,7 @@ defmodule HandbeamProbe.HomeScreen.Chat do
     assign(socket, :composer_select, next)
   end
 
-  def handle({:tap, {:permission_mode, mode}}, socket) when mode in [:auto, :prompt, :deny] do
+  def handle({:tap, {:permission_mode, mode}}, socket) when mode in [:auto, :prompt, :yolo] do
     case Handbeam.WorkspaceSettings.update_default_mode(socket.assigns.workspace["path"], mode) do
       :ok ->
         socket

@@ -252,7 +252,7 @@ defmodule Handbeam.WorkspaceSettings do
     end
   end
 
-  def update_default_mode(workspace_root, mode) when mode in [:auto, :prompt, :deny] do
+  def update_default_mode(workspace_root, mode) when mode in [:auto, :prompt, :deny, :yolo] do
     mode_str = Atom.to_string(mode)
     settings_path = path(workspace_root)
 

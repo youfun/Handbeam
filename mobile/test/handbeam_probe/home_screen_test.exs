@@ -1102,8 +1102,8 @@ defmodule HandbeamProbe.HomeScreenTest do
     assert Handbeam.Permissions.ToolPolicy.from_workspace(assigns(view).workspace["path"]).default_mode ==
              :prompt
 
-    view = info(view, {:tap, {:permission_mode, :deny}})
-    assert assigns(view).permission_mode == :deny
+    view = info(view, {:tap, {:permission_mode, :yolo}})
+    assert assigns(view).permission_mode == :yolo
   end
 
   test "approval projection ignores foreign and stale requests and clears cancelled review", %{

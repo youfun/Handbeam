@@ -1,7 +1,7 @@
 defmodule HandbeamWeb.Feature.PermissionModeFeatureTest do
   @moduledoc """
   Switching the permission pill writes workspace settings, and the next run
-  honors that mode: safe mode asks before a write, read-only denies it.
+  honors that mode: safe mode asks before a write, yolo runs it.
 
   Run: mix test --include e2e test/feature/permission_mode_feature_test.exs
   """
@@ -15,7 +15,7 @@ defmodule HandbeamWeb.Feature.PermissionModeFeatureTest do
 
   @moduletag :e2e
 
-  test "safe mode asks before a write, read-only denies it", %{conn: conn} do
+  test "safe mode asks before a write, yolo runs it", %{conn: conn} do
     %{workspace: workspace} = E2EHarness.isolate_home!("permission-mode")
 
     parent = self()
@@ -53,7 +53,7 @@ defmodule HandbeamWeb.Feature.PermissionModeFeatureTest do
 
     {:ok, ws} = Handbeam.WorkspaceStore.add(workspace, name: "Permissions")
     {:ok, first} = ConversationStore.create(ws["id"], title: "Safe")
-    {:ok, second} = ConversationStore.create(ws["id"], title: "Read only")
+    {:ok, second} = ConversationStore.create(ws["id"], title: "YOLO")
     :ok = Session.subscribe(first["id"])
     :ok = Session.subscribe(second["id"])
 
@@ -87,26 +87,25 @@ defmodule HandbeamWeb.Feature.PermissionModeFeatureTest do
     page
     |> visit("/w/#{ws["id"]}/c/#{second["id"]}")
     |> click_button("button[phx-click='toggle_permission_menu']", "安全模式")
-    |> click_button("button[phx-value-mode='deny']", "Read-only")
+    |> click_button("button[phx-value-mode='yolo']", "yolo")
 
     assert {:ok, settings} = WorkspaceSettings.load(workspace)
-    assert get_in(settings, ["tools", "default_mode"]) == "deny"
+    assert get_in(settings, ["tools", "default_mode"]) == "yolo"
 
     conn
     |> visit("/w/#{ws["id"]}/c/#{second["id"]}")
     |> fill_in("#ai-input", "Message", with: "Write again", exact: false)
     |> click_button("#send-button", "")
-    |> assert_has(".msg-bubble.msg-assistant", "Write denied", timeout: 5_000)
+    |> assert_has(".msg-bubble.msg-assistant", "Write finished", timeout: 5_000)
     |> refute_has("#tool-approval-overlay")
 
     assert E2EHarness.await_run_end(second["id"])[:status] in ["completed", :completed]
+    assert File.read!(Path.join(workspace, "out.txt")) == "kept"
 
-    assert Enum.any?(
+    refute Enum.any?(
              E2EHarness.transcript(second["id"]),
              &(&1["role"] == "tool" and &1["tool_status"] == "error" and
                  &1["output"] =~ "denied")
            )
-
-    refute File.exists?(Path.join(workspace, "again.txt"))
   end
 end
