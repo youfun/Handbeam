@@ -6,9 +6,11 @@ defmodule Handbeam.Agent.ContextLoader do
   ## Discovery
 
   Walks from `cwd` upward through parent directories collecting every
-  `AGENTS.md` file until the filesystem root. A `mix.exs` file is not a
-  boundary. Paths are sorted by depth ascending — shallowest (lowest
-  priority) first, deepest (highest priority) last.
+  `AGENTS.md` file, and also reads `AGENTS.md` in each immediate child of the
+  workspace root. The walk stops at the workspace root when one is given,
+  otherwise at the filesystem root. A `mix.exs` file is not a boundary.
+  Paths are sorted by depth ascending — shallowest (lowest priority) first,
+  deepest (highest priority) last.
 
   ## Loading
 
@@ -37,11 +39,15 @@ defmodule Handbeam.Agent.ContextLoader do
 
   @max_per_file 2000
   @max_total 8000
+  @skipped_children ~w(node_modules _build deps .git priv .gradle .elixir_ls)
 
   @doc """
   Discover AGENTS.md files walking upward from `cwd`.
 
-  The walk stops at the filesystem root. It does not stop at `mix.exs`.
+  Pass `workspace:` to stop at that directory and include `AGENTS.md` files
+  in its immediate children. Deeper files and files outside the workspace are
+  not project instructions. Without it, the walk stops at the filesystem root.
+  It does not stop at `mix.exs`.
 
   Returns absolute paths sorted by directory depth (shallowest first).
 
@@ -51,12 +57,16 @@ defmodule Handbeam.Agent.ContextLoader do
       iex> is_list(paths)
       true
   """
-  @spec discover(String.t()) :: [String.t()]
-  def discover(cwd \\ File.cwd!()) do
+  @spec discover(String.t(), keyword()) :: [String.t()]
+  def discover(cwd \\ File.cwd!(), opts \\ []) do
+    workspace = Keyword.get(opts, :workspace)
+
     cwd
-    |> walk_up()
+    |> walk_up(workspace)
+    |> Kernel.++(child_agents(workspace))
     |> Enum.filter(&File.exists?/1)
-    |> Enum.sort_by(&depth/1, :asc)
+    |> Enum.uniq()
+    |> Enum.sort_by(&{depth(&1), &1})
   end
 
   @doc """
@@ -129,12 +139,50 @@ defmodule Handbeam.Agent.ContextLoader do
 
   # ── Private: discovery ──
 
-  defp walk_up(dir) do
+  defp walk_up(dir, workspace) do
+    stop = workspace && Path.expand(workspace)
+
     Stream.unfold(dir, fn
-      nil -> nil
-      d -> {Path.join(d, "AGENTS.md"), parent(d)}
+      nil ->
+        nil
+
+      d ->
+        expanded = Path.expand(d)
+        {Path.join(expanded, "AGENTS.md"), if(expanded == stop, do: nil, else: parent(expanded))}
     end)
     |> Enum.to_list()
+  end
+
+  defp child_agents(nil), do: []
+
+  defp child_agents(workspace) do
+    root = Path.expand(workspace)
+
+    case File.ls(root) do
+      {:ok, names} ->
+        names
+        |> Enum.sort()
+        |> Enum.flat_map(&child_agent(root, &1))
+
+      _ ->
+        []
+    end
+  end
+
+  defp child_agent(root, name) do
+    dir = Path.join(root, name)
+    path = Path.join(dir, "AGENTS.md")
+
+    if child_dir?(name, dir) and regular_file?(path), do: [path], else: []
+  end
+
+  defp child_dir?(name, dir) do
+    not String.starts_with?(name, ".") and name not in @skipped_children and
+      match?({:ok, %File.Stat{type: :directory}}, File.lstat(dir))
+  end
+
+  defp regular_file?(path) do
+    match?({:ok, %File.Stat{type: :regular}}, File.lstat(path))
   end
 
   defp parent(dir) do

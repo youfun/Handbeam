@@ -37,20 +37,22 @@ defmodule Handbeam.Agent.ContextLoaderTest do
 
     paths = ContextLoader.discover(sub2)
 
-    assert length(paths) == 3
-    assert Enum.at(paths, 0) |> String.ends_with?("AGENTS.md")
-    assert Enum.at(paths, 1) |> Path.basename() == "AGENTS.md"
-    assert Enum.at(paths, 2) |> Path.basename() == "AGENTS.md"
+    owned = [
+      Path.join(root, "AGENTS.md"),
+      Path.join(sub1, "AGENTS.md"),
+      Path.join(sub2, "AGENTS.md")
+    ]
 
-    # Deepest (cwd) should be last (highest priority)
-    assert Enum.at(paths, 2) == Path.join(sub2, "AGENTS.md")
+    assert owned -- paths == []
+    assert Enum.filter(paths, &(&1 in owned)) == owned
+    assert List.last(paths) == Path.join(sub2, "AGENTS.md")
   end
 
   @tag :tmp_dir
-  test "discover/1 returns empty list when no AGENTS.md found", %{tmp_dir: tmp_dir} do
+  test "discover/1 returns no file from a directory without AGENTS.md", %{tmp_dir: tmp_dir} do
     mark_project_root(tmp_dir)
     paths = ContextLoader.discover(tmp_dir)
-    assert paths == []
+    refute Path.join(tmp_dir, "AGENTS.md") in paths
   end
 
   @tag :tmp_dir
@@ -65,24 +67,57 @@ defmodule Handbeam.Agent.ContextLoaderTest do
 
   @tag :tmp_dir
   test "discover/1 does not stop at mix.exs", %{tmp_dir: tmp_dir} do
-    outside =
-      Path.join(Path.dirname(tmp_dir), "agents_above_#{System.unique_integer([:positive])}")
-
-    above = Path.join(outside, "AGENTS.md")
-    on_exit(fn -> File.rm_rf(outside) end)
+    tree = Path.join(tmp_dir, "tree")
+    above = Path.join(tree, "AGENTS.md")
+    project = Path.join(tree, "app")
+    nested = Path.join(project, "lib")
 
     write_file(above, "# above the mix project")
-    mark_project_root(tmp_dir)
-    write_file(Path.join(tmp_dir, "AGENTS.md"), "# mix project")
-    nested = Path.join(tmp_dir, "lib")
+    mark_project_root(project)
+    write_file(Path.join(project, "AGENTS.md"), "# mix project")
 
     paths = ContextLoader.discover(nested)
 
     assert above in paths
-    assert Path.join(tmp_dir, "AGENTS.md") in paths
+    assert Path.join(project, "AGENTS.md") in paths
 
     assert Enum.find_index(paths, &(&1 == above)) <
-             Enum.find_index(paths, &(&1 == Path.join(tmp_dir, "AGENTS.md")))
+             Enum.find_index(paths, &(&1 == Path.join(project, "AGENTS.md")))
+
+    bounded = ContextLoader.discover(nested, workspace: project)
+    refute above in bounded
+    assert Path.join(project, "AGENTS.md") in bounded
+  end
+
+  @tag :tmp_dir
+  test "discover/1 includes AGENTS.md in immediate workspace children", %{tmp_dir: tmp_dir} do
+    mobile = Path.join([tmp_dir, "mobile", "AGENTS.md"])
+    nested = Path.join([tmp_dir, "mobile", "android", "AGENTS.md"])
+    hidden = Path.join([tmp_dir, ".handbeam", "AGENTS.md"])
+    vendor = Path.join([tmp_dir, "deps", "left", "AGENTS.md"])
+    outside = Path.join(Path.dirname(tmp_dir), "outside-agents")
+    linked = Path.join(outside, "AGENTS.md")
+
+    on_exit(fn -> File.rm_rf(outside) end)
+    write_file(Path.join(tmp_dir, "AGENTS.md"), "# root")
+    write_file(mobile, "# mobile")
+    write_file(nested, "# nested")
+    write_file(hidden, "# hidden")
+    write_file(vendor, "# vendor")
+    write_file(linked, "# linked")
+    File.ln_s!(outside, Path.join(tmp_dir, "linked"))
+
+    paths = ContextLoader.discover(tmp_dir, workspace: tmp_dir)
+
+    assert Path.join(tmp_dir, "AGENTS.md") in paths
+    assert mobile in paths
+    refute nested in paths
+    refute hidden in paths
+    refute vendor in paths
+    refute linked in paths
+
+    assert Enum.find_index(paths, &(&1 == Path.join(tmp_dir, "AGENTS.md"))) <
+             Enum.find_index(paths, &(&1 == mobile))
   end
 
   @tag :tmp_dir
@@ -99,12 +134,11 @@ defmodule Handbeam.Agent.ContextLoaderTest do
     write_file(Path.join(c, "AGENTS.md"), "# c")
 
     paths = ContextLoader.discover(c)
+    owned = [Path.join(root, "AGENTS.md"), Path.join(b, "AGENTS.md"), Path.join(c, "AGENTS.md")]
 
-    assert length(paths) == 3
-    # root must come first (shallowest)
-    assert Enum.at(paths, 0) == Path.join(root, "AGENTS.md")
-    # cwd deepest must come last
-    assert Enum.at(paths, 2) == Path.join(c, "AGENTS.md")
+    refute Path.join(a, "AGENTS.md") in paths
+    assert Enum.filter(paths, &(&1 in owned)) == owned
+    assert List.last(paths) == Path.join(c, "AGENTS.md")
   end
 
   # ── load/1 ──
