@@ -629,10 +629,16 @@ defmodule Handbeam.Agent.TurnTest do
       }
 
       state = State.init(config, "Trigger transient error")
-      result = Turn.run_loop(state, [])
+      test_pid = self()
+
+      result =
+        Turn.run_loop(state,
+          on_progress: fn kind -> send(test_pid, {:progress, kind}) end
+        )
 
       assert result.status == :completed
       assert List.last(result.messages).content =~ "Recovered after transient close"
+      assert_received {:progress, :provider_retry}
     end
 
     test "does not retry streaming provider errors after a chunk was emitted" do

@@ -1133,6 +1133,8 @@ defmodule Handbeam.Agent.Turn do
          reason,
          loop_opts
        ) do
+    notify_progress(loop_opts, :provider_retry)
+
     Logger.warning(fn ->
       "[Turn] provider transient error, retrying attempt=#{attempt + 1} " <>
         "delay_ms=#{delay_ms} error=#{format_error(reason)}"

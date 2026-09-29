@@ -17,6 +17,7 @@ defmodule Handbeam.Agent.Runner do
     :message_delta,
     :thinking_delta,
     :provider_items,
+    :provider_retry,
     :tool_start,
     :tool_end,
     :turn_start,
