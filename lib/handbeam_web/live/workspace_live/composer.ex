@@ -4,7 +4,7 @@ defmodule HandbeamWeb.WorkspaceLive.Composer do
   use Gettext, backend: HandbeamWeb.Gettext
 
   import Phoenix.Component, only: [assign: 3]
-  import Phoenix.LiveView, only: [consume_uploaded_entries: 3, stream: 4]
+  import Phoenix.LiveView, only: [cancel_upload: 3, consume_uploaded_entries: 3, stream: 4]
 
   alias HandbeamWeb.WorkspaceLive.Skills
 
@@ -16,6 +16,25 @@ defmodule HandbeamWeb.WorkspaceLive.Composer do
   def remove_attachment(socket, id) do
     attachments = Enum.reject(socket.assigns.pending_attachments, &((&1[:id] || &1["id"]) == id))
     assign(socket, :pending_attachments, attachments)
+  end
+
+  def clear_composer(socket) do
+    socket
+    |> assign(:pending_attachments, [])
+    |> assign(:input_value, "")
+    |> assign(:composer_error, nil)
+    |> assign(:skill_suggestions, [])
+    |> cancel_image_uploads()
+  end
+
+  defp cancel_image_uploads(socket) do
+    case socket.assigns[:uploads][:images] do
+      %{entries: entries} when is_list(entries) ->
+        Enum.reduce(entries, socket, fn entry, acc -> cancel_upload(acc, :images, entry.ref) end)
+
+      _ ->
+        socket
+    end
   end
 
   def has_upload_entries?(socket) do

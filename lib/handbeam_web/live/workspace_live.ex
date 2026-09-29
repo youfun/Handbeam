@@ -186,6 +186,7 @@ defmodule HandbeamWeb.WorkspaceLive do
              socket.assigns.chat_scope == :free do
           socket
         else
+          socket = drop_composer_for_switch(socket, conv_id)
           {socket, _conv_id} = ConversationSwitching.select_free_conversation(socket, conv_id)
 
           socket
@@ -211,6 +212,7 @@ defmodule HandbeamWeb.WorkspaceLive do
       with {:ok, ws} <- Handbeam.WorkspaceStore.get(ws_id),
            {:ok, conv} <- Handbeam.ConversationStore.get(conv_id, include_timeline?: false),
            true <- conv["workspace_id"] == ws_id do
+        socket = drop_composer_for_switch(socket, conv_id)
         {socket, _conv_id} = ConversationSwitching.select_conversation(socket, ws_id, conv_id)
 
         socket =
@@ -578,6 +580,7 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   @impl true
   def handle_event("select_workspace", %{"id" => ws_id}, socket) do
+    socket = drop_composer_for_switch(socket)
     socket = WorkspaceNavigation.expand_group(socket, ws_id)
     {socket, conv_id} = ConversationSwitching.select_workspace(socket, ws_id)
 
@@ -600,6 +603,7 @@ defmodule HandbeamWeb.WorkspaceLive do
   def handle_event("select_conversation", %{"id" => conv_id, "ws_id" => ws_id}, socket) do
     with {:ok, %{"workspace_id" => ^ws_id}} <-
            Handbeam.ConversationStore.get(conv_id, include_timeline?: false) do
+      socket = drop_composer_for_switch(socket, conv_id)
       {socket, _conv_id} = ConversationSwitching.select_conversation(socket, ws_id, conv_id)
 
       socket =
@@ -619,6 +623,7 @@ defmodule HandbeamWeb.WorkspaceLive do
   def handle_event("select_archived_conversation", %{"id" => conv_id} = params, socket) do
     with {:ok, conv} <- Handbeam.ConversationStore.get(conv_id, include_timeline?: false) do
       if Handbeam.ConversationStore.free?(conv) do
+        socket = drop_composer_for_switch(socket, conv_id)
         {socket, _conv_id} = ConversationSwitching.select_free_conversation(socket, conv_id)
 
         socket =
@@ -634,6 +639,8 @@ defmodule HandbeamWeb.WorkspaceLive do
 
         with true <- is_binary(ws_id),
              {:ok, %{"workspace_id" => ^ws_id}} <- {:ok, conv} do
+          socket = drop_composer_for_switch(socket, conv_id)
+
           {socket, _conv_id} =
             ConversationSwitching.select_archived_conversation(socket, ws_id, conv_id)
 
@@ -946,6 +953,8 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   @impl true
   def handle_event("new_free_conversation", _params, socket) do
+    socket = drop_composer_for_switch(socket)
+
     {socket, conv_id} =
       ConversationSwitching.new_free_conversation(socket, ModelSelection.switching_opts())
 
@@ -963,6 +972,7 @@ defmodule HandbeamWeb.WorkspaceLive do
   def handle_event("select_free_conversation", %{"id" => conv_id}, socket) do
     with {:ok, conv} <- Handbeam.ConversationStore.get(conv_id, include_timeline?: false),
          true <- Handbeam.ConversationStore.free?(conv) do
+      socket = drop_composer_for_switch(socket, conv_id)
       {socket, _conv_id} = ConversationSwitching.select_free_conversation(socket, conv_id)
 
       socket =
@@ -1113,6 +1123,8 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   defp create_conversation_in_workspace(socket, ws_id, opts) do
+    socket = drop_composer_for_switch(socket)
+
     {socket, conv_id} =
       ConversationSwitching.new_conversation(socket, ws_id, ModelSelection.switching_opts())
 
@@ -1331,6 +1343,14 @@ defmodule HandbeamWeb.WorkspaceLive do
     socket
     |> RuntimeProjection.apply(event)
     |> WorkspaceNavigation.finish_runtime()
+  end
+
+  defp drop_composer_for_switch(socket, next_id \\ :new) do
+    if socket.assigns.current_conversation_id == next_id do
+      socket
+    else
+      Composer.clear_composer(socket)
+    end
   end
 
   defp restore_session(socket) do

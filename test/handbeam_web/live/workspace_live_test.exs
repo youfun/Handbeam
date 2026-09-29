@@ -892,6 +892,54 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       refute has_element?(view, "#status-label", "running")
     end
 
+    test "switching conversations clears composer attachments from the previous conversation", %{
+      conn: conn
+    } do
+      isolate_conversation_home!()
+
+      {:ok, first} =
+        Handbeam.ConversationStore.create("default",
+          id: "conv-attach-switch-a",
+          title: "Attach first"
+        )
+
+      {:ok, second} =
+        Handbeam.ConversationStore.create("default",
+          id: "conv-attach-switch-b",
+          title: "Attach second"
+        )
+
+      {:ok, view, _html} = live(conn, "/w/default/c/#{first["id"]}")
+
+      png_path =
+        Path.join(System.tmp_dir!(), "sigil_lv_upload_#{System.unique_integer([:positive])}.png")
+
+      File.write!(png_path, <<0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0, 0, 0, 0>>)
+
+      upload =
+        file_input(view, "form", :images, [
+          %{
+            path: png_path,
+            name: "from-a.png",
+            type: "image/png",
+            content: File.read!(png_path)
+          }
+        ])
+
+      render_upload(upload, "from-a.png")
+      assert has_element?(view, "#composer-attachments span.sr-only", "from-a.png")
+
+      view
+      |> element(
+        ".conversation-item[phx-click='select_conversation'][phx-value-id='#{second["id"]}']"
+      )
+      |> render_click()
+
+      refute has_element?(view, "#composer-attachments span.sr-only", "from-a.png")
+      refute has_element?(view, "#composer-attachments button[phx-click='cancel_upload']")
+      assert :sys.get_state(view.pid).socket.assigns.pending_attachments == []
+    end
+
     test "sets running state after submitting a message", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/")
 
