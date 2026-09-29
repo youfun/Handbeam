@@ -23,7 +23,8 @@ defmodule Handbeam.Tool.Builtin.Grep do
 
   @impl true
   def description do
-    "Search indexed workspace files for a regex or literal pattern. " <>
+    "Search file contents for a required regex or literal pattern. " <>
+      "Use file_search instead to find files by name or path. " <>
       "Results are grouped by file; pass next_cursor as cursor to continue."
   end
 
@@ -38,9 +39,15 @@ defmodule Handbeam.Tool.Builtin.Grep do
     %{
       type: "object",
       properties: %{
-        pattern: %{type: "string", description: "Search pattern (regex by default)"},
+        pattern: %{
+          type: "string",
+          description: "Required content pattern (regex by default)"
+        },
         path: %{type: "string", description: "Workspace-relative file or directory"},
-        glob: %{type: "string", description: "Optional glob such as *.{ex,exs}"},
+        glob: %{
+          type: "string",
+          description: "Optional file filter such as *.{ex,exs}; not a search pattern"
+        },
         exclude: %{
           type: "array",
           items: %{type: "string"},

@@ -181,6 +181,8 @@ defmodule Handbeam.Tool.Builtin.GrepTest do
     assert Grep.concurrent?() == true
     assert is_integer(Grep.max_result_chars())
     assert "pattern" in Grep.input_schema().required
+    assert Grep.description() =~ "file_search"
+    assert Grep.input_schema().properties.glob.description =~ "not a search pattern"
   end
 
   test "elixir fallback finds matches without rg" do

@@ -151,6 +151,9 @@ defmodule Handbeam.Agent.ConfigTest do
         assert config.working_directory == workspace
         assert config.system_prompt =~ "Current workspace: #{workspace}"
         assert config.system_prompt =~ "Prefer workspace-relative file paths"
+        assert config.system_prompt =~ "`bash`, `grep`, `file_search`"
+        assert config.system_prompt =~ "Use `file_search` to find files by name or path"
+        assert config.system_prompt =~ "every `grep` call requires a `pattern`"
         assert config.system_prompt =~ "workspace root is NOT the filesystem root"
         assert config.system_prompt =~ "runs commands from the current workspace by default"
         assert config.system_prompt =~ "Do not prefix commands with `cd #{workspace} &&`"
