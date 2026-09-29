@@ -385,6 +385,35 @@ defmodule Handbeam.AttachmentsTest do
     assert {:error, :invalid_path} = Handbeam.ExportSnapshot.authorize(workspace, "/etc/passwd")
   end
 
+  test "free chat inlines an image without a workspace path", %{dir: dir} do
+    staging = Path.join(dir, "staging")
+    File.mkdir_p!(staging)
+    src = Path.join(staging, "shot.png")
+    png = png_header() <> <<1, 2, 3, 4>>
+    File.write!(src, png)
+    {:ok, conv} = Handbeam.ConversationStore.create("default")
+
+    imported = %Imported{
+      attachment_id: "att-free",
+      source: :test,
+      display_name: "shot.png",
+      canonical_type: "image/png",
+      size_bytes: byte_size(png),
+      controlled_path: src
+    }
+
+    assert {:ok, %Message{content: blocks}, persistable} =
+             MessageBuilder.build("look", [imported],
+               chat_scope: :free,
+               conversation_id: conv["id"],
+               staging_roots: [staging]
+             )
+
+    image = Enum.find(blocks, &(&1.type == "image"))
+    assert image.data == Base.encode64(png)
+    assert hd(persistable)["relative_path"] == "att-free.png"
+  end
+
   defp png_header, do: <<0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A>>
 
   defp write_text(dir, name, body) do

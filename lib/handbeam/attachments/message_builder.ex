@@ -181,16 +181,23 @@ defmodule Handbeam.Attachments.MessageBuilder do
   end
 
   defp read_image(%{relative_path: relative}, opts) when is_binary(relative) do
-    workspace = Keyword.fetch!(opts, :workspace_path)
     conversation_id = Keyword.fetch!(opts, :conversation_id)
 
-    with {:ok, path} <- Access.resolve_upload(workspace, conversation_id, relative),
+    with {:ok, path} <- resolve_image(relative, conversation_id, opts),
          {:ok, bin} <- Access.read_bounded(path, Attachments.max_image_bytes()) do
       {:ok, Base.encode64(bin)}
     end
   end
 
   defp read_image(_, _), do: {:error, :missing_file}
+
+  defp resolve_image(relative, conversation_id, opts) do
+    if Keyword.get(opts, :chat_scope) == :free do
+      Access.resolve_free_upload(conversation_id, Path.basename(relative))
+    else
+      Access.resolve_upload(Keyword.fetch!(opts, :workspace_path), conversation_id, relative)
+    end
+  end
 
   defp text_file_note(name, relative) when is_binary(relative),
     do: "Attached text file #{name} at #{relative}. Read it with the read tool."
