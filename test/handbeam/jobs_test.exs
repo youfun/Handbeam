@@ -46,11 +46,21 @@ defmodule Handbeam.JobsTest do
     assert {:error, _} = Jobs.wait_budget(-1, context)
   end
 
-  test "Bash stays synchronous unless explicitly opted in", %{context: context} do
-    assert {:ok, "sync", %{exit_code: 0}} = Bash.execute(%{"command" => "printf sync"}, context)
+  test "managed Bash returns executor-compatible text and a recoverable job handle", %{
+    context: context
+  } do
+    assert {:ok, sync_text, %{job: sync_job, recovery: :poll}} =
+             Bash.execute(%{"command" => "printf sync"}, context)
+
+    assert is_binary(sync_text)
+    assert sync_job.state == :completed
+    assert sync_job.output == "sync"
 
     assert {:ok, text, %{job: job}} =
-             Bash.execute(%{"command" => "printf async", "job" => true}, context)
+             Bash.execute(
+               %{"command" => "printf async", "job" => true},
+               %{context | tool_call_id: "call-explicit"}
+             )
 
     assert job.state == :completed
     assert job.output == "async"

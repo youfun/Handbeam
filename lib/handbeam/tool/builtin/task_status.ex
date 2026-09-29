@@ -4,7 +4,7 @@ defmodule Handbeam.Tool.Builtin.TaskStatus do
 
   alias Handbeam.Agent.Delegation
 
-  @actions ~w(list get cancel message apply discard)
+  @actions ~w(list get cancel message apply discard resume)
 
   @impl true
   def name, do: "task_status"
@@ -15,7 +15,9 @@ defmodule Handbeam.Tool.Builtin.TaskStatus do
       "list: all subagents and their status. get: one subagent's status and latest report. " <>
       "cancel: stop a running subagent. message: send the subagent a message; a running " <>
       "subagent receives it as a steer, a finished one starts a follow-up run and its reply " <>
-      "arrives later as a follow-up message. apply / discard: take or drop a write " <>
+      "arrives later as a follow-up message. resume: restart an interrupted child in the " <>
+      "same conversation and worktree after reviewing its prior transcript. apply / discard: " <>
+      "take or drop a write " <>
       "subagent's worktree diff (apply needs approval). child_conversation_id may also be a " <>
       "subagent_type, meaning the most recent subagent of that type."
   end
@@ -65,6 +67,8 @@ defmodule Handbeam.Tool.Builtin.TaskStatus do
 
   defp dispatch("discard", parent, child, _input),
     do: Delegation.worktree(parent, :discard, child)
+
+  defp dispatch("resume", parent, child, _input), do: Delegation.resume_task(parent, child)
 
   defp dispatch("message", parent, child, %{"message" => text})
        when is_binary(text) and byte_size(text) <= 16_000 do

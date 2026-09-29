@@ -39,6 +39,13 @@ defmodule Handbeam.Tool.Builtin.Bash do
   end
 
   @impl true
+  def hint do
+    "Read the command's stderr before retrying. Change the command, or its timeout and " <>
+      "working_directory, from that error. Retry with unsandboxed=true only after a sandbox " <>
+      "write denial; that asks the user for approval and does not bypass credential-path checks."
+  end
+
+  @impl true
   def input_schema do
     %{
       type: "object",
@@ -94,14 +101,21 @@ defmodule Handbeam.Tool.Builtin.Bash do
          {:ok, cwd} <- resolve_cwd(Map.get(input, "cwd"), working_directory) do
       unsandboxed? = Map.get(input, "unsandboxed") == true
 
-      case Map.get(input, "job", false) do
-        false ->
-          execute_command(command, timeout_sec, cwd, working_directory, unsandboxed?)
-
-        true when unsandboxed? ->
+      cond do
+        unsandboxed? and Map.get(input, "job", false) == true ->
           {:error, "unsandboxed is not available for job=true"}
 
-        true when is_integer(timeout_sec) and timeout_sec in 1..3_600 ->
+        unsandboxed? or not managed_context?(context) ->
+          execute_command(command, timeout_sec, cwd, working_directory, unsandboxed?)
+
+        Map.get(input, "job", false) == false and is_integer(timeout_sec) and
+            timeout_sec in 1..3_600 ->
+          managed_command(command, timeout_sec, cwd, input, context)
+
+        Map.get(input, "job", false) == false ->
+          execute_command(command, timeout_sec, cwd, working_directory, unsandboxed?)
+
+        is_integer(timeout_sec) and timeout_sec in 1..3_600 ->
           Handbeam.Jobs.start(
             command,
             cwd,
@@ -111,10 +125,10 @@ defmodule Handbeam.Tool.Builtin.Bash do
           )
           |> Handbeam.Jobs.format()
 
-        true ->
+        Map.get(input, "job", false) == true ->
           {:error, "Job timeout must be an integer from 1 to 3600 seconds"}
 
-        _ ->
+        true ->
           {:error, "job must be a boolean"}
       end
     end
@@ -181,6 +195,40 @@ defmodule Handbeam.Tool.Builtin.Bash do
   end
 
   # ── Execution ──
+
+  # Soft wait decides only how long this call blocks. The command starts once;
+  # a still-running result is the same job and must be polled, not relaunched.
+  defp managed_context?(context) do
+    is_binary(context[:conversation_id]) and context[:conversation_id] != "" and
+      is_binary(context[:run_id]) and context[:run_id] != "" and
+      is_binary(context[:working_directory]) and context[:working_directory] != "" and
+      is_binary(context[:tool_call_id]) and context[:tool_call_id] != ""
+  end
+
+  defp managed_command(command, timeout_sec, cwd, input, context) do
+    wait_ms = Map.get(input, "wait_ms", 1_000)
+
+    result =
+      command
+      |> Handbeam.Jobs.start(cwd, timeout_sec * 1_000, wait_ms, context)
+      |> Handbeam.Jobs.format()
+
+    case result do
+      {:ok, text, meta} ->
+        {:ok, text, Map.merge(meta || %{}, %{side_effect: :unknown, recovery: :poll})}
+
+      {:error, reason} when is_binary(reason) ->
+        if String.contains?(reason, "requires trusted") or String.contains?(reason, "unavailable") or
+             String.contains?(reason, "not open") do
+          execute_command(command, timeout_sec, cwd, context[:working_directory], false)
+        else
+          {:error, reason}
+        end
+
+      other ->
+        other
+    end
+  end
 
   defp execute_command(command, timeout_sec, cwd, working_directory, unsandboxed?) do
     timeout_ms = timeout_sec * 1000

@@ -72,6 +72,7 @@ defmodule Handbeam.Agent.Subagent.Worktree do
   def sweep(workspace, keep) do
     root = Path.join(Path.expand(workspace), @dir)
     now = System.os_time(:second)
+    keep = keep ++ recoverable_ids(workspace)
 
     case File.ls(root) do
       {:ok, names} ->
@@ -84,6 +85,35 @@ defmodule Handbeam.Agent.Subagent.Worktree do
       _ ->
         :ok
     end
+  end
+
+  defp recoverable_ids(workspace) do
+    root =
+      Application.get_env(
+        :handbeam,
+        :conversation_root,
+        Path.join(Handbeam.Home.path(), ".handbeam/conversations")
+      )
+
+    root
+    |> Path.join("items/*/subagents/*.json")
+    |> Path.wildcard()
+    |> Enum.flat_map(fn path ->
+      case File.read(path) do
+        {:ok, body} ->
+          case Handbeam.JSON.decode(body) do
+            {:ok, %{"workspace" => ^workspace, "id" => id, "status" => status}}
+            when status not in ["applied", "discarded"] ->
+              [id]
+
+            _ ->
+              []
+          end
+
+        _ ->
+          []
+      end
+    end)
   end
 
   defp old?(path, now) do

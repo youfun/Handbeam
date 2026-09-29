@@ -109,6 +109,16 @@ defmodule Handbeam.Agent.Delegation do
     call({:resume_child, parent_id, child_ref, decisions})
   end
 
+  @doc """
+  Continue an interrupted child without replaying committed tool effects.
+
+  Reuses the same child conversation and worktree. Completed receipts are
+  returned; unknown receipts must be reconciled and are not rerun.
+  """
+  def resume_task(parent_id, child_ref) when is_binary(parent_id) and is_binary(child_ref) do
+    call({:resume_task, parent_id, child_ref})
+  end
+
   defp call(message) do
     GenServer.call(__MODULE__, message, :infinity)
   catch
@@ -266,6 +276,29 @@ defmodule Handbeam.Agent.Delegation do
     {:reply, :ok, state}
   end
 
+  def handle_call({:resume_task, parent_id, ref}, from, state) do
+    with {:ok, session} <- owned_session(state, parent_id, ref),
+         :ok <- messageable(session),
+         false <- Map.has_key?(state.jobs, session.id),
+         false <- map_size(state.jobs) >= @global_limit do
+      prompt = resume_prompt(session)
+
+      start_follow_up(
+        state,
+        session,
+        prompt,
+        [forward_to_parent: true, source: :recovery],
+        from
+      )
+    else
+      {:error, _} = error ->
+        {:reply, error, state}
+
+      true ->
+        {:reply, {:error, "subagent cannot be resumed while it is running or at capacity"}, state}
+    end
+  end
+
   def handle_call({:resume_child, parent_id, ref, decisions}, _from, state) do
     with {:ok, session} <- owned_session(state, parent_id, ref),
          %{status: :awaiting_approval} = job <- state.jobs[session.id] do
@@ -302,12 +335,15 @@ defmodule Handbeam.Agent.Delegation do
           state
 
         session ->
-          put_session(state, %{
+          session = %{
             session
             | child_opts: child_opts,
               worktree: worktree && worktree.path,
               worktree_base: worktree && worktree.base
-          })
+          }
+
+          persist_descriptor(session)
+          put_session(state, session)
       end
 
     {:noreply, state}
@@ -328,6 +364,7 @@ defmodule Handbeam.Agent.Delegation do
             diff_stat: view.diff_stat || session.diff_stat
         }
 
+        persist_descriptor(session)
         state = put_session(state, session)
         state = if forward?, do: queue_report(state, session, view.text), else: state
         {:noreply, state}
@@ -605,13 +642,27 @@ defmodule Handbeam.Agent.Delegation do
     owner = self()
 
     child_opts =
-      session.child_opts
-      |> Keyword.merge(
-        history_messages: child_history(session),
-        source: Keyword.get(opts, :source, :direct_message)
-      )
-      |> Keyword.merge(run_opts(job, owner))
+      case child_history(session) do
+        {:error, reason} ->
+          {:error, reason}
 
+        history ->
+          session.child_opts
+          |> Keyword.merge(
+            history_messages: history,
+            source: Keyword.get(opts, :source, :direct_message)
+          )
+          |> Keyword.merge(run_opts(job, owner))
+      end
+
+    if match?({:error, _}, child_opts) do
+      {:reply, {:error, "child history could not be restored"}, state}
+    else
+      start_follow_up_task(state, session, job, text, child_opts, owner)
+    end
+  end
+
+  defp start_follow_up_task(state, session, job, text, child_opts, owner) do
     {:ok, starter} =
       Task.Supervisor.start_child(Handbeam.AgentRunTaskSupervisor, fn ->
         send(
@@ -747,6 +798,9 @@ defmodule Handbeam.Agent.Delegation do
 
   defp child_history(session) do
     case ConversationStore.load_messages_result(session.id) do
+      {:error, reason} ->
+        {:error, reason}
+
       {:ok, entries} ->
         workspace = session.child_opts[:workspace_path]
 
@@ -754,10 +808,56 @@ defmodule Handbeam.Agent.Delegation do
           entries,
           &Handbeam.Attachments.History.to_messages(&1, workspace, session.id)
         )
-
-      {:error, _} ->
-        []
     end
+  end
+
+  defp persist_descriptor(session) do
+    path = descriptor_path(session)
+
+    if path do
+      body =
+        session
+        |> Map.take([
+          :id,
+          :parent_id,
+          :workspace,
+          :worktree,
+          :worktree_base,
+          :status,
+          :run_id,
+          :runs
+        ])
+        |> Map.put(:profile, session.profile.name)
+        |> Handbeam.JsonSafe.normalize()
+        |> Handbeam.JSON.encode!()
+
+      File.mkdir_p(Path.dirname(path))
+      File.write(path, body)
+    end
+
+    :ok
+  end
+
+  defp descriptor_path(%{parent_id: parent, id: id}) when is_binary(parent) and is_binary(id) do
+    root =
+      Application.get_env(
+        :handbeam,
+        :conversation_root,
+        Path.join(Handbeam.Home.path(), ".handbeam/conversations")
+      )
+
+    Path.join([root, "items", parent, "subagents", id <> ".json"])
+  end
+
+  defp descriptor_path(_session), do: nil
+
+  defp resume_prompt(session) do
+    "Resume the interrupted task in this same child conversation and existing worktree. " <>
+      "Review the prior transcript and current files first. Do not repeat a tool operation " <>
+      "whose prior result says side_effect=committed. If a prior side effect is unknown, " <>
+      "reconcile it from the current file/process state before retrying. Continue from the " <>
+      "last unfinished step and report the completed outcome. Recovery attempt " <>
+      Integer.to_string((session.runs || 0) + 1) <> "."
   end
 
   defp wake_opts(context) do

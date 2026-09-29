@@ -252,6 +252,13 @@ defmodule Handbeam.Agent.DelegationTest do
     assert {:error, :not_found} = Handbeam.ConversationTranscriptStore.list(id)
     assert Policy.live_parent?(context)
     refute_receive {:provider, :child, _, _, _, _}, 100
+
+    resume = Task.async(fn -> Delegation.resume_task(context.conversation_id, id) end)
+    assert_receive {:provider, :child, resumed_child, resumed_messages, _, _}, 2_000
+    assert resumed_child != child
+    assert Enum.any?(resumed_messages, &(Message.text(&1) =~ "Resume the interrupted task"))
+    assert {:ok, %{child_conversation_id: ^id, delivery: :follow_up}} = Task.await(resume, 2_000)
+    send(resumed_child, :finish)
   end
 
   test "approval is blocked and cleaned rather than left awaiting a user", %{context: context} do
