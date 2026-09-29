@@ -95,7 +95,11 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
 
           socket =
             update(socket, :conversations_by_workspace, fn conversations_by_workspace ->
-              Map.put(conversations_by_workspace, @free_key, conversations ++ [conversation])
+              Map.put(
+                conversations_by_workspace,
+                @free_key,
+                insert_sidebar_conversation(conversations, conversation)
+              )
             end)
 
           {socket, conversation}
@@ -265,7 +269,11 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
 
         socket =
           update(socket, :conversations_by_workspace, fn conversations_by_workspace ->
-            Map.put(conversations_by_workspace, @free_key, conversations ++ [conversation])
+            Map.put(
+              conversations_by_workspace,
+              @free_key,
+              insert_sidebar_conversation(conversations, conversation)
+            )
           end)
 
         {socket, conversation}
@@ -307,7 +315,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
       Map.put(
         socket.assigns.conversations_by_workspace,
         @free_key,
-        conversations ++ [conversation]
+        insert_sidebar_conversation(conversations, conversation)
       )
 
     socket =
@@ -358,7 +366,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
       Map.put(
         socket.assigns.conversations_by_workspace,
         workspace_id,
-        conversations ++ [conversation]
+        insert_sidebar_conversation(conversations, conversation)
       )
 
     socket =
@@ -393,15 +401,17 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
 
         updated_convs =
           if Enum.any?(current_convs, &(ConversationState.conversation_id(&1) == conv_id)) do
-            Enum.map(current_convs, fn existing ->
+            current_convs
+            |> Enum.map(fn existing ->
               if ConversationState.conversation_id(existing) == conv_id do
                 merge_refreshed_title(existing, updated_conv)
               else
                 existing
               end
             end)
+            |> sort_sidebar_conversations()
           else
-            current_convs ++ [updated_conv]
+            insert_sidebar_conversation(current_convs, updated_conv)
           end
 
         socket
@@ -534,7 +544,11 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
 
         socket =
           update(socket, :conversations_by_workspace, fn conversations_by_workspace ->
-            Map.put(conversations_by_workspace, workspace_id, conversations ++ [conversation])
+            Map.put(
+              conversations_by_workspace,
+              workspace_id,
+              insert_sidebar_conversation(conversations, conversation)
+            )
           end)
 
         {socket, conversation}
@@ -616,6 +630,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
     conversations_by_workspace
     |> Map.get(@free_key, [])
     |> Enum.reject(&archived_conversation?/1)
+    |> sort_sidebar_conversations()
     |> Enum.map(&conversation_row(&1, nil, "对话", "free"))
   end
 
@@ -626,6 +641,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
     conversations_by_workspace
     |> Map.get(ws_id, [])
     |> Enum.reject(&archived_conversation?/1)
+    |> sort_sidebar_conversations()
     |> Enum.map(fn conv ->
       conversation_row(conv, ws_id, Map.get(ws_map, ws_id, ws_id), "workspace")
     end)
@@ -865,15 +881,31 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
     Handbeam.ConversationStore.transcript_empty?(conversation_id)
   end
 
-  defp maybe_sort_conversations(conversations, true) do
-    Enum.sort_by(
-      conversations,
-      fn c -> {not is_binary(c["archived_at"]), c["updated_at"] || ""} end,
-      :desc
-    )
+  defp maybe_sort_conversations(conversations, _include_archived?),
+    do: sort_sidebar_conversations(conversations)
+
+  defp insert_sidebar_conversation(conversations, conversation) do
+    id = ConversationState.conversation_id(conversation)
+
+    conversations
+    |> Enum.reject(&(ConversationState.conversation_id(&1) == id))
+    |> then(&[conversation | &1])
+    |> sort_sidebar_conversations()
   end
 
-  defp maybe_sort_conversations(conversations, false), do: conversations
+  # Active chats stay above archived ones. Within each group, the most recently
+  # updated conversation is first so a new chat appears at the top of the sidebar.
+  defp sort_sidebar_conversations(conversations) do
+    Enum.sort_by(conversations, &sidebar_sort_key/1, :desc)
+  end
+
+  defp sidebar_sort_key(conversation) do
+    {
+      not archived_conversation?(conversation),
+      ConversationState.conv_value(conversation, "updated_at", "") || "",
+      ConversationState.conv_value(conversation, "created_at", "") || ""
+    }
+  end
 
   defp filter_archived(conversations, true), do: conversations
 
