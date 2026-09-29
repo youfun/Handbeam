@@ -122,7 +122,88 @@ root_new = """                let textShouldFill = node.fillWidth || node.textAl
                 }
 """
 
+def match_brace(text, open_idx):
+    depth = 0
+    for i in range(open_idx, len(text)):
+        char = text[i]
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return i
+    sys.exit("MobRootView.swift: unbalanced brace")
+
+def split_node_view_body(text):
+    """Give each MobNodeView case its own ViewBuilder.
+
+    The stock body is one expression. Adding the markdown branch makes the
+    Swift type checker give up ("unable to type-check this expression in
+    reasonable time") on the macOS CI compiler.
+    """
+    if "private var mobNodeColumn:" in text:
+        return text
+    struct_at = text.find("struct MobNodeView: View {")
+    if struct_at < 0:
+        sys.exit("MobRootView.swift: MobNodeView not found")
+    struct_brace = text.find("{", struct_at)
+    struct_end = match_brace(text, struct_brace)
+    body_key = "    var body: some View {"
+    body_at = text.find(body_key, struct_at, struct_end)
+    if body_at < 0:
+        sys.exit("MobRootView.swift: MobNodeView body not found")
+    switch_key = "switch node.nodeType {"
+    switch_at = text.find(switch_key, body_at, struct_end)
+    if switch_at < 0:
+        sys.exit("MobRootView.swift: nodeType switch not found")
+    switch_brace = text.find("{", switch_at)
+    switch_end = match_brace(text, switch_brace)
+    inner = text[switch_brace + 1 : switch_end]
+    lines = inner.splitlines(keepends=True)
+    case_indent = None
+    chunks = []
+    for line in lines:
+        stripped = line.lstrip(" ")
+        indent = len(line) - len(stripped.lstrip("\n"))
+        # blank lines have no indent signal
+        is_case = stripped.startswith("case ") or stripped.startswith("@unknown default")
+        if is_case and (case_indent is None or indent == case_indent):
+            case_indent = indent
+            chunks.append([line])
+        elif chunks:
+            chunks[-1].append(line)
+        # preamble whitespace before the first case is ignored
+    if len(chunks) < 2:
+        sys.exit("MobRootView.swift: could not split nodeType cases")
+
+    helpers = []
+    new_cases = []
+    for chunk in chunks:
+        header = chunk[0].strip()
+        if header.startswith("@unknown"):
+            name = "mobNodeUnknown"
+        else:
+            kind = header.split(".", 1)[1].split(":", 1)[0].strip()
+            name = "mobNode" + kind[0].upper() + kind[1:]
+        body = "".join(chunk[1:]).rstrip() + "\n"
+        helpers.append(
+            "    @ViewBuilder\n"
+            f"    private var {name}: some View {{\n"
+            f"{body}"
+            "    }\n"
+        )
+        new_cases.append(chunk[0].rstrip() + "\n" + (" " * (case_indent + 4)) + name + "\n")
+
+    replacement = "\n" + "".join(new_cases) + " " * (case_indent - 4)
+    text = text[: switch_brace + 1] + replacement + text[switch_end:]
+    # struct_end moved by the length delta
+    delta = len(replacement) - len(inner)
+    struct_end += delta
+    helper_block = "\n" + "\n".join(helpers)
+    return text[:struct_end] + helper_block + text[struct_end:]
+
 root = load("MobRootView.swift")
+root = split_node_view_body(root)
 # macOS CI images often ship an SDK older than iOS 26. `#available` still
 # type-checks `glassEffect`, so hide it from compilers that do not have it.
 root = ensure(
