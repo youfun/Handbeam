@@ -945,6 +945,15 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       refute has_element?(view, "#composer-attachments span.sr-only", "from-a.png")
       refute has_element?(view, "#composer-attachments button[phx-click='cancel_upload']")
       assert :sys.get_state(view.pid).socket.assigns.pending_attachments == []
+
+      view
+      |> element(
+        ".conversation-item[phx-click='select_conversation'][phx-value-id='#{first["id"]}']"
+      )
+      |> render_click()
+
+      assert has_element?(view, "#composer-attachments img[alt='from-a.png']")
+      assert :sys.get_state(view.pid).socket.assigns.current_conversation_id == first["id"]
     end
 
     test "sets running state after submitting a message", %{conn: conn} do

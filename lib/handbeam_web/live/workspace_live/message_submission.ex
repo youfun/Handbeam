@@ -408,6 +408,7 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
           |> assign(:input_value, "")
           |> append_user_message(message, attachments, msg_id)
           |> assign(:pending_attachments, [])
+          |> Composer.forget(conv_id)
           |> assign(:pending_messages, pending)
           |> push_event("user-message-sent", %{})
 
@@ -419,6 +420,7 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
          |> assign(:input_value, "")
          |> append_user_message(message, attachments, msg_id)
          |> assign(:pending_attachments, [])
+         |> Composer.forget(conv_id)
          |> assign(:running, true)
          |> assign(:running_conversation_id, conv_id)
          |> push_event("user-message-sent", %{})}
@@ -540,6 +542,7 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
           |> assign(:running_conversation_id, conv_id)
           |> assign(:stream_suppressed, false)
           |> assign(:pending_attachments, [])
+          |> Composer.forget(conv_id)
           |> append_user_message(message, [], msg_id)
           |> RuntimeProjection.update_status(%{status: :running, turns: 0})
           |> RuntimeProjection.subscribe_session()
@@ -771,6 +774,7 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
           |> assign(:current_assistant_entry_id, nil)
           |> append_user_message(message, attachments, msg_id)
           |> assign(:pending_attachments, [])
+          |> Composer.forget(conv_id)
           |> RuntimeProjection.update_status(%{
             status: :running,
             input_tokens: 0,

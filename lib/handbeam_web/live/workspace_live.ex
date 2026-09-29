@@ -123,6 +123,7 @@ defmodule HandbeamWeb.WorkspaceLive do
       |> assign(:running_conversation_id, nil)
       |> assign(:stream_suppressed, false)
       |> assign(:pending_attachments, [])
+      |> assign(:composer_drafts, %{})
       |> assign(:pending_messages, %{})
       |> allow_upload(:images,
         accept: ~w(.png .jpg .jpeg .gif .webp),
@@ -1346,11 +1347,9 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   defp drop_composer_for_switch(socket, next_id \\ :new) do
-    if socket.assigns.current_conversation_id == next_id do
-      socket
-    else
-      Composer.clear_composer(socket)
-    end
+    socket
+    |> Composer.materialize_uploads()
+    |> Composer.switch_conversation(next_id)
   end
 
   defp restore_session(socket) do

@@ -18,6 +18,72 @@ defmodule HandbeamWeb.WorkspaceLive.Composer do
     assign(socket, :pending_attachments, attachments)
   end
 
+  def switch_conversation(socket, next_id) do
+    current_id = socket.assigns[:current_conversation_id]
+
+    if current_id == next_id do
+      socket
+    else
+      socket
+      |> stash_current()
+      |> load_draft(next_id)
+    end
+  end
+
+  def forget(socket, conversation_id) when is_binary(conversation_id) do
+    assign(socket, :composer_drafts, Map.delete(drafts(socket), conversation_id))
+  end
+
+  def forget(socket, _), do: socket
+
+  defp stash_current(socket) do
+    id = socket.assigns[:current_conversation_id]
+    draft = current_draft(socket)
+
+    drafts =
+      if is_binary(id) and draft != empty_draft() do
+        Map.put(drafts(socket), id, draft)
+      else
+        Map.delete(drafts(socket), id)
+      end
+
+    assign(socket, :composer_drafts, drafts)
+  end
+
+  defp load_draft(socket, conversation_id) do
+    draft = Map.get(drafts(socket), conversation_id, empty_draft())
+
+    socket
+    |> assign(:pending_attachments, draft.attachments)
+    |> assign(:input_value, draft.input)
+    |> assign(:composer_error, nil)
+    |> assign(
+      :skill_suggestions,
+      Skills.suggestions(draft.input, socket.assigns[:available_skills] || [])
+    )
+    |> cancel_image_uploads()
+  end
+
+  defp current_draft(socket) do
+    %{
+      input: socket.assigns[:input_value] || "",
+      attachments: socket.assigns[:pending_attachments] || []
+    }
+  end
+
+  defp empty_draft, do: %{input: "", attachments: []}
+
+  defp drafts(socket), do: socket.assigns[:composer_drafts] || %{}
+
+  def materialize_uploads(socket) do
+    if has_upload_entries?(socket) do
+      {socket, _attachments} = consume_images(socket, socket.assigns[:workspace_root])
+      socket
+    else
+      socket
+    end
+  end
+
   def clear_composer(socket) do
     socket
     |> assign(:pending_attachments, [])
@@ -30,10 +96,25 @@ defmodule HandbeamWeb.WorkspaceLive.Composer do
   defp cancel_image_uploads(socket) do
     case socket.assigns[:uploads][:images] do
       %{entries: entries} when is_list(entries) ->
-        Enum.reduce(entries, socket, fn entry, acc -> cancel_upload(acc, :images, entry.ref) end)
+        Enum.reduce(entries, socket, &cancel_image_upload/2)
 
       _ ->
         socket
+    end
+  end
+
+  defp cancel_image_upload(entry, socket) do
+    if upload_channel_alive?(socket, entry) do
+      cancel_upload(socket, :images, entry.ref)
+    else
+      socket
+    end
+  end
+
+  defp upload_channel_alive?(socket, entry) do
+    case socket.assigns.uploads.images.entry_refs_to_pids[entry.ref] do
+      pid when is_pid(pid) -> Process.alive?(pid)
+      _ -> false
     end
   end
 
