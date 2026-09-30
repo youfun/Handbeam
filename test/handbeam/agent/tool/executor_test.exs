@@ -82,24 +82,6 @@ defmodule Handbeam.Agent.Tool.ExecutorTest do
       assert first_block[:content] =~ "line one"
     end
 
-    test "runs sequential tools under AgentRunTaskSupervisor" do
-      config = %Config{working_directory: @fixtures_dir, tool_timeout: 2_000}
-      state = State.init(config, "Read sample")
-
-      tool_calls = [
-        %{id: "tool_sup", name: "read", input: %{"file_path" => "sample.txt", "limit" => 1}}
-      ]
-
-      before = MapSet.new(Task.Supervisor.children(Handbeam.AgentRunTaskSupervisor))
-      {:ok, result_msg} = Executor.execute_all(tool_calls, state)
-      after_children = MapSet.new(Task.Supervisor.children(Handbeam.AgentRunTaskSupervisor))
-
-      [block] = result_msg.content
-      assert block[:is_error] == false
-      assert MapSet.subset?(before, after_children) or after_children != before
-      assert Process.whereis(Handbeam.AgentRunTaskSupervisor)
-    end
-
     test "returns error for unknown tool" do
       config = %Config{}
       state = State.init(config, "Use unknown tool")

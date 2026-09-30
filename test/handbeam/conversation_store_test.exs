@@ -24,7 +24,6 @@ defmodule Handbeam.ConversationStoreTest do
   describe "storage_dir/0, index_path/0, paths" do
     test "storage_dir is fixed under ~/.handbeam/conversations", %{storage_dir: storage_dir} do
       assert String.ends_with?(storage_dir, "/.handbeam/conversations")
-      assert File.dir?(storage_dir) or not File.exists?(storage_dir)
     end
 
     test "storage_path returns the index file path", %{storage_path: storage_path} do

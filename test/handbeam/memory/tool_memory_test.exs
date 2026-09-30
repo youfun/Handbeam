@@ -269,7 +269,7 @@ defmodule Handbeam.Tool.MemoryTest do
           %{}
         )
 
-      assert reason =~ "not found" or reason =~ "not found"
+      assert reason =~ "not found"
     end
 
     test "rejects invalid kind" do

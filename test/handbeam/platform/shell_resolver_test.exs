@@ -24,14 +24,6 @@ defmodule Handbeam.Platform.ShellResolverTest do
     end
   end
 
-  describe "resolve/1: known paths" do
-    test "checks known Windows Git Bash paths" do
-      # On unix this should fall through to PATH bash
-      result = ShellResolver.resolve([])
-      assert match?({:ok, _}, result) or match?({:error, _}, result)
-    end
-  end
-
   describe "app_env config" do
     test "reads shell_path from Application env" do
       bash = System.find_executable("bash") || "/bin/bash"

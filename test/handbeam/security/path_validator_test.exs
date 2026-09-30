@@ -150,10 +150,8 @@ defmodule Handbeam.Security.PathValidator.Test do
       File.ln_s!(b, a)
       File.ln_s!(a, b)
 
-      # Should either return the path or detect it's within workspace
-      result = PathValidator.validate_within_workspace(a, @sandbox_dir)
-      # The loop should not crash; it resolves to the first seen path
-      assert result == :ok or match?({:error, _}, result)
+      assert {:error, "Path traversal blocked: " <> _} =
+               PathValidator.validate_within_workspace(a, @sandbox_dir)
     end
   end
 

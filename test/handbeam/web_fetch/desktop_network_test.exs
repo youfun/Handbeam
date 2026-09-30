@@ -198,8 +198,6 @@ defmodule Handbeam.WebFetch.DesktopNetworkTest do
     assert {:ok, {:http, "127.0.0.1", 7890, []}} = Proxy.from_scutil(scutil, "http")
 
     assert Proxy.from_scutil("HTTPEnable : 0\nHTTPSEnable : 0\n", "https") == nil
-    assert is_boolean(Route.system_tun?())
-    assert Proxy.system("https") == :error or match?({:ok, _}, Proxy.system("https"))
 
     assert WebFetch.Desktop.resolver_fake_ip?(fn -> {:ok, [{198, 18, 1, 9}]} end)
     refute WebFetch.Desktop.resolver_fake_ip?(fn -> {:ok, [{1, 1, 1, 1}]} end)

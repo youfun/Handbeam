@@ -86,7 +86,14 @@ defmodule Handbeam.AttachmentsTest do
              )
 
     assert File.exists?(src)
-    assert is_binary(message) or match?(%Message{}, message)
+
+    assert %Message{
+             role: :user,
+             content: [%{type: "text", text: "see file"}, %{type: "text", text: note}]
+           } = message
+
+    assert note =~ "note.txt"
+    assert note =~ ".handbeam/uploads/#{conv["id"]}/att-1.txt"
     refute persistable |> Jason.encode!() |> String.contains?("aGVsbG8")
     assert hd(persistable)["relative_path"] =~ ".handbeam/uploads/#{conv["id"]}"
     refute hd(persistable)["relative_path"] =~ workspace
