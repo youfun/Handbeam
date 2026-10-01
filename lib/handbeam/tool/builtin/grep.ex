@@ -23,15 +23,18 @@ defmodule Handbeam.Tool.Builtin.Grep do
 
   @impl true
   def description do
-    "Search file contents for a required regex or literal pattern. " <>
-      "Use file_search instead to find files by name or path. " <>
+    "Search file contents for a regex or literal pattern. " <>
+      "Omit pattern and pass glob to list matching files. " <>
+      "Use file_search for fuzzy name search. " <>
+      "path should be workspace-relative; an absolute path is accepted only inside the current workspace. " <>
       "Results are grouped by file; pass next_cursor as cursor to continue."
   end
 
   @impl true
   def hint do
-    "Fix the pattern or narrow path/glob from the error. A failed search is not an empty " <>
-      "result; do not repeat the same pattern unchanged."
+    "A failed search is not an empty result. Add a content pattern, or pass glob to list files. " <>
+      "If path is outside the workspace, omit it or use a workspace-relative path. " <>
+      "Do not invent another user's absolute path, and do not repeat the same arguments unchanged."
   end
 
   @impl true
@@ -43,7 +46,11 @@ defmodule Handbeam.Tool.Builtin.Grep do
           type: "string",
           description: "Required content pattern (regex by default)"
         },
-        path: %{type: "string", description: "Workspace-relative file or directory"},
+        path: %{
+          type: "string",
+          description:
+            "Workspace-relative file or directory. Absolute paths must stay inside the current workspace"
+        },
         glob: %{
           type: "string",
           description: "Optional file filter such as *.{ex,exs}; not a search pattern"
@@ -78,12 +85,20 @@ defmodule Handbeam.Tool.Builtin.Grep do
 
   @impl true
   def execute(input, context) when is_map(input) do
-    with {:ok, pattern} <- fetch_pattern(input),
-         {:ok, workspace, prefix} <- resolve_scope(input, context),
-         {:ok, regex} <- compile_pattern(pattern, input),
-         {:ok, index} <- Handbeam.Search.ensure_started(workspace),
-         {:ok, inventory} <- inventory(index, workspace, prefix, input) do
-      search(pattern, regex, inventory, workspace, input)
+    with {:ok, workspace, prefix, note} <- resolve_scope(input, context) do
+      case fetch_pattern(input) do
+        {:ok, pattern} ->
+          input
+          |> search_pattern(pattern, workspace, prefix)
+          |> with_note(note)
+
+        :missing ->
+          if glob_present?(input) do
+            list_by_glob(input, workspace, prefix, note)
+          else
+            {:error, missing_pattern_error(workspace)}
+          end
+      end
     end
   rescue
     error -> {:error, "grep failed: #{Exception.message(error)}"}
@@ -608,31 +623,146 @@ defmodule Handbeam.Tool.Builtin.Grep do
     end
   end
 
+  defp search_pattern(input, pattern, workspace, prefix) do
+    with {:ok, regex} <- compile_pattern(pattern, input),
+         {:ok, index} <- Handbeam.Search.ensure_started(workspace),
+         {:ok, inventory} <- inventory(index, workspace, prefix, input) do
+      search(pattern, regex, inventory, workspace, input)
+    end
+  end
+
+  defp list_by_glob(input, workspace, prefix, note) do
+    with {:ok, index} <- Handbeam.Search.ensure_started(workspace),
+         {:ok, inventory} <- inventory(index, workspace, prefix, input) do
+      glob = input["glob"] || input[:glob]
+
+      files =
+        inventory.paths
+        |> Enum.filter(&glob_match?(&1, glob))
+        |> Enum.filter(&safe_search_file?(workspace, &1))
+        |> Enum.sort()
+        |> Enum.take(limit(input))
+
+      body =
+        case files do
+          [] -> "No matches found"
+          paths -> Enum.join(paths, "\n")
+        end
+
+      {:ok, body <> indexing_suffix(inventory)}
+      |> with_note(note)
+    end
+  end
+
   defp fetch_pattern(input) do
     pattern = input["pattern"] || input[:pattern] || input["query"] || input[:query]
 
     if is_binary(pattern) and String.trim(pattern) != "",
       do: {:ok, pattern},
-      else: {:error, "pattern is required"}
+      else: :missing
+  end
+
+  defp glob_present?(input) do
+    case input["glob"] || input[:glob] do
+      glob when is_binary(glob) -> String.trim(glob) != ""
+      _ -> false
+    end
+  end
+
+  defp missing_pattern_error(workspace) do
+    "pattern is required to search contents. Pass glob to list files, or use file_search. " <>
+      "Omit path or use a workspace-relative path under #{workspace}. " <>
+      "Do not invent another user's absolute path."
   end
 
   defp resolve_scope(input, context) do
     workspace = context[:working_directory] || context["working_directory"] || File.cwd!()
+    workspace = Path.expand(workspace)
     raw_path = input["path"] || input[:path] || input["file_path"] || input[:file_path] || "."
     raw_path = Handbeam.Agent.Tool.Helpers.expand_tilde(raw_path)
 
-    path =
+    requested =
       if Path.type(raw_path) == :absolute, do: raw_path, else: Path.expand(raw_path, workspace)
+
+    {path, note} =
+      case reroot_foreign_workspace(requested, workspace) do
+        {:ok, rerooted} ->
+          relative = Path.relative_to(rerooted, workspace)
+
+          {rerooted,
+           "path rewritten into workspace #{workspace} as #{relative}; do not invent another user's absolute path"}
+
+        :error ->
+          {requested, nil}
+      end
 
     with :ok <- Handbeam.Security.PathValidator.validate_within_workspace(path, workspace),
          :ok <- Handbeam.Security.PathValidator.reject_resolved(path),
          true <- File.exists?(path) do
-      {:ok, Path.expand(workspace), Path.relative_to(path, workspace)}
+      {:ok, workspace, Path.relative_to(path, workspace), note}
     else
-      false -> {:error, "Path not found: #{path}"}
-      {:error, reason} -> {:error, reason}
+      false ->
+        {:error, path_not_found(path, note)}
+
+      {:error, "Path traversal blocked: " <> _} ->
+        {:error, outside_workspace_error(requested, workspace)}
+
+      {:error, reason} ->
+        {:error, reason}
     end
   end
+
+  # Cursor native Grep often sends an absolute path. A path that merely repeats this
+  # workspace's directory name is the same project with a hallucinated home, not a
+  # request to read another user's tree.
+  defp reroot_foreign_workspace(path, workspace) do
+    cond do
+      Handbeam.Security.PathValidator.validate_within_workspace(path, workspace) == :ok ->
+        :error
+
+      true ->
+        base = workspace |> Path.basename() |> String.downcase()
+        parts = path |> Path.split() |> Enum.reject(&(&1 in ["/", "\\"]))
+
+        case Enum.with_index(parts)
+             |> Enum.filter(fn {part, _index} -> String.downcase(part) == base end) do
+          [] ->
+            :error
+
+          matches ->
+            {_part, index} = List.last(matches)
+
+            relative =
+              case Enum.drop(parts, index + 1) do
+                [] -> "."
+                rest -> Path.join(rest)
+              end
+
+            rerooted = Path.expand(relative, workspace)
+
+            case Handbeam.Security.PathValidator.validate_within_workspace(rerooted, workspace) do
+              :ok -> {:ok, rerooted}
+              {:error, _} -> :error
+            end
+        end
+    end
+  end
+
+  defp path_not_found(path, nil), do: "Path not found: #{path}"
+
+  defp path_not_found(path, note), do: "Path not found: #{path}. #{note}"
+
+  defp outside_workspace_error(path, workspace) do
+    "Path traversal blocked: #{path} is outside workspace. " <>
+      "Current workspace is #{workspace}. Omit path or pass a workspace-relative path. " <>
+      "Do not invent another user's home directory."
+  end
+
+  defp with_note({:ok, output}, note) when is_binary(output) and is_binary(note) do
+    {:ok, output <> "\n[" <> note <> "]"}
+  end
+
+  defp with_note(result, _note), do: result
 
   defp regular_file?(path), do: match?({:ok, %{type: :regular}}, File.lstat(path))
 

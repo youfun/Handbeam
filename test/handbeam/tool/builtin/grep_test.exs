@@ -385,6 +385,79 @@ defmodule Handbeam.Tool.Builtin.GrepTest do
     end
   end
 
+  test "lists files when glob is set and pattern is omitted" do
+    live = Path.join(@work_dir, "live")
+    File.mkdir_p!(live)
+    File.write!(Path.join(live, "mcp_settings_live.html.heex"), "<div></div>\n")
+    File.write!(Path.join(@work_dir, "other.txt"), "nope\n")
+
+    {:ok, output} =
+      grep(%{"glob" => "**/mcp_settings_live*"}, %{working_directory: @work_dir})
+
+    assert output =~ "live/mcp_settings_live.html.heex"
+    refute output =~ "other.txt"
+    refute output =~ "pattern is required"
+  end
+
+  test "rewrites a hallucinated absolute project root into the current workspace" do
+    File.write!(
+      Path.join(@work_dir, "sample.ex"),
+      "defmodule Sample do\n  def hello, do: :world\nend\n"
+    )
+
+    base = Path.basename(@work_dir)
+
+    {:ok, output} =
+      grep(
+        %{
+          "pattern" => "def hello",
+          "path" => "/Users/zhangxianwei/#{base}/#{base}",
+          "glob" => "*.ex"
+        },
+        %{working_directory: @work_dir}
+      )
+
+    assert output =~ "sample.ex:2:"
+    assert output =~ "path rewritten into workspace"
+    refute output =~ "Path traversal"
+  end
+
+  test "keeps an unrelated absolute path outside the workspace" do
+    assert {:error, reason} =
+             Grep.execute(
+               %{"pattern" => "def hello", "path" => "/Users/xuelei/Projects/open-design"},
+               %{working_directory: @work_dir}
+             )
+
+    assert reason =~ "Path traversal blocked"
+    assert reason =~ @work_dir
+    assert reason =~ "workspace-relative"
+    refute reason =~ "narrow path"
+  end
+
+  test "does not follow a rewritten path out of the workspace" do
+    base = Path.basename(@work_dir)
+
+    assert {:error, reason} =
+             Grep.execute(
+               %{
+                 "pattern" => "secret",
+                 "path" => "/Users/zhangxianwei/#{base}/../../etc/passwd"
+               },
+               %{working_directory: @work_dir}
+             )
+
+    assert reason =~ "Path traversal blocked"
+    refute reason =~ "root:"
+  end
+
+  test "missing pattern without glob names the workspace instead of asking to change path" do
+    assert {:error, reason} = Grep.execute(%{}, %{working_directory: @work_dir})
+    assert reason =~ "pattern is required"
+    assert reason =~ @work_dir
+    refute reason =~ "narrow path"
+  end
+
   defp grep(input, context) do
     workspace = context[:working_directory]
     {:ok, index} = ExFff.Index.ensure_started(workspace)
