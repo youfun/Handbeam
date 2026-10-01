@@ -103,7 +103,7 @@ defmodule Handbeam.Agent.ProgressGuardTest do
     assert length(state.progress.recent) == 1
   end
 
-  test "the same read across three model decisions still stalls" do
+  test "the same read across three non-interactive model decisions still stalls" do
     state = middleware_state([])
 
     state =
@@ -127,7 +127,7 @@ defmodule Handbeam.Agent.ProgressGuardTest do
         ProgressGuardMiddleware.call(:after_tool_execution, %{state | messages: messages})
       end)
 
-    assert state.status == :interrupted
+    assert state.status == :stalled
     assert state.interrupt_data.signal == :repeated_call
     assert state.interrupt_data.evidence =~ "read"
   end
@@ -246,7 +246,7 @@ defmodule Handbeam.Agent.ProgressGuardTest do
 
   defp middleware_state(messages) do
     %State{
-      config: %{source: :live_view, delegated?: false},
+      config: %{source: :cli, delegated?: false},
       messages: messages,
       turn: 1,
       status: :running,

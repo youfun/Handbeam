@@ -47,6 +47,60 @@ defmodule Handbeam.E2E.ProgressWatchdogTest do
     :ok
   end
 
+  for source <- [:live_view, :native, :cli, :sns, :webhook] do
+    @tag source: source
+    test "repeated reads respect the progress policy for #{source}", %{source: source} do
+      %{workspace: workspace} = E2EHarness.isolate_home!("repeated-reads")
+      File.write!(Path.join(workspace, "sample.txt"), "unchanged contents\n")
+      {:ok, conversation} = ConversationStore.create("repeated-reads")
+      id = conversation["id"]
+      :ok = Session.subscribe(id)
+      ExUnit.Callbacks.on_exit(fn -> E2EHarness.cancel!(id) end)
+
+      script = fn messages, _tools ->
+        if Enum.count(messages, &(&1.role == :tool_result)) < 4 do
+          {:tools, [%{name: "read", input: %{"file_path" => "sample.txt"}}]}
+        else
+          "Finished after rereading"
+        end
+      end
+
+      assert {:ok, %{action: :started}} =
+               Coordinator.add_message(id, "Read the file four times, then finish",
+                 workspace_path: workspace,
+                 model: "fake-model",
+                 provider: Handbeam.TestSupport.FakeProvider,
+                 provider_config: %{scenario: {:script, script}},
+                 tools: [Handbeam.Tool.Builtin.Read],
+                 source: source,
+                 max_turns: 6,
+                 streaming: true
+               )
+
+      payload = E2EHarness.await_run_end(id)
+      entries = E2EHarness.transcript(id)
+      reads = Enum.filter(entries, &(&1["tool_name"] == "read"))
+      assert Enum.all?(reads, &(&1["tool_status"] == "done"))
+      assert Enum.all?(reads, &String.contains?(&1["output"], "unchanged contents"))
+
+      if source in [:live_view, :native] do
+        assert payload[:status] in [:completed, "completed"]
+        assert length(reads) == 4
+
+        assert Enum.any?(entries, fn entry ->
+                 entry["role"] == "assistant" and
+                   entry["content"] == "Finished after rereading"
+               end)
+
+        refute_received {:agent_event, %{kind: :stall_check_requested}}
+      else
+        assert payload[:status] in [:stalled, "stalled"]
+        assert payload[:signal] == :repeated_call
+        assert length(reads) == 3
+      end
+    end
+  end
+
   test "streaming progress keeps an interactive run alive beyond one watchdog window" do
     %{workspace: workspace} = E2EHarness.isolate_home!("progress-watchdog")
     {:ok, conversation} = ConversationStore.create("progress-watchdog")
