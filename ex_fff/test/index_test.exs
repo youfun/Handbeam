@@ -330,6 +330,42 @@ defmodule ExFff.IndexTest do
       File.rm_rf(tmp_dir)
     end
 
+    test "prunes generated dot directories but keeps project configuration" do
+      tmp_dir =
+        Path.join(
+          System.tmp_dir!(),
+          "ex_fff_dot_prune_test_#{System.unique_integer([:positive])}"
+        )
+
+      ignored = ~w(
+        .amp .build .cache .pytest_cache .mypy_cache .ruff_cache .tox .venv
+        .next .nuxt .svelte-kit .parcel-cache .turbo .dart_tool
+      )
+
+      Enum.each(ignored, fn directory ->
+        path = Path.join([tmp_dir, directory, "generated.txt"])
+        File.mkdir_p!(Path.dirname(path))
+        File.write!(path, "generated")
+      end)
+
+      File.mkdir_p!(Path.join(tmp_dir, ".agents"))
+      File.mkdir_p!(Path.join(tmp_dir, ".github"))
+      File.write!(Path.join(tmp_dir, ".agents/setup"), "project agent setup")
+      File.write!(Path.join(tmp_dir, ".github/workflow.yml"), "project workflow")
+
+      config = ExFff.Config.new(root_path: tmp_dir)
+      paths = ExFff.Scanner.scan(tmp_dir, config)
+
+      assert ".agents/setup" in paths
+      assert ".github/workflow.yml" in paths
+
+      Enum.each(ignored, fn directory ->
+        refute Path.join(directory, "generated.txt") in paths
+      end)
+
+      File.rm_rf(tmp_dir)
+    end
+
     test "respects nested gitignore rules including double-star patterns" do
       tmp_dir =
         Path.join(
