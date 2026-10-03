@@ -116,7 +116,12 @@ defmodule HandbeamProbe.HomeScreen.Render do
       if(entries == [] and stream == "" and not running,
         do: empty_chat(),
         else:
-          scroll(NativeTimeline.render(a.chat, a.work_groups, a.work_segments, a.tool_outputs),
+          scroll(
+            [
+              if(Map.get(a.chat, :history_has_more?, false),
+                do: button(gettext("Load older messages"), :load_older_history, fill_width: true)
+              )
+            ] ++ NativeTimeline.render(a.chat, a.work_groups, a.work_segments, a.tool_outputs),
             id: "chat-timeline-#{a.chat.conversation["id"]}",
             chat_navigation: true,
             stick_to_bottom: true

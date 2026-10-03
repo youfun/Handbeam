@@ -11,6 +11,11 @@ defmodule Handbeam.Agent.Middleware do
   - `:after_tool_request` - after provider response with :tool_use
   - `:after_tool_execution` - after tools have been executed
   - `:on_error` - when an error occurs
+
+  These are trusted runtime modules with full State access, not the extension
+  notification API. Extensions use HookPipeline's three request gates and
+  read-only lifecycle notifications. See docs/runtime-contracts.md for order
+  and authority; neither mechanism is a sandbox for arbitrary BEAM code.
   """
 
   alias Handbeam.Agent.State

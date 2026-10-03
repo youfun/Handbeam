@@ -193,7 +193,7 @@ defmodule Handbeam.E2E.MCPToolTest do
 
     File.write!(
       Path.join(workspace, ".mcp.json"),
-      Jason.encode!(%{
+      Handbeam.JSON.encode!(%{
         "mcpServers" => %{
           "echo" => %{
             "command" => python,
@@ -207,6 +207,7 @@ defmodule Handbeam.E2E.MCPToolTest do
     sid = "mcp-e2e-#{System.unique_integer([:positive])}"
     {:ok, _} = ConversationStore.create("default", id: sid)
     :ok = Session.subscribe(sid)
+    on_exit(fn -> Handbeam.TestSupport.E2EHarness.cancel!(sid) end)
 
     script = fn messages, defs ->
       tool = Enum.find_value(defs, &(&1.name =~ ~r/^mcp__echo_/ && &1.name))
@@ -252,12 +253,21 @@ defmodule Handbeam.E2E.MCPToolTest do
 
     # A direct call with the run's MCP scope reaches the external process.
     scope_opts =
-      Handbeam.MCP.Access.options(working_directory: workspace, trusted_project?: true)
+      Handbeam.MCP.Access.options(
+        working_directory: workspace,
+        workspace_id: "default",
+        trusted_project?: true
+      )
 
     assert {:ok, text, _details} =
              entry.executor.(%{"text" => "direct"}, %{mcp_scope: scope_opts})
 
     assert text == "echo: direct"
+
+    assert {:error, "MCP server is disabled, changed, or not allowed in this workspace"} =
+             entry.executor.(%{"text" => "wrong workspace"}, %{
+               mcp_scope: Keyword.put(scope_opts, :workspace_id, "other-workspace")
+             })
 
     # The transcript records what the external server answered.
     {:ok, entries} = ConversationTranscriptStore.list(sid)
@@ -291,7 +301,7 @@ defmodule Handbeam.E2E.MCPToolTest do
 
     File.write!(
       Path.join(project, ".handbeam/mcp.json"),
-      Jason.encode!(%{
+      Handbeam.JSON.encode!(%{
         "mcpServers" => %{"broken" => %{"command" => "nonexistent_cmd_xyz", "args" => []}}
       })
     )

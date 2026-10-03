@@ -117,11 +117,11 @@ defmodule Handbeam.Agent.Runner do
     end
   end
 
-  # Accepted new-run inbound (review `task_instructions`) is written here so
+  # Accepted new-run inbound is written here so
   # exclusive RunSupervisor start is the accept gate and the user entry exists
   # before handle_continue starts the provider task.
   defp accept_inbound(conversation_id, content, opts) do
-    if persist_accepted_inbound?(opts) do
+    if Keyword.get(opts, :persist_inbound?, true) do
       inbound_opts = Keyword.put(opts, :deliver_as, :new_run)
 
       case Handbeam.Agent.TranscriptPersistence.append_inbound(
@@ -135,17 +135,6 @@ defmodule Handbeam.Agent.Runner do
       end
     else
       :ok
-    end
-  end
-
-  defp persist_accepted_inbound?(opts) do
-    Keyword.get(opts, :persist_inbound?, true) and present_task_instructions?(opts)
-  end
-
-  defp present_task_instructions?(opts) do
-    case Keyword.get(opts, :task_instructions) do
-      text when is_binary(text) -> String.trim(text) != ""
-      _ -> false
     end
   end
 
@@ -167,6 +156,7 @@ defmodule Handbeam.Agent.Runner do
     :ok =
       Session.attach_run(state.conversation_id, self(), state.queue_pid,
         run_id: Keyword.get(state.opts, :run_id),
+        run_supervisor: state.opts[:run_supervisor],
         workspace_path: Keyword.get(state.opts, :workspace_path),
         model: Keyword.get(state.opts, :model)
       )
@@ -219,6 +209,7 @@ defmodule Handbeam.Agent.Runner do
         status: state.status,
         run_pid: self(),
         run_id: state.opts[:run_id],
+        run_supervisor: state.opts[:run_supervisor],
         queue_pid: state.queue_pid,
         deadline: state.deadline,
         error: state.error,
@@ -240,7 +231,7 @@ defmodule Handbeam.Agent.Runner do
       run_id: state.opts[:run_id]
     })
 
-    Session.mark_run_finished(state.conversation_id)
+    Session.mark_run_finished(state.conversation_id, state.opts[:run_id])
     # Teardown may terminate this Runner immediately; acknowledge before launching it.
     GenServer.reply(from, :ok)
     stop_run_supervisor(state)
@@ -262,7 +253,7 @@ defmodule Handbeam.Agent.Runner do
 
     resume = resume_fun(state)
 
-    Session.broadcast_event(state.conversation_id, :run_resumed, %{})
+    Session.broadcast_event(state.conversation_id, :run_resumed, %{run_id: state.opts[:run_id]})
 
     task =
       Task.Supervisor.async_nolink(Handbeam.AgentRunTaskSupervisor, fn ->
@@ -294,7 +285,7 @@ defmodule Handbeam.Agent.Runner do
       when is_reference(ref) do
     shutdown_run_task(state.task)
     persist_cancelled_run(state)
-    Session.mark_run_finished(state.conversation_id)
+    Session.mark_run_finished(state.conversation_id, state.opts[:run_id])
     stop_run_supervisor(state)
     {:stop, :normal, %{state | task: nil}}
   end
@@ -329,6 +320,9 @@ defmodule Handbeam.Agent.Runner do
 
       %Handbeam.Agent.State{status: :halted} = halted ->
         finish_terminal(state, halted, :halted)
+
+      %Handbeam.Agent.State{status: status} = result ->
+        finish_terminal(state, result, status)
 
       _ ->
         finish_terminal(state, result, :completed)
@@ -378,14 +372,9 @@ defmodule Handbeam.Agent.Runner do
 
     persist_terminal_event(state, payload)
     Session.broadcast_event(state.conversation_id, :run_end, payload)
-    Session.mark_run_finished(state.conversation_id)
+    Session.mark_run_finished(state.conversation_id, state.opts[:run_id])
     Handbeam.Agent.CandidateQueue.seal(state.queue_pid)
-    conversation_id = state.conversation_id
-
-    Task.Supervisor.start_child(Handbeam.AgentRunTaskSupervisor, fn ->
-      Process.sleep(50)
-      Handbeam.AgentRunSupervisor.stop_run(conversation_id)
-    end)
+    stop_run_supervisor(state)
 
     {:stop, :shutdown, %{state | status: :timeout, task: nil, deadline_timer: nil}}
   end
@@ -408,14 +397,9 @@ defmodule Handbeam.Agent.Runner do
 
     persist_terminal_event(state, payload)
     Session.broadcast_event(state.conversation_id, :run_end, payload)
-    Session.mark_run_finished(state.conversation_id)
+    Session.mark_run_finished(state.conversation_id, state.opts[:run_id])
     Handbeam.Agent.CandidateQueue.seal(state.queue_pid)
-    conversation_id = state.conversation_id
-
-    Task.Supervisor.start_child(Handbeam.AgentRunTaskSupervisor, fn ->
-      Process.sleep(50)
-      Handbeam.AgentRunSupervisor.stop_run(conversation_id)
-    end)
+    stop_run_supervisor(state)
 
     {:stop, :shutdown, %{state | status: :timeout, task: nil, deadline_timer: nil}}
   end
@@ -444,7 +428,7 @@ defmodule Handbeam.Agent.Runner do
 
     persist_terminal_event(state, payload)
     Session.broadcast_event(state.conversation_id, :run_end, payload)
-    Session.mark_run_finished(state.conversation_id)
+    Session.mark_run_finished(state.conversation_id, state.opts[:run_id])
     Logger.error("[Runner] run aborted without replay: #{inspect(reason)}")
     stop_run_supervisor(state)
     {:stop, :normal, %{state | status: :error, error: reason, task: nil}}
@@ -453,7 +437,7 @@ defmodule Handbeam.Agent.Runner do
   defp finish_terminal(state, result, status) do
     Handbeam.Agent.Provider.Cursor.Session.stop_for_conversation(state.conversation_id)
     Handbeam.Agent.CandidateQueue.seal(state.queue_pid)
-    Session.mark_run_finished(state.conversation_id)
+    Session.mark_run_finished(state.conversation_id, state.opts[:run_id])
 
     Task.Supervisor.start_child(Handbeam.AgentRunTaskSupervisor, fn ->
       Handbeam.Threads.Collaboration.completed(state.conversation_id, result, state.opts)
@@ -578,7 +562,7 @@ defmodule Handbeam.Agent.Runner do
     persist_terminal_event(state, payload)
     Session.broadcast_event(state.conversation_id, :run_end, payload)
 
-    Session.mark_run_finished(state.conversation_id)
+    Session.mark_run_finished(state.conversation_id, state.opts[:run_id])
     Logger.error("[Runner] Agent run failed: #{message}")
     stop_run_supervisor(state)
     {:noreply, %{state | status: :error, error: reason, task: nil}}
@@ -587,9 +571,15 @@ defmodule Handbeam.Agent.Runner do
   defp stop_run_supervisor(state) do
     close_scope(state)
 
-    Task.Supervisor.start_child(Handbeam.AgentRunTaskSupervisor, fn ->
-      Handbeam.AgentRunSupervisor.stop_run(state.conversation_id)
-    end)
+    case state.opts[:run_supervisor] do
+      pid when is_pid(pid) ->
+        Task.Supervisor.start_child(Handbeam.AgentRunTaskSupervisor, fn ->
+          Handbeam.AgentRunSupervisor.stop_run(pid)
+        end)
+
+      _ ->
+        :ok
+    end
 
     :ok
   end
@@ -625,8 +615,6 @@ defmodule Handbeam.Agent.Runner do
     }
   end
 
-  @blockable_events [:before_agent_start, :tool_call, :context]
-
   defp put_persistence_callback(opts, conversation_id) do
     user_on_event = Keyword.get(opts, :on_event)
     progress = fn kind -> notify_progress_owner({kind, %{}}, opts) end
@@ -643,7 +631,7 @@ defmodule Handbeam.Agent.Runner do
 
       case hook_result do
         {:block, reason} ->
-          if kind in @blockable_events do
+          if Handbeam.Extension.Event.blockable?(kind) do
             Logger.debug(
               "[Runner] event blocked by extension hook kind=#{kind} conversation=#{conversation_id} reason=#{reason}"
             )
@@ -656,7 +644,7 @@ defmodule Handbeam.Agent.Runner do
           end
 
         {:transform, transformed_payload} ->
-          if kind in @blockable_events do
+          if Handbeam.Extension.Event.blockable?(kind) do
             transformed_event = {kind, Map.merge(payload, transformed_payload)}
             persist_and_callback(conversation_id, transformed_event, opts, user_on_event)
           else
@@ -695,7 +683,8 @@ defmodule Handbeam.Agent.Runner do
       user_on_event.(event)
     end
 
-    broadcast_session_event(conversation_id, event, opts)
+    projected = Handbeam.Agent.TranscriptPersistence.project_event(conversation_id, event)
+    broadcast_session_event(conversation_id, projected, opts)
   end
 
   defp track_search_access({:tool_end, payload}, opts) do

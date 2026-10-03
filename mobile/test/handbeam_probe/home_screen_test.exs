@@ -8,6 +8,10 @@ defmodule HandbeamProbe.HomeScreenTest do
   alias Handbeam.PubSub.AgentEvent
   alias HandbeamWeb.WorkspaceHelper
 
+  defmodule UnavailableHistory do
+    def page(_id, _opts), do: {:error, :unavailable}
+  end
+
   defmodule ApprovalProvider do
     @behaviour Handbeam.Agent.Provider
     alias Handbeam.Agent.Message
@@ -212,6 +216,158 @@ defmodule HandbeamProbe.HomeScreenTest do
     assert Enum.any?(assigns(view).workspaces.items, &(&1.id == workspace_b["id"]))
     assert_renderable(view, extra: [:icon, :settings_select, :settings_button])
     refute Map.has_key?(assigns(view), :last_composer_intent)
+  end
+
+  test "older chat pages remain chronological and a sequence gap reloads durable text once", %{
+    view: view
+  } do
+    {:ok, conversation} = Handbeam.ConversationStore.create("default", title: "Paged chat")
+    id = conversation["id"]
+
+    entries =
+      for n <- 1..205,
+          do: %{"id" => "history-#{n}", "role" => "user", "content" => "message #{n}"}
+
+    :ok = Handbeam.ConversationTranscriptStore.replace_all(id, entries)
+    {:ok, _} = Handbeam.PubSub.Session.start_or_get(session_id: id)
+    on_exit(fn -> Handbeam.SessionSupervisor.stop_session(id) end)
+
+    view = info(view, {:tap, {:conversation, id}})
+    assert length(assigns(view).chat.entries) == 100
+    assert hd(assigns(view).chat.entries)["id"] == "history-106"
+    assert assigns(view).chat.history_has_more?
+    assert_renderable(view, extra: [:icon, :settings_select, :settings_button])
+    assert find(view, :text, text: gettext("Load older messages"))
+
+    view = info(view, {:tap, :load_older_history}) |> info({:tap, :load_older_history})
+    assert Enum.map(assigns(view).chat.entries, & &1["id"]) == Enum.map(entries, & &1["id"])
+    refute assigns(view).chat.history_has_more?
+
+    {:ok, _} =
+      Handbeam.ConversationTranscriptStore.append(id, %{
+        "id" => "reply",
+        "role" => "assistant",
+        "content_type" => "assistant_msg",
+        "content" => "你好 world"
+      })
+
+    :ok = Handbeam.PubSub.Session.broadcast_event(id, :thinking_delta, %{})
+
+    :ok =
+      Handbeam.PubSub.Session.broadcast_event(id, :message_delta, %{
+        transcript_id: "reply",
+        text_offset: 0,
+        text: "你好 world"
+      })
+
+    snapshot = Handbeam.PubSub.Session.snapshot(id)
+    event = Enum.max_by(snapshot.events, & &1.seq)
+    view = info(view, {:agent_event, event})
+    chat = assigns(view).chat
+    assert chat.seq == snapshot.last_seq
+    assert [%{"content" => "你好 world"}] = Enum.filter(chat.entries, &(&1["id"] == "reply"))
+    assert chat.stream == ""
+    view = info(view, {:agent_event, event})
+    assert assigns(view).chat == chat
+
+    :ok = Handbeam.SessionSupervisor.stop_session(id)
+    {:ok, _} = Handbeam.PubSub.Session.start_or_get(session_id: id, session_store_enabled?: false)
+    Handbeam.PubSub.Session.broadcast_event(id, :thinking_delta, %{})
+    restarted = Handbeam.PubSub.Session.snapshot(id)
+    event = Enum.max_by(restarted.events, & &1.seq)
+    view = info(view, {:agent_event, event})
+    assert assigns(view).chat.seq == 1
+    assert assigns(view).chat.epoch == restarted.epoch
+    assert assigns(view).chat.entries == chat.entries
+  end
+
+  test "history failure preserves prefix-recovery checkpoint and never acknowledges an empty load",
+       %{
+         view: view
+       } do
+    {:ok, conversation} = Handbeam.ConversationStore.create("default")
+    id = conversation["id"]
+    {:ok, _} = Handbeam.PubSub.Session.start_or_get(session_id: id)
+    on_exit(fn -> Handbeam.SessionSupervisor.stop_session(id) end)
+
+    {:ok, _} =
+      Handbeam.ConversationTranscriptStore.append(id, %{"id" => "saved", "content" => "keep"})
+
+    Handbeam.PubSub.Session.broadcast_event(id, :thinking_delta, %{})
+    view = info(view, {:tap, {:conversation, id}})
+    chat = assigns(view).chat
+    previous_store = Application.get_env(:handbeam, :conversation_transcript_store)
+
+    try do
+      Application.put_env(:handbeam, :conversation_transcript_store, UnavailableHistory)
+
+      event = %{
+        AgentEvent.new(
+          "session:#{id}",
+          :message_delta,
+          %{
+            transcript_id: "missing-prefix",
+            text_offset: 20,
+            text: "suffix"
+          },
+          chat.seq + 1
+        )
+        | epoch: chat.epoch
+      }
+
+      view = info(view, {:agent_event, event})
+      assert assigns(view).chat.seq == chat.seq
+      assert assigns(view).chat.entries == chat.entries
+      fresh = NativeChat.load(conversation)
+      assert fresh.seq == 0
+      assert fresh.epoch == nil
+      assert fresh.transcript_dirty
+
+      assert NativeChat.project(
+               %{AgentEvent.new("session:#{id}", :thinking_delta, %{}, 1) | epoch: chat.epoch},
+               fresh
+             ) == fresh
+    after
+      if previous_store,
+        do: Application.put_env(:handbeam, :conversation_transcript_store, previous_store),
+        else: Application.delete_env(:handbeam, :conversation_transcript_store)
+    end
+  end
+
+  test "first stamped event after loading without Session restores the live queue", %{view: view} do
+    {:ok, conversation} = Handbeam.ConversationStore.create("default")
+    id = conversation["id"]
+    view = info(view, {:tap, {:conversation, id}})
+    assert assigns(view).chat.epoch == nil
+    {:ok, _} = Handbeam.PubSub.Session.start_or_get(session_id: id, session_store_enabled?: false)
+    on_exit(fn -> Handbeam.SessionSupervisor.stop_session(id) end)
+    queue = start_supervised!({Handbeam.Agent.CandidateQueue, session_id: id, owner: self()})
+    run_id = Ecto.UUID.generate()
+    :ok = Handbeam.PubSub.Session.attach_run(id, self(), queue, run_id: run_id)
+    :ok = Handbeam.Agent.CandidateQueue.enqueue(queue, "queued", message_id: "queued")
+    Handbeam.PubSub.Session.broadcast_event(id, :thinking_delta, %{run_id: run_id})
+    snapshot = Handbeam.PubSub.Session.snapshot(id)
+    event = Enum.max_by(snapshot.events, & &1.seq)
+    view = info(view, {:agent_event, event})
+    assert assigns(view).chat.pending["queued"].status == :queued
+    assert assigns(view).chat.epoch == snapshot.epoch
+    assert assigns(view).chat.thinking
+
+    {:ok, _} =
+      Handbeam.ConversationTranscriptStore.append(id, %{
+        "id" => "reply",
+        "role" => "assistant",
+        "content" => "answer"
+      })
+
+    Handbeam.PubSub.Session.broadcast_event(id, :message_delta, %{
+      run_id: run_id,
+      transcript_id: "reply",
+      text_offset: 0,
+      text: "answer"
+    })
+
+    refute NativeChat.load(conversation).thinking
   end
 
   test "history overlays the unchanged chat and navigation identifies only user messages", %{
@@ -435,7 +591,14 @@ defmodule HandbeamProbe.HomeScreenTest do
 
     view = info(view, {:agent_event, partial})
     assert assigns(view).chat.running
-    assert find(view, :text, id: "stream-text").props.text == "Native fixture"
+    assert text(view) =~ "Native fixture"
+
+    assert Enum.any?(
+             assigns(view).chat.entries,
+             &(&1["id"] == partial.payload.transcript_id and &1["content"] == "Native fixture")
+           )
+
+    assert assigns(view).chat.stream == ""
     refute text(view) =~ "Native fixture answer"
 
     refute Enum.any?(
@@ -1118,19 +1281,19 @@ defmodule HandbeamProbe.HomeScreenTest do
       ]
     }
 
-    event = AgentEvent.new("session:#{c["id"]}", :tool_approval_requested, payload, 3)
+    event = AgentEvent.new("session:#{c["id"]}", :tool_approval_requested, payload, 1)
     view = info(view, {:agent_event, event})
     assert text(view) =~ "中文🙂"
     assert assigns(view).chat.running
 
-    assert assigns(info(view, {:agent_event, %{event | topic: "session:other", seq: 4}})).chat ==
+    assert assigns(info(view, {:agent_event, %{event | topic: "session:other", seq: 2}})).chat ==
              assigns(view).chat
 
-    assert assigns(info(view, {:agent_event, %{event | seq: 2}})).chat == assigns(view).chat
-    ended = AgentEvent.run_end(event.topic, :interrupted, 1, 4)
+    assert assigns(info(view, {:agent_event, %{event | seq: 0}})).chat == assigns(view).chat
+    ended = AgentEvent.run_end(event.topic, :interrupted, 1, 2)
     view = info(view, {:agent_event, ended})
     assert assigns(view).chat.pending_approval == payload
-    view = info(view, {:agent_event, %{ended | seq: 5, payload: %{status: "cancelled"}}})
+    view = info(view, {:agent_event, %{ended | seq: 3, payload: %{status: "cancelled"}}})
     refute assigns(view).chat.pending_approval
     refute assigns(view).chat.running
     refute text(view) =~ gettext("Tool action needs approval")

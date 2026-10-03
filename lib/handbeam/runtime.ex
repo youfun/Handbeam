@@ -27,9 +27,9 @@ defmodule Handbeam.Runtime do
 
   @spec mark_interrupted_runs() :: :ok
   def mark_interrupted_runs do
-    Enum.each(stale_running_ids(), fn id ->
-      Session.broadcast_event(id, :run_end, %{status: "interrupted", turns: 0})
-      Session.mark_run_finished(id)
+    Enum.each(stale_running_ids(), fn {id, run_id} ->
+      Session.broadcast_event(id, :run_end, %{status: "interrupted", turns: 0, run_id: run_id})
+      Session.mark_run_finished(id, run_id)
     end)
 
     :ok
@@ -48,11 +48,13 @@ defmodule Handbeam.Runtime do
 
       _pid ->
         Registry.select(Handbeam.SessionRegistry, [{{:"$1", :"$2", :_}, [], [:"$1"]}])
-        |> Enum.filter(fn id ->
+        |> Enum.flat_map(fn id ->
           case Session.snapshot(id) do
-            %{"meta" => %{"running?" => true}} -> true
-            %{meta: %{running?: true}} -> true
-            _ -> false
+            %{meta: %{running?: true, agent_pid: pid, run_id: run_id}} when is_binary(run_id) ->
+              if is_pid(pid) and Process.alive?(pid), do: [], else: [{id, run_id}]
+
+            _ ->
+              []
           end
         end)
     end

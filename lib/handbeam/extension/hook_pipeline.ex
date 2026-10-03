@@ -15,9 +15,11 @@ defmodule Handbeam.Extension.HookPipeline do
   Only certain events can be blocked:
   - `before_agent_start` — can block run, inject system_prompt
   - `tool_call` — can block tool execution, mutate args
-  - `context` — can filter/modify messages sent to LLM
+  - `context` — can stop the provider request or filter its messages/prompt
 
-  All other events are read-only notifications.
+  All other events are read-only notifications. A halt or transformation on a
+  notification is ignored without suppressing later observers. Tool argument
+  rewrites cannot widen workspace permissions or the active tool set.
 
   ## High-frequency events
 
@@ -27,7 +29,6 @@ defmodule Handbeam.Extension.HookPipeline do
 
   alias Handbeam.Extension.{Event, HookRunner, Registry}
 
-  @blockable_events [:before_agent_start, :tool_call, :context]
   @high_freq_events [:message_delta, :thinking_delta]
 
   @doc """
@@ -53,7 +54,11 @@ defmodule Handbeam.Extension.HookPipeline do
     if Event.known_event?(event_name) do
       {:ok, event} = Event.new(event_name, session_id, payload)
 
-      result = HookRunner.run(runner, event, session_id: session_id)
+      result =
+        HookRunner.run(runner, event,
+          session_id: session_id,
+          read_only?: not Event.blockable?(kind)
+        )
 
       case result do
         %{status: :halted, halt_reason: reason} ->
@@ -66,7 +71,7 @@ defmodule Handbeam.Extension.HookPipeline do
           # Strip internal keys injected by HookRunner (session_id, ext_name)
           clean_ctx = Map.drop(ctx, [:session_id, :ext_name])
 
-          if kind in @blockable_events and map_size(clean_ctx) > 0 do
+          if Event.blockable?(kind) and map_size(clean_ctx) > 0 do
             {:transform, clean_ctx}
           else
             :ok

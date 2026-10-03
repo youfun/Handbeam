@@ -81,8 +81,8 @@ Session owns runtime event snapshot/replay, not conversation history.
 
 - 所有用户/外部输入统一走 `Handbeam.Agent.Coordinator.add_message/3`。
 - `Coordinator.add_message/3` 会：
-  - 确保 `run_id`
-  - 先通过 `Handbeam.Agent.TranscriptPersistence.append_inbound/3` 持久化 inbound transcript
+  - 新 run 确保 `run_id`；运行中 ack/transcript 使用接受消息的原 run_id
+  - 新 run 在独占 Runner 初始化中持久化 inbound；候选消息在 CandidateQueue 的 seal/capacity 检查通过后、真正入队前持久化，拒绝不写幽灵消息
   - 如果当前 conversation idle，启动 `Handbeam.Agent.Runner`（即便调用方传了 `deliver_as: :follow_up` / `:steer`，inbound 仍写 `delivery: "new_run"`）
   - 如果当前 conversation running，把消息送入 `Handbeam.Agent.CandidateQueue`。缺省 `deliver_as: :steer`（`Keyword.put_new`）；显式 `:follow_up` 不被覆盖。LiveView / native **运行中 Send、Enter、IME 默认 steer**；显式排队才是 follow_up。不要传 `require_running?`：UI 仍显示 running 但 run 已结束时，应起新 run 而不是 stale 错误。
   - 同一条用户消息的 `inbound_id` / `transcript_id` / `message_id`（以及 `%Message{}.id`）必须是同一个 id，对齐 transcript、CandidateQueue、Session、Turn `message_ids` 与 UI pending key。
@@ -103,7 +103,7 @@ Session owns runtime event snapshot/replay, not conversation history.
 - `HandbeamWeb.WorkspaceLive` 只做 projection：
   - 发送 intent 到 Coordinator
   - optimistic render 当前用户输入
-  - 从 `ConversationTranscriptStore.list/2` 恢复 timeline
+  - 从 `ConversationTranscriptStore.page/2` 恢复 timeline；Web/native 共用 `PubSub.Projection` 的 epoch/seq、文本 overlap 与重连契约，见 `docs/runtime-contracts.md`
   - 收 PubSub event 更新本地 UI
   - 只保存 editor/files state，不再把 assigns 里的 timeline 当持久化事实源写回
 - 不要重新引入 `ConversationStore.upsert(... timeline ...)` 作为消息持久化路径。
@@ -115,9 +115,9 @@ Session owns runtime event snapshot/replay, not conversation history.
 
 | kind | 发出方 | payload 关键字段 | 说明 |
 |------|--------|------------------|------|
-| `run_start` | Turn | `model` | 每次 run 开始；`before_agent_start` hook 拦截时不会发，直接发 `run_end`/`agent_end`（`status: :error`） |
+| `run_start` | Turn | `model` | 每次 run 开始；`before_agent_start` hook 拦截时不会发，直接发 `run_end`/`agent_end`（`status: :halted`） |
 | `turn_start` / `turn_end` | Turn | `turn`，`turn_end` 另有 `stop_reason`、`status` | 单轮 provider 往返边界 |
-| `message_delta` | Turn | `chunk` | assistant 可见文本流；`TranscriptPersistence` 缓冲后 flush |
+| `message_delta` | Turn → Runner | `chunk`；广播另有 `transcript_id`、`text_offset`、`text` | assistant 可见文本在广播前持久化；projection 合并字节 offset patch，不重放已持久化文本 |
 | `thinking_delta` | Provider（Anthropic/StepFun） | 文本 | 高频事件，`TranscriptPersistence` 显式不 flush |
 | `tool_start` | Turn | `tool`、`tool_use_id`、`input` | transcript entry id 为 `tool-<tool_use_id>` |
 | `tool_end` | Turn | `tool`、`tool_use_id`、`duration_ms`、`details`、`file_path`、`output`，出错时 `error` | 更新同一条 tool entry；`TranscriptPersistence.tool_status/2` 还接受可选 `status: :cancelled`，但 Turn 目前不发它 |

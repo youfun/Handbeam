@@ -60,7 +60,8 @@ defmodule Handbeam.Extension.HookRunner do
     event_name_str = Atom.to_string(event.name)
     matching_hooks = Enum.filter(hooks, fn hook -> event_name_str in hook.events end)
 
-    base_ctx = Map.new(extra_ctx)
+    read_only? = Keyword.get(extra_ctx, :read_only?, false)
+    base_ctx = extra_ctx |> Keyword.delete(:read_only?) |> Map.new()
 
     initial_acc = %{
       status: :ok,
@@ -77,11 +78,17 @@ defmodule Handbeam.Extension.HookRunner do
           |> Map.merge(acc.ctx || %{})
 
         case call_hook(hook, event, ext_ctx, acc) do
+          {:halt, _reason} when read_only? ->
+            {:cont, acc}
+
           {:halt, reason} ->
             {:halt, %{acc | status: :halted, halt_reason: reason}}
 
           {:error, diagnostic} ->
             {:cont, %{acc | diagnostics: [diagnostic | acc.diagnostics]}}
+
+          {:ok, _new_ctx} when read_only? ->
+            {:cont, acc}
 
           {:ok, new_ctx} ->
             merged_ctx = Map.merge(acc.ctx || %{}, new_ctx)

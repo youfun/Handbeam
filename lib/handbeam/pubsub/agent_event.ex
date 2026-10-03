@@ -2,11 +2,11 @@ defmodule Handbeam.PubSub.AgentEvent do
   @moduledoc """
   Agent event struct — emitted during the agent loop.
 
-  All events carry a monotonically increasing `seq` number for ordering.
+  Events carry a monotonically increasing `seq` within their Session `epoch`.
   Single topic per session prevents cross-topic ordering issues.
   """
 
-  defstruct [:seq, :topic, :kind, :payload, :ts_ms]
+  defstruct [:seq, :epoch, :topic, :kind, :payload, :ts_ms]
 
   # `Session.broadcast_event/3` does not validate kinds; this type lists every
   # kind emitted today so consumers get exhaustive matching.
@@ -34,6 +34,7 @@ defmodule Handbeam.PubSub.AgentEvent do
 
   @type t :: %__MODULE__{
           seq: non_neg_integer(),
+          epoch: String.t() | nil,
           topic: String.t(),
           kind: kind(),
           payload: map(),
@@ -52,6 +53,32 @@ defmodule Handbeam.PubSub.AgentEvent do
       seq: seq,
       ts_ms: System.os_time(:millisecond)
     }
+  end
+
+  @doc "Approval suspension is not a terminal run, including restored JSON values."
+  def waiting_status?(status),
+    do: status in [:interrupted, "interrupted", :awaiting_approval, "awaiting_approval"]
+
+  @doc "Only known terminal statuses close a run; missing/unknown values do not."
+  def terminal_status?(status) do
+    status in [
+      :completed,
+      "completed",
+      :cancelled,
+      "cancelled",
+      :error,
+      "error",
+      :timeout,
+      "timeout",
+      :max_turns,
+      "max_turns",
+      :budget_exceeded,
+      "budget_exceeded",
+      :halted,
+      "halted",
+      :stalled,
+      "stalled"
+    ]
   end
 
   @doc "Create a message delta event (streaming chunk)."

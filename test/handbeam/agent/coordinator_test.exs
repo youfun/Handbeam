@@ -725,7 +725,10 @@ defmodule Handbeam.Agent.CoordinatorTest do
              )
 
     assert is_binary(run_id)
-    assert_receive {:delivered, %{"role" => "assistant", "delivery_delta" => delivered_delta}}, 2_000
+
+    assert_receive {:delivered, %{"role" => "assistant", "delivery_delta" => delivered_delta}},
+                   2_000
+
     assert delivered_delta =~ "Hello!"
     assert_receive_run_end(sid)
 

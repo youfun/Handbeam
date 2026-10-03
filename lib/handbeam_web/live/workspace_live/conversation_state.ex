@@ -35,12 +35,28 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
     expanded = Map.get(socket.assigns, :expanded_tool_groups, MapSet.new())
 
     {timeline, history_before, history_has_more?} =
-      if running_for_conversation?(socket, conv_id) and current_timeline != [] do
+      if running_for_conversation?(socket, conv_id) and current_timeline != [] and
+           not Keyword.get(opts, :force_transcript?, false) do
         {current_timeline, Map.get(socket.assigns, :history_before),
          Map.get(socket.assigns, :history_has_more?, false)}
       else
-        conv_id
-        |> load_transcript_page(fallback)
+        page = Keyword.get(opts, :transcript_page)
+
+        history =
+          if page do
+            {page.entries, page.before, page.has_more?}
+          else
+            load_transcript_page(
+              conv_id,
+              fallback,
+              if(Keyword.get(opts, :force_transcript?, false),
+                do: length(current_timeline),
+                else: 100
+              )
+            )
+          end
+
+        history
         |> then(fn {entries, before, has_more?} ->
           {HandbeamWeb.WorkspaceHelper.apply_tool_work_collapse(entries, expanded), before,
            has_more?}
@@ -69,6 +85,11 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
       |> assign(:history_before, history_before)
       |> assign(:history_has_more?, history_has_more?)
       |> maybe_reset_timeline_stream(timeline, running_for_conversation?)
+
+    socket =
+      if Keyword.get(opts, :force_transcript?, false),
+        do: stream(socket, :timeline, timeline, reset: true),
+        else: socket
 
     socket
     |> assign(
@@ -192,8 +213,10 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
 
   def load_transcript_entries(_conversation_id, fallback), do: fallback
 
-  def load_transcript_page(conversation_id, fallback) when is_binary(conversation_id) do
-    case Handbeam.ConversationTranscriptStore.page(conversation_id, limit: 100) do
+  def load_transcript_page(conversation_id, fallback, count \\ 100)
+
+  def load_transcript_page(conversation_id, fallback, count) when is_binary(conversation_id) do
+    case Handbeam.PubSub.Projection.history(conversation_id, count) do
       {:ok, %{entries: entries, before: before, has_more?: has_more?}} ->
         {entries, before, has_more?}
 
@@ -202,7 +225,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
     end
   end
 
-  def load_transcript_page(_conversation_id, fallback), do: {fallback, nil, false}
+  def load_transcript_page(_conversation_id, fallback, _count), do: {fallback, nil, false}
 
   def load_older_history(socket) do
     conv_id = socket.assigns.current_conversation_id
@@ -213,8 +236,17 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
            Handbeam.ConversationTranscriptStore.page(conv_id, limit: 100, before: before) do
       timeline = deduplicate_entries(entries ++ socket.assigns.timeline)
 
+      pending =
+        Handbeam.Agent.PendingMessages.reconcile(
+          socket.assigns.pending_messages,
+          HandbeamWeb.WorkspaceLive.RuntimeProjection.session_pending_messages(conv_id),
+          socket.assigns.running,
+          timeline
+        )
+
       socket
       |> assign(:timeline, timeline)
+      |> assign(:pending_messages, pending)
       |> assign(:history_before, next_before)
       |> assign(:history_has_more?, has_more?)
       |> stream(:timeline, timeline, reset: true)

@@ -171,9 +171,13 @@ defmodule Handbeam.PubSub.Session do
     GenServer.call(via_tuple(session_id), :drain_next_turn)
   end
 
-  @doc "Mark the active run finished and seal its queue."
+  @doc "Finish a legacy untracked run; identified runs require mark_run_finished/2."
   def mark_run_finished(session_id) do
-    GenServer.call(via_tuple(session_id), :mark_run_finished)
+    mark_run_finished(session_id, nil)
+  end
+
+  def mark_run_finished(session_id, run_id) do
+    GenServer.call(via_tuple(session_id), {:mark_run_finished, run_id})
   end
 
   # ── Server Callbacks ──
@@ -188,8 +192,14 @@ defmodule Handbeam.PubSub.Session do
     state = %{
       session_id: session_id,
       model: model,
+      epoch: Ecto.UUID.generate(),
       seq: Map.get(loaded, "seq", 0),
       events: load_events(Map.get(loaded, "events", [])),
+      control_events:
+        loaded
+        |> Map.get("control_events", Map.get(loaded, "events", []))
+        |> load_events()
+        |> Enum.reject(&(&1.kind in @high_freq_events)),
       meta: %{
         created_at: DateTime.utc_now(),
         status: :active,
@@ -197,6 +207,7 @@ defmodule Handbeam.PubSub.Session do
         agent_pid: nil,
         queue_pid: nil,
         run_id: nil,
+        run_supervisor: nil,
         model: Map.get(loaded, "model", model),
         workspace_path: Keyword.get(opts, :workspace_path)
       },
@@ -211,7 +222,7 @@ defmodule Handbeam.PubSub.Session do
     }
 
     Logger.debug("[Session] Created #{session_id} (model: #{model})")
-    {:ok, state}
+    {:ok, restore_active_run(state)}
   end
 
   @impl true
@@ -219,7 +230,9 @@ defmodule Handbeam.PubSub.Session do
     {:reply,
      %{
        last_seq: state.seq,
+       epoch: state.epoch,
        events: state.events,
+       control_events: state.control_events,
        meta: state.meta,
        extension_state: state.extension_state
      }, state}
@@ -236,6 +249,7 @@ defmodule Handbeam.PubSub.Session do
         agent_pid: agent_pid,
         queue_pid: queue_pid,
         run_id: run_id,
+        run_supervisor: Keyword.get(opts, :run_supervisor),
         workspace_path: Keyword.get(opts, :workspace_path, state.meta.workspace_path)
     }
 
@@ -249,35 +263,62 @@ defmodule Handbeam.PubSub.Session do
 
     case deliver_as do
       :next_turn ->
+        {content, opts} = stamp_queue_ids(content, opts)
+        opts = Keyword.put(opts, :run_id, state.meta.run_id)
         message = normalize_message(content, opts)
-        new_state = %{state | next_turn_messages: state.next_turn_messages ++ [message]}
-        new_state = maybe_save(new_state)
 
-        broadcast_event(state.session_id, :candidate_message_injected, %{
-          message_id: message.id,
-          content: message.content,
-          deliver_as: :next_turn
-        })
+        with true <- opts[:expected_run_id] in [nil, state.meta.run_id],
+             :ok <- persist_next_turn(state.session_id, content, opts) do
+          new_state = %{state | next_turn_messages: state.next_turn_messages ++ [message]}
+          new_state = maybe_save(new_state)
 
-        {:reply, :ok, new_state}
+          broadcast_event(state.session_id, :candidate_message_injected, %{
+            message_id: message.id,
+            content: message.content,
+            deliver_as: :next_turn,
+            run_id: state.meta.run_id
+          })
+
+          reply =
+            if opts[:expected_run_id],
+              do: {:ok, %{action: :enqueued, run_id: state.meta.run_id, run_pid: nil}},
+              else: :ok
+
+          {:reply, reply, new_state}
+        else
+          false -> {:reply, {:error, :stale_run}, state}
+          error -> {:reply, error, state}
+        end
 
       kind when kind in [:steer, :follow_up] ->
-        case state.queue_pid do
-          nil ->
+        expected_run = Keyword.get(opts, :expected_run_id)
+
+        cond do
+          is_binary(expected_run) and expected_run != state.meta.run_id ->
+            {:reply, {:error, :stale_run}, state}
+
+          is_nil(state.queue_pid) ->
             {:reply, {:error, :no_active_run}, state}
 
-          queue_pid ->
+          true ->
             {content, opts} = stamp_queue_ids(content, opts)
+            opts = Keyword.put(opts, :run_id, state.meta.run_id)
 
-            case Handbeam.Agent.CandidateQueue.enqueue(queue_pid, content, opts) do
+            case Handbeam.Agent.CandidateQueue.enqueue(state.queue_pid, content, opts) do
               :ok ->
                 broadcast_event(state.session_id, :candidate_message_injected, %{
                   message_id: Keyword.fetch!(opts, :message_id),
                   content: message_text(content),
-                  deliver_as: kind
+                  deliver_as: kind,
+                  run_id: state.meta.run_id
                 })
 
-                {:reply, :ok, state}
+                reply =
+                  if Keyword.has_key?(opts, :expected_run_id),
+                    do: {:ok, %{action: :enqueued, run_id: state.meta.run_id, run_pid: nil}},
+                    else: :ok
+
+                {:reply, reply, state}
 
               other ->
                 {:reply, other, state}
@@ -360,6 +401,12 @@ defmodule Handbeam.PubSub.Session do
     {:reply, state.next_turn_messages, new_state}
   end
 
+  def handle_call({:mark_run_finished, run_id}, from, state) do
+    if run_id == state.meta.run_id,
+      do: handle_call(:mark_run_finished, from, state),
+      else: {:reply, {:error, :stale_run}, state}
+  end
+
   def handle_call(:mark_run_finished, _from, state) do
     safe_seal_queue(state.queue_pid)
 
@@ -391,7 +438,13 @@ defmodule Handbeam.PubSub.Session do
   def handle_cast({:append, %AgentEvent{} = event}, state) do
     new_events = Enum.take([event | state.events], @max_snapshot_events)
 
-    new_state = %{state | seq: max(state.seq, event.seq), events: new_events}
+    new_state = %{
+      state
+      | seq: max(state.seq, event.seq),
+        events: new_events,
+        control_events: append_control(state.control_events, event)
+    }
+
     maybe_record_event(new_state, event)
     new_state = maybe_save_throttled(new_state, force?: event.kind not in @high_freq_events)
     {:noreply, new_state}
@@ -534,6 +587,7 @@ defmodule Handbeam.PubSub.Session do
   defp atomize_known_keys(map) do
     Map.new(map, fn
       {"seq", value} -> {:seq, value}
+      {"epoch", value} -> {:epoch, value}
       {"topic", value} -> {:topic, value}
       {"kind", value} -> {:kind, maybe_existing_atom(value)}
       {"payload", value} -> {:payload, value}
@@ -556,13 +610,22 @@ defmodule Handbeam.PubSub.Session do
   defp maybe_existing_atom(value), do: value
 
   # Core broadcast/append/persist pipeline shared by call and cast paths.
-  defp stale_run_event?(state, kind, payload) when kind in [:run_end, :run_resumed] do
-    event_run = payload_run_id(payload)
-    active_run = state.meta.run_id
-    is_binary(event_run) and is_binary(active_run) and event_run != active_run
+  defp persist_next_turn(id, content, opts) do
+    if opts[:persist_candidate?] do
+      case Handbeam.Agent.TranscriptPersistence.append_inbound(id, content, opts) do
+        {:ok, _} -> :ok
+        error -> error
+      end
+    else
+      :ok
+    end
   end
 
-  defp stale_run_event?(_state, _kind, _payload), do: false
+  defp stale_run_event?(state, _kind, payload) do
+    event_run = payload_run_id(payload)
+    active_run = state.meta.run_id
+    is_binary(event_run) and event_run != active_run
+  end
 
   defp payload_run_id(payload) when is_map(payload) do
     Map.get(payload, :run_id) || Map.get(payload, "run_id")
@@ -573,18 +636,59 @@ defmodule Handbeam.PubSub.Session do
   defp do_broadcast_event(state, kind, payload, opts) do
     seq = state.seq + 1
     topic = session_topic(state.session_id)
-    event = AgentEvent.new(topic, kind, payload, seq)
+    event = %{AgentEvent.new(topic, kind, payload, seq) | epoch: state.epoch}
 
     log_broadcast_event(state.session_id, event)
     Phoenix.PubSub.broadcast(Handbeam.PubSub, topic, {:agent_event, event})
     maybe_broadcast_run_lifecycle(state.session_id, event)
 
     new_events = Enum.take([event | state.events], @max_snapshot_events)
-    new_state = %{state | seq: seq, events: new_events}
+
+    new_state = %{
+      state
+      | seq: seq,
+        events: new_events,
+        control_events: append_control(state.control_events, event)
+    }
+
     new_state = broadcast_activity(new_state, kind)
 
     maybe_record_event(new_state, event)
     maybe_save_throttled(new_state, force?: Keyword.get(opts, :force_save?, true))
+  end
+
+  # Streaming text has its own durable owner and must not evict approvals or
+  # queue consumption controls needed for reconnect.
+  defp append_control(events, %{kind: kind}) when kind in @high_freq_events, do: events
+
+  defp append_control(events, event),
+    do: Enum.take([event | events], @max_snapshot_events)
+
+  # Read registry metadata, never call Runner from Session init: Runner may be
+  # waiting for this Session. Only a still-live, identified run is restored.
+  defp restore_active_run(state) do
+    id = state.session_id
+
+    with [{pid, %{run_id: run_id, active?: true}}] when is_binary(run_id) <-
+           Registry.lookup(Handbeam.AgentRunRegistry, id),
+         [{queue, _}] <- Registry.lookup(Handbeam.AgentRunQueueRegistry, id),
+         [{supervisor, _}] <- Registry.lookup(Handbeam.AgentRunSupervisorRegistry, id) do
+      Process.monitor(pid)
+      Process.monitor(queue)
+
+      meta = %{
+        state.meta
+        | running?: true,
+          agent_pid: pid,
+          queue_pid: queue,
+          run_id: run_id,
+          run_supervisor: supervisor
+      }
+
+      %{state | agent_pid: pid, queue_pid: queue, meta: meta}
+    else
+      _ -> state
+    end
   end
 
   defp log_broadcast_request(_session_id, :message_delta, %{chunk: chunk})
@@ -657,6 +761,7 @@ defmodule Handbeam.PubSub.Session do
     %{
       "seq" => state.seq,
       "events" => Enum.map(state.events, &Map.from_struct/1),
+      "control_events" => Enum.map(state.control_events, &Map.from_struct/1),
       "running?" => state.meta.running?,
       "model" => state.model,
       "next_turn_messages" => Enum.map(state.next_turn_messages, &Map.from_struct/1),

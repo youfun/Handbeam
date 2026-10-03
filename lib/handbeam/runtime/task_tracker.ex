@@ -108,10 +108,15 @@ defmodule Handbeam.Runtime.TaskTracker do
   end
 
   defp handle_lifecycle({:run_lifecycle, conversation_id, :run_end, payload}, state) do
-    if waiting_status?(payload) do
-      {:noreply, put_waiting(state, conversation_id, payload)}
-    else
-      {:noreply, finish_task(state, conversation_id, payload, end_reason(payload))}
+    cond do
+      waiting_status?(payload) ->
+        {:noreply, put_waiting(state, conversation_id, payload)}
+
+      Handbeam.PubSub.AgentEvent.terminal_status?(payload_value(payload, :status)) ->
+        {:noreply, finish_task(state, conversation_id, payload, end_reason(payload))}
+
+      true ->
+        {:noreply, state}
     end
   end
 
@@ -216,7 +221,7 @@ defmodule Handbeam.Runtime.TaskTracker do
   end
 
   defp waiting_status?(payload) do
-    to_string(payload_value(payload, :status) || "") in ["interrupted", "awaiting_approval"]
+    Handbeam.PubSub.AgentEvent.waiting_status?(payload_value(payload, :status))
   end
 
   defp end_reason(payload) do
@@ -224,6 +229,10 @@ defmodule Handbeam.Runtime.TaskTracker do
       "cancelled" -> :cancelled
       "error" -> :failed
       "stalled" -> :failed
+      "timeout" -> :failed
+      "max_turns" -> :failed
+      "budget_exceeded" -> :failed
+      "halted" -> :failed
       _ -> :completed
     end
   end

@@ -39,6 +39,7 @@ defmodule Handbeam.Agent.RunSupervisor do
     runner_opts =
       opts
       |> Keyword.put(:queue_name, queue_name)
+      |> Keyword.update!(:run_opts, &Keyword.put(&1, :run_supervisor, self()))
 
     # A crashed runner, queue, or this tree must not be restarted with the
     # original input. DynamicSupervisor also uses the temporary child_spec.

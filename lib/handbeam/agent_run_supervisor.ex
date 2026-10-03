@@ -24,7 +24,9 @@ defmodule Handbeam.AgentRunSupervisor do
     DynamicSupervisor.start_child(__MODULE__, {Handbeam.Agent.RunSupervisor, child_opts})
   end
 
-  def stop_run(conversation_id) do
+  def stop_run(pid) when is_pid(pid), do: DynamicSupervisor.terminate_child(__MODULE__, pid)
+
+  def stop_run(conversation_id) when is_binary(conversation_id) do
     case Registry.lookup(Handbeam.AgentRunSupervisorRegistry, conversation_id) do
       [{pid, _}] -> DynamicSupervisor.terminate_child(__MODULE__, pid)
       [] -> {:error, :not_found}

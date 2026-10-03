@@ -311,14 +311,14 @@ defmodule Handbeam.Agent.Turn do
       Logger.warning("[Turn] before_agent_start blocked: #{state.error}")
 
       emit(opts, :run_end, %{
-        status: :error,
+        status: state.status,
         error: state.error,
         turns: 0,
         run_id: state.config.run_id
       })
 
       emit(opts, :agent_end, %{
-        status: :error,
+        status: state.status,
         error: state.error,
         turns: 0,
         run_id: state.config.run_id
@@ -431,6 +431,9 @@ defmodule Handbeam.Agent.Turn do
       }
 
       case run_extension_hook(state, session_id, {:context, payload}) do
+        {:block, reason} ->
+          {:block, reason}
+
         {:transform, transformed} ->
           # Request-scoped only: outbound messages + system_prompt for this
           # provider call. Durable State / transcript stay untouched.
@@ -707,13 +710,19 @@ defmodule Handbeam.Agent.Turn do
   end
 
   defp do_completion(%State{} = state, opts) do
-    provider = state.config.provider
-
     provider_config =
       state
       |> build_provider_config()
       |> Map.put(:run_deadline, Keyword.get(opts, :run_deadline))
 
+    case apply_context_hook(state, provider_config, opts) do
+      {:block, reason} -> %{state | status: :halted, error: "Blocked by extension: #{reason}"}
+      {messages, config} -> do_provider_completion(state, opts, messages, config)
+    end
+  end
+
+  defp do_provider_completion(state, opts, outbound_messages, provider_config) do
+    provider = state.config.provider
     streaming? = Keyword.get(opts, :streaming, false)
 
     chunk_tracker = if streaming?, do: :counters.new(1, []), else: nil
@@ -769,9 +778,6 @@ defmodule Handbeam.Agent.Turn do
         &Handbeam.Tool.Builtin.Task.contextualize_def(&1, state.config, authorized_tools)
       )
 
-    # context hook — extensions can filter/modify messages and system_prompt
-    # for this provider call only (does NOT modify persistent state/transcript)
-    {outbound_messages, provider_config} = apply_context_hook(state, provider_config, opts)
     final_turn? = state.turn + 1 >= state.config.max_turns
     provider_config = maybe_require_final_answer(provider_config, final_turn?)
     tool_defs = if final_turn?, do: [], else: tool_defs
@@ -1557,7 +1563,7 @@ defmodule Handbeam.Agent.Turn do
             {:block, reason} ->
               {[{call, {:extension, reason}} | blocked], allowed}
 
-            {:transform, %{args: transformed_args} = ctx} ->
+            {:transform, %{args: transformed_args} = ctx} when is_map(transformed_args) ->
               # Mutate args from transform, keep other transformed fields for context
               mutated = %{call | input: Map.merge(call[:input] || %{}, transformed_args)}
               {blocked, [{mutated, ctx} | allowed]}
@@ -1579,6 +1585,33 @@ defmodule Handbeam.Agent.Turn do
       else
         {[], Enum.map(tool_calls, &{&1, %{}})}
       end
+
+    # Hooks cannot bypass the active set. An argument rewrite must also be
+    # independently authorized: approval of the original call ID is not
+    # approval of different arguments under that same ID.
+    {unauthorized, allowed_calls_w_ctx} =
+      Enum.split_with(allowed_calls_w_ctx, fn {call, ctx} ->
+        inactive? = active_set != nil and call[:name] not in active_set
+        rewritten? = Map.has_key?(ctx, :args)
+
+        policy =
+          Handbeam.Permissions.ToolPolicy.from_workspace(
+            state.config.working_directory,
+            %{},
+            state.tool_guard_session_allow || []
+          )
+
+        inactive? or
+          (rewritten? and Handbeam.Permissions.ToolPolicy.decision(policy, call) != :auto)
+      end)
+
+    blocked_calls =
+      blocked_calls ++
+        Enum.map(unauthorized, fn {call, _} ->
+          {call,
+           {:extension,
+            "Transformed call is not authorized by workspace permissions or active tools"}}
+        end)
 
     # Emit tool_start only for allowed (unblocked) calls
     Enum.each(allowed_calls_w_ctx, fn {call, _ctx} ->

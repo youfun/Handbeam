@@ -31,39 +31,71 @@ defmodule Handbeam.Agent.Coordinator do
          :ok <- validate_advisor_policy(opts),
          opts <- ensure_run_id(opts),
          {:ok, _pid} <- Session.start_or_get(session_id: conversation_id, model: opts[:model]) do
-      case status(conversation_id) do
-        {:ok, %{running?: true}} ->
-          cond do
-            present_task_instructions?(opts) ->
-              {:error, :run_in_progress}
-
-            true ->
-              opts = Keyword.put_new(opts, :deliver_as, :steer)
-
-              with {:ok, _entry} <-
-                     Handbeam.Agent.TranscriptPersistence.append_inbound(
-                       conversation_id,
-                       content,
-                       opts
-                     ),
-                   {:ok, ack} <- enqueue_candidate(conversation_id, content, opts) do
-                maybe_resume_stall(conversation_id)
-                {:ok, ack}
-              end
-          end
-
-        {:ok, %{running?: false}} ->
-          if Keyword.get(opts, :require_running?, false) do
-            {:error, :no_active_run}
-          else
-            start_run(conversation_id, content, opts)
-          end
-
-        {:error, reason} ->
-          {:error, reason}
-      end
+      admit_message(conversation_id, content, opts, 2)
     end
   end
+
+  defp admit_message(_id, _content, _opts, 0), do: {:error, :run_in_progress}
+
+  defp admit_message(id, content, opts, attempts) do
+    case status(id) do
+      {:ok, %{running?: true} = active} ->
+        if present_task_instructions?(opts) do
+          {:error, :run_in_progress}
+        else
+          candidate_opts =
+            opts
+            |> Keyword.put_new(:deliver_as, :steer)
+            |> Keyword.put(:expected_run_id, active.run_id)
+            |> Keyword.put(:persist_candidate?, Keyword.get(opts, :persist_inbound?, true))
+
+          case enqueue_candidate(id, content, candidate_opts) do
+            {:ok, ack} ->
+              Handbeam.Agent.OperationReceipt.complete({:message, id}, opts[:request_id], ack)
+              maybe_resume_stall(id)
+              {:ok, ack}
+
+            {:error, reason} when reason in [:sealed, :no_active_run, :stale_run] ->
+              with :ok <- await_run_exit(active[:run_supervisor]) do
+                admit_message(id, content, opts, attempts - 1)
+              end
+
+            error ->
+              error
+          end
+        end
+
+      {:ok, %{running?: false} = inactive} ->
+        if Keyword.get(opts, :require_running?, false) do
+          {:error, :no_active_run}
+        else
+          with :ok <- await_run_exit(inactive[:run_supervisor]) do
+            case start_run(id, content, opts) do
+              {:error, :run_in_progress} -> admit_message(id, content, opts, attempts - 1)
+              result -> result
+            end
+          end
+        end
+
+      error ->
+        error
+    end
+  end
+
+  # Wait for the exact old tree, not a timer or a lookup that could stop a new run.
+  defp await_run_exit(pid) when is_pid(pid) do
+    ref = Process.monitor(pid)
+
+    receive do
+      {:DOWN, ^ref, :process, ^pid, _} -> :ok
+    after
+      5_000 ->
+        Process.demonitor(ref, [:flush])
+        {:error, :run_in_progress}
+    end
+  end
+
+  defp await_run_exit(_pid), do: :ok
 
   defp replay_ack(receipt) when is_map(receipt) do
     %{
@@ -110,8 +142,8 @@ defmodule Handbeam.Agent.Coordinator do
          :ok <- validate_advisor_policy(opts),
          opts <- ensure_run_id(opts),
          {:ok, _pid} <- Session.start_or_get(session_id: conversation_id, model: opts[:model]),
-         {:ok, %{running?: false}} <- status(conversation_id),
-         :ok <- persist_inbound_before_start(conversation_id, content, opts) do
+         {:ok, %{running?: false}} <- status(conversation_id) do
+      {content, opts} = stamp_message_ids(content, opts)
       run_opts = agent_run_opts(conversation_id, opts)
 
       case Handbeam.Agent.Runner.start_run(conversation_id, content, run_opts) do
@@ -151,6 +183,7 @@ defmodule Handbeam.Agent.Coordinator do
 
     case Session.enqueue_candidate(conversation_id, content, opts) do
       :ok -> {:ok, %{action: :enqueued, run_id: nil, run_pid: nil}}
+      {:ok, ack} -> {:ok, ack}
       {:error, reason} -> {:error, reason}
     end
   catch
@@ -276,7 +309,8 @@ defmodule Handbeam.Agent.Coordinator do
   end
 
   defp validate_approval(conversation_id, decisions, opts) do
-    awaiting = if runner_awaiting?(conversation_id), do: :ok, else: {:error, :not_awaiting_approval}
+    awaiting =
+      if runner_awaiting?(conversation_id), do: :ok, else: {:error, :not_awaiting_approval}
 
     with :ok <- expected_run(conversation_id, opts),
          :ok <- awaiting,
@@ -447,8 +481,12 @@ defmodule Handbeam.Agent.Coordinator do
   defp agent_run_opts(conversation_id, opts) do
     opts =
       case Handbeam.ConversationStore.get_metadata(conversation_id) do
-        {:ok, %{"collaboration" => %{"read_only" => true}}} ->
-          Keyword.put(opts, :delegated_read_only, true)
+        {:ok, meta} ->
+          opts = Keyword.put_new(opts, :workspace_id, meta["workspace_id"])
+
+          if get_in(meta, ["collaboration", "read_only"]) == true,
+            do: Keyword.put(opts, :delegated_read_only, true),
+            else: opts
 
         _ ->
           opts
@@ -530,26 +568,10 @@ defmodule Handbeam.Agent.Coordinator do
     end
   end
 
-  defp persist_inbound_before_start(conversation_id, content, opts) do
-    # Task instructions are persisted inside Runner.init after exclusive acceptance.
-    if Keyword.get(opts, :persist_inbound?, true) and not present_task_instructions?(opts) do
-      case Handbeam.Agent.TranscriptPersistence.append_inbound(
-             conversation_id,
-             content,
-             Keyword.put(opts, :deliver_as, :new_run)
-           ) do
-        {:ok, _entry} -> :ok
-        {:error, reason} -> {:error, reason}
-      end
-    else
-      :ok
-    end
-  end
-
   defp normalize_start_run_error({:already_started, _pid}), do: {:error, :run_in_progress}
 
   defp normalize_start_run_error({:inbound_persist_failed, reason}),
-    do: {:error, {:inbound_persist_failed, reason}}
+    do: {:error, reason}
 
   defp normalize_start_run_error({:shutdown, {:failed_to_start_child, _mod, reason}}),
     do: normalize_start_run_error(reason)
@@ -634,6 +656,8 @@ defmodule Handbeam.Agent.Coordinator do
            conversation_id: conversation_id,
            running?: Map.get(meta, :running?, false),
            run_pid: Map.get(meta, :agent_pid),
+           run_id: Map.get(meta, :run_id),
+           run_supervisor: Map.get(meta, :run_supervisor),
            queue_pid: Map.get(meta, :queue_pid),
            status: Map.get(meta, :status)
          }}

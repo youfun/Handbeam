@@ -22,7 +22,12 @@ resend sit on the user bubble via `NativeChat` + `Handbeam.Agent.PendingMessages
 Pending draft images show compact local thumbs
 near the composer (tap opens a larger local card). Sent user images show a
 right-aligned thumb row above the bubble, resolved from conversation upload
-refs. Mob JSON carries only a local path. All SEND/SEND_MULTIPLE shares enter
+refs. Native chat loads the latest 100 transcript entries and can load older
+pages. Web/native share `Handbeam.PubSub.Projection`: Session epoch + last_seq is the
+checkpoint, gaps or changed epochs restore snapshot + durable history, and persisted text patches
+update the same transcript ID without replaying a synthetic streaming tail.
+See `../docs/runtime-contracts.md`. Mob.ScreenCase is a host-side check, not
+on-device acceptance. Mob JSON carries only a local path. All SEND/SEND_MULTIPLE shares enter
 one durable ShareIntake FIFO (manifest is the source of truth; notify only
 wakes the screen). Review order is `created_at` then persisted `created_seq`.
 Cancelled/acknowledged cleanup leaves a durable receipt under

@@ -56,6 +56,7 @@ defmodule Handbeam.E2E.BashSandboxTest do
   defp start(sid, workspace, inputs) do
     {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
     :ok = Session.subscribe(sid)
+    on_exit(fn -> Handbeam.TestSupport.E2EHarness.cancel!(sid) end)
 
     Coordinator.add_message(sid, "run the script",
       workspace_path: workspace,
@@ -150,7 +151,7 @@ defmodule Handbeam.E2E.BashSandboxTest do
   } do
     sid = "bash-sandbox-e2e-#{System.unique_integer([:positive])}"
 
-    assert {:ok, _} =
+    assert {:ok, %{run_pid: runner}} =
              start(sid, workspace, [
                %{
                  "command" => "target=$(printf '%s' '#{outside}'); printf approved > \"$target\"",
@@ -160,6 +161,19 @@ defmodule Handbeam.E2E.BashSandboxTest do
 
     request = await_event(:tool_approval_requested)
     assert [%{tool_call_id: call_id, tool_name: "bash"}] = request.action_requests
+
+    # The task emits the request before returning its interrupted State. Wait
+    # for that task, then ask the Runner that owns the approval lifecycle.
+    case :sys.get_state(runner).task do
+      %Task{pid: task} ->
+        ref = Process.monitor(task)
+        assert_receive {:DOWN, ^ref, :process, ^task, _}, 5_000
+
+      nil ->
+        :ok
+    end
+
+    assert {:ok, %{status: :awaiting_approval}} = Coordinator.status(sid)
     refute File.exists?(outside)
 
     assert :ok =

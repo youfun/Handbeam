@@ -90,6 +90,9 @@ defmodule Handbeam.Extension.Event do
   @spec list_known_events() :: [atom()]
   def list_known_events, do: @known_events
 
+  @doc "Only intent phases may block or transform; lifecycle notifications are read-only."
+  def blockable?(name), do: name in [:before_agent_start, :tool_call, :context]
+
   # ── Inspect redaction ──
 
   defimpl Inspect do

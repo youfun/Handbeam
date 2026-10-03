@@ -28,7 +28,11 @@ defmodule Handbeam.Agent.TranscriptPersistence do
         "raw_content" => persistable_raw_content(content, opts),
         "inbound_id" => Keyword.get(opts, :inbound_id) || Keyword.get(opts, :transcript_id),
         "origin" => inbound_origin(opts),
-        "consumption" => if(Keyword.get(opts, :origin), do: "pending", else: nil)
+        "consumption" =>
+          if(inbound_delivery(opts) in ["steer", "follow_up"] or opts[:origin],
+            do: "pending",
+            else: nil
+          )
       })
       |> put_inbound_delivery(opts)
 
@@ -63,6 +67,8 @@ defmodule Handbeam.Agent.TranscriptPersistence do
 
   def handle_event(conversation_id, {:message_delta, %{chunk: chunk} = payload}, opts)
       when is_binary(conversation_id) and is_binary(chunk) and chunk != "" do
+    Process.delete({__MODULE__, :text_patch, conversation_id})
+
     {thinking_text, clean_chunk, new_buffer} =
       Handbeam.Agent.ThinkingFilter.strip(thinking_buffer(conversation_id), chunk)
 
@@ -237,6 +243,14 @@ defmodule Handbeam.Agent.TranscriptPersistence do
   end
 
   def handle_event(_conversation_id, _event, _opts), do: :ok
+
+  @doc "Attach the exact persisted text position to a delta before Session broadcasts it."
+  def project_event(conversation_id, {:message_delta, payload}) do
+    patch = Process.get({__MODULE__, :text_patch, conversation_id}, %{})
+    {:message_delta, Map.merge(payload, patch)}
+  end
+
+  def project_event(_conversation_id, event), do: event
 
   @doc """
   Marks durable in-flight tools for this conversation+run as cancelled.
@@ -450,7 +464,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
     run_id = opts[:run_id]
 
     cond do
-      status in [:interrupted, "interrupted", nil] ->
+      not Handbeam.PubSub.AgentEvent.terminal_status?(status) ->
         :ok
 
       not is_binary(run_id) or run_id == "" ->
@@ -644,6 +658,13 @@ defmodule Handbeam.Agent.TranscriptPersistence do
         case persist_assistant_delta(conversation_id, entry_id, entry, opts) do
           {:ok, saved} ->
             Process.delete(buffer_key(conversation_id))
+
+            Process.put({__MODULE__, :text_patch, conversation_id}, %{
+              transcript_id: saved["id"],
+              text_offset: byte_size(saved["content"]) - byte_size(buffered),
+              text: buffered
+            })
+
             deliver_delta(saved, buffered, opts)
 
           {:error, reason} ->
@@ -774,9 +795,11 @@ defmodule Handbeam.Agent.TranscriptPersistence do
       :steer -> "steer"
       :follow_up -> "follow_up"
       :new_run -> "new_run"
+      :next_turn -> "next_turn"
       "steer" -> "steer"
       "follow_up" -> "follow_up"
       "new_run" -> "new_run"
+      "next_turn" -> "next_turn"
       _ -> "new_run"
     end
   end

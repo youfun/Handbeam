@@ -6,6 +6,8 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
 
   require Logger
 
+  alias Handbeam.PubSub.{AgentEvent, Projection}
+
   def timeline_insert(socket, entry) do
     expanded = Map.get(socket.assigns, :expanded_tool_groups, MapSet.new())
 
@@ -175,6 +177,8 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
   def safe_status("completed"), do: :completed
   def safe_status("running"), do: :running
   def safe_status("error"), do: :error
+  def safe_status("cancelled"), do: :cancelled
+  def safe_status("timeout"), do: :timeout
   def safe_status("max_turns"), do: :max_turns
   def safe_status("interrupted"), do: :interrupted
   def safe_status("awaiting_approval"), do: :awaiting_approval
@@ -268,10 +272,32 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
       )
     end
 
-    if event.topic == session_topic(socket.assigns.current_conversation_id) do
-      handle_agent_event(event, socket)
-    else
-      socket
+    case Projection.classify(
+           event,
+           session_topic(socket.assigns.current_conversation_id),
+           Map.get(socket.assigns, :session_seq, 0),
+           Map.get(socket.assigns, :session_epoch)
+         ) do
+      :apply ->
+        if event.kind == :message_delta and
+             Projection.text_patch(socket.assigns.timeline, event.payload) == :recover and
+             (Map.has_key?(event.payload, :transcript_id) or
+                Map.has_key?(event.payload, "transcript_id")) do
+          restore_active_session_snapshot(socket)
+        else
+          socket =
+            socket
+            |> assign(:session_seq, event.seq)
+            |> assign(:session_epoch, event.epoch || Map.get(socket.assigns, :session_epoch))
+
+          handle_agent_event(event, socket)
+        end
+
+      :recover ->
+        restore_active_session_snapshot(socket)
+
+      :ignore ->
+        socket
     end
   end
 
@@ -336,6 +362,17 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
       # Runtime usage is cumulative for this run; replace rather than add on replay.
       update_status(socket, payload |> payload_value(:usage, %{}) |> usage_tokens())
     end
+  end
+
+  def handle_agent_event(%{kind: :message_delta, payload: %{transcript_id: _} = payload}, socket) do
+    project_text_patch(socket, payload)
+  end
+
+  def handle_agent_event(
+        %{kind: :message_delta, payload: %{"transcript_id" => _} = payload},
+        socket
+      ) do
+    project_text_patch(socket, payload)
   end
 
   def handle_agent_event(%{kind: :message_delta, payload: %{chunk: chunk}}, socket) do
@@ -413,7 +450,7 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
   end
 
   def handle_agent_event(%{kind: :run_end, payload: payload}, socket) do
-    status_value = payload_value(payload, :status, "completed")
+    status_value = payload_value(payload, :status)
 
     Logger.debug(
       "[WorkspaceLive] agent event run_end status=#{inspect(status_value)} " <>
@@ -423,7 +460,8 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
     status = safe_status(status_value)
 
     socket =
-      if socket.assigns.stream_suppressed and status != :cancelled do
+      if (socket.assigns.stream_suppressed and status != :cancelled) or
+           not (AgentEvent.terminal_status?(status) or AgentEvent.waiting_status?(status)) do
         Logger.debug(
           "[WorkspaceLive] dropped suppressed run_end status=#{inspect(status_value)} " <>
             "conversation=#{socket.assigns.current_conversation_id}"
@@ -437,22 +475,46 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
 
     # Only clear pending_approval on terminal run_end (not interrupted/awaiting_approval)
     socket =
-      if status not in [:interrupted] do
+      if AgentEvent.terminal_status?(status) do
         socket
         |> assign(:pending_approval, nil)
         |> Composer.assign_pending(
           Handbeam.Agent.PendingMessages.apply_run_end(socket.assigns.pending_messages, status)
         )
       else
-        socket
-        |> assign(:running, true)
-        |> assign(:running_conversation_id, socket.assigns.current_conversation_id)
+        if AgentEvent.waiting_status?(status) do
+          socket
+          |> assign(:running, true)
+          |> assign(:running_conversation_id, socket.assigns.current_conversation_id)
+        else
+          socket
+        end
       end
 
     socket
   end
 
   def handle_agent_event(_event, socket), do: socket
+
+  defp project_text_patch(socket, payload) do
+    if socket.assigns.stream_suppressed do
+      socket
+    else
+      case Projection.text_patch(socket.assigns.timeline, payload) do
+        {:ok, entry} ->
+          socket
+          |> assign(:current_assistant_entry_id, entry["id"])
+          |> assign(:thinking_active, false)
+          |> timeline_insert(entry)
+
+        :ignore ->
+          socket
+
+        :recover ->
+          restore_active_session_snapshot(socket)
+      end
+    end
+  end
 
   def do_handle_tool_start(payload, socket) do
     %{entry: event, tool_name: tool_name} = ToolProjection.start(payload, &summarize_input/2)
@@ -544,66 +606,70 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
   def restore_active_session_snapshot(socket) do
     conv_id = socket.assigns.current_conversation_id
 
-    cond do
-      not is_binary(conv_id) ->
-        socket
+    if is_binary(conv_id) do
+      with {:ok, %{snapshot: snapshot, history: history}} <-
+             Projection.recover(conv_id, length(socket.assigns.timeline)) do
+        meta = snapshot.meta
+        pid = meta[:agent_pid]
+        running? = meta[:running?] == true and is_pid(pid) and Process.alive?(pid)
 
-      is_nil(Handbeam.PubSub.Session.whereis(conv_id)) ->
-        socket
+        pending =
+          Handbeam.Agent.PendingMessages.replay(
+            socket.assigns.pending_messages || %{},
+            snapshot.control_events,
+            if(Map.get(socket.assigns, :session_epoch) == snapshot.epoch,
+              do: Map.get(socket.assigns, :session_seq, 0),
+              else: 0
+            )
+          )
 
-      true ->
-        case Handbeam.PubSub.Session.snapshot(conv_id) do
-          %{events: events, meta: meta} ->
-            # Verify the run is actually still active: if the agent process
-            # is dead (e.g. Session restarted after a crash), don't replay
-            # events that would set running=true and show "agent working".
-            agent_pid = Map.get(meta, :agent_pid)
+        socket =
+          HandbeamWeb.WorkspaceLive.ConversationState.sync_conv_state(socket,
+            reload?: true,
+            force_transcript?: true,
+            transcript_page: history
+          )
 
-            actually_running? =
-              Map.get(meta, :running?, false) and
-                agent_pid != nil and
-                Process.alive?(agent_pid)
+        socket =
+          socket
+          |> assign(:session_seq, snapshot.last_seq)
+          |> assign(:session_epoch, snapshot.epoch)
+          |> assign(:running, running?)
+          |> assign(:running_conversation_id, if(running?, do: conv_id))
+          |> assign(:pending_approval, nil)
+          |> assign(:tools_active, %{})
+          |> assign(
+            :current_assistant_entry_id,
+            last_assistant_message_id(socket.assigns.timeline)
+          )
 
-            if actually_running? do
-              timeline = socket.assigns.timeline
-              replay_message_delta? = not timeline_has_assistant_message?(timeline)
-
-              Logger.debug(
-                "[WorkspaceLive] restoring active session snapshot conversation=#{conv_id} " <>
-                  "events=#{length(events)} replay_message_delta?=#{replay_message_delta?}"
-              )
-
-              socket =
-                if replay_message_delta? do
-                  socket
-                else
-                  assign(socket, :current_assistant_entry_id, last_assistant_message_id(timeline))
-                end
-
-              socket =
-                events
-                |> Enum.sort_by(& &1.seq)
-                |> maybe_skip_message_delta_events(replay_message_delta?)
-                |> Enum.reduce(socket, fn event, socket ->
-                  handle_current_agent_event(event, socket)
-                end)
-
-              pending =
-                Handbeam.Agent.PendingMessages.reconcile(
-                  socket.assigns.pending_messages || %{},
-                  session_pending_messages(conv_id),
-                  true,
-                  socket.assigns.timeline || []
-                )
-
-              assign(socket, :pending_messages, pending)
-            else
-              socket
-            end
-
-          _ ->
+        # Durable text is already in history. Replay only active-run control state,
+        # bypassing admission because these events are at/below the checkpoint.
+        socket =
+          if running? do
+            snapshot.control_events
+            |> Enum.sort_by(& &1.seq)
+            |> Enum.filter(&(payload_value(&1.payload, :run_id) == meta[:run_id]))
+            |> Enum.reject(&(&1.kind in [:message_delta, :thinking_delta]))
+            |> Enum.reduce(socket, &handle_agent_event/2)
+          else
             socket
-        end
+          end
+
+        pending =
+          Handbeam.Agent.PendingMessages.reconcile(
+            pending,
+            session_pending_messages(conv_id),
+            running?,
+            socket.assigns.timeline || []
+          )
+
+        assign(socket, :pending_messages, pending)
+      else
+        {:error, _} -> socket
+      end
+    else
+      socket
     end
   end
 
@@ -743,6 +809,14 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
 
       socket
       |> assign(:subscribed_session_topic, topic)
+      |> assign(
+        :session_seq,
+        if(previous_topic == topic, do: Map.get(socket.assigns, :session_seq, 0), else: 0)
+      )
+      |> assign(
+        :session_epoch,
+        if(previous_topic == topic, do: Map.get(socket.assigns, :session_epoch))
+      )
       |> subscribe_to_extension_ui()
     else
       socket

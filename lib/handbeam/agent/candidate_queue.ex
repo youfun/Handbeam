@@ -82,7 +82,22 @@ defmodule Handbeam.Agent.CandidateQueue do
     item = normalize_message(message, deliver_as, opts)
     queue = Map.fetch!(state, deliver_as)
 
-    {:reply, :ok, %{state | deliver_as => :queue.in(item, queue), size: state.size + 1}}
+    # Seal/capacity checks and persistence share the queue's acceptance gate.
+    # A rejected candidate must not appear as an accepted inbound transcript.
+    result =
+      if Keyword.get(opts, :persist_candidate?, false) do
+        Handbeam.Agent.TranscriptPersistence.append_inbound(state.session_id, item.message, opts)
+      else
+        {:ok, nil}
+      end
+
+    case result do
+      {:ok, _entry} ->
+        {:reply, :ok, %{state | deliver_as => :queue.in(item, queue), size: state.size + 1}}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   def handle_call({:drain, deliver_as}, _from, state) do

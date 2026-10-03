@@ -53,6 +53,7 @@ defmodule HandbeamProbe.HomeScreen do
   @chat_taps [
     :send,
     :stop,
+    :load_older_history,
     :new_chat,
     :new_free_chat,
     :dismiss_approval,

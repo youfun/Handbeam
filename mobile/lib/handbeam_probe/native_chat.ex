@@ -3,7 +3,7 @@ defmodule HandbeamProbe.NativeChat do
 
   use Gettext, backend: HandbeamProbe.Gettext
   alias Handbeam.Agent.{Coordinator, ModelConfig, PendingMessages, Reasoning, ThinkingFilter}
-  alias Handbeam.PubSub.Session
+  alias Handbeam.PubSub.{AgentEvent, Projection, Session}
   alias Handbeam.WorkspaceStore
   alias HandbeamProbe.Bridge.Payload
   alias HandbeamProbe.NativeLocalImage
@@ -12,17 +12,23 @@ defmodule HandbeamProbe.NativeChat do
 
   def reload_coalesce_ms, do: @reload_coalesce_ms
 
-  def load(conversation) do
+  def load(conversation, opts \\ []) do
     id = conversation["id"]
-    snapshot = if Session.whereis(id), do: safe_snapshot(id), else: %{events: []}
-    events = Enum.sort_by(snapshot.events, & &1.seq)
+    snapshot = Keyword.get_lazy(opts, :snapshot, fn -> Projection.snapshot(id) end)
+    events = Enum.sort_by(Map.get(snapshot, :control_events, snapshot.events), & &1.seq)
     {workspace_id, workspace_path} = bind_workspace(conversation)
+    page = Keyword.get_lazy(opts, :history_page, fn -> history_page(id, 100) end)
+    history_loaded? = is_map(page)
+    page = page || %{entries: [], before: nil, has_more?: false}
 
     state = %{
       conversation: conversation,
       workspace_id: workspace_id,
       workspace_path: workspace_path,
-      entries: NativeLocalImage.resolve_entries(transcript(id), workspace_path, id),
+      entries: NativeLocalImage.resolve_entries(page.entries, workspace_path, id),
+      history_before: page.before,
+      history_has_more?: page.has_more?,
+      history_loaded?: history_loaded?,
       running: running?(id),
       stream: "",
       thinking: false,
@@ -31,43 +37,80 @@ defmodule HandbeamProbe.NativeChat do
       approval_seq: nil,
       pending: PendingMessages.new(),
       seq: 0,
+      epoch: nil,
       last_transcript_reload_at: nil,
-      transcript_dirty: false,
+      transcript_dirty: not history_loaded?,
       reload_timer: nil,
       stream_since_boundary: ""
     }
 
-    # TranscriptPersistence flushes at every non-delta boundary. Only the
-    # trailing, not-yet-persisted deltas belong in the native streaming row.
-    tail =
-      Enum.reverse(events)
-      |> Enum.take_while(&(&1.kind in [:message_delta, :thinking_delta]))
-      |> Enum.reverse()
+    # Text is durable before broadcast. Restore only the active run's control
+    # state; replaying text over a history read would duplicate the reply.
+    active_events =
+      Enum.filter(events, &(event_payload(&1.payload)["run_id"] == snapshot.meta[:run_id]))
 
-    state = if state.running, do: Enum.reduce(tail, state, &delta/2), else: state
+    state = if state.running, do: Enum.reduce(active_events, state, &approval/2), else: state
+    latest_event = Enum.max_by(snapshot.events, & &1.seq, fn -> nil end)
 
-    # The approval event precedes Runner receiving its Task result. Replay while
-    # the run is active too, so switching at that boundary cannot lose the review.
-    state = if state.running, do: Enum.reduce(events, state, &approval/2), else: state
-
-    %{state | seq: events |> List.last() |> then(&if(&1, do: &1.seq, else: 0))}
+    %{
+      state
+      | seq: if(history_loaded?, do: snapshot.last_seq, else: 0),
+        epoch: if(history_loaded?, do: Map.get(snapshot, :epoch)),
+        thinking:
+          state.running and match?(%{kind: :thinking_delta}, latest_event) and
+            event_payload(latest_event.payload)["run_id"] == snapshot.meta[:run_id]
+    }
     |> reconcile_pending()
   end
 
-  def project(event, state, opts \\ []) do
-    if event.topic == Session.session_topic(state.conversation["id"]) and event.seq > state.seq do
-      state =
-        event
-        |> then(&approval(&1, %{state | seq: event.seq}))
-        |> pending_event(event)
+  def project(event, state, opts \\ [])
 
-      if event.kind in [:message_delta, :thinking_delta] do
-        delta(event, state)
-      else
-        project_boundary(event, state, opts)
-      end
-    else
-      state
+  # History can open while Session is absent. The first stamped event must
+  # establish a real checkpoint and restore controls, not just adopt its epoch.
+  def project(
+        %{topic: "session:" <> id, epoch: epoch},
+        %{conversation: %{"id" => id}, epoch: nil} = state,
+        _opts
+      )
+      when is_binary(epoch),
+      do: recover(state)
+
+  def project(
+        %{topic: "session:" <> id},
+        %{conversation: %{"id" => id}, history_loaded?: false} = state,
+        _opts
+      ),
+      do: recover(state)
+
+  def project(event, state, opts) do
+    case Projection.classify(
+           event,
+           Session.session_topic(state.conversation["id"]),
+           state.seq,
+           state.epoch
+         ) do
+      :apply ->
+        payload = event_payload(event.payload)
+
+        if event.kind == :message_delta and Map.has_key?(payload, "transcript_id") and
+             Projection.text_patch(state.entries, payload) == :recover do
+          recover(state)
+        else
+          state =
+            event
+            |> then(&approval(&1, %{state | seq: event.seq, epoch: event.epoch || state.epoch}))
+            |> pending_event(event)
+
+          if event.kind in [:message_delta, :thinking_delta],
+            do: delta(event, state),
+            else: project_boundary(event, state, opts)
+        end
+
+      :recover ->
+        recover(state)
+
+      :ignore ->
+        state
     end
   end
 
@@ -257,6 +300,54 @@ defmodule HandbeamProbe.NativeChat do
     end
   end
 
+  def load_older(state) do
+    id = state.conversation["id"]
+
+    case Handbeam.ConversationTranscriptStore.page(id, limit: 100, before: state.history_before) do
+      {:ok, page} ->
+        entries =
+          (page.entries ++ state.entries)
+          |> Enum.reverse()
+          |> Enum.uniq_by(& &1["id"])
+          |> Enum.reverse()
+
+        %{
+          state
+          | entries: NativeLocalImage.resolve_entries(entries, state.workspace_path, id),
+            history_before: page.before,
+            history_has_more?: page.has_more?,
+            history_loaded?: true
+        }
+        |> reconcile_pending()
+
+      {:error, :invalid_cursor} ->
+        recover(state)
+
+      {:error, _} ->
+        state
+    end
+  end
+
+  defp history_page(id, count) do
+    case Projection.history(id, count) do
+      {:ok, page} -> page
+      {:error, _} -> nil
+    end
+  end
+
+  defp recover(state) do
+    case Projection.recover(state.conversation["id"], length(state.entries)) do
+      {:ok, %{snapshot: snapshot, history: history}} ->
+        recovered = load(state.conversation, snapshot: snapshot, history_page: history)
+        last_seq = if state.epoch == snapshot.epoch, do: state.seq, else: 0
+        pending = PendingMessages.replay(state.pending, snapshot.control_events, last_seq)
+        %{recovered | pending: Map.merge(pending, recovered.pending)} |> reconcile_pending()
+
+      {:error, _} ->
+        state
+    end
+  end
+
   def open_tool_action(conversation_id, :browser, id) do
     if Handbeam.Browser.WebViewSession.snapshot_state(id).conversation_id == conversation_id,
       do: Handbeam.Browser.WebViewSession.user_takeover(id),
@@ -364,19 +455,18 @@ defmodule HandbeamProbe.NativeChat do
     end
   end
 
-  defp safe_snapshot(id) do
-    Session.snapshot(id)
-  catch
-    :exit, _ -> %{events: []}
-  end
-
   defp running?(id) do
     match?({:ok, %{running?: true}}, Coordinator.status(id))
   end
 
   defp still_running?(%{kind: :run_end, payload: payload}, state, _id) do
     status = event_payload(payload)["status"]
-    state.pending_approval != nil or status in [:interrupted, "interrupted"]
+
+    cond do
+      AgentEvent.terminal_status?(status) -> false
+      AgentEvent.waiting_status?(status) -> true
+      true -> state.running
+    end
   end
 
   defp still_running?(_event, state, id) do
@@ -424,14 +514,20 @@ defmodule HandbeamProbe.NativeChat do
     id = state.conversation["id"]
 
     id
-    |> read_transcript(opts)
+    |> read_transcript(opts, state.entries)
     |> NativeLocalImage.resolve_entries(Map.get(state, :workspace_path), id)
   end
 
-  defp read_transcript(id, opts) do
+  defp read_transcript(id, opts, existing) do
     case Keyword.get(opts, :transcript) do
-      fun when is_function(fun, 1) -> fun.(id)
-      _ -> transcript(id)
+      fun when is_function(fun, 1) ->
+        fun.(id)
+
+      _ ->
+        case Projection.history(id, length(existing)) do
+          {:ok, page} -> page.entries
+          {:error, _} -> existing
+        end
     end
   end
 
@@ -439,9 +535,9 @@ defmodule HandbeamProbe.NativeChat do
     do: %{state | pending_approval: event_payload(payload), approval_seq: seq}
 
   defp approval(%{kind: :run_end, payload: payload}, state) do
-    if event_payload(payload)["status"] in [:interrupted, "interrupted"],
-      do: state,
-      else: %{state | pending_approval: nil, approval_seq: nil}
+    if AgentEvent.terminal_status?(event_payload(payload)["status"]),
+      do: %{state | pending_approval: nil, approval_seq: nil},
+      else: state
   end
 
   defp approval(%{kind: kind}, state)
@@ -469,7 +565,33 @@ defmodule HandbeamProbe.NativeChat do
   @spec event_payload(term()) :: term()
   def event_payload(payload), do: Payload.string_keys(payload)
 
-  defp delta(%{kind: :message_delta, payload: %{chunk: chunk}}, state) do
+  defp delta(%{kind: :message_delta, payload: payload}, state) do
+    payload = event_payload(payload)
+
+    if Map.has_key?(payload, "transcript_id") do
+      case Projection.text_patch(state.entries, payload) do
+        {:ok, entry} ->
+          entries =
+            if Enum.any?(state.entries, &(&1["id"] == entry["id"])),
+              do: Enum.map(state.entries, &if(&1["id"] == entry["id"], do: entry, else: &1)),
+              else: state.entries ++ [entry]
+
+          %{state | entries: entries, stream: "", thinking: false}
+
+        :ignore ->
+          state
+
+        :recover ->
+          recover(state)
+      end
+    else
+      legacy_delta(payload["chunk"] || "", state)
+    end
+  end
+
+  defp delta(%{kind: :thinking_delta}, state), do: %{state | thinking: true}
+
+  defp legacy_delta(chunk, state) do
     {thinking, text, buffer} = ThinkingFilter.strip(state.thinking_buffer, chunk)
 
     stream_since_boundary =
@@ -485,8 +607,4 @@ defmodule HandbeamProbe.NativeChat do
         thinking: text == "" and (thinking != "" or state.thinking)
     }
   end
-
-  defp delta(%{kind: :thinking_delta}, state), do: %{state | thinking: true}
-
-  defp delta(_event, state), do: state
 end

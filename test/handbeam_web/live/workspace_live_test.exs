@@ -843,11 +843,28 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       {:ok, view, _html} = live(conn, "/w/default/c/#{conversation["id"]}")
       topic = "session:#{conversation["id"]}"
 
+      # Runtime text is durable before broadcast; recovery intentionally does
+      # not preserve an unpersisted projection-only assistant row.
+      {:ok, _} =
+        Handbeam.ConversationTranscriptStore.append(conversation["id"], %{
+          "id" => "running-reply",
+          "role" => "assistant",
+          "content_type" => "assistant_msg",
+          "content" => "in-flight reply",
+          "status" => "streaming"
+        })
+
       send(view.pid, {:agent_event, agent_event(:run_start, %{model: "test"}, 1, topic)})
 
       send(
         view.pid,
-        {:agent_event, agent_event(:message_delta, %{chunk: "in-flight reply"}, 2, topic)}
+        {:agent_event,
+         agent_event(
+           :message_delta,
+           %{transcript_id: "running-reply", text_offset: 0, text: "in-flight reply"},
+           2,
+           topic
+         )}
       )
 
       assert render(view) =~ "in-flight reply"
@@ -1125,12 +1142,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       {:ok, _session} = Handbeam.PubSub.Session.start_or_get(session_id: sid)
       {:ok, queue} = Handbeam.Agent.CandidateQueue.start_link(session_id: sid, owner: self())
       :ok = Handbeam.PubSub.Session.attach_run(sid, self(), queue)
-      topic = "session:#{sid}"
-
-      send(
-        view.pid,
-        {:agent_event, agent_event(:run_start, %{model: "step-router-v1"}, 1, topic)}
-      )
+      :ok = Handbeam.PubSub.Session.broadcast_event(sid, :run_start, %{model: "step-router-v1"})
 
       view
       |> element("form")
@@ -1151,10 +1163,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       |> element("form")
       |> render_submit(%{"message" => "left behind", "model" => "stepfun/step-router-v1"})
 
-      send(
-        view.pid,
-        {:agent_event, agent_event(:run_end, %{status: "cancelled"}, 3, topic)}
-      )
+      :ok = Handbeam.PubSub.Session.broadcast_event(sid, :run_end, %{status: "cancelled"})
 
       html = render(view)
       assert html =~ "Not delivered"
@@ -1171,21 +1180,13 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       {:ok, _session} = Handbeam.PubSub.Session.start_or_get(session_id: sid)
       {:ok, queue} = Handbeam.Agent.CandidateQueue.start_link(session_id: sid, owner: self())
       :ok = Handbeam.PubSub.Session.attach_run(sid, self(), queue)
-      topic = "session:#{sid}"
-
-      send(
-        view.pid,
-        {:agent_event, agent_event(:run_start, %{model: "step-router-v1"}, 1, topic)}
-      )
+      :ok = Handbeam.PubSub.Session.broadcast_event(sid, :run_start, %{model: "step-router-v1"})
 
       view
       |> element("form")
       |> render_submit(%{"message" => "retry later", "model" => "stepfun/step-router-v1"})
 
-      send(
-        view.pid,
-        {:agent_event, agent_event(:run_end, %{status: "cancelled"}, 3, topic)}
-      )
+      :ok = Handbeam.PubSub.Session.broadcast_event(sid, :run_end, %{status: "cancelled"})
 
       assert render(view) =~ "Not delivered"
       pending = :sys.get_state(view.pid).socket.assigns.pending_messages
@@ -1227,21 +1228,13 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       {:ok, _session} = Handbeam.PubSub.Session.start_or_get(session_id: sid)
       {:ok, queue} = Handbeam.Agent.CandidateQueue.start_link(session_id: sid, owner: self())
       :ok = Handbeam.PubSub.Session.attach_run(sid, self(), queue)
-      topic = "session:#{sid}"
-
-      send(
-        view.pid,
-        {:agent_event, agent_event(:run_start, %{model: "step-router-v1"}, 1, topic)}
-      )
+      :ok = Handbeam.PubSub.Session.broadcast_event(sid, :run_start, %{model: "step-router-v1"})
 
       view
       |> element("form")
       |> render_submit(%{"message" => "cannot resend", "model" => "stepfun/step-router-v1"})
 
-      send(
-        view.pid,
-        {:agent_event, agent_event(:run_end, %{status: "cancelled"}, 3, topic)}
-      )
+      :ok = Handbeam.PubSub.Session.broadcast_event(sid, :run_end, %{status: "cancelled"})
 
       assert render(view) =~ "Not delivered"
       [old_id] = Map.keys(:sys.get_state(view.pid).socket.assigns.pending_messages)
@@ -1262,10 +1255,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         %{state | socket: Phoenix.Component.assign(socket, :pending_messages, pending)}
       end)
 
-      send(
-        view.pid,
-        {:agent_event, agent_event(:run_start, %{model: "step-router-v1"}, 4, topic)}
-      )
+      :ok = Handbeam.PubSub.Session.broadcast_event(sid, :run_start, %{model: "step-router-v1"})
 
       view
       |> element("button[phx-click='resend_pending']")

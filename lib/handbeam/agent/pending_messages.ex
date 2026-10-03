@@ -87,9 +87,23 @@ defmodule Handbeam.Agent.PendingMessages do
     if terminal_run_end?(status), do: mark_undelivered(pending), else: pending
   end
 
+  @doc "Recover missed queue controls in sequence, without replaying transcript text."
+  def replay(pending, events, last_seq) do
+    events
+    |> Enum.filter(&(&1.seq > last_seq))
+    |> Enum.sort_by(& &1.seq)
+    |> Enum.reduce(pending, fn event, acc ->
+      case event.kind do
+        :candidate_message_injected -> apply_injected(acc, event.payload)
+        :candidate_message_deleted -> apply_deleted(acc, event.payload)
+        :run_end -> apply_run_end(acc, stringify(event.payload)["status"])
+        _ -> acc
+      end
+    end)
+  end
+
   @spec terminal_run_end?(term()) :: boolean()
-  def terminal_run_end?(status) when status in [:interrupted, "interrupted"], do: false
-  def terminal_run_end?(_status), do: true
+  def terminal_run_end?(status), do: Handbeam.PubSub.AgentEvent.terminal_status?(status)
 
   @spec mark_undelivered(t()) :: t()
   def mark_undelivered(pending) do
@@ -128,10 +142,23 @@ defmodule Handbeam.Agent.PendingMessages do
         |> Enum.flat_map(&queued_from_session(&1, pending, entries))
         |> Map.new()
       else
-        %{}
+        entries
+        |> Enum.filter(fn entry ->
+          entry["delivery"] in ["steer", "follow_up"] and
+            entry["consumption"] == "pending"
+        end)
+        |> Enum.flat_map(fn entry ->
+          queued_from_session(
+            %{id: entry["id"], content: entry["content"], deliver_as: entry["delivery"]},
+            pending,
+            entries
+          )
+        end)
+        |> Map.new()
+        |> mark_undelivered()
       end
 
-    Map.merge(undelivered, queued)
+    if running?, do: Map.merge(undelivered, queued), else: Map.merge(queued, undelivered)
   end
 
   def reconcile(pending, _session_items, _running?, _entries), do: pending

@@ -86,7 +86,9 @@ defmodule Handbeam.Agent.OperationReceipt do
     path = path(scope, opts)
 
     case read_records(path) do
-      {:error, :corrupt} -> {:error, :corrupt}
+      {:error, :corrupt} ->
+        {:error, :corrupt}
+
       {:ok, records} ->
         case Map.get(records, request_id) do
           nil -> :error
@@ -133,13 +135,20 @@ defmodule Handbeam.Agent.OperationReceipt do
       Keyword.get(
         opts,
         :root,
-        Application.get_env(:handbeam, :conversation_root, Path.join(Handbeam.Home.path(), ".handbeam/conversations"))
+        Application.get_env(
+          :handbeam,
+          :conversation_root,
+          Path.join(Handbeam.Home.path(), ".handbeam/conversations")
+        )
       )
+
     Path.join([root, "items", conversation_id, "operations-#{kind}.jsonl"])
   end
 
   defp drop_truncated_tail(content) do
-    if String.ends_with?(content, "\n"), do: content, else: content |> String.split("\n") |> Enum.drop(-1) |> Enum.join("\n")
+    if String.ends_with?(content, "\n"),
+      do: content,
+      else: content |> String.split("\n") |> Enum.drop(-1) |> Enum.join("\n")
   end
 
   defp read_records(path) do

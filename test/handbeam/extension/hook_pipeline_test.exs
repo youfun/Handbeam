@@ -33,6 +33,21 @@ defmodule Handbeam.Extension.HookPipelineTest do
       assert HookPipeline.run("s", {:tool_start, %{tool: "read"}}, registry: reg) == :ok
     end
 
+    test "a read-only halt cannot suppress the next observer or transform its context", %{
+      reg_name: reg
+    } do
+      for {name, hook} <- [
+            {"readonly-blocker", BlockingHook},
+            {"readonly-observer", ReadonlyObserverHook}
+          ] do
+        :ok = ExtRegistry.register(reg, build_extension(name, hooks: ["tool_end"]))
+        :ok = HookPipeline.register_hook_module(reg, name, hook)
+      end
+
+      assert HookPipeline.run("s", {:tool_end, %{notify: self()}}, registry: reg) == :ok
+      assert_received :readonly_observed
+    end
+
     test "returns {:block, reason} when extension hook returns {:halt, reason}", %{reg_name: reg} do
       ext = build_extension("block-ext", hooks: ["tool_call"])
       :ok = ExtRegistry.register(reg, ext)
@@ -171,6 +186,17 @@ defmodule BlockingHook do
 
   @impl true
   def handle_event(_event, _ctx), do: {:halt, "tool not allowed"}
+end
+
+defmodule ReadonlyObserverHook do
+  @moduledoc false
+  @behaviour Handbeam.Extension.Hook
+
+  @impl true
+  def handle_event(event, _ctx) do
+    send(event.payload.notify, :readonly_observed)
+    :ok
+  end
 end
 
 defmodule TransformingHook do
