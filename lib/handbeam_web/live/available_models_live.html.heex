@@ -331,7 +331,7 @@
         ✕
       </button>
     </div>
-    <form phx-change="update_add_provider" phx-submit="submit_add_provider">
+    <form id="add-provider-form" phx-change="update_add_provider" phx-submit="submit_add_provider">
       <input
         type="hidden"
         name="add_provider[provider_runtime]"
@@ -597,7 +597,11 @@
         ✕
       </button>
     </div>
-    <form phx-change="update_edit_provider" phx-submit="submit_edit_provider">
+    <form
+      id="edit-provider-form"
+      phx-change="update_edit_provider"
+      phx-submit="submit_edit_provider"
+    >
       <div class="settings-form-group">
         <label class="settings-form-label">{gettext("名称")}</label>
         <input
@@ -705,7 +709,7 @@
         ✕
       </button>
     </div>
-    <form phx-change="update_add_model" phx-submit="submit_add_model">
+    <form id="add-model-form" phx-change="update_add_model" phx-submit="submit_add_model">
       <div class="settings-form-group">
         <label class="settings-form-label">{gettext("模型 ID")}</label>
         <input

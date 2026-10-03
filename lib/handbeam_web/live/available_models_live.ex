@@ -90,23 +90,40 @@ defmodule HandbeamWeb.AvailableModelsLive do
     {:noreply, poll_subscription_oauth(socket, attempt_id)}
   end
 
-  def handle_info({:subscription_oauth_polled, attempt_id, result}, socket) do
+  @impl true
+  def handle_async({:subscription_oauth_poll, attempt_id}, {:ok, result}, socket) do
     {:noreply, handle_async_poll(socket, attempt_id, result)}
   end
 
-  def handle_info({:codex_models_discovered, attempt_id, generation, result}, socket) do
+  def handle_async({:subscription_oauth_poll, attempt_id}, {:exit, _reason}, socket) do
+    {:noreply,
+     handle_async_poll(socket, attempt_id, {:error, gettext("Subscription authorization failed")})}
+  end
+
+  def handle_async({:codex_models, attempt_id, generation}, {:ok, result}, socket) do
     {:noreply, apply_codex_models(socket, attempt_id, generation, result)}
   end
 
-  def handle_info({:cursor_models_discovered, attempt_id, result}, socket) do
+  def handle_async({:codex_models, attempt_id, generation}, {:exit, _reason}, socket) do
+    {:noreply,
+     apply_codex_models(
+       socket,
+       attempt_id,
+       generation,
+       {:error, gettext("Model discovery failed")}
+     )}
+  end
+
+  def handle_async({:cursor_models, attempt_id}, {:ok, result}, socket) do
     {:noreply, apply_cursor_models(socket, attempt_id, result)}
   end
 
-  def handle_info({:catalog_prices, prices}, socket) do
-    handle_info({:catalog_prices, socket.assigns.catalog_price_generation, prices}, socket)
+  def handle_async({:cursor_models, attempt_id}, {:exit, _reason}, socket) do
+    {:noreply,
+     apply_cursor_models(socket, attempt_id, {:error, gettext("Model discovery failed")})}
   end
 
-  def handle_info({:catalog_prices, generation, prices}, socket) do
+  def handle_async({:catalog_prices, generation}, {:ok, prices}, socket) do
     if socket.assigns.catalog_price_generation == generation do
       providers = apply_catalog_prices(socket.assigns.providers, prices)
 
@@ -121,6 +138,9 @@ defmodule HandbeamWeb.AvailableModelsLive do
       {:noreply, socket}
     end
   end
+
+  def handle_async({:catalog_prices, _generation}, {:exit, _reason}, socket),
+    do: {:noreply, socket}
 
   # ── Subscription OAuth ─────────────────────────────────────────────────
 
@@ -665,14 +685,11 @@ defmodule HandbeamWeb.AvailableModelsLive do
     if oauth.polling? or (attempt_id && attempt_id != oauth.attempt_id) do
       socket
     else
-      lv = self()
-
-      Task.start(fn ->
-        result = poll_once(oauth.provider_id, device)
-        send(lv, {:subscription_oauth_polled, oauth.attempt_id, result})
+      socket
+      |> start_async({:subscription_oauth_poll, oauth.attempt_id}, fn ->
+        poll_once(oauth.provider_id, device)
       end)
-
-      put_oauth(socket, %{oauth | polling?: true})
+      |> put_oauth(%{oauth | polling?: true})
     end
   end
 
@@ -740,27 +757,20 @@ defmodule HandbeamWeb.AvailableModelsLive do
   defp maybe_discover_codex_models(socket, "openai_codex") do
     attempt_id = System.unique_integer([:positive])
     generation = Epoch.current("openai_codex")
-    lv = self()
 
-    Task.start(fn ->
-      result = CodexModels.discover()
-      send(lv, {:codex_models_discovered, attempt_id, generation, result})
-    end)
-
-    assign(socket, :codex_discover_attempt, attempt_id)
+    socket
+    |> cancel_discovery_async(:codex)
+    |> start_async({:codex_models, attempt_id, generation}, fn -> CodexModels.discover() end)
+    |> assign(:codex_discover_attempt, {attempt_id, generation})
   end
 
   defp maybe_discover_codex_models(socket, _), do: socket
 
   defp maybe_discover_cursor_models(socket, "cursor", attempt_id) do
-    lv = self()
-
-    Task.start(fn ->
-      result = CursorModels.discover()
-      send(lv, {:cursor_models_discovered, attempt_id, result})
-    end)
-
-    assign(socket, :cursor_discover_attempt, attempt_id)
+    socket
+    |> cancel_discovery_async(:cursor)
+    |> start_async({:cursor_models, attempt_id}, fn -> CursorModels.discover() end)
+    |> assign(:cursor_discover_attempt, attempt_id)
   end
 
   defp maybe_discover_cursor_models(socket, _provider_id, _attempt_id), do: socket
@@ -789,7 +799,7 @@ defmodule HandbeamWeb.AvailableModelsLive do
   end
 
   defp apply_codex_models(socket, attempt_id, generation, result) do
-    if socket.assigns.codex_discover_attempt == attempt_id and
+    if socket.assigns.codex_discover_attempt == {attempt_id, generation} and
          Epoch.current("openai_codex") == generation do
       socket = assign(socket, :codex_discover_attempt, nil)
 
@@ -814,9 +824,36 @@ defmodule HandbeamWeb.AvailableModelsLive do
 
   defp clear_subscription_oauth(socket) do
     socket
+    |> cancel_subscription_poll()
+    |> cancel_discovery_async(:codex)
+    |> cancel_discovery_async(:cursor)
     |> put_oauth(nil)
     |> assign(:codex_discover_attempt, nil)
     |> assign(:cursor_discover_attempt, nil)
+  end
+
+  defp cancel_discovery_async(socket, :codex) do
+    case socket.assigns[:codex_discover_attempt] do
+      nil -> socket
+      {attempt_id, generation} -> cancel_async(socket, {:codex_models, attempt_id, generation})
+    end
+  end
+
+  defp cancel_discovery_async(socket, :cursor) do
+    case socket.assigns[:cursor_discover_attempt] do
+      nil -> socket
+      attempt_id -> cancel_async(socket, {:cursor_models, attempt_id})
+    end
+  end
+
+  defp cancel_subscription_poll(socket) do
+    case socket.assigns.subscription_oauth do
+      %{attempt_id: attempt_id, polling?: true} ->
+        cancel_async(socket, {:subscription_oauth_poll, attempt_id})
+
+      _ ->
+        socket
+    end
   end
 
   defp schedule_subscription_poll(device, attempt_id) do
@@ -851,22 +888,25 @@ defmodule HandbeamWeb.AvailableModelsLive do
   defp schedule_catalog_prices(socket, providers) do
     ids = unpriced_model_ids(providers)
     generation = socket.assigns.catalog_price_generation + 1
-    socket = assign(socket, :catalog_price_generation, generation)
+
+    socket =
+      socket
+      |> cancel_catalog_async(generation - 1)
+      |> assign(:catalog_price_generation, generation)
 
     cond do
       ids == [] or not connected?(socket) ->
         socket
 
       true ->
-        lv = self()
-
-        Task.start(fn ->
-          send(lv, {:catalog_prices, generation, lookup_catalog_prices(ids)})
-        end)
-
-        socket
+        start_async(socket, {:catalog_prices, generation}, fn -> lookup_catalog_prices(ids) end)
     end
   end
+
+  defp cancel_catalog_async(socket, generation) when generation > 0,
+    do: cancel_async(socket, {:catalog_prices, generation})
+
+  defp cancel_catalog_async(socket, _generation), do: socket
 
   defp lookup_catalog_prices(ids), do: LlmDbDefaults.prices_for_model_ids(ids)
 

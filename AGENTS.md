@@ -237,10 +237,10 @@ inbound 附件相关字段：
 
 ## 技术栈
 
-- **语言**: Elixir 1.20 (rc.5) / Erlang OTP 28
-- **框架**: Phoenix 1.8.7 / LiveView 1.1
+- **语言**: Elixir 1.20.2 / Erlang OTP 29（见 `mise.toml`）
+- **框架**: Phoenix 1.8.15 / LiveView 1.2.12（以 `mix.lock` 为准）
 - **数据库**: SQLite3 (ecto_sqlite3)
-- **HTTP**: Req ~> 0.5
+- **HTTP**: Req 0.7.4（以 `mix.lock` 为准）
 - **文件搜索**: ex_fff (ETS 三元组模糊索引)
 - **Provider**: Anthropic Claude / OpenAI / DeepSeek / ZenMux / OpenRouter / StepFun
 

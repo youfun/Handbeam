@@ -93,14 +93,22 @@ defmodule Handbeam.Memory.MemoryStore do
   """
   @spec reinforce(Engram.t()) :: {:ok, Engram.t()} | {:error, Ecto.Changeset.t()}
   def reinforce(%Engram{} = engram) do
-    engram
-    |> Engram.changeset(%{
-      short_term: false,
-      expires_at: nil,
-      reinforced_count: engram.reinforced_count + 1,
-      last_reinforced_at: DateTime.utc_now()
-    })
-    |> Repo.update()
+    now = DateTime.utc_now() |> DateTime.truncate(:second)
+    changeset = Engram.changeset(engram, %{short_term: false, last_reinforced_at: now})
+
+    if changeset.valid? do
+      query = from(e in Engram, where: e.id == ^engram.id, select: e)
+
+      case Repo.update_all(query,
+             inc: [reinforced_count: 1],
+             set: [short_term: false, expires_at: nil, last_reinforced_at: now, updated_at: now]
+           ) do
+        {1, [reinforced]} -> {:ok, reinforced}
+        {0, []} -> raise Ecto.StaleEntryError, changeset: changeset, action: :update
+      end
+    else
+      {:error, changeset}
+    end
   end
 
   @doc """

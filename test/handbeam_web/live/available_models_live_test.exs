@@ -283,7 +283,7 @@ defmodule HandbeamWeb.AvailableModelsLiveTest do
     overlay = view |> element(".settings-overlay") |> render()
     assert overlay =~ "https://cursor.com/loginDeepControl"
     assert overlay =~ "Waiting for authentication..."
-    assert overlay =~ "非官方协议"
+    assert overlay =~ "unofficial protocol"
     refute overlay =~ "user_code"
 
     {:ok, config} =
@@ -297,21 +297,27 @@ defmodule HandbeamWeb.AvailableModelsLiveTest do
     assert provider["models"] == []
   end
 
-  test "cancelled Cursor discovery does not apply a late result", %{conn: conn} do
+  # LiveView drops cancelled task replies before handle_async/3. Exercise the
+  # additional attempt guard directly for a reply racing a newer discovery.
+  test "stale Cursor discovery callback cannot overwrite a newer attempt", %{conn: conn} do
     {:ok, view, _html} =
       live_isolated(conn, HandbeamWeb.AvailableModelsLive, session: %{"embedded" => "true"})
 
-    view
-    |> element(~s|button[phx-click="open_subscription_login"]|)
-    |> render_click()
+    socket =
+      :sys.get_state(view.pid).socket |> Phoenix.Component.assign(:cursor_discover_attempt, 1000)
 
-    view
-    |> element(~s|button[phx-click="start_subscription_oauth"][phx-value-id="cursor"]|)
-    |> render_click()
+    original = File.read!(ModelConfig.config_file_path())
 
-    send(view.pid, {:cursor_models_discovered, 999, {:ok, [%{"id" => "late", "name" => "Late"}]}})
-    html = render(view)
-    refute html =~ "Late"
+    assert {:noreply, unchanged} =
+             HandbeamWeb.AvailableModelsLive.handle_async(
+               {:cursor_models, 999},
+               {:ok, {:ok, [%{"id" => "late", "name" => "Late"}]}},
+               socket
+             )
+
+    assert unchanged.assigns.cursor_discover_attempt == 1000
+    assert unchanged.assigns.providers == socket.assigns.providers
+    assert File.read!(ModelConfig.config_file_path()) == original
   end
 
   test "cancelling Cursor login hides the overlay", %{conn: conn} do
@@ -475,15 +481,7 @@ defmodule HandbeamWeb.AvailableModelsLiveTest do
     |> element(~s|button[phx-click="select_provider"][phx-value-id="cursor"]|)
     |> render_click()
 
-    send(view.pid, {
-      :catalog_prices,
-      %{
-        "gpt-5.3-codex-low-fast" => %{"input" => 1.75, "output" => 14},
-        "claude-opus-4.6" => %{"input" => 5, "output" => 25}
-      }
-    })
-
-    html = render(view)
+    html = render_async(view, 5_000)
     assert html =~ "in 1.75 / out 14"
     assert html =~ "in 5 / out 25"
     assert html =~ "composer-2.5"

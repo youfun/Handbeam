@@ -94,7 +94,10 @@ defmodule Handbeam.Agent.RunnerTest do
     def complete(messages, _tool_defs, config) do
       if Enum.any?(messages, &(&1.role == :tool_result)) do
         send(config.notify, {:resumed_deadline, config[:run_deadline]})
-        Process.sleep(5_000)
+
+        receive do
+          :finish -> :ok
+        end
       end
 
       {:ok,
@@ -102,7 +105,12 @@ defmodule Handbeam.Agent.RunnerTest do
          stop_reason: :tool_use,
          messages: [
            Handbeam.Agent.Message.assistant([
-             %{type: "tool_use", id: "call-1", name: "run_elixir_script", input: %{"code" => "1"}}
+             %{
+               type: "tool_use",
+               id: "call-1",
+               name: "run_elixir_script",
+               input: %{"path" => "approval.exs"}
+             }
            ])
          ],
          usage: %{input_tokens: 1, output_tokens: 1}
@@ -123,7 +131,12 @@ defmodule Handbeam.Agent.RunnerTest do
          stop_reason: :tool_use,
          messages: [
            Handbeam.Agent.Message.assistant([
-             %{type: "tool_use", id: "call-1", name: "run_elixir_script", input: %{"code" => "1"}}
+             %{
+               type: "tool_use",
+               id: "call-1",
+               name: "run_elixir_script",
+               input: %{"path" => "approval.exs"}
+             }
            ])
          ],
          usage: %{input_tokens: 1, output_tokens: 1}
@@ -439,6 +452,7 @@ defmodule Handbeam.Agent.RunnerTest do
 
   test "interactive approval wait pauses the inactivity watchdog" do
     sid = "runner-approval-deadline-#{System.unique_integer([:positive])}"
+    workspace = approval_workspace()
     {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
     :ok = Session.subscribe(sid)
 
@@ -447,6 +461,7 @@ defmodule Handbeam.Agent.RunnerTest do
                sid,
                "needs approval",
                opts(
+                 workspace_path: workspace,
                  timeout_ms: 100,
                  provider: ApprovalProvider,
                  tools: [Handbeam.Tool.Builtin.RunElixirScript],
@@ -467,6 +482,7 @@ defmodule Handbeam.Agent.RunnerTest do
 
   test "resuming an interactive approval starts a fresh inactivity window" do
     sid = "runner-resume-budget-#{System.unique_integer([:positive])}"
+    workspace = approval_workspace()
     {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
     :ok = Session.subscribe(sid)
     parent = self()
@@ -476,6 +492,7 @@ defmodule Handbeam.Agent.RunnerTest do
                sid,
                "approve then block",
                opts(
+                 workspace_path: workspace,
                  timeout_ms: 300,
                  provider: ResumeBudgetProvider,
                  provider_config: %{notify: parent},
@@ -723,7 +740,7 @@ defmodule Handbeam.Agent.RunnerTest do
     :ok = Session.subscribe(sid)
     release = :counters.new(1, [])
 
-    assert {:ok, %{run_id: first_run, run_pid: first_runner}} =
+    assert {:ok, %{run_id: first_run}} =
              Coordinator.add_message(
                sid,
                "old",
@@ -838,8 +855,21 @@ defmodule Handbeam.Agent.RunnerTest do
     end)
   end
 
+  defp approval_workspace do
+    workspace = Path.join(Handbeam.Host.data_dir(), "approval-workspace")
+    File.mkdir_p!(Path.join(workspace, ".handbeam"))
+    File.write!(Path.join(workspace, "approval.exs"), "1\n")
+
+    File.write!(
+      Handbeam.WorkspaceSettings.path(workspace),
+      Handbeam.JSON.encode!(%{"tools" => %{"per_tool" => %{"run_elixir_script" => "prompt"}}})
+    )
+
+    workspace
+  end
+
   defp alive_os?(pid) when is_integer(pid) do
-    :os.cmd('ps -p #{pid} -o pid=') |> to_string() |> String.contains?(Integer.to_string(pid))
+    :os.cmd(~c"ps -p #{pid} -o pid=") |> to_string() |> String.contains?(Integer.to_string(pid))
   end
 
   defp assert_eventually(fun, attempts \\ 50)

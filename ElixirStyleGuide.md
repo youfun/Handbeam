@@ -2,6 +2,8 @@
 
 这份文档整合了 BEAM 核心哲学、架构设计原则与微观编码规范，旨在指导生成“单次通过（Single Pass）”的高质量、地道 Elixir 代码。
 
+除 Elixir/Phoenix 本身明确规定的语法和 API 契约外，本文中的“必须”“禁止”表示 Handbeam 团队偏好，不代表 Elixir 生态的官方规则。维护现有代码时应结合上下文，不为套用偏好而做无关重构。
+
 ---
 
 ## 1. 核心哲学与原则 (Core Philosophy)
@@ -113,14 +115,13 @@ Elixir 变量可重绑定，但 `if`, `case`, `with` 内部的绑定**不会泄�
 ### 4.3 Map vs Struct
 
 * **Struct**：**必须**使用点语法 `struct.field`。这能在编译时捕获拼写错误。
-* **Map**：**推荐**使用 Access 语法 `map[:key]`。它对不存在的键返回 `nil`，容错性更强。
+* **Map 必需键**：团队偏好点语法 `map.key` 或模式匹配 `%{key: value}`，让缺键尽早失败并表达数据契约。
+* **Map 可选键**：使用 Access 语法 `map[:key]`（或合适的 `get_in/2`）；缺键返回 `nil`。不要把 Access 用于实际必需的键来掩盖错误。
 
 ### 4.4 逻辑控制与管道
 
 * **模式匹配优先**：能在函数头解决的判断，绝不写在函数体内。
-* **管道禁令**：**严禁**将管道结果直接送入 `case`, `if` 或 `with`。
-* *理由*：这会破坏可读性，使 diff 变得混乱。
-* *正确做法*：先赋值变量，再进行控制流判断。
+* **管道与控制流**：Handbeam 团队偏好先给管道结果命名，再交给 `case`、`if` 或 `with`，尤其当管道或分支较长时。短小、清晰的 `value |> fun() |> case do ... end` 是合法 Elixir，并非生态禁令；以可读性和现有上下文为准。
 
 * **`with` 语句规范**：
 * 仅用于处理一连串的“快乐路径”。
@@ -214,9 +215,9 @@ Mix 是 Elixir 的核心构建工具，熟练使用 Mix 能显著提升开发效
 
 ### 8.1 优先使用代码生成器 (Generators First)
 
-在 Phoenix 项目中，**严禁**手动创建 Context、Schema 和 Migration 文件，除非你是为了极特殊的定制需求。
+Phoenix 生成器适合为标准 CRUD 快速搭建 Context、Schema、Migration 和 Web 层脚手架，但并不要求每个业务 Context 都由生成器创建，也不要求所有 Context 都采用 CRUD 形态。非 CRUD 领域逻辑、既有架构约束或小型定制可直接实现；迁移仍优先用生成器取得有序时间戳。
 
-* **原则**：**Generate, then Modify (生成 -> 重构)**。
+* **团队偏好**：标准 CRUD 场景采用 **Generate, then Modify (生成 -> 重构)**。
 * **理由**：生成器不仅创建了标准的文件结构，还自动处理了 Ecto 映射、Changeset 基础逻辑以及**配套的测试文件**。手动创建极易遗漏测试或引入拼写错误。
 
 #### 核心生成器对比：Phoenix vs BCC

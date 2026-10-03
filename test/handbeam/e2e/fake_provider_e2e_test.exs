@@ -269,6 +269,46 @@ defmodule Handbeam.E2E.FakeProviderEndToEndTest do
       assert engram.expires_at != nil
     end
 
+    test "repeated mem_reinforce calls persist promotion and report database activity" do
+      {:ok, engram} = Handbeam.Memory.MemoryStore.learn("Durable agent memory", :fact)
+      metric = [:handbeam, :repo, :query, :total_time]
+      before_count = HandbeamWeb.Telemetry.Reporter.snapshot()[metric].count
+
+      script = fn messages, _tools ->
+        completed = Enum.count(messages, &(&1.role == :tool_result))
+
+        if completed < 2 do
+          {:tools, [%{name: "mem_reinforce", input: %{"id" => engram.id}}]}
+        else
+          "Reinforced twice"
+        end
+      end
+
+      {:ok, state} =
+        run_agent("Remember this permanently",
+          provider: Handbeam.TestSupport.FakeProvider,
+          model: "fake",
+          provider_config: %{scenario: {:script, script}},
+          working_directory: @working_dir,
+          max_turns: 5
+        )
+
+      assert state.status == :completed
+
+      results =
+        state.messages |> Enum.filter(&(&1.role == :tool_result)) |> Enum.flat_map(& &1.content)
+
+      assert length(results) == 2
+      assert Enum.all?(results, &(&1[:content] =~ "now long-term" and not &1[:is_error]))
+
+      persisted = Repo.get!(Engram, engram.id)
+      assert persisted.reinforced_count == 2
+      refute persisted.short_term
+      assert persisted.expires_at == nil
+      assert persisted.last_reinforced_at != nil
+      assert HandbeamWeb.Telemetry.Reporter.snapshot()[metric].count > before_count
+    end
+
     test "mem_recall returns the engram that was just stored" do
       {:ok, state} =
         run_agent("Learn my preference",
@@ -373,7 +413,8 @@ defmodule Handbeam.E2E.FakeProviderEndToEndTest do
         )
 
       assert state.status == :completed
-      assert state.config.system_prompt == "You are a testing assistant."
+      assert String.starts_with?(state.config.system_prompt, "You are a testing assistant.\n\n")
+      assert state.config.system_prompt =~ "## Host execution environment"
     end
 
     test "enforces max_turns limit" do
@@ -394,32 +435,41 @@ defmodule Handbeam.E2E.FakeProviderEndToEndTest do
       assert state.status in [:max_turns, :completed]
     end
 
-    test "emits PubSub events when session_id is provided" do
-      session_id = "e2e-session-#{System.unique_integer([:positive])}"
+    test "Coordinator publishes run events and persists the final reply" do
+      alias Handbeam.TestSupport.E2EHarness
+      alias Handbeam.PubSub.Session
 
-      {:ok, state} =
-        run_agent("Hello",
+      %{workspace: workspace} = E2EHarness.isolate_home!("fake-provider-lifecycle")
+      session_id = "e2e-session-#{System.unique_integer([:positive])}"
+      {:ok, _} = Handbeam.ConversationStore.create("default", id: session_id)
+      :ok = Session.subscribe(session_id)
+      on_exit(fn -> E2EHarness.cancel!(session_id) end)
+
+      {:ok, %{action: :started, run_pid: run_pid}} =
+        Handbeam.Agent.Coordinator.add_message(session_id, "Hello",
           provider: Handbeam.TestSupport.FakeProvider,
           model: "fake",
           provider_config: %{scenario: :simple_answer},
-          working_directory: @working_dir,
-          max_turns: 50,
-          session_id: session_id
+          tools: [],
+          source: :cli,
+          workspace_path: workspace,
+          max_turns: 50
         )
 
-      assert state.status == :completed
-
-      # Verify session GenServer exists and has events
-      {:ok, pid} = Handbeam.PubSub.Session.start_or_get(session_id: session_id)
-      assert is_pid(pid)
-
-      snapshot = Handbeam.PubSub.Session.snapshot(session_id)
-      assert is_list(snapshot.events)
-
-      # Should have at least run_start and run_end events
+      ref = Process.monitor(run_pid)
+      payload = E2EHarness.await_run_end(session_id)
+      assert payload[:status] in [:completed, "completed"]
+      # run_end is broadcast before Runner finishes its metadata bookkeeping.
+      assert_receive {:DOWN, ^ref, :process, ^run_pid, _reason}, 5_000
+      snapshot = Session.snapshot(session_id)
       kinds = Enum.map(snapshot.events, & &1.kind)
       assert :run_start in kinds
       assert :run_end in kinds
+
+      assert Enum.any?(E2EHarness.transcript(session_id), fn entry ->
+               entry["role"] == "assistant" and
+                 entry["content"] == "Hello! I am a fake provider response."
+             end)
     end
   end
 

@@ -182,10 +182,6 @@ defmodule Handbeam.Agent.Provider.Retry do
     end
   end
 
-  defp jitter_ms(delay) do
-    :rand.uniform(max(div(delay, 5), 1))
-  end
-
   @doc """
   Calculate all delay values for a config.
 

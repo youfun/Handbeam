@@ -1216,7 +1216,7 @@ defmodule Handbeam.Agent.Turn do
 
   defp retry_after_ms(_reason), do: 0
 
-  defp interruptible_sleep(delay_ms, opts, parent \\ self()) do
+  defp interruptible_sleep(delay_ms, opts, parent) do
     deadline = Keyword.get(opts, :run_deadline)
 
     wait =

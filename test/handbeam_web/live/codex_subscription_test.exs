@@ -121,10 +121,74 @@ defmodule HandbeamWeb.CodexSubscriptionTest do
     send(view.pid, {:poll_subscription_oauth, oauth.attempt_id})
     assert :sys.get_state(view.pid).socket.assigns.subscription_oauth.polling?
     view |> element(~s(button[phx-click="cancel_subscription_oauth"])) |> render_click()
-    send(poll_pid, :release)
-    assert_receive {:DOWN, ^ref, :process, ^poll_pid, :normal}
+    assert_receive {:DOWN, ^ref, :process, ^poll_pid, {:shutdown, :cancel}}
     refute render(view) =~ "Waiting for authentication"
     refute_received {:poll_blocked, _}
+    assert {:error, :not_found} = Storage.get("openai_codex")
+  end
+
+  test "poll task crash clears waiting state without crashing the page", %{conn: conn} do
+    Req.Test.stub(ReqMock, fn conn ->
+      case conn.request_path do
+        "/api/accounts/deviceauth/usercode" -> device_reply(conn)
+        "/api/accounts/deviceauth/token" -> exit(:poll_failed)
+      end
+    end)
+
+    {view, _} = open_login(conn)
+    owner = self()
+
+    :sys.replace_state(view.pid, fn state ->
+      socket =
+        Phoenix.LiveView.attach_hook(state.socket, :oauth_completion, :handle_async, fn
+          {:subscription_oauth_poll, attempt_id}, result, socket ->
+            send(owner, {:oauth_finished, attempt_id, result})
+            {:cont, socket}
+
+          _name, _result, socket ->
+            {:cont, socket}
+        end)
+
+      %{state | socket: socket}
+    end)
+
+    oauth = :sys.get_state(view.pid).socket.assigns.subscription_oauth
+    send(view.pid, {:poll_subscription_oauth, oauth.attempt_id})
+    attempt_id = oauth.attempt_id
+    assert_receive {:oauth_finished, ^attempt_id, {:exit, :poll_failed}}
+    html = render(view)
+    assert Process.alive?(view.pid)
+    assert html =~ "Subscription authorization failed"
+    refute html =~ "Waiting for authentication"
+    assert {:error, :not_found} = Storage.get("openai_codex")
+  end
+
+  test "closing the page terminates its in-flight poll", %{conn: conn} do
+    # The LiveViewTest proxy is linked to the test and exits with the channel.
+    Process.flag(:trap_exit, true)
+    owner = self()
+
+    Req.Test.stub(ReqMock, fn conn ->
+      case conn.request_path do
+        "/api/accounts/deviceauth/usercode" ->
+          device_reply(conn)
+
+        "/api/accounts/deviceauth/token" ->
+          send(owner, {:poll_started, self()})
+
+          receive do
+            :release -> Req.Test.json(conn, %{})
+          end
+      end
+    end)
+
+    {view, _} = open_login(conn)
+    oauth = :sys.get_state(view.pid).socket.assigns.subscription_oauth
+    send(view.pid, {:poll_subscription_oauth, oauth.attempt_id})
+    assert_receive {:poll_started, pid}
+    ref = Process.monitor(pid)
+    GenServer.stop(view.pid, {:shutdown, :closed})
+    assert_receive {:DOWN, ^ref, :process, ^pid, _reason}
     assert {:error, :not_found} = Storage.get("openai_codex")
   end
 
@@ -136,6 +200,19 @@ defmodule HandbeamWeb.CodexSubscriptionTest do
       case conn.request_path do
         "/api/accounts/deviceauth/usercode" ->
           device_reply(conn)
+
+        "/api/accounts/deviceauth/token" ->
+          Req.Test.json(conn, %{
+            authorization_code: "auth-code",
+            code_verifier: "private-verifier"
+          })
+
+        "/oauth/token" ->
+          Req.Test.json(conn, %{
+            access_token: token(),
+            refresh_token: "private-refresh",
+            expires_in: 3600
+          })
 
         "/backend-api/codex/models" ->
           send(owner, {:discovery, self()})
@@ -152,7 +229,7 @@ defmodule HandbeamWeb.CodexSubscriptionTest do
 
     {view, _} = open_login(conn)
     oauth = :sys.get_state(view.pid).socket.assigns.subscription_oauth
-    send(view.pid, {:subscription_oauth_polled, oauth.attempt_id, {:authorized, credential()}})
+    send(view.pid, {:poll_subscription_oauth, oauth.attempt_id})
     assert_receive {:discovery, discover_pid}
     ref = Process.monitor(discover_pid)
     send(discover_pid, :release)

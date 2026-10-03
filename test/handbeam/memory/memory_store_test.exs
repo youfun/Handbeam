@@ -140,8 +140,10 @@ defmodule Handbeam.Memory.MemoryStoreTest do
       {:ok, r1} = MemoryStore.reinforce(engram)
       assert r1.reinforced_count == 1
 
-      {:ok, r2} = MemoryStore.reinforce(r1)
+      # A caller can still hold the original snapshot after another reinforcement.
+      {:ok, r2} = MemoryStore.reinforce(engram)
       assert r2.reinforced_count == 2
+      assert Handbeam.Repo.get!(Engram, engram.id).reinforced_count == 2
     end
 
     test "reinforce updates last_reinforced_at" do

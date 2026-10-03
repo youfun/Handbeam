@@ -18,6 +18,58 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  checks:
+    name: Quality gate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: "29.0"
+          elixir-version: "1.20.2"
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            deps
+            _build
+            ~/.mix
+            ~/.hex
+          key: pack-checks-${{ runner.os }}-${{ hashFiles('mix.lock') }}
+          restore-keys: |
+            pack-checks-${{ runner.os }}-
+
+      - name: Dependencies
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+          mix deps.get
+
+      - name: Compile without warnings
+        env:
+          MIX_ENV: test
+        run: mix compile --warnings-as-errors
+
+      - name: Check formatting
+        run: mix format --check-formatted
+
+      - name: Default ExUnit suite
+        run: mix test
+
+      - name: FakeProvider Agent end-to-end path
+        run: mix test --include e2e test/handbeam/e2e/fake_provider_e2e_test.exs
+
+      - name: Web feature paths
+        run: mix test --include e2e test/feature
+
   web:
     name: Web (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
@@ -133,9 +185,10 @@ jobs:
 
   publish-web:
     name: Publish release
-    needs: [web, android, ios]
+    needs: [checks, web, android, ios]
     if: >-
       always() &&
+      needs.checks.result == 'success' &&
       (github.event_name == 'workflow_dispatch' ||
        github.ref == 'refs/heads/main' ||
        startsWith(github.ref, 'refs/tags/v'))

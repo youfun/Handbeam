@@ -212,16 +212,21 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
           Map.put(existing, "content", (Map.get(existing, "content") || "") <> chunk)
       end
 
-    socket |> assign(:current_assistant_entry_id, id) |> timeline_insert(entry)
+    # Text deltas do not change tool streak membership. Keep the server-side
+    # projection current for history/reset paths without regrouping every chunk.
+    socket
+    |> assign(:current_assistant_entry_id, id)
+    |> assign(:timeline, replace_or_append(socket.assigns.timeline, entry))
+    |> stream_insert(:timeline, entry)
   end
 
-  defp replace_or_append(timeline, %{"id" => id} = entry) do
-    if Enum.any?(timeline, &(Map.get(&1, "id") == id)),
-      do:
-        Enum.map(timeline, fn existing ->
-          if Map.get(existing, "id") == id, do: entry, else: existing
-        end),
-      else: timeline ++ [entry]
+  defp replace_or_append([], entry), do: [entry]
+
+  defp replace_or_append([%{"id" => id} | rest], %{"id" => id} = entry),
+    do: [entry | rest]
+
+  defp replace_or_append([head | rest], entry) do
+    [head | replace_or_append(rest, entry)]
   end
 
   defp stream_related_tool_work(socket, timeline, %{"work_group_id" => group_id, "id" => id})

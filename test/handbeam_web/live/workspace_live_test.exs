@@ -738,6 +738,21 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert rendered =~ "history item 1"
       assert rendered =~ "live after newest page"
       refute has_element?(view, "#load-older-history")
+
+      send(
+        view.pid,
+        {:agent_event,
+         agent_event(
+           :message_delta,
+           %{chunk: " and after loading older history"},
+           2,
+           "session:#{conversation["id"]}"
+         )}
+      )
+
+      rendered = render(view)
+      assert rendered =~ "live after newest page and after loading older history"
+      assert rendered =~ "history item 1"
     end
 
     test "switching away and back reloads persisted streaming display history", %{conn: conn} do
