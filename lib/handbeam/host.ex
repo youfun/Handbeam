@@ -48,6 +48,7 @@ defmodule Handbeam.Host do
     :shell,
     :terminal,
     :browser_backend,
+    :computer_use_backend,
     :artifact_delivery_backend,
     :host_script,
     :directory_picker,

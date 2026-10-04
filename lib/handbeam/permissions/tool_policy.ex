@@ -86,6 +86,11 @@ defmodule Handbeam.Permissions.ToolPolicy do
       sensitive_call?(policy, call) ->
         :deny
 
+      # Native host independently approves the app and every input. Workspace
+      # rules (including yolo) cannot grant desktop control or remember it.
+      name == "computer" ->
+        computer_decision(policy, call)
+
       # Allow rules and session grants were given for sandboxed execution.
       # Leaving the OS sandbox is a fresh decision, except in yolo.
       unsandboxed_bash?(name, call) ->
@@ -124,6 +129,17 @@ defmodule Handbeam.Permissions.ToolPolicy do
 
       true ->
         release(policy.default_mode)
+    end
+  end
+
+  # YOLO auto-approves the gates that full access still asks about, and the
+  defp computer_decision(policy, call) do
+    input = call[:input] || call["input"] || %{}
+
+    case input["action"] || input[:action] do
+      action when action in ["list", "observe", "stop"] -> :auto
+      _ when policy.default_mode == :deny -> :deny
+      _ -> :prompt
     end
   end
 

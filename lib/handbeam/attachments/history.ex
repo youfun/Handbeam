@@ -18,6 +18,9 @@ defmodule Handbeam.Attachments.History do
     conversation_id = conversation_id || entry["conversation_id"]
 
     cond do
+      role == "tool" and attachments == [] and entry["images"] not in [nil, []] ->
+        restore_tool(entry, conversation_id)
+
       role == "user" and attachments != [] ->
         case rebuild_user(text, attachments, workspace_path, conversation_id, entry) do
           {:ok, content} -> [%Message{role: :user, content: content}]
@@ -36,6 +39,29 @@ defmodule Handbeam.Attachments.History do
   end
 
   def to_messages(_, _, _), do: []
+
+  defp restore_tool(entry, conversation_id) do
+    images = Handbeam.Tool.Images.project(entry["images"])
+    images = Enum.filter(images, &String.starts_with?(&1.ref, "#{conversation_id}/"))
+    id = entry["tool_use_id"]
+
+    if is_binary(id) and is_binary(entry["tool_name"]) and
+         entry["tool_status"] in ["done", "error"] do
+      call = %{type: "tool_use", id: id, name: entry["tool_name"], input: entry["input"] || %{}}
+
+      result =
+        Message.tool_result_block(
+          id,
+          entry["output"] || "[Historical tool observation; observe again before input]",
+          entry["tool_status"] == "error"
+        )
+        |> Map.put(:images, images)
+
+      [Message.tool_use([call]), Message.tool_results([result])]
+    else
+      []
+    end
+  end
 
   # Failed or cancelled assistant text is a loop, not context. Replaying it
   # teaches the next turn to continue the same degenerate output.

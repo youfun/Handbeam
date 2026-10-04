@@ -173,7 +173,8 @@ defmodule Handbeam.Tool.Builtin.ReadTest do
       assert output =~ "[Image:"
       assert output =~ "image/png"
       assert metadata.mime_type == "image/png"
-      assert is_binary(metadata.data)
+      assert [%{path: ^png_path, mime_type: "image/png"}] = metadata.image_sources
+      refute Map.has_key?(metadata, :data)
     end
 
     test "[BDD-READ-013] 非图片但图片扩展名" do
@@ -349,7 +350,8 @@ defmodule Handbeam.Tool.Builtin.ReadTest do
       assert meta.offset == 0
       # Image-specific fields preserved
       assert meta.mime_type == "image/png"
-      assert is_binary(meta.data)
+      assert [%{mime_type: "image/png"}] = meta.image_sources
+      refute Map.has_key?(meta, :data)
       assert output =~ "[Image:"
     end
 

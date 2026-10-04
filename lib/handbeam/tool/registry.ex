@@ -196,6 +196,11 @@ defmodule Handbeam.Tool.Registry do
       :packaged_mix_toolchain
     )
     |> host_gate(not is_nil(Host.get(:git_backend)), Handbeam.Tool.Builtin.Git, :git_backend)
+    |> host_gate(
+      not is_nil(Host.get(:computer_use_backend)),
+      Handbeam.Tool.Builtin.Computer,
+      :computer_use_backend
+    )
     |> host_gate(Host.shell?(), Handbeam.Tool.Builtin.Bash, :shell)
     |> host_gate(
       not is_nil(Host.browser_backend()),

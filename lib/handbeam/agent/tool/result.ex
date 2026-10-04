@@ -25,7 +25,8 @@ defmodule Handbeam.Agent.Tool.Result do
           code: atom() | String.t() | nil,
           side_effect: side_effect(),
           recovery: map() | atom() | nil,
-          artifacts: [map()]
+          artifacts: [map()],
+          images: [map()]
         }
 
   defstruct [
@@ -37,7 +38,8 @@ defmodule Handbeam.Agent.Tool.Result do
     is_error: false,
     status: :succeeded,
     side_effect: :unknown,
-    artifacts: []
+    artifacts: [],
+    images: []
   ]
 
   @doc """
@@ -91,7 +93,8 @@ defmodule Handbeam.Agent.Tool.Result do
       code: Keyword.get(opts, :code),
       side_effect: Keyword.get(opts, :side_effect, :unknown),
       recovery: Keyword.get(opts, :recovery),
-      artifacts: Keyword.get(opts, :artifacts, [])
+      artifacts: Keyword.get(opts, :artifacts, []),
+      images: Keyword.get(opts, :images, [])
     }
   end
 

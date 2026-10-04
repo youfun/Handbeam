@@ -1,5 +1,14 @@
 import Config
 
+if match?({:unix, :darwin}, :os.type()) and System.get_env("HANDBEAM_COMPUTER_PORT") do
+  config :handbeam,
+         :computer_use_port,
+         String.to_integer(System.fetch_env!("HANDBEAM_COMPUTER_PORT"))
+
+  config :handbeam, :computer_use_token, System.fetch_env!("HANDBEAM_COMPUTER_TOKEN")
+  config :handbeam, :host, %{computer_use_backend: Handbeam.ComputerUse.Native}
+end
+
 # config/runtime.exs is executed for all environments, including
 # during releases. It is executed after compilation and before the
 # system starts, so it is typically used to load production configuration

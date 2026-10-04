@@ -153,6 +153,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
       "tool_error" => error,
       "output" => output,
       "details" => details,
+      "images" => Handbeam.Tool.Images.project(payload_value(payload, :images, [])),
       "file_path" => payload_value(payload, :file_path) || map_value(details, :file_path),
       "diff_lines" => map_value(details, :diff_lines)
     }

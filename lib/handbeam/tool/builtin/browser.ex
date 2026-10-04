@@ -189,7 +189,7 @@ defmodule Handbeam.Tool.Builtin.Browser do
       {:ok, raw} ->
         raw
         |> Result.parse(artifact_dir: artifact_dir(context))
-        |> wrap_parsed()
+        |> wrap_parsed(context)
 
       {:error, :missing_binary, binary} ->
         parsed = Result.missing_binary(binary)
@@ -200,12 +200,21 @@ defmodule Handbeam.Tool.Builtin.Browser do
     end
   end
 
-  defp wrap_parsed(%{details: %{result_category: "failure"}} = parsed) do
+  defp wrap_parsed(%{details: %{result_category: "failure"}} = parsed, _context) do
     {:error, parsed.content, parsed.details}
   end
 
-  defp wrap_parsed(parsed) do
-    {:ok, parsed.content, parsed.details}
+  defp wrap_parsed(parsed, context) do
+    sources =
+      for artifact <- Enum.take(parsed.details[:artifacts] || [], 2),
+          artifact.type == "screenshot",
+          do: %{
+            path: artifact.path,
+            mime_type: artifact.media_type,
+            trusted_root: artifact_dir(context)
+          }
+
+    {:ok, parsed.content, Map.put(parsed.details, :image_sources, sources)}
   end
 
   defp reject_denied(args) do

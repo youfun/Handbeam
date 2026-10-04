@@ -135,6 +135,7 @@ defmodule Handbeam.Agent.Turn do
 
           state
           |> State.append_messages([merged_msg])
+          |> Map.update!(:messages, &Handbeam.Tool.Images.bound_history/1)
           |> mw_run(:after_tool_execution)
           |> inject_candidate_messages(opts, :steer)
           |> do_turn(opts)
@@ -271,6 +272,7 @@ defmodule Handbeam.Agent.Turn do
         duration_ms: 0,
         details: bounded_tool_details(details),
         file_path: file_path,
+        images: Handbeam.Tool.Images.project(ui_block && ui_block[:images]),
         output: bounded_tool_output(ui_block && (ui_block[:content] || ui_block["content"]))
       }
 
@@ -1676,6 +1678,7 @@ defmodule Handbeam.Agent.Turn do
               duration_ms: duration_ms,
               details: bounded_tool_details(details),
               file_path: file_path,
+              images: Handbeam.Tool.Images.project(ui_block && ui_block[:images]),
               output: bounded_tool_output(ui_block && ui_block[:content])
             }
 
@@ -1699,6 +1702,7 @@ defmodule Handbeam.Agent.Turn do
 
           state
           |> State.append_messages([merged_msg])
+          |> Map.update!(:messages, &Handbeam.Tool.Images.bound_history/1)
           |> mw_run(:after_tool_execution)
           |> inject_candidate_messages(opts, :steer)
           |> do_turn(opts)

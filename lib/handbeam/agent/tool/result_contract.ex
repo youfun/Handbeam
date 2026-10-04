@@ -57,7 +57,8 @@ defmodule Handbeam.Agent.Tool.ResultContract do
         content: bound_text(result.content, Keyword.get(opts, :max_content, @max_content_bytes)),
         details: details,
         recovery: bound_recovery(result.recovery),
-        artifacts: bound_artifacts(result.artifacts)
+        artifacts: bound_artifacts(result.artifacts),
+        images: Handbeam.Tool.Images.project(result.images)
     }
   end
 

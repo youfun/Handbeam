@@ -49,7 +49,8 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
   # rewrites allow rules or session overrides, and a failed review is the
   # existing human interrupt — not a deny.
   defp review_or_interrupt(state, pending, auto_approved) do
-    if AutoReview.enabled?(state.config.working_directory) do
+    if AutoReview.enabled?(state.config.working_directory) and
+         not Enum.any?(pending, &(&1[:name] == "computer")) do
       case AutoReview.review(state, pending) do
         {:ok, %State{status: :halted} = reviewed} ->
           {:tool_guard_denied, reviewed}

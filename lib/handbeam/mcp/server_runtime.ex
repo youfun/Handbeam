@@ -347,11 +347,14 @@ defmodule Handbeam.MCP.ServerRuntime do
     text =
       Enum.map_join(content, fn
         %{"type" => "text", "text" => text} -> text
+        %{"type" => "image"} -> "[MCP image observation]"
         %{"text" => text} -> text
-        other -> inspect(other)
+        %{"type" => type} -> "[Unsupported MCP content: #{type}]"
+        _ -> "[Unsupported MCP content]"
       end)
 
-    {:ok, text, Map.drop(result, ["content", "isError"])}
+    images = content |> Enum.filter(&match?(%{"type" => "image"}, &1)) |> Enum.take(2)
+    {:ok, text, Map.drop(result, ["content", "isError"]) |> Map.put(:image_blocks, images)}
   end
 
   defp normalize_tool_result(%{"error" => error}), do: {:error, format_error(error)}

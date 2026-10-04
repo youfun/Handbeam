@@ -120,19 +120,17 @@ defmodule Handbeam.Tool.Builtin.Read do
   # ── Image handling ──
 
   defp read_image(path) do
-    total_bytes = File.stat!(path).size
-
     case detect_image(path) do
       {:ok, mime} ->
-        data = File.read!(path)
-        base64 = Base.encode64(data)
+        with :ok <- Handbeam.Attachments.Access.verify_canonical(path, mime),
+             {:ok, bytes} <- Handbeam.Attachments.Access.read_bounded(path, 5_000_000) do
+          metadata =
+            build_metadata(path, true, nil, byte_size(bytes), false, 0)
+            |> Map.put(:mime_type, mime)
+            |> Map.put(:image_sources, [%{path: path, mime_type: mime}])
 
-        metadata =
-          build_metadata(path, true, nil, total_bytes, false, 0)
-          |> Map.put(:mime_type, mime)
-          |> Map.put(:data, base64)
-
-        {:ok, "[Image: #{mime}, #{byte_size(data)} bytes]", metadata}
+          {:ok, "[Image: #{mime}, #{byte_size(bytes)} bytes]", metadata}
+        end
 
       :error ->
         {:error, "#{path}: Binary file, cannot display as text"}
@@ -140,11 +138,24 @@ defmodule Handbeam.Tool.Builtin.Read do
   end
 
   defp detect_image(path) do
-    case File.read(path) do
-      {:ok, <<0x89, 0x50, 0x4E, 0x47, _::binary>>} -> {:ok, "image/png"}
-      {:ok, <<0xFF, 0xD8, 0xFF, _::binary>>} -> {:ok, "image/jpeg"}
-      {:ok, <<"GIF8", _::binary>>} -> {:ok, "image/gif"}
-      {:ok, <<"RIFF", _::32, "WEBP", _::binary>>} -> {:ok, "image/webp"}
+    # MIME probing must not read an arbitrarily large binary into memory.
+    case File.open(path, [:read, :binary]) do
+      {:ok, io} ->
+        head = IO.binread(io, 16)
+        File.close(io)
+        detect_image_head(head)
+
+      _ ->
+        :error
+    end
+  end
+
+  defp detect_image_head(head) do
+    case head do
+      <<0x89, 0x50, 0x4E, 0x47, _::binary>> -> {:ok, "image/png"}
+      <<0xFF, 0xD8, 0xFF, _::binary>> -> {:ok, "image/jpeg"}
+      <<"GIF8", _::binary>> -> {:ok, "image/gif"}
+      <<"RIFF", _::32, "WEBP", _::binary>> -> {:ok, "image/webp"}
       _ -> :error
     end
   end

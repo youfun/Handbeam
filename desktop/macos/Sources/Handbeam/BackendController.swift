@@ -16,6 +16,7 @@ final class BackendController {
     var onChange: ((State) -> Void)?
 
     private var process: Process?
+    private var computerBridge: ComputerBridge?
     private var logHandle: FileHandle?
     private var intentionalStop = false
     private var startGeneration = 0
@@ -43,6 +44,8 @@ final class BackendController {
     /// SIGTERM the backend this process spawned, then SIGKILL if it is still alive.
     /// Does nothing when this launch only attached to an existing server.
     func stopOwnedBackend() {
+        computerBridge?.stop()
+        computerBridge = nil
         startGeneration += 1
         intentionalStop = true
         guard let process else {
@@ -94,7 +97,7 @@ final class BackendController {
         }
         guard generation == startGeneration else { return }
         do {
-            try spawn()
+            try await spawn(generation: generation)
         } catch {
             guard generation == startGeneration else { return }
             state = .failed(error.localizedDescription)
@@ -134,7 +137,7 @@ final class BackendController {
         onChange?(state)
     }
 
-    private func spawn() throws {
+    private func spawn(generation: Int) async throws {
         let root = try locateReleaseRoot()
         let bin = root.appendingPathComponent("bin/handbeam")
         guard fileManager.isExecutableFile(atPath: bin.path) else {
@@ -157,11 +160,22 @@ final class BackendController {
             inherited: ProcessInfo.processInfo.environment
         )
 
-        let handle = try openLog()
         let process = Process()
         process.executableURL = URL(fileURLWithPath: launch.executable)
         process.arguments = launch.arguments
-        process.environment = launch.environment
+        let bridge = try ComputerBridge()
+        computerBridge = bridge
+        let computerEnvironment: [String: String]
+        do { computerEnvironment = try await bridge.start() }
+        catch { bridge.stop(); throw error }
+        guard generation == startGeneration, self.process?.isRunning != true else {
+            bridge.stop()
+            return
+        }
+        let handle: FileHandle
+        do { handle = try openLog() }
+        catch { bridge.stop(); computerBridge = nil; throw error }
+        process.environment = launch.environment.merging(computerEnvironment) { _, computer in computer }
         process.currentDirectoryURL = URL(fileURLWithPath: launch.workingDirectory)
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = handle
@@ -178,6 +192,10 @@ final class BackendController {
         do {
             try process.run()
         } catch {
+            bridge.stop()
+            computerBridge = nil
+            try? handle.close()
+            if let stderr = process.standardError as? FileHandle, stderr !== handle { try? stderr.close() }
             throw ShellError.launchFailed(error.localizedDescription)
         }
         self.process = process
@@ -187,6 +205,8 @@ final class BackendController {
     }
 
     private func noteExit(code: Int32) {
+        computerBridge?.stop()
+        computerBridge = nil
         let intentional = intentionalStop
         process = nil
         closeLog()
@@ -196,6 +216,8 @@ final class BackendController {
         state = .failed("後端已退出（狀態 \(code)）。日誌：\(logURL.path)")
         onChange?(state)
     }
+
+    func stopComputerUse() { computerBridge?.controller.stop() }
 
     private func probe(port: Int? = nil, timeout: TimeInterval = 3) async -> Bool {
         let candidatePort = port ?? self.port

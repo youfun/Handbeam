@@ -239,7 +239,8 @@ defmodule Handbeam.Agent.Compactor do
     compacted_blocks =
       Enum.map(blocks, fn
         %{type: type} = block when type in ["tool_result", "server_tool_result"] ->
-          %{block | content: "[compacted]"}
+          %{block | content: "[compacted; old observations are not actionable]"}
+          |> Map.delete(:images)
 
         %{type: "thinking", thinking: text} = block when byte_size(text) > @truncate_length ->
           %{block | thinking: String.slice(text, 0, @truncate_length) <> "..."}
@@ -335,10 +336,18 @@ defmodule Handbeam.Agent.Compactor do
   end
 
   defp estimate_message_tokens(%Message{content: blocks}) when is_list(blocks) do
-    blocks
-    |> Enum.map_join("\n", &inspect/1)
-    |> String.length()
-    |> then(&max(1, div(&1, 4)))
+    text_cost =
+      blocks
+      |> Enum.map_join("\n", &inspect/1)
+      |> String.length()
+      |> then(&max(1, div(&1, 4)))
+
+    # Two recent images are retained on the wire. Charge their visual cost,
+    # not just a few tokens of opaque reference text.
+    text_cost +
+      Enum.reduce(blocks, 0, fn block, cost ->
+        cost + 6_000 * length(Map.get(block, :images, []))
+      end)
   end
 
   defp estimate_message_tokens(_), do: 1

@@ -257,7 +257,9 @@ defmodule Handbeam.Agent.Provider.OpenAI do
         prompt -> [%{"role" => "system", "content" => prompt}]
       end
 
-    convo_items = Enum.flat_map(messages, &format_input_item/1)
+    convo_items =
+      messages |> Handbeam.Tool.Images.bound_history() |> Enum.flat_map(&format_input_item/1)
+
     system_items ++ convo_items
   end
 
@@ -276,8 +278,13 @@ defmodule Handbeam.Agent.Provider.OpenAI do
   defp format_input_item(%Message{role: :tool_result, content: blocks}) when is_list(blocks) do
     blocks
     |> Enum.map(fn
-      %{type: "tool_result", tool_use_id: tool_call_id, content: content} ->
-        %{"type" => "function_call_output", "call_id" => tool_call_id, "output" => content}
+      %{type: "tool_result", tool_use_id: tool_call_id, content: content} = block ->
+        output =
+          if block[:images] in [nil, []],
+            do: content,
+            else: Enum.map(Handbeam.Tool.Images.content(block), &format_user_content_block/1)
+
+        %{"type" => "function_call_output", "call_id" => tool_call_id, "output" => output}
 
       _other ->
         nil

@@ -296,6 +296,7 @@ defmodule Handbeam.Agent.Provider.Anthropic do
 
     formatted_messages =
       messages
+      |> Handbeam.Tool.Images.bound_history()
       |> Enum.map(&format_message/1)
       |> maybe_add_cache_to_last_user_message(cache?)
 
@@ -441,6 +442,11 @@ defmodule Handbeam.Agent.Provider.Anthropic do
   end
 
   defp format_content_block(%{type: "tool_result", tool_use_id: id, content: content} = block) do
+    content =
+      if block[:images] in [nil, []],
+        do: content,
+        else: Enum.map(Handbeam.Tool.Images.content(block), &format_content_block/1)
+
     result = %{"type" => "tool_result", "tool_use_id" => id, "content" => content}
     if Map.get(block, :is_error), do: Map.put(result, "is_error", true), else: result
   end

@@ -24,6 +24,7 @@ defmodule Handbeam.E2E.MCPToolTest do
   @moduletag :e2e
 
   @echo_input "hello from mcp"
+  @image "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg=="
 
   @echo_server ~s"""
   import json
@@ -94,7 +95,8 @@ defmodule Handbeam.E2E.MCPToolTest do
                   "result": {
                       "content": [
                           {"type": "text", "text": "echo: " + str(args.get("text", ""))}
-                      ]
+                      ] + ([{"type": "image", "mimeType": "image/png", "data": "#{@image}"}]
+                           if args.get("text") == "#{@echo_input}" else [])
                   },
               })
           elif msg_id is not None:
@@ -120,6 +122,7 @@ defmodule Handbeam.E2E.MCPToolTest do
 
     old_home = System.get_env("HOME")
     old_models = System.get_env("HANDBEAM_MODELS_FILE")
+    existing_tools = Enum.filter(Handbeam.Tool.Registry.list(), &String.starts_with?(&1, "mcp__"))
     models = Path.join(root, "models.json")
 
     File.write!(
@@ -138,7 +141,7 @@ defmodule Handbeam.E2E.MCPToolTest do
         else: System.delete_env("HANDBEAM_MODELS_FILE")
 
       if Process.whereis(Handbeam.Tool.Registry) do
-        Handbeam.Tool.Registry.list()
+        (Handbeam.Tool.Registry.list() -- existing_tools)
         |> Enum.filter(&String.starts_with?(&1, "mcp__"))
         |> Enum.each(&Handbeam.Tool.Registry.unregister/1)
       end
@@ -146,7 +149,12 @@ defmodule Handbeam.E2E.MCPToolTest do
       File.rm_rf!(root)
     end)
 
-    %{root: root, workspace: workspace, server_script: server_script}
+    %{
+      root: root,
+      workspace: workspace,
+      server_script: server_script,
+      existing_tools: existing_tools
+    }
   end
 
   defp settle(sid, attempts \\ 200) do
@@ -185,7 +193,8 @@ defmodule Handbeam.E2E.MCPToolTest do
 
   test "a workspace .mcp.json server's tool is bridged and called during a live run", %{
     workspace: workspace,
-    server_script: server_script
+    server_script: server_script,
+    existing_tools: existing_tools
   } do
     start_mcp_stack()
 
@@ -217,6 +226,10 @@ defmodule Handbeam.E2E.MCPToolTest do
           flunk("the bridged mcp tool was not offered to the provider")
 
         Enum.any?(messages, &match?(%Handbeam.Agent.Message{role: :tool_result}, &1)) ->
+          result = Enum.find(messages, &(&1.role == :tool_result))
+          assert [%{images: [image]}] = result.content
+          assert {:ok, %{data: encoded}} = Handbeam.Tool.Images.load(image)
+          assert encoded == @image
           "the mcp tool answered"
 
         true ->
@@ -242,7 +255,10 @@ defmodule Handbeam.E2E.MCPToolTest do
 
     # The bridge registered the namespaced tool with server metadata.
     tool =
-      Enum.find(Handbeam.Tool.Registry.list(), &String.match?(&1, ~r/^mcp__echo_.+__echo_text$/))
+      Enum.find(
+        Handbeam.Tool.Registry.list() -- existing_tools,
+        &String.match?(&1, ~r/^mcp__echo_.+__echo_text$/)
+      )
 
     assert tool, "expected the bridged mcp tool in the registry"
 
@@ -276,6 +292,14 @@ defmodule Handbeam.E2E.MCPToolTest do
     assert tool_entry["tool_status"] == "done"
     assert tool_entry["output"] =~ "echo: #{@echo_input}"
     assert tool_entry["tool_error"] in [nil, ""]
+    assert [_image] = tool_entry["images"]
+    refute Handbeam.JSON.encode!(tool_entry) =~ @image
+
+    assert [
+             %Handbeam.Agent.Message{role: :assistant},
+             %Handbeam.Agent.Message{role: :tool_result}
+           ] =
+             Handbeam.Attachments.History.to_messages(tool_entry, workspace, sid)
 
     assert Enum.any?(
              entries,
@@ -283,15 +307,22 @@ defmodule Handbeam.E2E.MCPToolTest do
                  &1["content"] == "the mcp tool answered")
            )
 
-    # Teardown removes every bridged mcp__ tool.
+    # Teardown removes this workspace's tools, not unrelated registry fixtures.
     assert :ok = Handbeam.MCP.teardown_previous()
     assert :error = Handbeam.Tool.Registry.get(tool)
-    assert [] = Enum.filter(Handbeam.Tool.Registry.list(), &String.starts_with?(&1, "mcp__"))
+
+    assert [] =
+             Enum.filter(
+               Handbeam.Tool.Registry.list() -- existing_tools,
+               &String.starts_with?(&1, "mcp__")
+             )
 
     settle(sid)
   end
 
-  test "a server that cannot connect is reported per-server without registering anything" do
+  test "a server that cannot connect is reported per-server without registering anything", %{
+    existing_tools: existing_tools
+  } do
     start_mcp_stack()
 
     project = Path.join(System.tmp_dir!(), "mcp-e2e-broken-#{System.unique_integer([:positive])}")
@@ -311,6 +342,10 @@ defmodule Handbeam.E2E.MCPToolTest do
 
     assert [%{server: "broken", error: "Connection failed"}] = errors
 
-    assert [] = Enum.filter(Handbeam.Tool.Registry.list(), &String.starts_with?(&1, "mcp__"))
+    assert [] =
+             Enum.filter(
+               Handbeam.Tool.Registry.list() -- existing_tools,
+               &String.starts_with?(&1, "mcp__")
+             )
   end
 end

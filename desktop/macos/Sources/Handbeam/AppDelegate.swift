@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var instanceLock: SingleInstanceLock?
     private var menuBar: MenuBarController?
     private var backend: BackendController?
+    private var verificationBridge: ComputerBridge?
     private var windows: WebWindowController?
     private var activity: NSObjectProtocol?
     private var signalSources: [DispatchSourceSignal] = []
@@ -19,6 +20,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if CommandLine.arguments.count == 3 && CommandLine.arguments[1] == "--computer-use-verification" {
+            startComputerVerification(directory: CommandLine.arguments[2])
+            return
+        }
+        // The disposable bundle must stay verification-only after TCC's
+        // Quit & Reopen, which does not preserve command-line arguments.
+        if Bundle.main.bundleIdentifier == "com.youfun.handbeam.computerverification" {
+            guard let directory = Bundle.main.object(forInfoDictionaryKey: "HandbeamComputerVerificationDirectory") as? String else {
+                NSApp.terminate(nil)
+                return
+            }
+            startComputerVerification(directory: directory)
+            return
+        }
         guard let instanceLock = SingleInstanceLock.acquire() else {
             activateExistingInstance()
             NSApp.terminate(nil)
@@ -55,6 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        verificationBridge?.stop()
         backend?.stopOwnedBackend()
         if let activity {
             ProcessInfo.processInfo.endActivity(activity)
@@ -62,7 +78,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        menuBar?.shouldTerminateWhenLastWindowClosed ?? true
+        if verificationBridge != nil { return false }
+        return menuBar?.shouldTerminateWhenLastWindowClosed ?? true
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -110,6 +127,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         hideOthers.keyEquivalentModifierMask = [.command, .option]
         appMenu.addItem(withTitle: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: "")
         appMenu.addItem(.separator())
+        appMenu.addItem(withTitle: "Stop Computer Use", action: #selector(stopComputerUse), keyEquivalent: ".")
+        appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "Quit Handbeam", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
 
         let editItem = NSMenuItem()
@@ -132,6 +151,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         windowMenu.addItem(withTitle: "Close", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
         NSApp.windowsMenu = windowMenu
         NSApp.mainMenu = main
+    }
+
+    @MainActor @objc private func stopComputerUse(_ sender: Any?) {
+        verificationBridge?.controller.stop()
+        backend?.stopComputerUse()
+    }
+
+    // Manual-only harness: no BEAM, no production storage, no bypass of TCC
+    // or native consent. Its bridge can select only the dedicated fixture app.
+    private func startComputerVerification(directory: String) {
+        NSApp.setActivationPolicy(.regular)
+        installSignalForwarding()
+        installMainMenu()
+        Task { @MainActor in
+            do {
+                let directoryURL = URL(fileURLWithPath: directory, isDirectory: true).resolvingSymlinksInPath()
+                let attributes = try FileManager.default.attributesOfItem(atPath: directoryURL.path)
+                guard directory.hasPrefix("/"), attributes[.type] as? FileAttributeType == .typeDirectory,
+                      (attributes[.ownerAccountID] as? NSNumber)?.uint32Value == getuid(),
+                      let permissions = attributes[.posixPermissions] as? NSNumber,
+                      permissions.intValue & 0o077 == 0 else {
+                    throw CocoaError(.fileWriteNoPermission)
+                }
+                let bridge = try ComputerBridge(verificationOnly: true)
+                let environment = try await bridge.start()
+                self.verificationBridge = bridge
+                let url = directoryURL.appendingPathComponent("bridge.json")
+                let data = try JSONSerialization.data(withJSONObject: environment)
+                try data.write(to: url, options: .atomic)
+                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            } catch {
+                let alert = NSAlert()
+                alert.messageText = "Computer Use verification could not start"
+                alert.informativeText = String(describing: error)
+                alert.runModal()
+                NSApp.terminate(nil)
+            }
+        }
     }
 
     @objc private func showAbout(_ sender: Any?) {

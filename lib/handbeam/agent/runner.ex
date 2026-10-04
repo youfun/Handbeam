@@ -585,6 +585,8 @@ defmodule Handbeam.Agent.Runner do
   end
 
   defp close_scope(state) do
+    Handbeam.Tool.Builtin.Computer.stop(state.conversation_id, state.opts[:run_id])
+
     Registry.update_value(Handbeam.AgentRunRegistry, state.conversation_id, fn metadata ->
       Map.put(metadata || %{}, :active?, false)
     end)

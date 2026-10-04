@@ -213,6 +213,7 @@ defmodule Handbeam.Agent.Tool.Executor do
               end
 
             normalize_outcome(outcome, tool_fns, name)
+            |> Handbeam.Tool.Images.import_result(context)
           rescue
             e ->
               msg = "Tool #{name} crashed: #{Exception.message(e)}"
@@ -418,6 +419,7 @@ defmodule Handbeam.Agent.Tool.Executor do
     details = result_details(result)
 
     Message.tool_result_block(tool_use_id, result.content, result.is_error, details)
+    |> Map.put(:images, result.images)
   end
 
   defp normalize_outcome(%Result{} = result, _tool_fns, _name), do: result
