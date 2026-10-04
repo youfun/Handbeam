@@ -156,11 +156,24 @@ defmodule Handbeam.Agent.CliAgentTest do
 
   test "run projects text without executing tools through the handbeam executor" do
     script = fake_droid(tool_script())
+    original_path = System.get_env("PATH")
+    System.put_env("PATH", "/nonexistent")
 
-    assert {:ok, "noted", %{backend: "droid", session_id: "sess-1"}} =
-             Run.turn("inspect", backend: "droid", cwd: File.cwd!(), executable: script)
+    try do
+      refute Droid.available?()
 
-    assert {:error, :unknown_backend} = Run.turn("nope", backend: "missing", cwd: File.cwd!())
+      assert {:error, :not_available} =
+               Run.turn("inspect", backend: "droid", cwd: File.cwd!())
+
+      assert {:ok, "noted", %{backend: "droid", session_id: "sess-1"}} =
+               Run.turn("inspect", backend: "droid", cwd: File.cwd!(), executable: script)
+
+      assert {:error, :unknown_backend} = Run.turn("nope", backend: "missing", cwd: File.cwd!())
+    after
+      if original_path,
+        do: System.put_env("PATH", original_path),
+        else: System.delete_env("PATH")
+    end
   end
 
   test "grok ACP session projects text and answers only an explicit permission" do

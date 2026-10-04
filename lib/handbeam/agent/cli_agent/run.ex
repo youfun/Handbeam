@@ -39,7 +39,6 @@ defmodule Handbeam.Agent.CliAgent.Run do
 
     with :ok <- host_available(),
          {:ok, module} <- Registry.fetch(backend),
-         true <- module.available?() || {:error, :not_available},
          {:ok, session} <- module.start_session(start_opts(opts)),
          session <- maybe_decision(module, session, opts) do
       try do
@@ -59,7 +58,6 @@ defmodule Handbeam.Agent.CliAgent.Run do
       end
     else
       {:error, reason} -> {:error, reason}
-      false -> {:error, :not_available}
     end
   end
 

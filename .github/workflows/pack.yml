@@ -41,7 +41,19 @@ jobs:
       - name: Build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential pkg-config bubblewrap inotify-tools
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config bubblewrap inotify-tools apparmor
+
+      - name: Permit Bubblewrap user namespaces on the CI runner
+        run: |
+          # Keep Ubuntu's system-wide restriction; permit only this sandbox binary.
+          sudo tee /etc/apparmor.d/handbeam-ci-bwrap >/dev/null <<'EOF'
+          abi <abi/4.0>,
+          profile handbeam-ci-bwrap /usr/bin/bwrap flags=(unconfined) {
+            userns,
+          }
+          EOF
+          sudo apparmor_parser -r /etc/apparmor.d/handbeam-ci-bwrap
+          bwrap --unshare-user --uid 0 --gid 0 --ro-bind / / -- /usr/bin/true
 
       - uses: erlef/setup-beam@v1
         with:
