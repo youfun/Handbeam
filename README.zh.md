@@ -2,14 +2,14 @@
 
 [English](README.md) · [中文](README.zh.md)
 
-本地 agent 助手。对话、工具、记忆都在本机；一套 OTP runtime，[LiveView](lib/handbeam_web/live) 和 [mobile](mobile/)（Android + iOS）共用。`code_search` 按符号或已配置的 embeddings 返回路径和行号，文件内容仍走 `read`。
+本地 AI 编程与 Agent 助手。对话交互、工具调度与长期记忆全部保留在本机。LiveView Web 界面与移动端（Android / iOS）共享同一套 Elixir/OTP 运行时。
 
-- 读、改、写文件，跑 shell，模糊搜文件
-- 工作区权限（auto / prompt / deny）
-- 流式回复和工具状态
-- Anthropic / OpenAI 兼容协议（StepFun、Ollama、OpenCode Go、DeepSeek、OpenRouter 等）
-- MCP、BEAM 内省、跨会话记忆
-- Android / iOS 共用同一套 Coordinator / Runner
+- **工作区操作**：读写与编辑文件、执行 Shell 命令、基于模糊匹配快速搜文件、基于符号检索精确定位代码位置
+- **权限管控**：细粒度工作区权限管理，支持自动执行（auto）、人工审批（prompt）与拒绝（deny）
+- **实时响应**：支持文本流式生成与工具执行状态实时反馈
+- **多模型支持**：支持 Anthropic 及各类 OpenAI 兼容接口（StepFun、Ollama、OpenCode Go、DeepSeek、OpenRouter 等）
+- **扩展与记忆**：支持 MCP（Model Context Protocol）、BEAM 虚拟机深度内省与跨会话记忆
+- **多端同核**：Web 与 Android / iOS 移动端共用同一套 Coordinator 与 Runner 调度核心
 
 ## 聊天内 HTML / 交互组件（Web）
 
@@ -24,68 +24,106 @@ Android / iOS 原生聊天目前仍显示代码，不支持此内联预览。
 
 ## 应用截图
 
-Android 原生聊天主界面，英文界面真机截图。
+Android 原生界面真机截图：
 
-<img src="docs/screenshots/android-chat-en.png" alt="Handbeam Android 英文聊天主界面" width="360">
+<img src="docs/screenshots/android-chat-en.png" alt="Handbeam Android 聊天界面" width="360">
 
 ### 手机端 Elixir 项目编程（实验性）
 
-在手机上通过对话，让 Agent 在工作区创建、编辑和运行 Elixir/Mix 项目。基于应用内置的 Elixir/OTP，支持通过 `mix_project` 获取依赖、编译、测试和运行，无需额外安装 Linux 环境。
+在手机上通过对话交互，即可让 Agent 在工作区中创建、修改和运行 Elixir/Mix 项目。该能力完全基于客户端内置的 Elixir/OTP 运行，无需在手机上额外配置 Linux 容器或终端环境：
 
-- 支持与宿主版本兼容的纯 Elixir/Erlang 依赖；不支持的原生构建、外部工具链及宿主依赖版本冲突会被拒绝。
-- 项目代码在应用的 BEAM VM 中执行，并非独立虚拟机或安全沙箱，请仅运行可信代码。
-- 已通过 Android 真机的对话驱动端到端验证；iOS 目前仅完成模拟器验证，尚未完成真机及完整发行构建验证。
+- **依赖支持**：支持与当前内置运行时兼容的纯 Elixir/Erlang 依赖；不支持含 C 扩展的原生构建（NIF）或依赖外部编译链的库。
+- **执行环境**：项目代码直接在宿主应用的 BEAM 虚拟机中执行，非沙箱隔离环境，请仅运行信任的代码。
+- **多端现状**：Android 真机已完成端到端验证；iOS 目前仅在模拟器中通过测试，真机与发布版仍在适配中。
 
-需要 Elixir 1.20、OTP 28+、Node。
+## Web UI 预编译包（开箱即用）
 
-## Web UI 安装包
+GitHub Releases 的 `web-latest` 及各版本标签提供了开箱即用的自包含运行时包。解压后即可直接运行 Web 界面，无需在本机安装 Elixir 或 Erlang：
 
-GitHub Releases 的 `web-latest`（以及 `v*` 标签）提供自包含 OTP 包，解压后即可打开 Web UI，不必安装 Elixir：
+| 平台 / 架构 | 包名 | 说明 |
+|-------------|------|------|
+| Linux (x86_64) | `handbeam-web-linux-x86_64.tar.gz` | 执行 `./start.sh` 启动 |
+| macOS (Apple Silicon) | `handbeam-web-macos-arm64.tar.gz` | 执行 `./start.sh` 启动 |
+| macOS (Apple Silicon 原生应用) | `Handbeam-macos-arm64.zip` | 解压后直接打开 `Handbeam.app`（基于系统 WebKit，无 Electron 开销） |
+| Windows (x86_64) | `handbeam-web-windows-amd64.zip` | 执行 `start.bat` 启动 |
+| Windows (带开发工具链，实验性) | `handbeam-web-windows-amd64-toolchain.zip` | 启动时临时在当前进程 PATH 注入 Elixir、Mix、Hex、Rebar3 和 MinGit（不含 C 编译器） |
 
-- `handbeam-web-linux-x86_64.tar.gz`
-- `handbeam-web-windows-amd64.zip`
-- `handbeam-web-windows-amd64-toolchain.zip`（实验包）
-- `handbeam-web-macos-arm64.tar.gz`
-- `Handbeam-macos-arm64.zip`（原生 WebKit App）
+**使用说明**：
+- **访问地址**：解压启动后，默认服务地址为 `http://localhost:5008`。
+- **Windows 终端说明**：由于内置 Web 终端引擎（Ghostty）暂无 Windows 原生 NIF 支持，Windows 发行包暂未内置浏览器终端组件。
+- 暂不提供 Windows ARM64 预编译包。
 
-macOS 原生包解压后打开 `Handbeam.app`。Web UI 包在 Linux / macOS 运行 `./start.sh`，Windows 运行 `start.bat`；默认地址是 `http://localhost:5008`。macOS 原生壳使用系统 WebKit，不含 Electron。Windows 包没有内置终端（Ghostty 没有 Windows NIF）。实验包额外带上 Elixir、Mix、Hex、Rebar3 和 MinGit，只在本次启动的进程里放到 PATH 前面，不含 C 编译器。不发布 Windows ARM64。
+## 源码运行
 
-## 运行
+如果你希望参与开发或直接从源码构建，需满足以下环境要求：
+- **Elixir**：`>= 1.20.0`
+- **Erlang/OTP**：`28+`
+- **Node.js**（用于前端资源构建）
+
+### 启动步骤
 
 ```bash
-cp models.example.json models.json   # 填 apiKey，或用 env:OPENAI_API_KEY
+# 1. 配置模型接口（填写 apiKey，或配置系统环境变量 OPENAI_API_KEY）
+cp models.example.json models.json
+
+# 2. 安装依赖并构建静态资源
 mix setup
-mix phx.server                       # http://localhost:5002
+
+# 3. 启动开发服务器（默认端口 5002）
+mix phx.server
 ```
 
-选一个工作区即可聊天。CSS 和 JavaScript 源文件放在 `assets/`，生成的
-`priv/static/assets/` 不提交 Git。原有样式保留在 `assets/css/`，预生成的基础样式保留在
-`assets/default.css`，均作为资源构建的输入。
+启动后在浏览器打开 `http://localhost:5002`，选择工作区目录即可开始使用。
 
-`mix setup` 会安装依赖并构建资源。只处理资源时，依次运行 `mix assets.setup` 和
-`mix assets.build`。开发时 `mix phx.server` 自动监听 CSS / JS 修改并重建；发布时使用
-`mix assets.deploy` 压缩资源并生成 Phoenix digest。`mix compile` 只编译 Elixir。
+### 静态资源开发说明
+
+- 静态资源源码位于 `assets/` 目录；`priv/static/assets/` 下的构建产物不纳入版本控制。
+- 样式源码位于 `assets/css/`，预生成的默认基础样式位于 `assets/default.css`。
+- `mix setup` 会自动安装依赖并构建资源。如仅需重新构建前端资源，可运行 `mix assets.setup` 和 `mix assets.build`。
+- `mix phx.server` 在开发模式下会自动监听前端文件变动并触发热更新；生产构建使用 `mix assets.deploy` 压缩资源并生成静态摘要。
+- `mix compile` 仅编译 Elixir 后端代码。
+
+### 运行测试
 
 ```bash
 mix test --exclude slow --exclude e2e
 ```
 
-## ChatGPT / Codex 订阅
+## 检查宿主生效配置（Inspect Config）
 
-Web 设置 → 可用模型 → 订阅登录 → **ChatGPT (Codex subscription)**。
-在 OpenAI 验证页输入用户码，完成后选择该供应商的模型；可以点击“刷新订阅模型”。
-设备码不可用时，检查账号是否允许设备码登录。原生手机设置页暂未提供对应登录 UI。
+在不启动完整服务、不初始化存储目录、不暴露真实凭据且不连接 MCP 的前提下，你可以通过诊断工具导出当前环境的配置解析报告：
 
-无需安装 Codex CLI；推理直连 Codex Responses 后端，工具与审批仍由 Handbeam 执行。
-这是 ChatGPT 的 Codex 权益，不是 Platform API 余额；可用模型、限额和额外用量受账号方案约束。
-不会自动回退到 API Key 付费，也不把未知费用显示成免费。后端协议可能随官方客户端变化。
-凭证保存在 `~/.handbeam/auth.json`（0600），不要分享或提交该文件。
+```bash
+mix handbeam.inspect_config --workspace /path/to/workspace
+```
+
+若在运行中的宿主内部调用，可使用 `Handbeam.ConfigInspection.report(workspace: path)`。
+
+**报告特点与覆盖规则**：
+- **分层决策解析**：清晰区分宿主初始能力（Host seed）、工具注册表状态、依赖静态检查，以及未声明的运行时权限。
+- **配置覆盖顺序**：全局配置优先于内置默认值，工作区特定配置优先于全局配置；运行时的 Provider 环境变量覆盖配置文件中的目录值。
+- **安全脱敏**：报告会自动隐藏绝对路径、模型 ID、权限正则、动态工具名、网络 URL、凭据及提示词正文，方便安全共享与故障排查。
+- **静态诊断**：诊断过程纯静态分析，不会执行任何外部命令、本地回调或发起真实网络探测。
+
+## ChatGPT / Codex 订阅登录
+
+如果你拥有 ChatGPT 订阅（Codex 权益），可以直接使用账号登录，无需配置 API 平台充值余额：
+
+1. 在 Web 端进入 **设置 → 可用模型 → 订阅登录**，选择 **ChatGPT (Codex subscription)**。
+2. 按照提示在 OpenAI 授权页面输入设备码完成验证，随后在模型列表中选择对应模型即可。
+3. 可通过“刷新订阅模型”按钮同步最新的可用模型目录。
+
+**注意事项**：
+- 无需在本地安装 Codex CLI，推理直接走 Codex Responses 协议；工具执行与权限审批仍由 Handbeam 控制。
+- 该功能扣除的是 ChatGPT 订阅包含的使用额度，而非 OpenAI Platform API 预充值余额；可用模型及调用额度受 OpenAI 账号订阅套餐限制。
+- 认证凭证安全保存在本地 `~/.handbeam/auth.json`（权限为 0600），请勿共享或将该文件提交至版本库。
+- 移动端设置界面暂未接入此登录流程。
 
 ## Git 私有仓库认证
 
-`git` 工具只接受凭据名称（`credential`），不接受密码或 PAT。
-由可信宿主在启动时配置凭据；不要把配置写入 Agent 可编辑的工作区设置，
-也不要在对话中粘贴密钥。例如在宿主的运行时配置中：
+`git` 工具仅接收预先命名的凭据标识（`credential` 参数），杜绝在对话中直接传输明文密码或个人访问令牌（PAT）。
+
+请在宿主启动配置中声明凭据，不要保存在工作区或对话上下文中。例如在宿主运行时配置中：
 
 ```elixir
 config :handbeam, :git_credentials, %{
@@ -96,29 +134,33 @@ config :handbeam, :git_credentials, %{
 }
 ```
 
-工具参数只需 `{"action":"push","credential":"project-origin"}`。
-新的认证挑战必须匹配配置的 HTTPS endpoint。
-libgit2 拒绝跨主机重定向和 HTTPS 降级，
-但可能在同一主机的其他 HTTPS 端口或路径复用凭据。**配置凭据意味着信任该主机上的全部
-HTTPS 服务，不提供端口或仓库路径隔离。** 不要为包含不可信服务的主机配置凭据；
-同时应使用最小权限、仅授权目标仓库的 PAT。
-省略 `credential` 时匿名访问。手机宿主同样可以在启动时注入该配置；
-目前没有新增凭据管理 UI。历史对话中已经出现过的密钥不会被自动清除，应撤销并更换。
+Agent 发起 Git 操作时仅需传递凭据名称：
+```json
+{"action": "push", "credential": "project-origin"}
+```
 
-## Mobile（Android + iOS）
+**安全边界**：
+- 认证质询必须与配置中的 HTTPS endpoint 完全匹配。
+- 底层 libgit2 库会拒绝跨主机重定向与明文 HTTP 降级，但在同一主机的其他端口或路径上可能会复用凭据。
+- **配置凭据代表信任该主机名下的全部 HTTPS 服务**，并不提供按端口或具体仓库路径的绝对隔离。请勿为包含不可信服务的主机配置凭据，并建议使用只针对特定仓库授权的最小权限 PAT。
+- 不传 `credential` 时默认走匿名访问。移动端也可在启动时注入上述配置。
+
+## 移动端开发（Android / iOS）
 
 ```bash
 cd mobile
 mix deps.get
 mix test
-bash script/pack_android_apks.sh --abi arm64-v8a   # Android
-mix ios.native                                     # iOS 模拟器（需 Xcode）
+
+# 构建 Android APK
+bash script/pack_android_apks.sh --abi arm64-v8a
+
+# 启动 iOS 模拟器（需要 macOS 及 Xcode）
+mix ios.native
 ```
 
-说明见 [`mobile/README.md`](mobile/README.md)。ChromeOS 用 `--abi x86_64`。
-iOS 包名 `com.example.handbeam_probe`；模拟器 Dist 节点为
-`handbeam_probe_ios_<UDID 前 8 位>@127.0.0.1`。
+详细指南请参阅 [`mobile/README.md`](mobile/README.md)。ChromeOS 设备构建参数请使用 `--abi x86_64`。iOS 测试应用 Bundle ID 为 `com.example.handbeam_probe`。
 
-## 许可
+## 开源协议
 
-[AGPL-3.0](LICENSE)。Copyright (C) 2026 youfun。
+本项目采用 [AGPL-3.0](LICENSE) 协议开源。Copyright (C) 2026 youfun。

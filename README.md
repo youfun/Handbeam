@@ -2,14 +2,14 @@
 
 [English](README.md) · [中文](README.zh.md)
 
-A local agent assistant. Chat, tools, and memory stay on the machine. One OTP runtime is shared by [LiveView](lib/handbeam_web/live) and [mobile](mobile/) (Android + iOS).
+A local agent assistant for autonomous coding. Conversations, tool execution, and long-term memory stay entirely on your machine. The Phoenix LiveView Web UI and native mobile clients (Android and iOS) share the exact same Elixir/OTP runtime core.
 
-- Read, edit, and write files; run a shell; fuzzy-search files; locate code by symbol or configured embeddings (`code_search` returns paths and line numbers, then `read` loads the file)
-- Workspace permissions (auto / prompt / deny)
-- Streaming replies and tool status
-- Anthropic and OpenAI-compatible APIs (StepFun, Ollama, OpenCode Go, DeepSeek, OpenRouter, and others)
-- MCP, BEAM introspection, and memory across sessions
-- Same Coordinator / Runner on Android and iOS
+- **Workspace control**: Read, edit, and write files, run a shell, fuzzy-search filenames, and locate code positions by symbol or embeddings
+- **Granular permissions**: Fine-grained workspace permission policies (auto, prompt, or deny)
+- **Streaming & observability**: Real-time response streaming with live tool execution status
+- **Broad provider support**: Anthropic and OpenAI-compatible endpoints (StepFun, Ollama, OpenCode Go, DeepSeek, OpenRouter, and more)
+- **Extensible runtime**: MCP (Model Context Protocol), BEAM VM introspection, and cross-session memory
+- **Unified architecture**: Android, iOS, and Web all run on the same Coordinator and Runner lifecycle
 
 ## Inline HTML / interactive widgets (Web)
 
@@ -26,99 +26,106 @@ rules. Android / iOS native chat still displays code, without inline previews.
 
 ## App screenshot
 
-Native Android chat interface, captured on a physical device in English.
+Native Android chat interface, captured on a physical device:
 
 <img src="docs/screenshots/android-chat-en.png" alt="Handbeam Android chat screen in English" width="360">
 
 ### On-device Elixir projects (experimental)
 
-On a phone, chat with the agent to create, edit, and run Elixir/Mix projects in the workspace. Mix can fetch deps, compile, test, and run through `mix_project` on the app's bundled Elixir/OTP. No extra Linux environment.
+Create, edit, test, and run Elixir/Mix projects directly on your phone through natural dialogue. The agent uses the app's bundled Elixir/OTP runtime via `mix_project` without requiring a separate Linux environment or chroot:
 
-- Pure Elixir/Erlang deps that match the host version are supported. Unsupported native builds, extra toolchains, and host-version conflicts are rejected.
-- Project code runs in the app's BEAM VM. This is not a separate VM or a security sandbox. Only run code you trust.
-- Chat-driven end-to-end runs have been verified on a physical Android device. iOS has only been verified in the simulator, not on a device or a full release build.
+- **Dependency support**: Supports pure Elixir/Erlang dependencies compatible with the bundled host version. C extensions (NIFs) and external toolchains are rejected.
+- **Execution environment**: Code runs inside the app's BEAM VM. It is not an isolated sandbox; only run code you trust.
+- **Platform status**: End-to-end chat workflows are verified on physical Android devices. iOS is currently verified in the simulator only.
 
-Requires Elixir 1.20, OTP 28+, and Node.
+## Web UI standalone packages
 
-## Web UI packages
+Prebuilt packages with a bundled OTP runtime are available on GitHub Releases under `web-latest` and version tags. Extract and run without installing Elixir:
 
-GitHub Releases tag `web-latest` (and `v*` tags) includes a self-contained OTP package. Unpack it and start the Web UI without installing Elixir:
+| Platform / Architecture | Package | How to run |
+|---|---|---|
+| Linux (x86_64) | `handbeam-web-linux-x86_64.tar.gz` | Run `./start.sh` |
+| macOS (Apple Silicon) | `handbeam-web-macos-arm64.tar.gz` | Run `./start.sh` |
+| macOS (Native WebKit App) | `Handbeam-macos-arm64.zip` | Launch `Handbeam.app` (native WebKit shell, zero Electron overhead) |
+| Windows (x86_64) | `handbeam-web-windows-amd64.zip` | Run `start.bat` |
+| Windows (with toolchain, experimental) | `handbeam-web-windows-amd64-toolchain.zip` | Prepend bundled Elixir, Mix, Hex, Rebar3, and MinGit to process `PATH` |
 
-- `handbeam-web-linux-x86_64.tar.gz`
-- `handbeam-web-windows-amd64.zip`
-- `handbeam-web-windows-amd64-toolchain.zip` (experimental)
-- `handbeam-web-macos-arm64.tar.gz`
-- `Handbeam-macos-arm64.zip` (native WebKit app)
+**Notes**:
+- **Default address**: Standalone release packages serve on `http://localhost:5008`.
+- **Windows terminal**: The in-browser terminal is omitted on Windows because Ghostty lacks a Windows native NIF.
+- Windows ARM64 builds are not currently published.
 
-Open `Handbeam.app` from the native macOS zip. For the Web UI packages, run `./start.sh` on Linux and macOS or `start.bat` on Windows. The default URL is `http://localhost:5008`. The native macOS shell uses system WebKit, not Electron. Windows packages do not include the in-browser terminal; Ghostty has no Windows NIF. The toolchain zip adds Elixir, Mix, Hex, Rebar3, and MinGit to PATH for that process only. It does not include a C compiler. Windows ARM64 is not published.
+## Run from source
 
-## Inspect effective host configuration
+### Prerequisites
+- **Elixir**: `>= 1.20.0`
+- **Erlang/OTP**: `28+`
+- **Node.js** (for asset bundling)
 
-`mix handbeam.inspect_config --workspace /path/to/workspace` prints a redacted
-JSON report without starting Handbeam, initializing stores, resolving credentials
-or bootstrapping MCP. It loads normal Mix configuration and compiles when needed;
-it inspects this Mix VM, **not** an already running phone or Web session. Inside
-an existing host, use `Handbeam.ConfigInspection.report(workspace: path)`.
-
-The report separates Host seed decisions, observed registry membership, passive
-dependency checks, and unknown run authorization/model visibility. It explains
-Host defaults/overrides (including browser precedence), effective Model/AI field
-sources, workspace approval defaults, and injected environment section IDs.
-Global settings override defaults; normalized workspace settings override global
-settings. Runtime provider environment overrides apply above catalog values;
-entry-point model selection and per-run options are not reconstructed. Approval
-defaults are not per-call decisions: arguments, session overrides and capability
-rules still apply. `unknown` is intentional, not a claim of availability.
-
-For safe sharing, arbitrary strings are withheld: paths, model IDs, permission
-patterns, dynamic tool names, URLs, credentials and prompt bodies. Sources identify
-the owning layer, not the original writer of an Application environment value.
-No executable, native callback, browser or network availability probe is run.
-Desktop/Web/native/headless share the same runtime. Default and custom agent
-prompts append the same Host-derived environment contract; Android/iOS have no
-agent shell when Host disables it. Script API details remain in ScriptEnvironment,
-not duplicated platform-specific prompts. Later runtime hooks can still transform
-the outgoing prompt, which this report does not evaluate.
-
-## Run
+### Setup & run
 
 ```bash
-cp models.example.json models.json   # set apiKey, or use env:OPENAI_API_KEY
+# 1. Configure model credentials (specify apiKey or export OPENAI_API_KEY)
+cp models.example.json models.json
+
+# 2. Install dependencies and build assets
 mix setup
-mix phx.server                       # http://localhost:5002
+
+# 3. Start development server (serves on http://localhost:5002)
+mix phx.server
 ```
 
-Pick a workspace and chat. CSS and JavaScript sources live in `assets/`; generated
-files in `priv/static/assets/` are not committed. The original styles are preserved
-in `assets/css/`, with the prebuilt baseline stylesheet in `assets/default.css`.
+Open `http://localhost:5002` in your browser and select a workspace directory to begin.
 
-`mix setup` installs dependencies and builds assets. For assets alone, use
-`mix assets.setup` then `mix assets.build`. `mix phx.server` watches CSS and JS
-sources and rebuilds them automatically. Release builds use `mix assets.deploy`
-to minify assets and generate Phoenix digests. `mix compile` only compiles Elixir.
+### Asset development
+
+- Frontend source files live in `assets/`. Compiled bundles in `priv/static/assets/` are not committed to git.
+- Styles are organized under `assets/css/`, with baseline styles in `assets/default.css`.
+- `mix setup` installs dependencies and builds assets. To build assets alone, run `mix assets.setup` followed by `mix assets.build`.
+- `mix phx.server` automatically watches frontend files and recompiles them on change. For production builds, `mix assets.deploy` minifies assets and generates digests.
+- `mix compile` compiles Elixir source code only.
+
+### Running tests
 
 ```bash
 mix test --exclude slow --exclude e2e
 ```
 
-## ChatGPT / Codex subscription
+## Inspect effective host configuration
 
-In Web Settings → Available models → Subscription login, select **ChatGPT (Codex subscription)**.
-Enter the device code on OpenAI's verification page, then select a model from this provider.
-Use the refresh-subscription-models button to update the catalog. If device login is unavailable,
-check whether your account permits it. The native mobile settings UI does not yet offer this login.
+Inspect your resolved runtime configuration safely without booting the full server, initializing file stores, resolving credentials, or connecting to MCP servers:
 
-No Codex CLI is required. Inference uses the Codex Responses backend; Handbeam still owns tools
-and approvals. This uses ChatGPT Codex entitlements, not Platform API credits. Model availability,
-limits and additional usage depend on your account. There is no automatic API-key billing fallback,
-and unknown cost is not displayed as free. Backend compatibility may change with official clients.
-Credentials are stored in `~/.handbeam/auth.json` (0600); never share or commit that file.
+```bash
+mix handbeam.inspect_config --workspace /path/to/workspace
+```
 
-## Private Git repositories
+Within a running host session, call `Handbeam.ConfigInspection.report(workspace: path)`.
 
-The `git` tool accepts a credential name (`credential`), never a password or PAT.
-Configure credentials in the trusted host at startup, not in agent-editable
-workspace settings or chat. For example, in the host's runtime configuration:
+**Key features**:
+- **Layered decision breakdown**: Separates Host seed capabilities, registered tool membership, passive dependency checks, and runtime authorizations.
+- **Precedence hierarchy**: Global settings override defaults; workspace settings override global settings; runtime provider environment variables take precedence over catalog values.
+- **Automatic redaction**: Automatically suppresses absolute filesystem paths, model identifiers, permission patterns, dynamic tool names, endpoints, secrets, and prompt text for safe sharing.
+- **Non-intrusive diagnosis**: Pure static analysis. Does not execute external commands, native callbacks, or live network probes.
+
+## ChatGPT / Codex subscription login
+
+If you have a ChatGPT subscription with Codex access, you can sign in directly without setting up prepaid API credits:
+
+1. In Web UI, navigate to **Settings → Available models → Subscription login** and select **ChatGPT (Codex subscription)**.
+2. Enter the device code on the OpenAI verification page, then pick a model from this provider.
+3. Use the **Refresh subscription models** button to update the model catalog.
+
+**Details**:
+- No Codex CLI required. Inference connects directly to the Codex Responses backend; Handbeam handles tool execution and permission prompts.
+- Uses your ChatGPT Codex subscription allowance, not Platform API credits. Available models and rate limits are dictated by your account plan.
+- Auth credentials are stored locally in `~/.handbeam/auth.json` (mode `0600`). Never share or commit this file.
+- The native mobile settings UI does not currently support device login.
+
+## Private Git repository authentication
+
+The `git` tool takes a named credential reference (`credential`), never raw tokens or passwords.
+
+Configure credentials in the trusted host at startup rather than in workspace settings or chat messages. For example, in host runtime configuration:
 
 ```elixir
 config :handbeam, :git_credentials, %{
@@ -129,31 +136,33 @@ config :handbeam, :git_credentials, %{
 }
 ```
 
-The tool call uses `{"action":"push","credential":"project-origin"}`.
-Fresh authentication challenges must match the configured HTTPS endpoint.
-libgit2 rejects cross-host redirects and HTTPS downgrades, but may reuse credentials
-on other HTTPS ports or paths of the same hostname. **Configuration trusts all HTTPS
-services on that hostname: it does not provide port or repository-path isolation.**
-Do not configure credentials for hosts containing untrusted services. Use a
-least-privilege, repository-scoped PAT as well.
-Omit `credential` for anonymous access. Mobile hosts can inject the same startup
-configuration; there is no new credential-management UI. Previously exposed
-secrets are not removed from old conversations automatically; revoke and rotate them.
+The agent invokes the tool with:
+```json
+{"action": "push", "credential": "project-origin"}
+```
 
-## Mobile (Android + iOS)
+**Security boundaries**:
+- Fresh authentication challenges must match the configured HTTPS endpoint.
+- libgit2 rejects cross-host redirects and HTTPS downgrades, but may reuse credentials across other ports or paths on the same hostname.
+- **Configuring credentials trusts all HTTPS services on that hostname**; it does not isolate by port or repository path. Avoid configuring credentials for hosts serving untrusted tenants, and prefer repository-scoped, least-privilege tokens.
+- Omit `credential` for anonymous read access. Mobile hosts can inject the same startup configuration.
+
+## Mobile development (Android + iOS)
 
 ```bash
 cd mobile
 mix deps.get
 mix test
-bash script/pack_android_apks.sh --abi arm64-v8a   # Android
-mix ios.native                                     # iOS Simulator (Xcode)
+
+# Build Android APK
+bash script/pack_android_apks.sh --abi arm64-v8a
+
+# Launch iOS Simulator (requires macOS and Xcode)
+mix ios.native
 ```
 
-See [`mobile/README.md`](mobile/README.md). On ChromeOS use `--abi x86_64`.
-iOS bundle id is `com.example.handbeam_probe`; the simulator Dist node is
-`handbeam_probe_ios_<first-8-udid>@127.0.0.1`.
+See [`mobile/README.md`](mobile/README.md) for full instructions. Use `--abi x86_64` on ChromeOS. The iOS test app Bundle ID is `com.example.handbeam_probe`.
 
 ## License
 
-[AGPL-3.0](LICENSE). Copyright (C) 2026 youfun.
+Licensed under [AGPL-3.0](LICENSE). Copyright (C) 2026 youfun.
