@@ -165,4 +165,4 @@ See [`mobile/README.md`](mobile/README.md) for full instructions. Use `--abi x86
 
 ## License
 
-Licensed under [AGPL-3.0](LICENSE). Copyright (C) 2026 youfun.
+Licensed under [FSL-1.1-ALv2](LICENSE). Copyright (C) 2026 youfun.

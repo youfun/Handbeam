@@ -161,6 +161,6 @@ mix ios.native
 
 详细指南请参阅 [`mobile/README.md`](mobile/README.md)。ChromeOS 设备构建参数请使用 `--abi x86_64`。iOS 测试应用 Bundle ID 为 `com.example.handbeam_probe`。
 
-## 开源协议
+## 许可协议
 
-本项目采用 [AGPL-3.0](LICENSE) 协议开源。Copyright (C) 2026 youfun。
+本项目采用 [FSL-1.1-ALv2](LICENSE)（Functional Source License 1.1, Apache-2.0 Future License）授权。Copyright (C) 2026 youfun。

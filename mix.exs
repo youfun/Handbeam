@@ -27,7 +27,7 @@ defmodule Handbeam.MixProject do
       make_clean: ["clean"],
       listeners: [Phoenix.CodeReloader],
       package: [
-        licenses: ["AGPL-3.0-only"],
+        licenses: ["FSL-1.1-ALv2"],
         links: %{"GitHub" => "https://github.com/youfun/Handbeam"}
       ]
     ]
