@@ -4,6 +4,7 @@ import { renderMarkdown } from "../streaming_markdown/render_markdown.js";
 import { injectCopyButtons } from "../streaming_markdown/code_block_copy.js";
 import { patchMarkdownDom } from "../streaming_markdown/patch_markdown_dom.js";
 import { renderMermaidBlocks } from "../streaming_markdown/mermaid_blocks.js";
+import { decorateHtmlPreviews, handleHtmlPreviewClick, resizeHtmlPreview } from "../streaming_markdown/html_previews.js";
 
 export const StreamingMarkdown = {
   mounted() {
@@ -13,6 +14,8 @@ export const StreamingMarkdown = {
     this.lastStreaming = false;
     this.unsubscribe = null;
     this.retryId = null;
+    this.resizeHandler = (event) => resizeHtmlPreview(this.target, event);
+    window.addEventListener("message", this.resizeHandler);
     this.controller = createSmoothMarkdownStream({}, () => this.renderSnapshot());
     this.unsubscribe = this.controller.subscribe(() => this.renderSnapshot());
     this.applySource({ initial: true });
@@ -21,11 +24,13 @@ export const StreamingMarkdown = {
     }, 0);
 
     // Event delegation for copy buttons
-    this.el.addEventListener("click", (e) => {
+    this.clickHandler = (e) => {
+      handleHtmlPreviewClick(e);
       const btn = e.target.closest(".code-block-copy, .msg-copy-btn");
       if (!btn) return;
       this.handleCopyClick(btn);
-    });
+    };
+    this.el.addEventListener("click", this.clickHandler);
   },
 
   updated() {
@@ -36,6 +41,8 @@ export const StreamingMarkdown = {
     if (this.retryId) clearTimeout(this.retryId);
     if (this.unsubscribe) this.unsubscribe();
     if (this.controller) this.controller.destroy();
+    this.el.removeEventListener("click", this.clickHandler);
+    window.removeEventListener("message", this.resizeHandler);
     this.retryId = null;
     this.unsubscribe = null;
     this.controller = null;
@@ -93,7 +100,7 @@ export const StreamingMarkdown = {
     const markdown = patchStreamingMarkdown(snapshot.visible, snapshot.final || this.readFinal());
     let html = renderMarkdown(markdown, { linkTargetBlank: true });
     html = injectCopyButtons(html);
-    applyRenderedHtml(this.target, html);
+    applyRenderedHtml(this.target, html, snapshot.visible);
 
     if (this.readStreaming() && !snapshot.final) {
       this.insertCursor();
@@ -222,7 +229,7 @@ export const StreamingMarkdown = {
   }
 };
 
-function applyRenderedHtml(target, html) {
+function applyRenderedHtml(target, html, markdown) {
   if (typeof document === "undefined" || !target) {
     target.innerHTML = html;
     return;
@@ -231,6 +238,7 @@ function applyRenderedHtml(target, html) {
   try {
     const template = document.createElement("template");
     template.innerHTML = html;
+    decorateHtmlPreviews(template.content, markdown);
     patchMarkdownDom(target, template.content, {
       selection: typeof window !== "undefined" ? window.getSelection?.() : null
     });

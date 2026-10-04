@@ -16,8 +16,14 @@ function patchChildren(parent, incomingChildren, selection) {
     const match = findReusable(currentChildren, incoming, used);
     if (match) {
       used.add(match);
-      patchNode(match, incoming, selection);
-      nextChildren.push(match);
+      if (match.dataset?.htmlPreview || incoming.dataset?.htmlPreview) {
+        const samePreview = match.dataset?.htmlPreview === incoming.dataset?.htmlPreview &&
+          match.querySelector("code")?.textContent === incoming.querySelector("code")?.textContent;
+        nextChildren.push(samePreview ? match : cloneNode(incoming));
+      } else {
+        patchNode(match, incoming, selection);
+        nextChildren.push(match);
+      }
     } else {
       nextChildren.push(cloneNode(incoming));
     }
@@ -55,8 +61,18 @@ function sameShape(left, right) {
 }
 
 function replaceChildren(parent, nextChildren) {
-  if (typeof parent.replaceChildren === "function") {
-    parent.replaceChildren(...nextChildren);
+  if (typeof parent.insertBefore === "function") {
+    // Detaching an unchanged iframe would destroy its form/interaction state.
+    let cursor = parent.firstChild;
+    for (const child of nextChildren) {
+      if (child !== cursor) parent.insertBefore(child, cursor);
+      cursor = child.nextSibling;
+    }
+    while (cursor) {
+      const next = cursor.nextSibling;
+      parent.removeChild(cursor);
+      cursor = next;
+    }
     return;
   }
 

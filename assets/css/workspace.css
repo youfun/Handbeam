@@ -2641,6 +2641,67 @@ button.workspace-file-row:hover,
   margin: 0;
 }
 
+[data-html-preview] {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--panel);
+}
+
+.html-preview-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 2.5rem;
+  padding: 0.3rem 2.5rem 0.3rem 0.65rem;
+  border-bottom: 1px solid var(--border);
+  font-size: var(--font-size-xs);
+}
+
+.html-preview-label,
+.html-preview-status {
+  color: var(--muted-2);
+}
+
+.html-preview-status {
+  margin-left: auto;
+}
+
+.html-preview-toolbar button {
+  padding: 0.2rem 0.5rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.html-preview-toolbar button[aria-pressed="true"] {
+  color: var(--text);
+  background: var(--panel-2);
+}
+
+.html-preview-frame {
+  display: block;
+  width: 100%;
+  height: 360px;
+  border: 0;
+  background: var(--panel);
+}
+
+[data-html-preview] [hidden] {
+  display: none;
+}
+
+[data-html-preview] > pre {
+  max-height: 360px;
+  overflow: auto;
+}
+
+[data-html-preview] .code-block-copy {
+  opacity: 1;
+}
+
 .code-block-copy {
   position: absolute;
   top: 0.35rem;

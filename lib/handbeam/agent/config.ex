@@ -255,7 +255,30 @@ defmodule Handbeam.Agent.Config do
     |> maybe_inject_project_context(opts)
     |> maybe_inject_skills(opts)
     |> maybe_append_task_instructions(opts)
+    |> maybe_inject_inline_previews(opts)
     |> append_prompt_section(Handbeam.Agent.HostEnvironment.describe())
+  end
+
+  defp maybe_inject_inline_previews(system_prompt, opts) do
+    if Keyword.get(opts, :source) == :live_view do
+      append_prompt_section(system_prompt, """
+
+      ## Inline HTML previews
+
+      This Web chat renders fenced `html` and `widget` blocks as inline previews.
+      When the user requests an interactive visualization, calculator, or small UI,
+      return a self-contained HTML block with inline CSS and JavaScript. Use ordinary
+      Markdown for explanations; do not create a widget unless it helps the request.
+      Content appears while streaming; JavaScript runs only after the closing fence.
+      The iframe has an opaque origin: no parent DOM, cookies, storage, host tools,
+      external scripts, network fetches, or form submissions. Use local data and
+      vanilla JavaScript; no CDN dependencies. Make layouts responsive. Interaction
+      stays inside the widget and cannot send messages or perform host actions.
+      Never claim a preview was verified unless you actually tested it.
+      """)
+    else
+      system_prompt
+    end
   end
 
   defp free_chat_system_prompt do

@@ -11,6 +11,17 @@
 - MCP、BEAM 内省、跨会话记忆
 - Android / iOS 共用同一套 Coordinator / Runner
 
+## 聊天内 HTML / 交互组件（Web）
+
+在 Web 聊天中要求可视化、计算器或小型交互界面，助手可用 `html` / `widget`
+代码块直接展示预览。支持流式静态预览、源码切换和复制；代码块闭合后运行内联
+JavaScript。历史仍保存为对话 Markdown，重新打开可恢复预览，交互中的临时值不持久化。
+
+预览使用不含 `allow-same-origin` 的 iframe 沙箱，不能访问应用 DOM、cookie、存储
+或宿主工具。CSP 阻止外部脚本、fetch 和表单提交；组件需自包含，不依赖 CDN。
+这不是操作系统级或完整的无网络沙箱（iframe 自身导航仍受浏览器规则控制）。
+Android / iOS 原生聊天目前仍显示代码，不支持此内联预览。
+
 ## 应用截图
 
 Android 原生聊天主界面，英文界面真机截图。

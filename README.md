@@ -11,6 +11,19 @@ A local agent assistant. Chat, tools, and memory stay on the machine. One OTP ru
 - MCP, BEAM introspection, and memory across sessions
 - Same Coordinator / Runner on Android and iOS
 
+## Inline HTML / interactive widgets (Web)
+
+Ask for a visualization, calculator, or small interactive UI in Web chat. Assistant
+`html` / `widget` fences render inline with streaming static previews, source view,
+and copy. Inline JavaScript runs after the closing fence. History stays Markdown;
+reopening restores previews, not transient input state.
+
+An iframe sandbox without `allow-same-origin` isolates application DOM, cookies,
+storage, and host tools. CSP blocks external scripts, fetches, and form submissions;
+widgets must be self-contained, without CDN dependencies. This is not an OS-level
+or fully network-isolated sandbox: frame navigation remains governed by browser
+rules. Android / iOS native chat still displays code, without inline previews.
+
 ## App screenshot
 
 Native Android chat interface, captured on a physical device in English.
