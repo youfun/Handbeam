@@ -459,7 +459,14 @@ defmodule Handbeam.Tool.Builtin.GitTest do
     File.write!(spaced, "main\n")
     File.write!(nl, "main\n")
     fixture_commit(git, work, "main")
-    {_out, _status} = System.cmd(git, ["merge", "other"], cd: work, stderr_to_stdout: true)
+
+    {_out, 1} =
+      System.cmd(
+        git,
+        ["-c", "user.name=Fixture", "-c", "user.email=fix@example.com", "merge", "other"],
+        cd: work,
+        stderr_to_stdout: true
+      )
 
     assert {:ok, _, %{entries: entries}} = Git.execute(%{"action" => "status"}, ctx)
     spaced_entry = Enum.find(entries, &(&1.path == "has space.txt"))

@@ -538,25 +538,30 @@ defmodule Handbeam.Agent.RunnerTest do
     defmodule provider do
       @behaviour Handbeam.Agent.Provider
 
-      def complete(_messages, _tool_defs, config) do
-        {:ok,
-         %{
-           stop_reason: :tool_use,
-           messages: [
-             Handbeam.Agent.Message.assistant([
-               %{
-                 type: "tool_use",
-                 id: "bash-1",
-                 name: "bash",
-                 input: %{
-                   "command" =>
-                     "echo $$ > #{config.shell_file}; sleep 30 & echo $! > #{config.child_file}; wait"
+      def complete(messages, tool_defs, config) do
+        if Enum.any?(messages, &(&1.role == :tool_result)) do
+          Handbeam.Agent.RunnerTest.BlockingProvider.complete(messages, tool_defs, config)
+        else
+          {:ok,
+           %{
+             stop_reason: :tool_use,
+             messages: [
+               Handbeam.Agent.Message.assistant([
+                 %{
+                   type: "tool_use",
+                   id: "bash-1",
+                   name: "bash",
+                   input: %{
+                     "command" =>
+                       "echo $$ > #{config.shell_file}; sleep 30 & echo $! > #{config.child_file}; wait",
+                     "wait_ms" => 100
+                   }
                  }
-               }
-             ])
-           ],
-           usage: %{input_tokens: 1, output_tokens: 1}
-         }}
+               ])
+             ],
+             usage: %{input_tokens: 1, output_tokens: 1}
+           }}
+        end
       end
 
       def stream(messages, tool_defs, config, _on_chunk),
@@ -572,7 +577,11 @@ defmodule Handbeam.Agent.RunnerTest do
                opts(
                  timeout_ms: 1_500,
                  provider: provider,
-                 provider_config: %{shell_file: shell_file, child_file: child_file},
+                 provider_config: %{
+                   shell_file: shell_file,
+                   child_file: child_file,
+                   notify: self()
+                 },
                  tools: [Handbeam.Tool.Builtin.Bash],
                  middleware: [],
                  workspace_path: workspace,
@@ -584,9 +593,14 @@ defmodule Handbeam.Agent.RunnerTest do
       assert File.exists?(shell_file) and File.exists?(child_file)
     end)
 
-    shell_pid = shell_file |> File.read!() |> String.trim() |> String.to_integer()
-    child_pid = child_file |> File.read!() |> String.trim() |> String.to_integer()
-    assert_receive {:agent_event, %{kind: :run_end, payload: %{status: "timeout"}}}, 2_000
+    {shell_pid, child_pid} = host_process_ids(shell_file, child_file)
+
+    assert_receive {:agent_event,
+                    %{
+                      kind: :run_end,
+                      payload: %{status: "timeout", reason: :run_inactivity_timeout}
+                    }},
+                   3_000
 
     assert_eventually(fn ->
       refute alive_os?(shell_pid)
@@ -657,8 +671,8 @@ defmodule Handbeam.Agent.RunnerTest do
       assert File.exists?(shell_file) and File.exists?(child_file)
     end)
 
-    shell_pid = shell_file |> File.read!() |> String.trim() |> String.to_integer()
-    child_pid = child_file |> File.read!() |> String.trim() |> String.to_integer()
+    {shell_pid, child_pid} = host_process_ids(shell_file, child_file)
+    assert Process.alive?(runner)
     Process.exit(runner, :kill)
 
     assert_eventually(fn ->
@@ -868,8 +882,53 @@ defmodule Handbeam.Agent.RunnerTest do
     workspace
   end
 
+  defp host_process_ids(shell_file, child_file) do
+    shell_pid = shell_file |> File.read!() |> String.trim() |> String.to_integer()
+    child_pid = child_file |> File.read!() |> String.trim() |> String.to_integer()
+
+    if :os.type() == {:unix, :linux} do
+      # $$ and $! are namespace-local under Bubblewrap, not host PIDs.
+      # Resolve the shell by its unique command marker, then the child within
+      # that same PID namespace. Never mistake a namespace PID of 2 for kthreadd.
+      processes =
+        for name <- File.ls!("/proc"),
+            {pid, ""} <- [Integer.parse(name)],
+            {:ok, status} <- [File.read("/proc/#{pid}/status")],
+            [_, ids] <- [Regex.run(~r/^NSpid:\s*(.+)$/m, status)] do
+          {pid, ids |> String.split() |> List.last() |> String.to_integer()}
+        end
+
+      assert [{host_shell, ^shell_pid}] =
+               Enum.filter(processes, fn {pid, local} ->
+                 local == shell_pid and
+                   case File.read("/proc/#{pid}/cmdline") do
+                     {:ok, command} -> String.contains?(command, shell_file)
+                     _ -> false
+                   end
+               end)
+
+      namespace = File.read_link!("/proc/#{host_shell}/ns/pid")
+
+      assert [{host_child, ^child_pid}] =
+               Enum.filter(processes, fn {pid, local} ->
+                 local == child_pid and
+                   File.read_link("/proc/#{pid}/ns/pid") == {:ok, namespace}
+               end)
+
+      {host_shell, host_child}
+    else
+      {shell_pid, child_pid}
+    end
+  end
+
   defp alive_os?(pid) when is_integer(pid) do
-    :os.cmd(~c"ps -p #{pid} -o pid=") |> to_string() |> String.contains?(Integer.to_string(pid))
+    case System.cmd("ps", ["-p", Integer.to_string(pid), "-o", "stat="]) do
+      {state, 0} ->
+        String.trim(state) != "" and not String.starts_with?(String.trim(state), ["Z", "X"])
+
+      _ ->
+        false
+    end
   end
 
   defp assert_eventually(fun, attempts \\ 50)

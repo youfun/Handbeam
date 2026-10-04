@@ -279,8 +279,12 @@ defmodule Handbeam.Tool.Builtin.BashTest do
     test "allows reading a workspace symlink that points to a host file" do
       escaped_link = Path.join(File.cwd!(), "tmp_bash_symlink_escape")
 
+      # Linux mounts a private /tmp. A host-read fixture must live outside it.
       outside =
-        Path.join(System.tmp_dir!(), "bash-readable-host-#{System.unique_integer([:positive])}")
+        Path.join(
+          Path.dirname(File.cwd!()),
+          "bash-readable-host-#{System.unique_integer([:positive])}"
+        )
 
       File.write!(outside, "host-readable")
       File.ln_s!(outside, escaped_link)
