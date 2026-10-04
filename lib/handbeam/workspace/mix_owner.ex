@@ -420,8 +420,9 @@ defmodule Handbeam.Workspace.MixOwner do
 
       if current != path and is_list(path) do
         :code.purge(protocol)
-        :code.delete(protocol)
 
+        # Replace the current code atomically; deleting it would let another
+        # process autoload a protocol and occupy the old-code slot first.
         result =
           :code.load_abs(
             path

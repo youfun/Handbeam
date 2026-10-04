@@ -375,6 +375,7 @@ defmodule Handbeam.Tool.RegistryTest do
 
   describe "nested-only exposure" do
     test "omits nested-only module and virtual tools from provider defs and prompt snippets" do
+      assert :ok = Registry.register(Handbeam.Tool.Builtin.Read)
       assert :ok = Registry.register(NestedOnlyProbe)
 
       assert :ok =

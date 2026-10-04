@@ -140,6 +140,7 @@ defmodule Handbeam.Workspace.MixToolchain do
       Path.join(dest, "manifest.json"),
       Handbeam.JSON.encode!(manifest, pretty: true) <> "\n"
     )
+
     :ok
   end
 
@@ -400,7 +401,7 @@ defmodule Handbeam.Workspace.MixToolchain do
     case hex_archive_root() do
       nil ->
         Mix.raise(
-          "Hex #{@hex_version} archive not found. Install it with mix local.hex --force " <>
+          "Hex #{@hex_version} archive not found. Install it with mix local.hex #{@hex_version} --force " <>
             "and keep this exact version for mobile packaging."
         )
 

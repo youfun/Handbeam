@@ -178,8 +178,11 @@ defmodule Handbeam.WorkspaceSettings do
         case put_approvals_reviewer(content, Atom.to_string(reviewer)) do
           {:ok, updated} ->
             case File.write(settings_path, updated) do
-              :ok -> :ok
-              {:error, reason} -> {:error, "Failed to write workspace settings: #{inspect(reason)}"}
+              :ok ->
+                :ok
+
+              {:error, reason} ->
+                {:error, "Failed to write workspace settings: #{inspect(reason)}"}
             end
 
           {:error, reason} ->

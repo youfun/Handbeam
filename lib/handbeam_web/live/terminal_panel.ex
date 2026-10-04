@@ -227,7 +227,9 @@ defmodule HandbeamWeb.Live.TerminalPanel do
           id={"terminal-command-input-#{@command_nonce}"}
           name="line"
           type="text"
-          placeholder={if @active_pty_pid, do: "Type a command and press Enter", else: "Starting shell…"}
+          placeholder={
+            if @active_pty_pid, do: "Type a command and press Enter", else: "Starting shell…"
+          }
           autocomplete="off"
           autocapitalize="off"
           autocorrect="off"

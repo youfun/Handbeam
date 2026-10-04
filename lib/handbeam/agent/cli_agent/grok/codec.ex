@@ -81,8 +81,12 @@ defmodule Handbeam.Agent.CliAgent.Grok.Codec do
     line = String.trim(line)
 
     cond do
-      line == "" -> :ignore
-      String.starts_with?(line, "You are logged in") -> :ignore
+      line == "" ->
+        :ignore
+
+      String.starts_with?(line, "You are logged in") ->
+        :ignore
+
       true ->
         case JSON.decode(line) do
           {:ok, %{} = message} -> {:ok, message}
@@ -92,8 +96,12 @@ defmodule Handbeam.Agent.CliAgent.Grok.Codec do
   end
 
   @spec session_id(map()) :: {:ok, String.t()} | {:error, term()}
-  def session_id(%{"result" => %{"sessionId" => id}}) when is_binary(id) and id != "", do: {:ok, id}
-  def session_id(%{"error" => error}) when is_map(error), do: {:error, {:protocol, error_message(error)}}
+  def session_id(%{"result" => %{"sessionId" => id}}) when is_binary(id) and id != "",
+    do: {:ok, id}
+
+  def session_id(%{"error" => error}) when is_map(error),
+    do: {:error, {:protocol, error_message(error)}}
+
   def session_id(_), do: {:error, :protocol}
 
   @spec stop_reason(map()) :: {:ok, atom()} | :pending | {:error, term()}
@@ -101,7 +109,9 @@ defmodule Handbeam.Agent.CliAgent.Grok.Codec do
     {:ok, stop_atom(reason)}
   end
 
-  def stop_reason(%{"error" => error}) when is_map(error), do: {:error, {:protocol, error_message(error)}}
+  def stop_reason(%{"error" => error}) when is_map(error),
+    do: {:error, {:protocol, error_message(error)}}
+
   def stop_reason(_), do: :pending
 
   @doc """
@@ -110,7 +120,8 @@ defmodule Handbeam.Agent.CliAgent.Grok.Codec do
   ACP notifications become normalized events. `session/request_permission`
   is a server request the session must answer. Non-ACP notices are ignored.
   """
-  @spec classify(wire()) :: {:event, term()} | {:server_request, map()} | {:response, wire()} | :ignore
+  @spec classify(wire()) ::
+          {:event, term()} | {:server_request, map()} | {:response, wire()} | :ignore
   def classify(message) when is_map(message) do
     cond do
       permission_request?(message) ->

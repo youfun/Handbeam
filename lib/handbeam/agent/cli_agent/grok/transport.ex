@@ -11,7 +11,8 @@ defmodule Handbeam.Agent.CliAgent.Grok.Transport do
 
   @executable "grok"
 
-  @spec open(keyword()) :: {:ok, port(), pos_integer() | nil} | {:error, :not_available | String.t()}
+  @spec open(keyword()) ::
+          {:ok, port(), pos_integer() | nil} | {:error, :not_available | String.t()}
   def open(opts) do
     with {:ok, executable} <- resolve(opts) do
       spawn_port(executable, Codec.argv(opts), Keyword.get(opts, :cwd))
@@ -47,8 +48,11 @@ defmodule Handbeam.Agent.CliAgent.Grok.Transport do
       cwd = Keyword.get(opts, :cwd) || File.cwd!()
 
       case System.cmd(executable, ["models"], cd: cwd, stderr_to_stdout: true) do
-        {output, 0} -> {:ok, output}
-        {output, status} -> {:error, "grok models exited #{status}: #{String.slice(output, 0, 200)}"}
+        {output, 0} ->
+          {:ok, output}
+
+        {output, status} ->
+          {:error, "grok models exited #{status}: #{String.slice(output, 0, 200)}"}
       end
     end
   end

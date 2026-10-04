@@ -38,10 +38,14 @@ defmodule HandbeamWeb.Feature.WorkspaceLifecycleFeatureTest do
 
     page =
       page
+      |> assert_has("#activity-bar[phx-hook='ConversationSidebar']")
+      |> assert_has(
+        "#workspace-group-#{workspace["id"]}[data-workspace-id='#{workspace["id"]}'][data-workspace-default='false']"
+      )
+      |> assert_has("#workspace-hover-card [data-workspace-hover-rename]")
+      |> assert_has("#workspace-hover-remove[data-workspace-hover-remove]")
       |> unwrap(fn view ->
-        render_click(view, "toggle_workspace_menu", %{"id" => workspace["id"]})
-      end)
-      |> unwrap(fn view ->
+        # ConversationSidebar's workspace hover card pushes this server event.
         render_click(view, "open_rename_workspace", %{"id" => workspace["id"]})
       end)
       |> assert_has("#rename-workspace-overlay", timeout: 2_000)
@@ -55,9 +59,9 @@ defmodule HandbeamWeb.Feature.WorkspaceLifecycleFeatureTest do
 
     page
     |> unwrap(fn view ->
-      render_click(view, "toggle_workspace_menu", %{"id" => workspace["id"]})
+      # The remove control is client-wired by ConversationSidebar to this event.
+      render_click(view, "open_remove_workspace", %{"id" => workspace["id"]})
     end)
-    |> click_button("#workspace-action-remove-#{workspace["id"]}", "Remove workspace")
     |> assert_has("#remove-workspace-overlay", timeout: 2_000)
     |> click_button("#confirm-remove-workspace", "Remove")
     |> refute_has("#workspace-group-#{workspace["id"]}", timeout: 2_000)

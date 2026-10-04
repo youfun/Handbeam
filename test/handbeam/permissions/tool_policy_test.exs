@@ -415,6 +415,7 @@ defmodule Handbeam.Permissions.ToolPolicyTest do
                policy,
                call("task_status", %{"action" => "apply"})
              ) == :auto
+
       assert ToolPolicy.decision(policy, call("run_elixir_script")) == :auto
       assert ToolPolicy.decision(policy, call("mix_project")) == :auto
       assert ToolPolicy.decision(policy, call("ext__term_send")) == :auto

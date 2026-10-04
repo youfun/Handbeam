@@ -258,5 +258,4 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceComponents do
     </div>
     """
   end
-
 end

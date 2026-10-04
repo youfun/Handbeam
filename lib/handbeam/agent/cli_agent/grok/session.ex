@@ -40,7 +40,9 @@ defmodule Handbeam.Agent.CliAgent.Grok.Session do
         timeout = Keyword.get(opts, :timeout, @init_timeout)
 
         case GenServer.call(pid, :await_ready, timeout) do
-          {:ok, handle} -> {:ok, handle}
+          {:ok, handle} ->
+            {:ok, handle}
+
           {:error, reason} ->
             stop(pid)
             {:error, reason}
@@ -113,7 +115,14 @@ defmodule Handbeam.Agent.CliAgent.Grok.Session do
   end
 
   def handle_call({:send_message, text, on_event, decision}, from, %{status: :ready} = state) do
-    state = %{state | status: :in_turn, listener: on_event, events: [], pending: Map.put(state.pending, :decision, decision)}
+    state = %{
+      state
+      | status: :in_turn,
+        listener: on_event,
+        events: [],
+        pending: Map.put(state.pending, :decision, decision)
+    }
+
     {:noreply, write(state, Codec.prompt(next_id(state), state.session_id, text), {:turn, from})}
   end
 
@@ -129,7 +138,8 @@ defmodule Handbeam.Agent.CliAgent.Grok.Session do
   def handle_call(:interrupt, _from, state), do: {:reply, {:error, :not_ready}, state}
 
   @impl true
-  def handle_info({port, {:data, data}}, %{port: port} = state), do: {:noreply, ingest(state, data)}
+  def handle_info({port, {:data, data}}, %{port: port} = state),
+    do: {:noreply, ingest(state, data)}
 
   def handle_info({port, {:exit_status, status}}, %{port: port} = state) do
     {:noreply, %{fail(state, {:exit, status}) | port: nil, status: :closed}}

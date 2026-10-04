@@ -159,6 +159,7 @@ defmodule Handbeam.Tool.Builtin.MixProjectTest do
   end
 
   test "run only calls modules owned by the workspace project", %{work: work, ctx: ctx} do
+    assert {:module, Jason} = Code.ensure_loaded(Jason)
     write_project(work, :hex_state)
 
     assert {:error, message, _} =

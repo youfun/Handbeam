@@ -110,11 +110,13 @@ defmodule Handbeam.ThreadsTest do
 
     File.write!(
       ConversationStore.meta_path(c.target),
-      Jason.encode!(Map.put(meta, "workspace_id", "other"))
+      Handbeam.JSON.encode!(Map.put(meta, "workspace_id", "other"))
     )
 
     assert {:ok, %{threads: [%{"id" => id}]}} = Threads.find(%{}, c.context)
     assert id == c.source
+    assert {:error, :not_accessible} = Threads.read(%{"thread" => c.target}, c.context)
+    assert {:error, :not_accessible} = Threads.status(%{"thread" => c.target}, c.context)
   end
 
   test "date filtering normalizes offsets and rejects malformed input", c do

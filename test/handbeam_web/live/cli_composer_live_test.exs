@@ -12,12 +12,19 @@ defmodule HandbeamWeb.CliComposerLiveTest do
   import Phoenix.LiveViewTest
 
   alias Handbeam.Agent.CliAgent.Registry
+  alias Handbeam.TestSupport.E2EHarness
 
   setup do
+    E2EHarness.isolate_home!("cli-composer")
+    E2EHarness.use_fake_provider!(:simple_answer)
     Registry.reset()
     Application.delete_env(:handbeam, :fake_cli_notify)
 
     on_exit(fn ->
+      for conversation <- Handbeam.ConversationStore.list(include_timeline?: false) do
+        E2EHarness.cancel!(conversation["id"])
+      end
+
       Registry.reset()
       Application.delete_env(:handbeam, :fake_cli_notify)
     end)
@@ -32,7 +39,8 @@ defmodule HandbeamWeb.CliComposerLiveTest do
     assert html =~ ~s(id="cli-picker")
     assert html =~ "Handbeam"
     assert html =~ ~s(id="model-picker")
-    refute html =~ "fake-model"
+    assert has_element?(view, "#model-picker option[value='fake/fake-model']")
+    refute has_element?(view, "#cli-model-picker")
 
     view
     |> form("#composer", %{message: "hello handbeam"})

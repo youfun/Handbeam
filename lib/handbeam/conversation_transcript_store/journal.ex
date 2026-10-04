@@ -48,8 +48,10 @@ defmodule Handbeam.ConversationTranscriptStore.Journal do
   end
 
   @impl true
-  def init(_opts),
-    do: {:ok, %{cache: %{}, clock: 0, pending: MapSet.new(), retry_timer: nil, locks: %{}}}
+  def init(_opts) do
+    Process.flag(:trap_exit, true)
+    {:ok, %{cache: %{}, clock: 0, pending: MapSet.new(), retry_timer: nil, locks: %{}}}
+  end
 
   @impl true
   def terminate(_reason, state) do

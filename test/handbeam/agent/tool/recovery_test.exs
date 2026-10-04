@@ -1,4 +1,10 @@
 defmodule Handbeam.Agent.Tool.RecoveryTest do
+  @moduledoc """
+  Recovery boundary failures that cannot be exercised inside one Agent run:
+  persisted input IDs must not collide across VM restarts, and retry_of must
+  retain the original body while rejecting unavailable artifacts.
+  """
+
   use ExUnit.Case, async: false
 
   alias Handbeam.Agent.OperationReceipt
@@ -7,11 +13,61 @@ defmodule Handbeam.Agent.Tool.RecoveryTest do
   alias Handbeam.Tool.Builtin.{Edit, Grep, Write}
 
   setup do
-    root = Path.join(System.tmp_dir!(), "handbeam-recovery-#{System.unique_integer([:positive])}")
-    File.mkdir_p!(root)
+    root = Path.join(System.tmp_dir!(), "handbeam-recovery-#{Ecto.UUID.generate()}")
+    home = Path.join(root, "home")
+    File.mkdir_p!(home)
+    previous_home = System.get_env("HOME")
+    previous_root = Application.get_env(:handbeam, :conversation_root)
+    System.put_env("HOME", home)
     Application.put_env(:handbeam, :conversation_root, root)
-    on_exit(fn -> File.rm_rf(root) end)
+
+    on_exit(fn ->
+      if previous_home,
+        do: System.put_env("HOME", previous_home),
+        else: System.delete_env("HOME")
+
+      if previous_root,
+        do: Application.put_env(:handbeam, :conversation_root, previous_root),
+        else: Application.delete_env(:handbeam, :conversation_root)
+
+      File.rm_rf(root)
+    end)
+
     %{root: root, workspace: Path.join(root, "workspace")}
+  end
+
+  test "saved input IDs stay distinct across VM restarts", %{root: root} do
+    script = """
+    [root, body] = System.argv()
+    Application.put_env(:handbeam, :conversation_root, root)
+    context = %{conversation_id: "restart"}
+    {:ok, _, id} = Handbeam.Agent.Tool.SavedInput.prepare(
+      "write", %{"file_path" => "note.txt", "content" => body}, context, ["file_path"]
+    )
+    IO.puts(id)
+    """
+
+    paths = Path.wildcard(Path.join(Mix.Project.build_path(), "lib/*/ebin"))
+    args = ["--erl", "+S 1:1"] ++ Enum.flat_map(paths, &["-pa", &1]) ++ ["-e", script]
+
+    ids =
+      for body <- ["before restart", "after restart"] do
+        {output, status} =
+          System.cmd(System.find_executable("elixir"), args ++ [root, body],
+            stderr_to_stdout: true
+          )
+
+        assert status == 0, output
+        String.trim(output)
+      end
+
+    assert [before_id, after_id] = ids
+    refute before_id == after_id
+
+    for {id, body} <- Enum.zip(ids, ["before restart", "after restart"]) do
+      assert {:ok, %{"receipt" => %{"content" => ^body}}} =
+               OperationReceipt.lookup({:tool_input, "restart"}, id)
+    end
   end
 
   test "retry_of reuses a large write without sending the body again", %{workspace: workspace} do

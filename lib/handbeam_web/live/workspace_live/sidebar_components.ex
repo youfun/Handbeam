@@ -670,7 +670,17 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
           <div class="workspace-hover-path" data-workspace-hover-path></div>
           <div class="workspace-hover-repo" data-workspace-hover-repo hidden>
             <span>{gettext("仓库")}</span>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <svg
+              width="13"
+              height="13"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              aria-hidden="true"
+            >
               <line x1="6" y1="3" x2="6" y2="15" />
               <circle cx="18" cy="6" r="3" /><circle cx="6" cy="18" r="3" />
               <path d="M18 9a9 9 0 0 1-9 9" />
@@ -740,8 +750,21 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
           aria-label={gettext("复制标题")}
         >
           <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
-            <rect x="4.25" y="3.25" width="5.5" height="6.5" rx="0.75" stroke="currentColor" stroke-width="1.1" />
-            <path d="M3.25 8.75H2.75A.75.75 0 0 1 2 8V2.75A.75.75 0 0 1 2.75 2H8a.75.75 0 0 1 .75.75V3.25" stroke="currentColor" stroke-width="1.1" stroke-linecap="round" />
+            <rect
+              x="4.25"
+              y="3.25"
+              width="5.5"
+              height="6.5"
+              rx="0.75"
+              stroke="currentColor"
+              stroke-width="1.1"
+            />
+            <path
+              d="M3.25 8.75H2.75A.75.75 0 0 1 2 8V2.75A.75.75 0 0 1 2.75 2H8a.75.75 0 0 1 .75.75V3.25"
+              stroke="currentColor"
+              stroke-width="1.1"
+              stroke-linecap="round"
+            />
           </svg>
         </button>
         <span class="conversation-hover-age" data-hover-age hidden></span>
@@ -753,13 +776,34 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
         hidden
       >
         <div :if={meta.folder} class="conversation-hover-meta">
-          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <svg
+            width="13"
+            height="13"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
             <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
           </svg>
           <span class="truncate">{meta.folder}</span>
         </div>
         <div :if={meta.branch} class="conversation-hover-meta">
-          <svg class="conversation-hover-branch-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <svg
+            class="conversation-hover-branch-icon"
+            width="13"
+            height="13"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
             <line x1="6" y1="3" x2="6" y2="15" />
             <circle cx="18" cy="6" r="3" /><circle cx="6" cy="18" r="3" />
             <path d="M18 9a9 9 0 0 1-9 9" />

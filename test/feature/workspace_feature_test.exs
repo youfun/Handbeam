@@ -7,10 +7,12 @@ defmodule HandbeamWeb.Feature.WorkspaceFeatureTest do
     - Switch model (切换model)
     - New conversation (增加新对话)
     - Archive / unarchive conversation (存档/恢复)
-    - Recycle bin visibility (回收站)
+    - Archived conversation visibility (已存档)
   """
 
   use HandbeamWeb.FeatureCase, async: false
+
+  alias Handbeam.TestSupport.E2EHarness
 
   defp isolate_conversation_home! do
     old_home = System.get_env("HOME")
@@ -22,6 +24,10 @@ defmodule HandbeamWeb.Feature.WorkspaceFeatureTest do
     safe_rm_test_rune!(home_dir)
 
     on_exit(fn ->
+      for conversation <- Handbeam.ConversationStore.list(include_timeline?: false) do
+        E2EHarness.cancel!(conversation["id"])
+      end
+
       if old_home, do: System.put_env("HOME", old_home), else: System.delete_env("HOME")
 
       if File.exists?(home_dir), do: File.rm_rf!(home_dir)
@@ -43,6 +49,17 @@ defmodule HandbeamWeb.Feature.WorkspaceFeatureTest do
 
   setup do
     isolate_conversation_home!()
+    old_provider = Application.get_env(:handbeam, :test_provider)
+    E2EHarness.use_fake_provider!(:simple_answer)
+
+    on_exit(fn ->
+      if old_provider do
+        Application.put_env(:handbeam, :test_provider, old_provider)
+      else
+        Application.delete_env(:handbeam, :test_provider)
+      end
+    end)
+
     :ok
   end
 
@@ -233,34 +250,39 @@ defmodule HandbeamWeb.Feature.WorkspaceFeatureTest do
       |> assert_has("#no-messages", "No messages yet")
     end
 
-    test "after archive, recycle bin shows archived conversations", %{conn: conn} do
-      conn
-      |> visit("/")
-      |> click_button(
-        "button[phx-click='new_conversation_in_workspace'][phx-value-ws_id='default']",
-        ""
-      )
-      |> within(".workspace-group:first-child .conversations-list", fn s ->
+    test "Archived group contains archived conversations", %{conn: conn} do
+      session =
+        conn
+        |> visit("/")
+        |> click_button(
+          "button[phx-click='new_conversation_in_workspace'][phx-value-ws_id='default']",
+          ""
+        )
+        |> fill_in("#ai-input", "Message", with: "Archive this conversation", exact: false)
+        |> click_button("#send-button", "")
+        |> assert_has(".msg-bubble.msg-assistant", "Hello! I am a fake provider response.",
+          timeout: 5_000
+        )
+
+      "/w/default/c/" <> archived_id = session.current_path
+
+      session
+      |> within("#conversation-#{archived_id}", fn s ->
         s
         |> click_button("button[phx-click='toggle_conversation_menu']", "More actions")
         |> click_button(".conversation-menu-item[phx-click='archive_conversation']", "Archive")
       end)
+      |> click_button("button[phx-click='toggle_archive']", "Archived")
+      |> assert_has("#archived-conversation-#{archived_id}")
 
-      # Verify the conversation was archived via the store API
-      archived_count =
-        Handbeam.ConversationStore.storage_path()
-        |> File.read!()
-        |> Jason.decode!()
-        |> Map.fetch!("conversations")
-        |> Enum.count(&is_binary(&1["archived_at"]))
-
-      assert archived_count >= 1
+      assert {:ok, archived} = Handbeam.ConversationStore.get_metadata(archived_id)
+      assert is_binary(archived["archived_at"])
     end
 
-    test "recycle bin toggle button is present", %{conn: conn} do
+    test "archive toggle button is present", %{conn: conn} do
       conn
       |> visit("/")
-      |> assert_has("button", "Trash")
+      |> assert_has("button[phx-click='toggle_archive']", "Archived")
     end
   end
 
@@ -277,7 +299,7 @@ defmodule HandbeamWeb.Feature.WorkspaceFeatureTest do
         "button[phx-click='new_conversation_in_workspace'][phx-value-ws_id='default']",
         ""
       )
-      |> within(".workspace-group:first-child .conversations-list", fn session ->
+      |> within("#workspace-conversations-default", fn session ->
         session
         |> click_button("button[phx-click='toggle_conversation_menu']", "More actions")
         |> click_button(".conversation-menu-item[phx-click='toggle_pin_conversation']", "Pin")
@@ -292,7 +314,7 @@ defmodule HandbeamWeb.Feature.WorkspaceFeatureTest do
         )
       end)
       |> refute_has("#pinned-conversations")
-      |> assert_has(".workspace-group:first-child .conversations-list", "New chat")
+      |> assert_has("#workspace-conversations-default", "New chat")
     end
   end
 
@@ -311,7 +333,7 @@ defmodule HandbeamWeb.Feature.WorkspaceFeatureTest do
       )
       |> fill_in("#ai-input", "Message", with: "Need a title", exact: false)
       |> click_button("#send-button", "")
-      |> within(".workspace-group:first-child .conversations-list", fn s ->
+      |> within("#workspace-conversations-default", fn s ->
         s
         |> click_button("button[phx-click='toggle_conversation_menu']", "More actions")
         |> click_button(".conversation-menu-item[phx-click='open_rename_conversation']", "Rename")
@@ -330,41 +352,49 @@ defmodule HandbeamWeb.Feature.WorkspaceFeatureTest do
       :ok
     end
 
-    test "restore button appears in recycle bin after archive", %{conn: conn} do
-      conn
-      |> visit("/")
+    test "restore button in Archived restores the persisted conversation", %{conn: conn} do
+      session =
+        conn
+        |> visit("/")
+        |> click_button(
+          "button[phx-click='new_conversation_in_workspace'][phx-value-ws_id='default']",
+          ""
+        )
+        |> fill_in("#ai-input", "Message", with: "Restore this conversation", exact: false)
+        |> click_button("#send-button", "")
+        |> assert_has(".msg-bubble.msg-assistant", "Hello! I am a fake provider response.",
+          timeout: 5_000
+        )
+
+      "/w/default/c/" <> archived_id = session.current_path
+
+      session =
+        session
+        |> within("#conversation-#{archived_id}", fn s ->
+          s
+          |> click_button("button[phx-click='toggle_conversation_menu']", "More actions")
+          |> click_button(".conversation-menu-item[phx-click='archive_conversation']", "Archive")
+        end)
+
+      assert {:ok, archived} =
+               Handbeam.ConversationStore.get(archived_id, include_timeline?: false)
+
+      assert is_binary(archived["archived_at"])
+
+      session
+      |> click_button("button[phx-click='toggle_archive']", "Archived")
+      |> assert_has("#archived-conversation-#{archived_id}")
       |> click_button(
-        "button[phx-click='new_conversation_in_workspace'][phx-value-ws_id='default']",
+        "#archived-conversation-#{archived_id} button[phx-click='unarchive_conversation']",
         ""
       )
-      |> within(".workspace-group:first-child .conversations-list", fn s ->
-        s
-        |> click_button("button[phx-click='toggle_conversation_menu']", "More actions")
-        |> click_button(".conversation-menu-item[phx-click='archive_conversation']", "Archive")
-      end)
+      |> refute_has("#archived-conversation-#{archived_id}")
+      |> assert_has("#conversation-#{archived_id}")
+      |> click_button("#conversation-#{archived_id} button[phx-click='select_conversation']", "")
+      |> assert_has(".msg-bubble.msg-user", "Restore this conversation")
 
-      # Verify archive + retrieve the archived id
-      index_path = Handbeam.ConversationStore.storage_path()
-
-      conversations =
-        index_path
-        |> File.read!()
-        |> Jason.decode!()
-        |> Map.fetch!("conversations")
-
-      archived = Enum.filter(conversations, &is_binary(&1["archived_at"]))
-      assert length(archived) >= 1
-      archived_id = hd(archived)["id"]
-
-      # Unarchive and verify
-      {:ok, _restored} = Handbeam.ConversationStore.unarchive(archived_id)
-
-      restored =
-        Handbeam.ConversationStore.storage_path()
-        |> File.read!()
-        |> Jason.decode!()
-        |> Map.fetch!("conversations")
-        |> Enum.find(&(&1["id"] == archived_id))
+      assert {:ok, restored} =
+               Handbeam.ConversationStore.get(archived_id, include_timeline?: false)
 
       assert is_nil(restored["archived_at"])
     end

@@ -50,7 +50,12 @@ defmodule Handbeam.Agent.Middleware.ToolGuardTest do
       %State{State.init(config, "hi") | tool_guard_overrides: %{}}
       |> State.append_messages([
         Message.tool_use([
-          %{type: "tool_use", id: "o1", name: "open_url", input: %{"url" => "https://example.com"}}
+          %{
+            type: "tool_use",
+            id: "o1",
+            name: "open_url",
+            input: %{"url" => "https://example.com"}
+          }
         ])
       ])
 

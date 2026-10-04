@@ -9,11 +9,17 @@ defmodule Handbeam.Memory.ObservationalTest do
   @test_conversation_id "test-om-conv-#{:rand.uniform(100_000)}"
 
   setup do
+    previous = Application.get_env(:handbeam, :observational_memory)
+
     # Clean up test observation file after each test
     path = ObservationStore.file_path(@test_conversation_id)
     if File.exists?(path), do: File.rm!(path)
 
     on_exit(fn ->
+      if previous,
+        do: Application.put_env(:handbeam, :observational_memory, previous),
+        else: Application.delete_env(:handbeam, :observational_memory)
+
       if File.exists?(path), do: File.rm!(path)
     end)
 

@@ -261,7 +261,9 @@ defmodule HandbeamWeb.FileChangeCard do
     end
   end
 
-  def relative_display_path(path, _workspace_root) when is_binary(path), do: normalize_separators(path)
+  def relative_display_path(path, _workspace_root) when is_binary(path),
+    do: normalize_separators(path)
+
   def relative_display_path(_path, _workspace_root), do: ""
 
   defp normalize_separators(path), do: String.replace(path, "\\", "/")

@@ -252,19 +252,23 @@ defmodule HandbeamWeb.WorkspaceLive.ModelSelection do
   def model_entry_for(nil, _available), do: %{}
 
   def model_entry_for(composite_id, available) do
-    Enum.find(available, &(&1.id == composite_id || &1.model_id == composite_id)) || %{}
+    Enum.find(available, &(&1.id == composite_id || Map.get(&1, :model_id) == composite_id)) ||
+      %{}
   end
 
   def model_display_name(nil, _available), do: "None"
 
   def model_display_name(composite_id, available) do
-    case Enum.find(available, &(&1.id == composite_id || &1.model_id == composite_id)) do
+    case Enum.find(available, &(&1.id == composite_id || Map.get(&1, :model_id) == composite_id)) do
       nil ->
         composite_id
 
-      entry ->
+      %{provider_id: provider_id} = entry ->
         siblings = Enum.filter(available, &(&1.provider_id == entry.provider_id))
-        "#{provider_display_name(entry.provider_id)} / #{model_option_label(entry, siblings)}"
+        "#{provider_display_name(provider_id)} / #{model_option_label(entry, siblings)}"
+
+      %{display_name: display_name} ->
+        display_name
     end
   end
 

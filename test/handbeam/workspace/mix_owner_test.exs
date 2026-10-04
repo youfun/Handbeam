@@ -243,4 +243,47 @@ defmodule Handbeam.Workspace.MixOwnerTest do
     assert File.cwd!() == cwd
     assert {:ok, :ok} = MixOwner.run(fn -> :ok end)
   end
+
+  # Protocol restoration is a VM boundary, not an Agent path: another process
+  # may autoload Inspect between deleting it and loading the saved host code.
+  test "restores the host protocol while an outside process keeps inspecting" do
+    owner = start_supervised!({MixOwner, name: :mix_owner_protocol_restore_test})
+    original = :code.which(Inspect)
+    {Inspect, binary, _} = :code.get_object_code(Inspect)
+    reader = Task.async(&inspect_until_stopped/0)
+
+    try do
+      for _ <- 1..200 do
+        assert {:ok, :replaced} =
+                 MixOwner.run(
+                   fn ->
+                     :code.purge(Inspect)
+
+                     assert {:module, Inspect} =
+                              :code.load_binary(Inspect, ~c"workspace-inspect.beam", binary)
+
+                     :replaced
+                   end,
+                   server: owner
+                 )
+
+        assert :code.which(Inspect) == original
+      end
+    after
+      send(reader.pid, :stop)
+      Task.await(reader)
+      :code.purge(Inspect)
+      :code.load_abs(original |> List.to_string() |> Path.rootname() |> String.to_charlist())
+    end
+  end
+
+  defp inspect_until_stopped do
+    receive do
+      :stop -> :ok
+    after
+      0 ->
+        assert inspect(%{marker: :stable}) == "%{marker: :stable}"
+        inspect_until_stopped()
+    end
+  end
 end

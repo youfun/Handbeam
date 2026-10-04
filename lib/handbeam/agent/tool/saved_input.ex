@@ -59,7 +59,7 @@ defmodule Handbeam.Agent.Tool.SavedInput do
   end
 
   defp save_fresh(tool, input, context) do
-    operation_id = "op_" <> Integer.to_string(System.unique_integer([:positive]))
+    operation_id = "op_" <> Ecto.UUID.generate()
 
     case store_large_fields(tool, operation_id, input, context) do
       {:ok, stored} ->

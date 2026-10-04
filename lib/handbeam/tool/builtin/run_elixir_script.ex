@@ -204,6 +204,8 @@ defmodule Handbeam.Tool.Builtin.RunElixirScript do
             end
           end)
 
+        watcher_ref = Process.monitor(watcher)
+
         try do
           result = eval_source(source, bindings, path)
           stdout = ElixirScriptIO.snapshot(capture)
@@ -211,6 +213,10 @@ defmodule Handbeam.Tool.Builtin.RunElixirScript do
         after
           ElixirScriptIO.stop(capture)
           send(watcher, :stop)
+
+          receive do
+            {:DOWN, ^watcher_ref, :process, ^watcher, _} -> :ok
+          end
         end
       end)
 

@@ -25,6 +25,7 @@ defmodule Handbeam.ExportSnapshotTest do
   test "rejects a .. component even when it stays inside the workspace", %{root: root} do
     assert {:error, :invalid_path} = ExportSnapshot.authorize(root, "a/../foo..bar.txt")
     assert {:error, :invalid_path} = ExportSnapshot.authorize(root, "a/../b")
+    assert {:error, :invalid_path} = ExportSnapshot.authorize(root, "a/b/..")
     assert {:error, :invalid_path} = ExportSnapshot.authorize(root, "../secret")
     assert {:error, :invalid_path} = ExportSnapshot.authorize(root, "..")
   end

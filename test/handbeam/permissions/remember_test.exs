@@ -1,7 +1,22 @@
 defmodule Handbeam.Permissions.RememberTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Handbeam.Permissions.{Remember, ToolPolicy}
+
+  setup do
+    previous = Application.get_env(:handbeam, :host)
+    fixed = :persistent_term.get({Handbeam.Tool.Builtin.Browser, :backend}, :unfixed)
+    :ok = Handbeam.Tool.Builtin.Browser.release_backend!()
+    Handbeam.Host.put!(%{browser_backend: :cli})
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:handbeam, :host, previous),
+        else: Application.delete_env(:handbeam, :host)
+
+      restore_browser(fixed)
+    end)
+  end
 
   defp call(name, input), do: %{id: "c1", name: name, input: input}
 
@@ -24,15 +39,24 @@ defmodule Handbeam.Permissions.RememberTest do
                "write(config/dev.exs)"
     end
 
-    test "browser remembers the first arg family" do
+    test "CLI browser remembers args only" do
       assert Remember.pattern(call("browser", %{"args" => ["eval", "1"]})) == "browser(eval:*)"
 
       assert Remember.pattern(call("browser", %{"args" => ["open", "https://example.com"]})) ==
                "browser(open:*)"
 
+      assert Remember.pattern(call("browser", %{"action" => "open"})) == "browser"
+    end
+
+    test "WebView browser remembers action only" do
+      Handbeam.Host.put!(%{browser_backend: :webview})
+
       assert Remember.pattern(
                call("browser", %{"action" => "open", "url" => "https://example.com"})
              ) == "browser(open:*)"
+
+      assert Remember.pattern(call("browser", %{"args" => ["open", "https://example.com"]})) ==
+               "browser"
     end
 
     test "unknown tools fall back to the tool name" do
@@ -51,5 +75,12 @@ defmodule Handbeam.Permissions.RememberTest do
 
     assert ToolPolicy.decision(policy, call("bash", %{"command" => "git status"})) == :auto
     assert ToolPolicy.decision(policy, call("bash", %{"command" => "rm -rf tmp"})) == :prompt
+  end
+
+  defp restore_browser(:unfixed), do: Handbeam.Tool.Builtin.Browser.release_backend!()
+
+  defp restore_browser(backend) do
+    :persistent_term.put({Handbeam.Tool.Builtin.Browser, :backend}, backend)
+    :ok
   end
 end

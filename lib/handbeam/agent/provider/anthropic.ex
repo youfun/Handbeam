@@ -48,8 +48,6 @@ defmodule Handbeam.Agent.Provider.Anthropic do
   alias Handbeam.Agent.Message
   alias Handbeam.Agent.Provider.SSE
 
-
-
   @default_api_url "https://api.anthropic.com"
   @default_api_version "2023-06-01"
   @default_max_tokens 4096

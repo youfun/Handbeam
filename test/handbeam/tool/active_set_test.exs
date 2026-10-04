@@ -6,6 +6,10 @@ defmodule Handbeam.Tool.ActiveSetTest do
   setup do
     registry_state = :sys.get_state(Registry)
 
+    for tool <- [Handbeam.Tool.Builtin.Read, Handbeam.Tool.Builtin.Bash] do
+      assert :ok = Registry.register(tool)
+    end
+
     on_exit(fn -> :sys.replace_state(Registry, fn _current -> registry_state end) end)
   end
 

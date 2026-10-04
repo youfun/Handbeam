@@ -47,11 +47,19 @@ defmodule Handbeam.StorageLockIntegrationTest do
     File.write!(path <> ".pending", Jason.encode!(pending) <> "\n", [:sync])
     assert {:ok, [%{"id" => "replayed"}]} = Journal.load(path)
     lock_path = Path.join(Path.dirname(path), ".handbeam-storage.lock")
+    locks = :sys.get_state(Journal).locks
 
     :ok = Supervisor.terminate_child(Handbeam.Supervisor, Journal)
-    assert {:ok, lock} = :handbeam_storage.lock(lock_path)
-    assert :ok = :handbeam_storage.close(lock)
-    {:ok, _} = Supervisor.restart_child(Handbeam.Supervisor, Journal)
+
+    try do
+      # External references must not delay explicit lock release until GC.
+      assert map_size(locks) > 0
+      assert {:ok, lock} = :handbeam_storage.lock(lock_path)
+      assert :ok = :handbeam_storage.close(lock)
+    after
+      {:ok, _} = Supervisor.restart_child(Handbeam.Supervisor, Journal)
+    end
+
     assert {:ok, [%{"id" => "replayed"}]} = Journal.load(path)
   end
 

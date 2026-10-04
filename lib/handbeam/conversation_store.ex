@@ -161,7 +161,7 @@ defmodule Handbeam.ConversationStore do
         |> Enum.flat_map(fn entry ->
           case get_metadata(entry["id"]) do
             {:ok, meta} ->
-              [meta]
+              if predicate.(meta), do: [meta], else: []
 
             _ ->
               []

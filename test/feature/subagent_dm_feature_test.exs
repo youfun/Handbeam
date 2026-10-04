@@ -13,40 +13,22 @@ defmodule HandbeamWeb.Feature.SubagentDmFeatureTest do
   alias Handbeam.Agent.{Coordinator, Delegation, Message}
   alias Handbeam.ConversationStore
   alias Handbeam.PubSub.Session
+  alias Handbeam.TestSupport.E2EHarness
 
   @moduletag :e2e
 
-  defp isolate_home! do
-    old_home = System.get_env("HOME")
-    old_models = System.get_env("HANDBEAM_MODELS_FILE")
-
-    root =
-      Path.join(System.tmp_dir!(), "subagent-dm-feature-#{System.unique_integer([:positive])}")
-
-    home = Path.join(root, "home")
-    workspace = Path.join(root, "workspace")
-    File.mkdir_p!(home)
-    File.mkdir_p!(workspace)
-
-    File.write!(
-      Path.join(root, "models.json"),
-      ~s({"providers": {"fake": {"baseUrl": "http://localhost", "api": "openai-chat-completions", "apiKey": "sk-fake", "models": [{"id": "fake-model", "name": "Fake Model"}]}}})
-    )
-
-    System.put_env("HOME", home)
-    System.put_env("HANDBEAM_MODELS_FILE", Path.join(root, "models.json"))
+  setup do
+    context = E2EHarness.isolate_home!("subagent-dm-feature")
+    E2EHarness.use_fake_provider!(:simple_answer)
 
     on_exit(fn ->
-      if old_home, do: System.put_env("HOME", old_home), else: System.delete_env("HOME")
-
-      if old_models,
-        do: System.put_env("HANDBEAM_MODELS_FILE", old_models),
-        else: System.delete_env("HANDBEAM_MODELS_FILE")
-
-      File.rm_rf(root)
+      for conversation <-
+            ConversationStore.list(include_timeline?: false, include_internal?: true) do
+        E2EHarness.cancel!(conversation["id"])
+      end
     end)
 
-    %{workspace: workspace}
+    context
   end
 
   # Parent delegates once, then answers once the report arrives; the child
@@ -126,13 +108,18 @@ defmodule HandbeamWeb.Feature.SubagentDmFeatureTest do
     end
   end
 
-  test "@subagent text in the composer goes to the subagent, not the parent", %{conn: conn} do
-    %{workspace: workspace} = isolate_home!()
+  test "@subagent text in the composer goes to the subagent, not the parent", %{
+    conn: conn,
+    workspace: workspace
+  } do
     sid = "dm-feature-#{System.unique_integer([:positive])}"
     {:ok, _} = ConversationStore.create("default", id: sid)
+    on_exit(fn -> E2EHarness.cancel!(sid) end)
     :ok = Session.subscribe(sid)
 
     child = start_parent(sid, workspace).child_conversation_id
+    on_exit(fn -> E2EHarness.cancel!(child) end)
+    assert {:ok, %{"workspace_id" => "default"}} = ConversationStore.get_metadata(child)
     await_parent_report(sid)
 
     conn
@@ -171,8 +158,6 @@ defmodule HandbeamWeb.Feature.SubagentDmFeatureTest do
   end
 
   test "@name with no matching subagent stays a normal message", %{conn: conn} do
-    isolate_home!()
-
     conn
     |> visit("/")
     |> fill_in("#ai-input", "Message", with: "@nobody hi there", exact: false)

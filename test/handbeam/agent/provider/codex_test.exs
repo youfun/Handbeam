@@ -429,6 +429,11 @@ defmodule Handbeam.Agent.Provider.CodexTest do
 
   test "Handbeam Turn executes the local tool and feeds its real result into the next SSE request" do
     alias Handbeam.Agent.{Config, State, Turn}
+    registry = Handbeam.Tool.Registry
+    registry_state = :sys.get_state(registry)
+    assert :ok = registry.register(Handbeam.Tool.Builtin.Read)
+    on_exit(fn -> :sys.replace_state(registry, fn _ -> registry_state end) end)
+
     dir = Path.join(System.tmp_dir!(), "codex-turn-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     File.write!(Path.join(dir, "probe.txt"), "ORCHID-5928")

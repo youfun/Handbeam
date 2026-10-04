@@ -49,7 +49,8 @@ jobs:
 
       - name: Dependencies
         run: |
-          mix local.hex --force
+          # MixToolchain.sync_to! tests the version pinned for mobile packaging.
+          mix local.hex 2.4.1 --force
           mix local.rebar --force
           mix deps.get
 

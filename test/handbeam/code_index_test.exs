@@ -1,6 +1,7 @@
 defmodule Handbeam.CodeIndexTest do
   use ExUnit.Case, async: false
 
+  alias Handbeam.Agent.Subagent.Profile
   alias Handbeam.CodeIndex
   alias Handbeam.CodeIndex.{Chunk, Location, Scan, Search, Store, Sync}
   alias Handbeam.Host
@@ -292,12 +293,14 @@ defmodule Handbeam.CodeIndexTest do
   end
 
   test "delegation and collaboration allow the tool" do
-    assert "code_search" in Handbeam.Agent.Delegation.Policy.allowed_tools([
-             "code_search",
-             "bash"
-           ])
+    allowed =
+      Handbeam.Agent.Delegation.Policy.allowed_tools(
+        ["code_search", "bash"],
+        Profile.researcher()
+      )
 
-    refute "bash" in Handbeam.Agent.Delegation.Policy.allowed_tools(["code_search", "bash"])
+    assert "code_search" in allowed
+    refute "bash" in allowed
   end
 
   defp names do

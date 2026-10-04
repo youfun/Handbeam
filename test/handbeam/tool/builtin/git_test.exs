@@ -21,13 +21,6 @@ defmodule Handbeam.Tool.Builtin.GitTest do
     {:ok, work: work, ctx: %{working_directory: work}}
   end
 
-  test "desktop and WebUI use the host Git CLI, not ExGit" do
-    assert Handbeam.Git.backend() == Handbeam.Git.CLI
-    assert Handbeam.Git.backend_kind() == :host_git_cli
-    assert :code.which(ExGit) == :non_existing
-    refute Code.ensure_loaded?(Handbeam.Git.ExGit)
-  end
-
   test "rejects missing workspace and unknown action", %{ctx: ctx} do
     assert {:error, "working_directory is required"} = Git.execute(%{"action" => "status"}, %{})
     assert {:error, message} = Git.execute(%{"action" => "rebase"}, ctx)
@@ -328,7 +321,8 @@ defmodule Handbeam.Tool.Builtin.GitTest do
     assert description =~ "remote_add"
     assert description =~ "PAT"
     assert description =~ "fast-forward"
-    assert description =~ "Git CLI"
+    assert description =~ "host injects a Git backend"
+    assert description =~ "desktop agents use the machine's Git through bash"
     refute description =~ "GitHub App"
   end
 
