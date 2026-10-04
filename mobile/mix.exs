@@ -1,10 +1,21 @@
 defmodule HandbeamProbe.MixProject do
   use Mix.Project
 
+  @version_file Path.expand("../version.properties", __DIR__)
+  @external_resource @version_file
+  @version @version_file
+           |> File.read!()
+           |> String.split("\n", trim: true)
+           |> Map.new(fn line ->
+             [key, value] = String.split(line, "=", parts: 2)
+             {key, String.trim(value)}
+           end)
+           |> Map.fetch!("version")
+
   def project do
     [
       app: :handbeam_probe,
-      version: "0.2.3",
+      version: @version,
       elixir: "~> 1.18",
       start_permanent: false,
       deps: deps(),
@@ -51,12 +62,27 @@ defmodule HandbeamProbe.MixProject do
       deploy: ["handbeam.pack_mix_toolchain", "mob.deploy"],
       watch: ["mob.watch"],
       icon: ["mob.icon"],
+      "handbeam.prepare_ios": [fn _ -> prepare_ios!() end],
+      "mob.deploy": [
+        fn args ->
+          if "--ios" in args or ("--android" not in args and :os.type() == {:unix, :darwin}),
+            do: prepare_ios!()
+
+          Mix.Task.run("compile")
+          Mix.Tasks.Mob.Deploy.run(args)
+        end
+      ],
       ios: ["handbeam.pack_mix_toolchain", "mob.deploy --ios"],
       # TestFlight rewrites ios/release_device.sh from mob_dev. Splice the
       # markdown host overlay back in before that rewrite, then run the real task.
       "mob.release": [
         fn args ->
-          unless "--android" in args, do: HandbeamProbe.IosMarkdownRelease.install!()
+          unless "--android" in args do
+            prepare_ios!()
+            Mix.Task.run("compile")
+            HandbeamProbe.IosMarkdownRelease.install!()
+          end
+
           Mix.Tasks.Mob.Release.run(args)
         end
       ],
@@ -64,5 +90,16 @@ defmodule HandbeamProbe.MixProject do
       android: ["handbeam.pack_mix_toolchain", "mob.deploy --android"],
       "android.native": ["handbeam.pack_mix_toolchain", "mob.deploy --native --android"]
     ]
+  end
+
+  defp prepare_ios! do
+    script = Path.expand("../scripts/version.sh", __DIR__)
+    template = Path.expand("ios/Info.plist.template", __DIR__)
+    output = Path.expand("ios/Info.plist", __DIR__)
+
+    case System.cmd("bash", [script, "plist", template, output], stderr_to_stdout: true) do
+      {output, 0} -> Mix.shell().info(String.trim(output))
+      {output, _} -> Mix.raise(output)
+    end
   end
 end

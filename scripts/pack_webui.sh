@@ -18,6 +18,7 @@ mix assets.deploy
 mix release --overwrite
 
 release_dir="_build/prod/rel/handbeam"
+bash scripts/version.sh verify-web "$release_dir"
 cp scripts/start.sh "$release_dir/start.sh"
 chmod +x "$release_dir/start.sh" "$release_dir/bin/handbeam"
 

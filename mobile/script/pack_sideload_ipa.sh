@@ -72,5 +72,6 @@ if unzip -l "$ipa" | grep -q 'embedded.mobileprovision'; then
   exit 1
 fi
 
+bash "$PROBE_ROOT/../scripts/version.sh" verify-ipa "$ipa"
 shasum -a 256 "$ipa" > "$ipa.sha256"
 echo "Wrote $ipa"

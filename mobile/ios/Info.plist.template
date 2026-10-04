@@ -11,10 +11,6 @@
     <string>Handbeam</string>
     <key>CFBundleExecutable</key>
     <string>HandbeamProbe</string>
-    <key>CFBundleVersion</key>
-    <string>6</string>
-    <key>CFBundleShortVersionString</key>
-    <string>0.2.3</string>
     <key>CFBundleIconName</key>
     <string>AppIcon</string>
     <key>CFBundlePackageType</key>

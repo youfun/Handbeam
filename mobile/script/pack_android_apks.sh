@@ -131,6 +131,7 @@ for abi in "${abis[@]}"; do
   echo "Packing $abi → $out"
   mix mob.pack_apk --abi "$abi" --no-install --output "$out"
   test -s "$out"
+  bash "$PROBE_ROOT/../scripts/version.sh" verify-apk "$out"
 done
 
 echo "APKs:"

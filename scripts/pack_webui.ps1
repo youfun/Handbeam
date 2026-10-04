@@ -18,6 +18,11 @@ mix assets.deploy
 mix release --overwrite
 
 $release = Join-Path $root "_build\prod\rel\handbeam"
+$expectedVersion = (Get-Content (Join-Path $root "version.properties") -Raw | ConvertFrom-StringData).version
+$actualVersion = ((Get-Content (Join-Path $release "releases\start_erl.data") -Raw).Trim() -split '\s+')[1]
+if ($actualVersion -ne $expectedVersion) {
+    throw "Web release $actualVersion does not match version.properties $expectedVersion"
+}
 Copy-Item (Join-Path $root "scripts\start.bat") (Join-Path $release "start.bat") -Force
 Copy-Item (Join-Path $root "scripts\start.ps1") (Join-Path $release "start.ps1") -Force
 

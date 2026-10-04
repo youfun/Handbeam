@@ -26,6 +26,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Validate release metadata and tag
+        run: |
+          bash scripts/version.sh version
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            bash scripts/version.sh check-tag "$GITHUB_REF_NAME"
+          fi
+
       - name: Build tools
         run: |
           sudo apt-get update
@@ -277,10 +284,9 @@ jobs:
           else
             tag="web-latest"
           fi
-          version="$(sed -n 's/^      version: "\([^"]*\)".*/\1/p' mix.exs | head -1)"
-          if [[ -z "${version}" ]]; then
-            echo "Could not read version from mix.exs"
-            exit 1
+          version="$(bash scripts/version.sh version)"
+          if [[ "$tag" != web-latest ]]; then
+            bash scripts/version.sh check-tag "$tag"
           fi
           title="Handbeam ${version}"
           if gh release view "$tag" >/dev/null 2>&1; then

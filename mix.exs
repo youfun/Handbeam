@@ -1,10 +1,21 @@
 defmodule Handbeam.MixProject do
   use Mix.Project
 
+  @version_file Path.expand("version.properties", __DIR__)
+  @external_resource @version_file
+  @version @version_file
+           |> File.read!()
+           |> String.split("\n", trim: true)
+           |> Map.new(fn line ->
+             [key, value] = String.split(line, "=", parts: 2)
+             {key, String.trim(value)}
+           end)
+           |> Map.fetch!("version")
+
   def project do
     [
       app: :handbeam,
-      version: "0.2.3",
+      version: @version,
       elixir: ">= 1.20.0-rc.5 and < 1.21.0",
       source_url: "https://github.com/youfun/Handbeam",
       elixirc_paths: elixirc_paths(Mix.env()),

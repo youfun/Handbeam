@@ -7,6 +7,10 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 WEB_ROOT="${HANDBEAM_WEB_ROOT:-$ROOT/Resources/handbeam-web}"
 cd "$ROOT"
 
+if [[ -x "$WEB_ROOT/bin/handbeam" ]]; then
+  bash "$ROOT/../../scripts/version.sh" verify-web "$WEB_ROOT"
+fi
+
 swift build -c release --arch arm64
 BIN_DIR="$(swift build -c release --arch arm64 --show-bin-path)"
 BIN="$BIN_DIR/Handbeam"
@@ -16,7 +20,7 @@ APP="$ROOT/build/Handbeam.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Handbeam"
-cp "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
+bash "$ROOT/../../scripts/version.sh" plist "$ROOT/Resources/Info.plist" "$APP/Contents/Info.plist"
 cp "$ROOT/Resources/Handbeam.icns" "$APP/Contents/Resources/Handbeam.icns"
 chmod +x "$APP/Contents/MacOS/Handbeam"
 

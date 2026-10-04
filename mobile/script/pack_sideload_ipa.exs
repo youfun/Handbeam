@@ -7,6 +7,7 @@
 mobile = Path.expand("..", __DIR__)
 File.cd!(mobile)
 
+Mix.Task.run("handbeam.prepare_ios")
 HandbeamProbe.IosMarkdownRelease.install!()
 
 driver = Path.join(mobile, "priv/generated/driver_tab_ios.c")

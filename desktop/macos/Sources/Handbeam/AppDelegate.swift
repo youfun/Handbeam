@@ -140,7 +140,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .applicationVersion: Bundle.main.object(
                 forInfoDictionaryKey: "CFBundleShortVersionString"
             ) as? String ?? "",
-            .credits: NSAttributedString(string: "本機 WebKit 殼。聊天介面由捆綁的 Handbeam Web 後端提供。"),
         ])
     }
 }
