@@ -507,14 +507,23 @@ defmodule HandbeamProbe.ModelSettingsTest do
     # Current workspace healthy: load still works and the other workspace's
     # breakage does not leak into sources/policy.
     state = ModelSettings.load(ws_a)
-    assert Enum.all?(state.sources, fn {_field, source} -> source == :global end)
+    assert state.sources.advisor == :none
+
+    assert Enum.all?(Map.delete(state.sources, :advisor), fn {_field, source} ->
+             source == :global
+           end)
+
     assert state.policy.mode == :unrestricted
 
     # Broken current workspace: load falls back instead of raising.
     broken = ModelSettings.load(ws_b)
     assert broken.policy.mode == :invalid
     assert broken.chat_blocked
-    assert Enum.all?(broken.sources, fn {_field, source} -> source == :global end)
+    assert broken.sources.advisor == :none
+
+    assert Enum.all?(Map.delete(broken.sources, :advisor), fn {_field, source} ->
+             source == :global
+           end)
 
     log =
       ExUnit.CaptureLog.capture_log(fn ->

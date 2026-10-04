@@ -70,6 +70,10 @@ defmodule HandbeamProbe.ReviewCoordinatorTest do
       :ok = Agent.stop(owned)
       stop_keeper!(keeper)
 
+      for {index, _} <- Registry.lookup(ExFff.Registry, vars["HANDBEAM_WORKSPACE"]) do
+        GenServer.stop(index)
+      end
+
       if host,
         do: Application.put_env(:handbeam, :host, host),
         else: Application.delete_env(:handbeam, :host)
@@ -145,7 +149,7 @@ defmodule HandbeamProbe.ReviewCoordinatorTest do
     sid = own(ctx.owned, conversation["id"])
     parent = self()
 
-    assert {:error, {:inbound_persist_failed, :disk_full}} =
+    assert {:error, :disk_full} =
              Coordinator.add_message(
                sid,
                "never sent",

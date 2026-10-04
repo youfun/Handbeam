@@ -3,6 +3,11 @@ defmodule HandbeamProbe.MCPSettingsTest do
 
   alias HandbeamProbe.MCPSettings
 
+  setup do
+    Gettext.put_locale(HandbeamProbe.Gettext, "en")
+    :ok
+  end
+
   test "renders HTTP and read-only stdio entries with empty and error states" do
     state =
       MCPSettings.loaded(MCPSettings.empty(), {
@@ -31,13 +36,13 @@ defmodule HandbeamProbe.MCPSettingsTest do
         ]
       })
 
-    rendered = inspect(MCPSettings.render(state, []))
+    rendered = inspect(MCPSettings.render(state, []), limit: :infinity)
     assert rendered =~ "Web"
     assert rendered =~ "3 tools"
     assert rendered =~ "Read-only on mobile"
     assert rendered =~ "Disabled"
 
-    empty = inspect(MCPSettings.render(MCPSettings.empty(), []))
+    empty = inspect(MCPSettings.render(MCPSettings.empty(), []), limit: :infinity)
     assert empty =~ "No MCP servers configured"
 
     failed = MCPSettings.loaded(MCPSettings.empty(), {:error, "cannot read settings"})

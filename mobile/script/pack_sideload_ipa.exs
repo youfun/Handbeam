@@ -123,7 +123,7 @@ script_path = Path.join(System.tmp_dir!(), "handbeam-sideload-release.sh")
 File.write!(script_path, script)
 File.chmod!(script_path, 0o755)
 
-output_dir = System.get_env("HANDBEAM_IPA_DIR") || Path.join(mobile, "artifacts")
+output_dir = Path.expand(System.get_env("HANDBEAM_IPA_DIR") || "artifacts", mobile)
 File.mkdir_p!(output_dir)
 
 plugin_env = MobDev.Release.plugin_ios_build_env(MobDev.Plugin.activated())

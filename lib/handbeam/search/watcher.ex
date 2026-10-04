@@ -240,6 +240,10 @@ defmodule Handbeam.Search.Watcher do
 
         {pid, monitor, state}
 
+      :ignore ->
+        Logger.warning("[Search.Watcher] file watcher unavailable workspace=#{workspace}")
+        {nil, nil, state}
+
       {:error, reason} ->
         Logger.warning(
           "[Search.Watcher] file watcher unavailable workspace=#{workspace} reason=#{inspect(reason)}"

@@ -3,8 +3,13 @@ defmodule HandbeamProbe.GitSettingsTest do
 
   alias HandbeamProbe.GitSettings
 
+  setup do
+    Gettext.put_locale(HandbeamProbe.Gettext, "en")
+    :ok
+  end
+
   test "renders identity, empty accounts, and editor without the saved token" do
-    empty = inspect(GitSettings.render(GitSettings.empty()))
+    empty = inspect(GitSettings.render(GitSettings.empty()), limit: :infinity)
     assert empty =~ "No Git accounts yet"
 
     state =

@@ -115,7 +115,7 @@ defmodule HandbeamProbe.ScriptEnvironmentTest do
         tools: [RunElixirScript],
         working_directory: System.tmp_dir!(),
         streaming: false,
-        max_turns: 1,
+        max_turns: 2,
         provider_config: %{
           api_key: "fixture-only",
           cache: false,

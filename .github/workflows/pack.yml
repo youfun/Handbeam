@@ -41,12 +41,17 @@ jobs:
       - name: Build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential pkg-config
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config bubblewrap inotify-tools
 
       - uses: erlef/setup-beam@v1
         with:
           otp-version: "29.0"
           elixir-version: "1.20.2"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
 
       - uses: actions/cache@v4
         with:
@@ -65,6 +70,11 @@ jobs:
           mix local.hex 2.4.1 --force
           mix local.rebar --force
           mix deps.get
+
+      - name: Frontend build tools
+        env:
+          MIX_ENV: test
+        run: mix assets.setup
 
       - name: Compile without warnings
         env:
@@ -87,7 +97,6 @@ jobs:
     name: Web (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.timeout }}
-    continue-on-error: ${{ matrix.continue_on_error || false }}
     strategy:
       fail-fast: false
       matrix:

@@ -92,7 +92,7 @@ jobs:
 
       - name: Host packages
         run: |
-          sudo apt-get update && sudo apt-get install -y --no-install-recommends zip libgit2-dev pkg-config
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends zip libgit2-dev pkg-config inotify-tools bubblewrap
           if [[ ! -f /usr/include/git2/sys/errors.h ]]; then
             sudo mkdir -p /usr/include/git2/sys
             printf '%s\n' \

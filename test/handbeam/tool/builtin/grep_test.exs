@@ -358,6 +358,64 @@ defmodule Handbeam.Tool.Builtin.GrepTest do
     GenServer.stop(index)
   end
 
+  test "an unavailable native watcher retains inventory and can recover" do
+    # Missing platform executables make FileSystem.start_link return :ignore,
+    # not {:error, reason}. This must not crash the shared application.
+    workspace = Path.expand(@work_dir)
+    File.write!(Path.join(workspace, "initial.txt"), "initial inventory\n")
+    index_name = Module.concat(ExFff.Index, "Unavailable_#{System.unique_integer([:positive])}")
+
+    watcher_name =
+      Module.concat(Handbeam.Search.Watcher, "Unavailable_#{System.unique_integer([:positive])}")
+
+    index = start_supervised!({ExFff.Index, root_path: workspace, name: index_name})
+    assert :ok = ExFff.Index.await_index(index)
+    watcher = start_supervised!({Handbeam.Search.Watcher, name: watcher_name})
+    original_path = System.get_env("PATH")
+    original_mac = System.get_env("FILESYSTEM_FSMAC_EXECUTABLE_FILE")
+    original_inotify = System.get_env("FILESYSTEM_FSINOTIFY_EXECUTABLE_FILE")
+    original_config = Application.fetch_env(:file_system, :fs_inotify)
+
+    try do
+      System.put_env("PATH", "/nonexistent")
+      System.put_env("FILESYSTEM_FSMAC_EXECUTABLE_FILE", "/nonexistent/fswatch")
+      System.delete_env("FILESYSTEM_FSINOTIFY_EXECUTABLE_FILE")
+      Application.put_env(:file_system, :fs_inotify, executable_file: nil)
+      assert :ignore = FileSystem.start_link(dirs: [workspace])
+      GenServer.cast(watcher, {:watch, workspace, index})
+      assert %{index: ^index, watcher: nil} = :sys.get_state(watcher).workspaces[workspace]
+
+      added = Path.join(workspace, "added.txt")
+      File.write!(added, "explicit update\n")
+      GenServer.cast(watcher, {:path_changed, workspace, added})
+      :sys.get_state(watcher)
+
+      assert eventually(fn ->
+               {:ok, inventory} = ExFff.Index.files(index)
+               if inventory.paths == ["added.txt", "initial.txt"], do: {:ok, true}, else: :retry
+             end)
+    after
+      for {key, value} <- [
+            {"PATH", original_path},
+            {"FILESYSTEM_FSMAC_EXECUTABLE_FILE", original_mac},
+            {"FILESYSTEM_FSINOTIFY_EXECUTABLE_FILE", original_inotify}
+          ] do
+        if value, do: System.put_env(key, value), else: System.delete_env(key)
+      end
+
+      case original_config do
+        {:ok, value} -> Application.put_env(:file_system, :fs_inotify, value)
+        :error -> Application.delete_env(:file_system, :fs_inotify)
+      end
+    end
+
+    send(watcher, {:restart_watcher, workspace})
+    assert %{watcher: native} = :sys.get_state(watcher).workspaces[workspace]
+    assert is_pid(native)
+    assert Process.alive?(native)
+    GenServer.stop(native)
+  end
+
   test "elixir fallback glob cannot escape the workspace" do
     outside_dir =
       Path.join(System.tmp_dir!(), "sigil_grep_outside_#{System.unique_integer([:positive])}")
