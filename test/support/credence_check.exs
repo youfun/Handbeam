@@ -12,13 +12,20 @@ changed_lines =
           {file, Map.put_new(lines, file, MapSet.new())}
 
         "@@ " <> hunk, {file, lines} when is_binary(file) ->
-          [_, start, count] =
-            Regex.run(~r/\+(\d+)(?:,(\d+))?/, hunk, capture: :all_but_first) ++ [nil]
+          case Regex.run(~r/\+(\d+)(?:,(\d+))?/, hunk, capture: :all_but_first) do
+            [start, count] ->
+              first = String.to_integer(start)
+              last = first + String.to_integer(count) - 1
+              added = if last < first, do: MapSet.new(), else: MapSet.new(first..last)
+              {file, Map.update!(lines, file, &MapSet.union(&1, added))}
 
-          first = String.to_integer(start)
-          last = first + String.to_integer(count || "1") - 1
-          added = if last < first, do: MapSet.new(), else: MapSet.new(first..last)
-          {file, Map.update!(lines, file, &MapSet.union(&1, added))}
+            [start] ->
+              line = String.to_integer(start)
+              {file, Map.update!(lines, file, &MapSet.put(&1, line))}
+
+            nil ->
+              {file, lines}
+          end
 
         _line, acc ->
           acc
