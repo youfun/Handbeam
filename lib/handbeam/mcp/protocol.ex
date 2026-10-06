@@ -40,7 +40,7 @@ defmodule Handbeam.MCP.Protocol do
   @spec parse_response(map()) :: {:ok, term()} | {:error, map()}
   def parse_response(%{"result" => result}), do: {:ok, result}
   def parse_response(%{"error" => error}), do: {:error, error}
-  def parse_response(_), do: {:error, %{"code" => -32600, "message" => "Invalid response"}}
+  def parse_response(_), do: {:error, %{"code" => -32_600, "message" => "Invalid response"}}
 
   @doc """
   Splits a binary buffer into complete JSON lines and remaining partial data.

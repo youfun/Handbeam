@@ -243,9 +243,9 @@ defmodule Handbeam.Agent.Advisor do
       end
 
     files =
-      state.progress.digest.files
-      |> Enum.map(fn {path, hashes} -> "- #{path} (#{length(hashes)} versions)" end)
-      |> Enum.join("\n")
+      Enum.map_join(state.progress.digest.files, "\n", fn {path, hashes} ->
+        "- #{path} (#{length(hashes)} versions)"
+      end)
 
     """
     Latest user request:
@@ -322,13 +322,11 @@ defmodule Handbeam.Agent.Advisor do
 
   defp format_findings(%{findings: findings}) when is_list(findings) do
     text =
-      findings
-      |> Enum.map(fn finding ->
+      Enum.map_join(findings, "\n", fn finding ->
         id = finding["criterion_id"] || finding["id"]
         impact = finding["impact"] || finding["fix"]
         "未通过 #{id}: #{impact}"
       end)
-      |> Enum.join("\n")
 
     if text == "", do: "验收未通过", else: text
   end

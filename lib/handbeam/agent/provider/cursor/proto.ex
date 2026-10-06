@@ -134,7 +134,7 @@ defmodule Handbeam.Agent.Provider.Cursor.Proto do
   # ── google.protobuf.Value ────────────────────────────────────────────
 
   def encode_value(nil), do: finish(encode_int32(1, 0))
-  def encode_value(n) when is_integer(n), do: finish(encode_double(2, n * 1.0))
+  def encode_value(n) when is_integer(n), do: finish(encode_double(2, :erlang.float(n)))
   def encode_value(n) when is_float(n), do: finish(encode_double(2, n))
   def encode_value(s) when is_binary(s), do: finish(encode_string(3, s))
   def encode_value(true), do: finish(encode_bool(4, true))
@@ -355,8 +355,7 @@ defmodule Handbeam.Agent.Provider.Cursor.Proto do
       [tool_msgs, if(cloud_rule, do: encode_string(16, cloud_rule), else: [])]
       |> finish()
 
-    result = finish(encode_message(1, encode_message(1, success)))
-    result
+    finish(encode_message(1, encode_message(1, success)))
   end
 
   def encode_mcp_tool(%{name: name, description: description, schema: schema}) do

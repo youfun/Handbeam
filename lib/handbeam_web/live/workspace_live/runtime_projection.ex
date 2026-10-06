@@ -469,8 +469,7 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
 
         socket
       else
-        do_handle_run_end(payload, status, socket)
-        |> assign(:thinking_active, false)
+        assign(do_handle_run_end(payload, status, socket), :thinking_active, false)
       end
 
     # Only clear pending_approval on terminal run_end (not interrupted/awaiting_approval)

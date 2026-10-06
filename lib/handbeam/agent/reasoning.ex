@@ -240,8 +240,7 @@ defmodule Handbeam.Agent.Reasoning do
       map_get(model_entry, :provider, "provider"),
       map_get(model_entry, :api, "api")
     ]
-    |> Enum.map(&to_string/1)
-    |> Enum.join(" ")
+    |> Enum.map_join(" ", &to_string/1)
     |> String.downcase()
   end
 

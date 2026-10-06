@@ -178,14 +178,11 @@ defmodule Handbeam.Agent.OperationReceipt do
     File.mkdir_p!(Path.dirname(path))
 
     body =
-      records
-      |> Map.values()
-      |> Enum.map(fn record ->
+      Enum.map_join(Map.values(records), "\n", fn record ->
         record
         |> Map.put("$handbeam_operation", @version)
         |> Handbeam.JSON.encode!()
       end)
-      |> Enum.join("\n")
 
     tmp = path <> "." <> Integer.to_string(System.unique_integer([:positive])) <> ".tmp"
     File.write!(tmp, body <> "\n")

@@ -310,7 +310,7 @@ defmodule Handbeam.Terminal.Session do
   end
 
   defp build_pty_command(cmd, args, cwd) do
-    exec = [cmd | args] |> Enum.map(&shell_escape/1) |> Enum.join(" ")
+    exec = Enum.map_join([cmd | args], " ", &shell_escape/1)
 
     cd =
       if is_binary(cwd) and cwd != "" and cwd != File.cwd!() do

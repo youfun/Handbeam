@@ -82,7 +82,7 @@ defmodule Handbeam.Threads do
          {:ok, _} <- authorize(context, input["thread"]),
          {:ok, first} <- integer(input, "start_message", 0, 0, 1_000_000),
          {:ok, last} <- integer(input, "end_message", 1_000_000, first, 1_000_000),
-         {:ok, max} <- integer(input, "max_chars", 8000, 1, 16000),
+         {:ok, max} <- integer(input, "max_chars", 8000, 1, 16_000),
          {:ok, entries} <- ConversationTranscriptStore.list(input["thread"]) do
       messages = entries |> Enum.map(&project_message/1) |> Enum.slice(first..last)
       binding = binding("read", context, input, messages)

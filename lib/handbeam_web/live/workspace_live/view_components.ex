@@ -117,7 +117,7 @@ defmodule HandbeamWeb.WorkspaceLive.ViewComponents do
             cond do
               diff < 60 -> "刚刚"
               diff < 3600 -> "#{div(diff, 60)}分钟前"
-              diff < 86400 -> "#{div(diff, 3600)}小时前"
+              diff < 86_400 -> "#{div(diff, 3600)}小时前"
               true -> dt_str |> String.slice(0, 10)
             end
 

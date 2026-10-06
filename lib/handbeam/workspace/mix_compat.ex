@@ -334,7 +334,7 @@ defmodule Handbeam.Workspace.MixCompat do
           :ok
 
         names ->
-          shown = names |> Enum.take(8) |> Enum.map(&inspect/1) |> Enum.join(", ")
+          shown = names |> Enum.take(8) |> Enum.map_join(", ", &inspect/1)
 
           {:error,
            "#{owner} redefines host modules (#{shown}); the host copy will not be replaced"}

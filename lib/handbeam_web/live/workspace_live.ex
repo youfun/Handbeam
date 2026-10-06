@@ -1412,7 +1412,6 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   # Same display names stay distinguishable. Cursor stores one name for a base
   # model and its fast variant; the id is what actually differs.
-  @doc false
 
   # ── /model command parser ──
 

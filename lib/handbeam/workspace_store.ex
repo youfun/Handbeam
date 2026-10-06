@@ -372,7 +372,7 @@ defmodule Handbeam.WorkspaceStore do
   defp generate_id do
     # Simple unique id — timestamp + random
     ts = System.os_time(:millisecond)
-    rand = System.unique_integer([:positive]) |> rem(100_000)
+    rand = rem(System.unique_integer([:positive]), 100_000)
     "ws_#{ts}_#{rand}"
   end
 

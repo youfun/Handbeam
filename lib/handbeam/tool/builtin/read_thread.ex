@@ -16,7 +16,7 @@ defmodule Handbeam.Tool.Builtin.ReadThread do
         },
         start_message: %{type: "integer", minimum: 0},
         end_message: %{type: "integer", minimum: 0},
-        max_chars: %{type: "integer", minimum: 1, maximum: 16000},
+        max_chars: %{type: "integer", minimum: 1, maximum: 16_000},
         cursor: %{type: "string"}
       }
     }

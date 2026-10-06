@@ -146,10 +146,6 @@ defmodule Handbeam.Memory.Policy do
     # Check single-line noise patterns
     first_line = content |> String.split("\n", trim: true) |> List.first("") |> String.trim()
 
-    if first_line != "" and Enum.any?(@noise_patterns, &Regex.match?(&1, first_line)) do
-      true
-    else
-      false
-    end
+    first_line != "" and Enum.any?(@noise_patterns, &Regex.match?(&1, first_line))
   end
 end

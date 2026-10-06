@@ -191,9 +191,7 @@ defmodule Handbeam.Attachments.History do
 
   defp fallback_user(text, attachments) do
     names =
-      attachments
-      |> Enum.map(&(&1["filename"] || &1[:filename] || "attachment"))
-      |> Enum.join(", ")
+      Enum.map_join(attachments, ", ", &(&1["filename"] || &1[:filename] || "attachment"))
 
     notice = "Attachments could not be restored: #{names}"
     body = [text, notice] |> Enum.filter(&(is_binary(&1) and &1 != "")) |> Enum.join("\n")

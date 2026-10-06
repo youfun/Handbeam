@@ -176,12 +176,10 @@ defmodule Handbeam.Tool.Extension.Beam.Docs do
       end)
 
     total =
-      docs
-      |> Enum.filter(fn
+      Enum.count(docs, fn
         {{:function, _, _}, _, _, _, _} -> true
         _ -> false
       end)
-      |> length()
 
     (lines ++ func_lines ++ ["Total: #{total} functions"])
     |> Enum.join("\n")

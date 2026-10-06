@@ -161,7 +161,7 @@ defmodule Handbeam.WebFetch.Desktop.Route do
 
   defp split_dest(dest) do
     case String.split(dest, "/", parts: 2) do
-      [ip, prefix] -> [ip, prefix]
+      [_, _] = parts -> parts
       [ip] -> [ip, "32"]
     end
   end

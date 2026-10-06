@@ -708,7 +708,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
   defp hover_branch(_path), do: nil
 
   defp branch_cache_bucket do
-    System.system_time(:second) |> div(30)
+    div(System.system_time(:second), 30)
   end
 
   @doc "Git remote repository name for a workspace path, e.g. `Handbeam`."

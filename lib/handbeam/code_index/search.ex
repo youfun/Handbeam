@@ -53,8 +53,8 @@ defmodule Handbeam.CodeIndex.Search do
   def fuse(fts, vectors, limit) do
     scores =
       %{}
-      |> add_ranks(fts, fn hit -> key(hit) end)
-      |> add_ranks(vectors, fn hit -> key(hit) end)
+      |> add_ranks(fts, &key/1)
+      |> add_ranks(vectors, &key/1)
 
     by_key =
       (fts ++ vectors)

@@ -378,8 +378,7 @@ defmodule Handbeam.Tool.Builtin.Grep do
     ]
 
     base = if truthy?(input["ignore_case"] || input[:ignore_case]), do: base ++ ["-i"], else: base
-    base = if truthy?(input["literal"] || input[:literal]), do: base ++ ["-F"], else: base
-    base
+    if truthy?(input["literal"] || input[:literal]), do: base ++ ["-F"], else: base
   end
 
   defp rg_sensitive_globs do

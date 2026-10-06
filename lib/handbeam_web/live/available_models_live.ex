@@ -1287,7 +1287,7 @@ defmodule HandbeamWeb.AvailableModelsLive do
     end
   end
 
-  defp parse_float(value) when is_integer(value), do: value * 1.0
+  defp parse_float(value) when is_integer(value), do: :erlang.float(value)
   defp parse_float(value) when is_float(value), do: value
 
   defp format_price_number(value) when is_integer(value), do: Integer.to_string(value)

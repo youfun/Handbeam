@@ -437,9 +437,7 @@ defmodule Handbeam.Workspace.MixToolchain do
       |> Enum.reject(&(&1 in [nil, ""]))
       |> Enum.uniq()
 
-    Enum.find_value(homes, fn home ->
-      hex_archive_in(home)
-    end)
+    Enum.find_value(homes, &hex_archive_in/1)
   end
 
   defp mix_archives_dir do
