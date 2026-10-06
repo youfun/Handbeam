@@ -1059,7 +1059,8 @@ defmodule Handbeam.Agent.Turn do
   def resume_after_stall_check(%State{} = state, _decisions, _opts), do: state
 
   defp artifact_digest(state) do
-    Enum.map_join(state.messages, "\n", &Handbeam.Agent.Message.text/1)
+    state.messages
+    |> Enum.map_join("\n", &Handbeam.Agent.Message.text/1)
     |> then(&:crypto.hash(:sha256, &1))
     |> Base.encode16(case: :lower)
   end
