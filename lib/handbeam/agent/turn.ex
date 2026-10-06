@@ -88,14 +88,19 @@ defmodule Handbeam.Agent.Turn do
 
   defp partition_hitl_decisions(hitl_ids, tool_calls, decision_by_id) do
     Enum.reduce(hitl_ids, {[], [], %{}, MapSet.new()}, fn call_id, acc ->
-      call = Enum.find(tool_calls, &((&1[:id] || &1["id"]) == call_id))
+      call =
+        Enum.find(
+          tool_calls,
+          &(Handbeam.Utils.SafeMap.get_first_truthy(&1, :id, "id") == call_id)
+        )
       decision = Map.get(decision_by_id, call_id, %{})
       fold_hitl_decision(acc, call_id, call, decision)
     end)
   end
 
   defp fold_hitl_decision({calls, blocks, overrides, denied}, call_id, call, decision) do
-    action = decision["action"] || decision[:action] || "deny"
+    action =
+      Handbeam.Utils.SafeMap.get_first_truthy(decision, "action", :action) || "deny"
 
     if to_string(action) == "approve" do
       {calls, blocks, remember_session_grant(overrides, decision, call), denied}
@@ -126,7 +131,7 @@ defmodule Handbeam.Agent.Turn do
   end
 
   defp remember_deny_override(overrides, decision, tool_name) do
-    if decision["remember"] || decision[:remember] do
+    if Handbeam.Utils.SafeMap.get_first_truthy(decision, "remember", :remember) do
       Map.put(overrides, tool_name, :deny)
     else
       overrides
@@ -182,7 +187,7 @@ defmodule Handbeam.Agent.Turn do
 
   defp executable_approved_calls(approved_calls, denied_blocks) do
     Enum.split_with(approved_calls, fn call ->
-      id = call[:id] || call["id"]
+      id = Handbeam.Utils.SafeMap.get_first_truthy(call, :id, "id")
 
       not Enum.any?(
         denied_blocks,
@@ -818,7 +823,8 @@ defmodule Handbeam.Agent.Turn do
   defp start_stream_trackers(false), do: {nil, nil}
 
   defp start_stream_trackers(true) do
-    {:counters.new(1, []), Agent.start_link(fn -> %{text: "", phases: %{}} end) |> elem(1)}
+    tracker = Agent.start_link(fn -> %{text: "", phases: %{}} end)
+    {:counters.new(1, []), elem(tracker, 1)}
   end
 
   defp completion_on_chunk(opts, streaming?, chunk_tracker, streamed_text_tracker) do
@@ -870,7 +876,9 @@ defmodule Handbeam.Agent.Turn do
     authorized_tools = Executor.authorized_tools(state.config)
 
     tool_defs =
-      session_tool_defs(Keyword.get(opts, :session_id))
+      opts
+      |> Keyword.get(:session_id)
+      |> session_tool_defs()
       |> Handbeam.MCP.Access.filter(state.config.context)
       |> Enum.filter(&(&1.name in authorized_tools))
       |> Enum.map(
@@ -1723,10 +1731,12 @@ defmodule Handbeam.Agent.Turn do
   end
 
   defp gate_tool_calls(state, tool_calls, session_id, active_set) do
-    Enum.reduce(tool_calls, {[], []}, fn call, acc ->
-      fold_tool_call_gate(state, session_id, active_set, call, acc)
-    end)
-    |> then(fn {blocked, allowed} -> {Enum.reverse(blocked), Enum.reverse(allowed)} end)
+    {blocked, allowed} =
+      Enum.reduce(tool_calls, {[], []}, fn call, acc ->
+        fold_tool_call_gate(state, session_id, active_set, call, acc)
+      end)
+
+    {Enum.reverse(blocked), Enum.reverse(allowed)}
   end
 
   defp fold_tool_call_gate(state, session_id, active_set, call, {blocked, allowed}) do
@@ -1897,8 +1907,9 @@ defmodule Handbeam.Agent.Turn do
   end
 
   defp tool_end_file_path(details, call) do
-    details[:file_path] || details["file_path"] || call[:input][:file_path] ||
-      call[:input]["file_path"]
+    Handbeam.Utils.SafeMap.get_first_truthy(details, :file_path, "file_path") ||
+      get_in(call, [:input, :file_path]) ||
+      get_in(call, [:input, "file_path"])
   end
 
   defp execute_tool_calls_with_guard_results(
