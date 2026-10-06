@@ -7,7 +7,8 @@ defmodule HandbeamWeb.WorkspaceLive.Approval do
   def action_requests(%{"action_requests" => requests}) when is_list(requests), do: requests
 
   def action_requests(pending) when is_map(pending),
-    do: Handbeam.Utils.SafeMap.get_first_truthy(pending, :action_requests, "action_requests") || []
+    do:
+      Handbeam.Utils.SafeMap.get_first_truthy(pending, :action_requests, "action_requests") || []
 
   def action_requests(_), do: []
 
@@ -34,7 +35,8 @@ defmodule HandbeamWeb.WorkspaceLive.Approval do
 
     Enum.each(action_requests(pending), fn request ->
       pattern =
-        Handbeam.Utils.SafeMap.get_first_truthy(request, :suggested_pattern, "suggested_pattern") || Handbeam.Utils.SafeMap.get_first_truthy(request, :tool_name, "tool_name")
+        Handbeam.Utils.SafeMap.get_first_truthy(request, :suggested_pattern, "suggested_pattern") ||
+          Handbeam.Utils.SafeMap.get_first_truthy(request, :tool_name, "tool_name")
 
       if is_binary(pattern) and String.trim(pattern) != "" do
         case Handbeam.WorkspaceSettings.append_tool_rule(workspace_root, list, pattern) do

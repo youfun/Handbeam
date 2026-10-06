@@ -14,7 +14,12 @@ defmodule HandbeamWeb.WorkspaceLive.Composer do
   def upload_error(other), do: to_string(other)
 
   def remove_attachment(socket, id) do
-    attachments = Enum.reject(socket.assigns.pending_attachments, &((Handbeam.Utils.SafeMap.get_first_truthy(&1, :id, "id")) == id))
+    attachments =
+      Enum.reject(
+        socket.assigns.pending_attachments,
+        &(Handbeam.Utils.SafeMap.get_first_truthy(&1, :id, "id") == id)
+      )
+
     assign(socket, :pending_attachments, attachments)
   end
 

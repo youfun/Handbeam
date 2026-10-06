@@ -334,7 +334,10 @@ defmodule Handbeam.Agent.Coordinator do
   end
 
   defp pending_tool_ids(%{interrupt_data: %{action_requests: requests}}) when is_list(requests) do
-    Enum.map(requests, &(Handbeam.Utils.SafeMap.get_first_truthy(&1, :tool_call_id, "tool_call_id")))
+    Enum.map(
+      requests,
+      &Handbeam.Utils.SafeMap.get_first_truthy(&1, :tool_call_id, "tool_call_id")
+    )
   end
 
   defp pending_tool_ids(_info), do: []

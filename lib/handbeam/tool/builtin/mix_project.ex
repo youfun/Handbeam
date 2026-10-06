@@ -84,7 +84,8 @@ defmodule Handbeam.Tool.Builtin.MixProject do
 
   @impl true
   def execute(%{"action" => action} = input, context) when is_binary(action) do
-    workspace = Handbeam.Utils.SafeMap.get_first_truthy(context, :working_directory, "working_directory")
+    workspace =
+      Handbeam.Utils.SafeMap.get_first_truthy(context, :working_directory, "working_directory")
 
     with {:ok, workspace} <- require_workspace(workspace),
          {:ok, action} <- parse_action(action),

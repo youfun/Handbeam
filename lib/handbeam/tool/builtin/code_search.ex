@@ -100,7 +100,9 @@ defmodule Handbeam.Tool.Builtin.CodeSearch do
   end
 
   defp workspace(context) do
-    root = Handbeam.Utils.SafeMap.get_first_truthy(context, :working_directory, "working_directory") || File.cwd!()
+    root =
+      Handbeam.Utils.SafeMap.get_first_truthy(context, :working_directory, "working_directory") ||
+        File.cwd!()
 
     if File.dir?(root) do
       {:ok, Path.expand(root)}

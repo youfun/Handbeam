@@ -343,7 +343,11 @@ defmodule Handbeam.Browser.WebViewSession do
   defp finish_pending(state, pending, payload) do
     case Handbeam.Utils.SafeMap.get_first_truthy(payload, :error, "error") do
       nil ->
-        decode_eval(state, pending.action, Handbeam.Utils.SafeMap.get_first_truthy(payload, :result, "result") || payload)
+        decode_eval(
+          state,
+          pending.action,
+          Handbeam.Utils.SafeMap.get_first_truthy(payload, :result, "result") || payload
+        )
 
       reason ->
         {:error, format_reason(reason), base_details(state, pending.action)}

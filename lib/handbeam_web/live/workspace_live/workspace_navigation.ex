@@ -90,7 +90,10 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
 
   def import_workspace(socket, item) when is_map(item) do
     path = Handbeam.Utils.SafeMap.get_first_truthy(item, :path, "path")
-    name = Handbeam.Utils.SafeMap.get_first_truthy(item, :name, "name") || Path.basename(to_string(path || ""))
+
+    name =
+      Handbeam.Utils.SafeMap.get_first_truthy(item, :name, "name") ||
+        Path.basename(to_string(path || ""))
 
     cond do
       not is_binary(path) or path == "" ->

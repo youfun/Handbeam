@@ -447,7 +447,8 @@ defmodule Handbeam.Permissions.AutoReview do
     end
   end
 
-  defp request_id(request), do: Handbeam.Utils.SafeMap.get_first_truthy(request, :tool_call_id, "tool_call_id")
+  defp request_id(request),
+    do: Handbeam.Utils.SafeMap.get_first_truthy(request, :tool_call_id, "tool_call_id")
 
   defp decision_kind(%{decision: decision}) when decision in [:approve, :deny], do: decision
   defp decision_kind(%{"decision" => "approve"}), do: :approve
@@ -516,6 +517,7 @@ defmodule Handbeam.Permissions.AutoReview do
 
       type == "tool_use" ->
         name = Handbeam.Utils.SafeMap.get_first_truthy(block, :name, "name")
+
         "tool_use #{name} #{encode_compact(Handbeam.Utils.SafeMap.get_first_truthy(block, :input, "input") || %{})}"
 
       type == "tool_result" ->

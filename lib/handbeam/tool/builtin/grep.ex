@@ -136,7 +136,14 @@ defmodule Handbeam.Tool.Builtin.Grep do
 
   defp search(pattern, regex, inventory, workspace, input) do
     started_at = System.monotonic_time(:millisecond)
-    cursor = decode_cursor(Handbeam.Utils.SafeMap.get_first_truthy(input, "cursor", :cursor), input, workspace)
+
+    cursor =
+      decode_cursor(
+        Handbeam.Utils.SafeMap.get_first_truthy(input, "cursor", :cursor),
+        input,
+        workspace
+      )
+
     wanted = limit(input) + 1
 
     if cursor == :invalid do
@@ -145,7 +152,9 @@ defmodule Handbeam.Tool.Builtin.Grep do
 
     files =
       inventory.paths
-      |> Enum.filter(&glob_match?(&1, Handbeam.Utils.SafeMap.get_first_truthy(input, "glob", :glob)))
+      |> Enum.filter(
+        &glob_match?(&1, Handbeam.Utils.SafeMap.get_first_truthy(input, "glob", :glob))
+      )
       |> Enum.sort()
 
     {matcher, hits, partial?} =
@@ -377,8 +386,14 @@ defmodule Handbeam.Tool.Builtin.Grep do
       Integer.to_string(@max_file_bytes)
     ]
 
-    base = if truthy?(Handbeam.Utils.SafeMap.get_first_truthy(input, "ignore_case", :ignore_case)), do: base ++ ["-i"], else: base
-    if truthy?(Handbeam.Utils.SafeMap.get_first_truthy(input, "literal", :literal)), do: base ++ ["-F"], else: base
+    base =
+      if truthy?(Handbeam.Utils.SafeMap.get_first_truthy(input, "ignore_case", :ignore_case)),
+        do: base ++ ["-i"],
+        else: base
+
+    if truthy?(Handbeam.Utils.SafeMap.get_first_truthy(input, "literal", :literal)),
+      do: base ++ ["-F"],
+      else: base
   end
 
   defp rg_sensitive_globs do
@@ -676,7 +691,11 @@ defmodule Handbeam.Tool.Builtin.Grep do
   defp resolve_scope(input, context) do
     workspace = context[:working_directory] || context["working_directory"] || File.cwd!()
     workspace = Path.expand(workspace)
-    raw_path = Handbeam.Utils.SafeMap.get_first_truthy(input, "path", :path) || Handbeam.Utils.SafeMap.get_first_truthy(input, "file_path", :file_path) || "."
+
+    raw_path =
+      Handbeam.Utils.SafeMap.get_first_truthy(input, "path", :path) ||
+        Handbeam.Utils.SafeMap.get_first_truthy(input, "file_path", :file_path) || "."
+
     raw_path = Handbeam.Agent.Tool.Helpers.expand_tilde(raw_path)
 
     requested =

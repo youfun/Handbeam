@@ -395,7 +395,10 @@ defmodule Handbeam.Agent.Provider.OpenAI do
 
   defp reasoning_replay_item?(item) when is_map(item) do
     type = Handbeam.Utils.SafeMap.get_first_truthy(item, "type", :type)
-    encrypted = Handbeam.Utils.SafeMap.get_first_truthy(item, "encrypted_content", :encrypted_content)
+
+    encrypted =
+      Handbeam.Utils.SafeMap.get_first_truthy(item, "encrypted_content", :encrypted_content)
+
     type == "reasoning" and is_binary(encrypted) and encrypted != ""
   end
 

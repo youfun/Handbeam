@@ -288,7 +288,7 @@ defmodule Handbeam.Permissions.ToolPolicy do
 
   defp worktree_apply?("task_status", call) do
     input = Handbeam.Utils.SafeMap.get_first_truthy(call, :input, "input") || %{}
-    (Handbeam.Utils.SafeMap.get_first_truthy(input, "action", :action)) == "apply"
+    Handbeam.Utils.SafeMap.get_first_truthy(input, "action", :action) == "apply"
   end
 
   defp worktree_apply?(_name, _call), do: false

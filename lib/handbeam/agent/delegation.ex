@@ -411,7 +411,12 @@ defmodule Handbeam.Agent.Delegation do
   end
 
   def handle_info({:child_event, id, run_id, {:tool_start, payload}}, state) do
-    update_job(state, id, run_id, &progress(&1, Handbeam.Utils.SafeMap.get_first_truthy(payload, :tool, "tool")))
+    update_job(
+      state,
+      id,
+      run_id,
+      &progress(&1, Handbeam.Utils.SafeMap.get_first_truthy(payload, :tool, "tool"))
+    )
   end
 
   def handle_info({:child_event, id, run_id, {:tool_approval_requested, payload}}, state) do

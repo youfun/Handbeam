@@ -696,7 +696,10 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
         %{
           "index" => Handbeam.Utils.SafeMap.get_first_truthy(question, "index", :index),
           "question" => Handbeam.Utils.SafeMap.get_first_truthy(question, "question", :question),
-          "answer" => List.first(Handbeam.Utils.SafeMap.get_first_truthy(question, "options", :options) || []) || ""
+          "answer" =>
+            List.first(
+              Handbeam.Utils.SafeMap.get_first_truthy(question, "options", :options) || []
+            ) || ""
         }
       end)
 

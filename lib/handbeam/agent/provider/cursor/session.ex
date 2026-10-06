@@ -864,9 +864,11 @@ defmodule Handbeam.Agent.Provider.Cursor.Session do
           Enum.map(List.wrap(content), fn block ->
             Handbeam.JSON.encode!(%{
               "role" => "tool",
-              "tool_use_id" => Handbeam.Utils.SafeMap.get_first_truthy(block, :tool_use_id, "tool_use_id"),
+              "tool_use_id" =>
+                Handbeam.Utils.SafeMap.get_first_truthy(block, :tool_use_id, "tool_use_id"),
               "content" => tool_result_text(block),
-              "is_error" => Handbeam.Utils.SafeMap.get_first_truthy(block, :is_error, "is_error") || false
+              "is_error" =>
+                Handbeam.Utils.SafeMap.get_first_truthy(block, :is_error, "is_error") || false
             })
           end)
 
@@ -1141,7 +1143,8 @@ defmodule Handbeam.Agent.Provider.Cursor.Session do
   defp tool_def(def) do
     %{
       name: Handbeam.Utils.SafeMap.get_first_truthy(def, :name, "name"),
-      description: Handbeam.Utils.SafeMap.get_first_truthy(def, :description, "description") || "",
+      description:
+        Handbeam.Utils.SafeMap.get_first_truthy(def, :description, "description") || "",
       schema: Handbeam.Utils.SafeMap.get_first_truthy(def, :input_schema, "input_schema") || %{}
     }
   end

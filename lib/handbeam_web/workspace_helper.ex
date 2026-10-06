@@ -111,7 +111,9 @@ defmodule HandbeamWeb.WorkspaceHelper do
       case Handbeam.Utils.SafeMap.get_first_truthy(entry, "id", :id) do
         id when is_binary(id) and id != "" ->
           content = Handbeam.Utils.SafeMap.get_first_truthy(entry, "content", :content)
-          attachments = Handbeam.Utils.SafeMap.get_first_truthy(entry, "attachments", :attachments) || []
+
+          attachments =
+            Handbeam.Utils.SafeMap.get_first_truthy(entry, "attachments", :attachments) || []
 
           [
             %{
