@@ -253,8 +253,8 @@ defmodule Handbeam.Extension.HotReloader do
       Path.join(user_home, ".handbeam/extensions")
     ]
     |> Enum.reject(&is_nil/1)
-    |> Enum.map(&Path.expand(&1, default_user_home()))
     |> Enum.map(fn dir ->
+      dir = Path.expand(dir, default_user_home())
       File.mkdir_p!(dir)
       dir
     end)

@@ -1,4 +1,6 @@
 defmodule Handbeam.Tool.Builtin.ReadThread do
+  @moduledoc "Read authorized transcript messages from a thread."
+
   use Handbeam.Tool.ThreadTool,
     name: "read_thread",
     module: Handbeam.Threads,

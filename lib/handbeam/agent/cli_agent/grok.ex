@@ -114,9 +114,8 @@ defmodule Handbeam.Agent.CliAgent.Grok do
   defp validate_start(opts) do
     with :ok <- require_cwd(opts),
          :ok <- validate_binary_opt(opts, :model),
-         :ok <- validate_binary_opt(opts, :reasoning_effort),
-         :ok <- validate_binary_opt(opts, :session_id) do
-      :ok
+         :ok <- validate_binary_opt(opts, :reasoning_effort) do
+      validate_binary_opt(opts, :session_id)
     end
   end
 

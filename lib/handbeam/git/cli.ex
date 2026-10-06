@@ -47,9 +47,8 @@ defmodule Handbeam.Git.CLI do
         {:error, "repository already exists"}
 
       true ->
-        with :ok <- git_ok(["init", "-b", "main", "--", path], cwd: parent_or_path(path)),
-             {:ok, repo} <- open(path, []) do
-          {:ok, repo}
+        with :ok <- git_ok(["init", "-b", "main", "--", path], cwd: parent_or_path(path)) do
+          open(path, [])
         end
     end
   end
@@ -213,9 +212,8 @@ defmodule Handbeam.Git.CLI do
            git_ok(["clone", "--no-recurse-submodules", "--", url, path],
              cwd: parent_or_path(path),
              auth: opts
-           ),
-         {:ok, repo} <- open(path, []) do
-      {:ok, repo}
+           ) do
+      open(path, [])
     end
   end
 

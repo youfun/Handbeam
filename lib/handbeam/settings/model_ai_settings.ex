@@ -294,9 +294,8 @@ defmodule Handbeam.Settings.ModelAISettings do
     with :ok <- validate_privacy_mode(map),
          :ok <- validate_memory_scope(map),
          :ok <- validate_max_recent_context(map),
-         :ok <- validate_token_thresholds(map),
-         :ok <- validate_advisor(map) do
-      :ok
+         :ok <- validate_token_thresholds(map) do
+      validate_advisor(map)
     end
   end
 

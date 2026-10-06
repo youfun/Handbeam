@@ -75,9 +75,8 @@ defmodule Handbeam.Agent.Tool.FileCommit do
   defp write_temp(path, content, operation_id) do
     tmp = temp_path(path, operation_id)
 
-    with :ok <- File.mkdir_p(Path.dirname(path)),
-         :ok <- File.write(tmp, content) do
-      :ok
+    with :ok <- File.mkdir_p(Path.dirname(path)) do
+      File.write(tmp, content)
     end
   end
 

@@ -93,9 +93,8 @@ defmodule Handbeam.MCP.ServerRuntime do
              clientInfo: %{"name" => "Handbeam", "version" => app_version()},
              capabilities: %{}
            }),
-         :ok <- stdio_notify(state, "notifications/initialized", %{}),
-         {:ok, tools} <- stdio_list_tools(state) do
-      {:ok, tools}
+         :ok <- stdio_notify(state, "notifications/initialized", %{}) do
+      stdio_list_tools(state)
     else
       {:error, reason} -> {:error, reason}
     end

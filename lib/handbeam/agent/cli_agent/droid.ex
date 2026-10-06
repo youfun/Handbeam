@@ -44,9 +44,8 @@ defmodule Handbeam.Agent.CliAgent.Droid do
   @impl true
   def start_session(opts) when is_list(opts) do
     with :ok <- ensure_available(opts),
-         :ok <- validate_start(opts),
-         {:ok, session} <- Session.start(opts) do
-      {:ok, session}
+         :ok <- validate_start(opts) do
+      Session.start(opts)
     end
   end
 
@@ -105,9 +104,8 @@ defmodule Handbeam.Agent.CliAgent.Droid do
     with :ok <- require_cwd(opts),
          :ok <- validate_auto(Keyword.get(opts, :auto)),
          :ok <- validate_binary_opt(opts, :model),
-         :ok <- validate_binary_opt(opts, :reasoning_effort),
-         :ok <- validate_binary_opt(opts, :session_id) do
-      :ok
+         :ok <- validate_binary_opt(opts, :reasoning_effort) do
+      validate_binary_opt(opts, :session_id)
     end
   end
 

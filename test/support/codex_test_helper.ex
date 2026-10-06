@@ -16,6 +16,8 @@ defmodule Handbeam.CodexTestHelper do
   end
 
   defmodule ReqMock do
+    @moduledoc false
+
     def post(url, opts), do: Req.post(url, Keyword.put(opts, :plug, {Req.Test, __MODULE__}))
     def get(url, opts), do: Req.get(url, Keyword.put(opts, :plug, {Req.Test, __MODULE__}))
   end

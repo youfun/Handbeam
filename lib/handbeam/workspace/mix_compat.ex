@@ -206,9 +206,8 @@ defmodule Handbeam.Workspace.MixCompat do
          :ok <- check_compilers(app, List.wrap(dep.opts[:compilers])),
          :ok <- check_mix_exs(app, dest),
          :ok <- check_app_conflict(app, dep_version(dep), host),
-         :ok <- check_native_tree(app, dest),
-         :ok <- check_module_ownership("dependency #{app}", dest, host) do
-      :ok
+         :ok <- check_native_tree(app, dest) do
+      check_module_ownership("dependency #{app}", dest, host)
     end
   end
 

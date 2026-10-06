@@ -1,4 +1,6 @@
 defmodule Handbeam.Tool.Builtin.SendThreadMessage do
+  @moduledoc "Send a message to an authorized peer thread."
+
   use Handbeam.Tool.ThreadTool,
     name: "send_thread_message",
     module: Handbeam.Threads.Collaboration,

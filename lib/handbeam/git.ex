@@ -436,9 +436,8 @@ defmodule Handbeam.Git do
 
       _ ->
         with {:ok, endpoint} <- require_credential_endpoint(opts),
-             {:ok, urls} <- clone_destinations(backend, url, workspace),
-             :ok <- CredentialGuard.assert_https_destinations(urls, endpoint) do
-          :ok
+             {:ok, urls} <- clone_destinations(backend, url, workspace) do
+          CredentialGuard.assert_https_destinations(urls, endpoint)
         end
     end
   end
@@ -450,9 +449,8 @@ defmodule Handbeam.Git do
 
       _ ->
         with {:ok, endpoint} <- require_credential_endpoint(opts),
-             {:ok, urls} <- remote_destinations(backend, repo, action, remote_name(opts)),
-             :ok <- CredentialGuard.assert_https_destinations(urls, endpoint) do
-          :ok
+             {:ok, urls} <- remote_destinations(backend, repo, action, remote_name(opts)) do
+          CredentialGuard.assert_https_destinations(urls, endpoint)
         end
     end
   end

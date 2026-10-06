@@ -637,8 +637,7 @@ defmodule Handbeam.Tool.Builtin.Grep do
 
       files =
         inventory.paths
-        |> Enum.filter(&glob_match?(&1, glob))
-        |> Enum.filter(&safe_search_file?(workspace, &1))
+        |> Enum.filter(&(glob_match?(&1, glob) and safe_search_file?(workspace, &1)))
         |> Enum.sort()
         |> Enum.take(limit(input))
 

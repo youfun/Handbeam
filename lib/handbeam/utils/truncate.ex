@@ -60,7 +60,7 @@ defmodule Handbeam.Utils.Truncate do
   - `:max_lines` — maximum number of lines to keep
   - `:max_bytes` — maximum output byte size (default: #{@default_max_bytes})
   """
-  @spec truncate(String.t(), strategy(), keyword()) :: %Result{}
+  @spec truncate(String.t(), strategy(), keyword()) :: Result.t()
   def truncate(text, strategy \\ :tail, opts \\ [])
 
   def truncate(text, :head, opts) do
@@ -79,7 +79,7 @@ defmodule Handbeam.Utils.Truncate do
   Truncate a single line. If the line exceeds `max_chars` characters,
   it is cut and a `... [truncated]` marker is appended.
   """
-  @spec truncate_line(String.t(), non_neg_integer()) :: %Result{}
+  @spec truncate_line(String.t(), non_neg_integer()) :: Result.t()
   def truncate_line(text, max_chars) do
     total_bytes = byte_size(text)
 
@@ -127,7 +127,7 @@ defmodule Handbeam.Utils.Truncate do
   - `:tail_lines` — lines to keep from the tail (default: #{@default_tail_lines})
   - `:max_bytes` — maximum output byte size (default: #{@default_max_bytes})
   """
-  @spec truncate_head_tail(String.t(), keyword()) :: %Result{}
+  @spec truncate_head_tail(String.t(), keyword()) :: Result.t()
   def truncate_head_tail(content, opts \\ []) do
     head_lines = max(Keyword.get(opts, :head_lines, @default_head_lines), 0)
     tail_lines = max(Keyword.get(opts, :tail_lines, @default_tail_lines), 0)

@@ -119,9 +119,8 @@ defmodule Handbeam.Agent.ExtensionBridge do
     owner = {:extension, ext.name}
 
     with :ok <- Handbeam.Tool.Registry.replace_owner(owner, prepared.tool_modules),
-         :ok <- Handbeam.Extension.Supervisor.replace_workers(owner, prepared.modules),
-         :ok <- ExtRegistry.commit(ext_registry, ext, prepared.hook_module) do
-      :ok
+         :ok <- Handbeam.Extension.Supervisor.replace_workers(owner, prepared.modules) do
+      ExtRegistry.commit(ext_registry, ext, prepared.hook_module)
     end
   end
 
@@ -166,9 +165,8 @@ defmodule Handbeam.Agent.ExtensionBridge do
   @spec validate_extension_tool(module()) :: :ok | {:error, String.t()}
   def validate_extension_tool(mod) when is_atom(mod) do
     with {:ok} <- ensure_compiled(mod),
-         :ok <- validate_tool_behaviour(mod),
-         :ok <- validate_extension_name(mod) do
-      :ok
+         :ok <- validate_tool_behaviour(mod) do
+      validate_extension_name(mod)
     end
   end
 

@@ -1418,9 +1418,8 @@ defmodule Handbeam.Agent.ModelConfig do
   defp validate_config(json) when is_map(json) do
     with :ok <- validate_config_providers_exist(json),
          :ok <- validate_config_default_provider(json),
-         :ok <- validate_config_all_providers(json),
-         :ok <- validate_config_default_model(json) do
-      :ok
+         :ok <- validate_config_all_providers(json) do
+      validate_config_default_model(json)
     end
   end
 
@@ -1482,9 +1481,8 @@ defmodule Handbeam.Agent.ModelConfig do
   defp validate_provider_entry(provider_id, provider_config) do
     with :ok <- validate_provider_name(provider_id),
          :ok <- validate_provider_is_map(provider_id, provider_config),
-         :ok <- validate_provider_has_models(provider_config),
-         :ok <- validate_provider_models(provider_config) do
-      :ok
+         :ok <- validate_provider_has_models(provider_config) do
+      validate_provider_models(provider_config)
     end
   end
 
@@ -1506,9 +1504,8 @@ defmodule Handbeam.Agent.ModelConfig do
   end
 
   defp validate_provider_attrs(attrs) do
-    with :ok <- validate_provider_has_models(attrs),
-         :ok <- validate_provider_models(attrs) do
-      :ok
+    with :ok <- validate_provider_has_models(attrs) do
+      validate_provider_models(attrs)
     end
   end
 

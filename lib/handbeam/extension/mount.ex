@@ -182,9 +182,8 @@ defmodule Handbeam.Extension.Mount do
   end
 
   defp validate_modules(modules, tool_modules, id) do
-    with :ok <- validate_tool_modules(tool_modules, id),
-         :ok <- validate_worker_modules(modules) do
-      :ok
+    with :ok <- validate_tool_modules(tool_modules, id) do
+      validate_worker_modules(modules)
     end
   end
 

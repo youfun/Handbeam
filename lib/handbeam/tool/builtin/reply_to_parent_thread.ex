@@ -1,4 +1,6 @@
 defmodule Handbeam.Tool.Builtin.ReplyToParentThread do
+  @moduledoc "Reply to the parent thread through the runtime-owned route."
+
   use Handbeam.Tool.ThreadTool,
     name: "reply_to_parent_thread",
     module: Handbeam.Threads.Collaboration,

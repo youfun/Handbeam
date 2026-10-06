@@ -35,8 +35,7 @@ defmodule HandbeamWeb.Router do
       [header | _] ->
         header
         |> String.split(",")
-        |> Enum.map(&String.trim/1)
-        |> Enum.map(&parse_lang_tag/1)
+        |> Enum.map(&(&1 |> String.trim() |> parse_lang_tag()))
         |> Enum.reject(&is_nil/1)
         |> Enum.sort_by(&elem(&1, 1), :desc)
         |> List.first()

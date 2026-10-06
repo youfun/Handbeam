@@ -1,4 +1,6 @@
 defmodule Handbeam.Tool.Builtin.FindThread do
+  @moduledoc "Find durable threads in the current workspace."
+
   use Handbeam.Tool.ThreadTool,
     name: "find_thread",
     module: Handbeam.Threads,

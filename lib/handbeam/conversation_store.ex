@@ -619,7 +619,7 @@ defmodule Handbeam.ConversationStore do
   def replace_messages(conversation_id, entries) when is_list(entries) do
     with {:ok, _meta} <- read_meta(conversation_id) do
       encoded =
-        entries |> Enum.map(&Handbeam.JsonSafe.normalize/1) |> Enum.map(&Handbeam.JSON.encode/1)
+        Enum.map(entries, &(&1 |> Handbeam.JsonSafe.normalize() |> Handbeam.JSON.encode()))
 
       if error = Enum.find(encoded, &match?({:error, _}, &1)) do
         Logger.error(
@@ -1001,9 +1001,8 @@ defmodule Handbeam.ConversationStore do
     files = extract_files(conversation)
 
     with :ok <- write_meta_file(id, meta),
-         :ok <- maybe_write_messages_file(id, timeline),
-         :ok <- write_files_file(id, files) do
-      :ok
+         :ok <- maybe_write_messages_file(id, timeline) do
+      write_files_file(id, files)
     end
   end
 

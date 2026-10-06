@@ -149,9 +149,8 @@ defmodule Handbeam.CodeIndex.Store do
              "DELETE FROM embeddings WHERE chunk_id IN (SELECT id FROM chunks WHERE path = ?1)",
              [path]
            ),
-         :ok <- exec(store, "DELETE FROM chunks WHERE path = ?1", [path]),
-         :ok <- exec(store, "DELETE FROM files WHERE path = ?1", [path]) do
-      :ok
+         :ok <- exec(store, "DELETE FROM chunks WHERE path = ?1", [path]) do
+      exec(store, "DELETE FROM files WHERE path = ?1", [path])
     end
   end
 

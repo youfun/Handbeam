@@ -560,13 +560,14 @@ defmodule Handbeam.Agent.Tool.Executor do
       if parent, do: Handbeam.Tool.Registry.active_for_session(parent.conversation_id)
 
     registered
-    |> Enum.filter(&(is_nil(config.allowed_tools) or &1 in config.allowed_tools))
-    |> Enum.filter(&advisor_tool_allowed?(&1, config))
-    |> Enum.filter(&(is_nil(active) or &1 in active))
-    |> Enum.filter(&(is_nil(parent_active) or &1 in parent_active))
-    |> Enum.filter(fn _ ->
-      is_nil(parent) or Handbeam.Agent.Delegation.Policy.authorized_child?(parent, config.run_id)
-    end)
+    |> Enum.filter(
+      &((is_nil(config.allowed_tools) or &1 in config.allowed_tools) and
+          advisor_tool_allowed?(&1, config) and
+          (is_nil(active) or &1 in active) and
+          (is_nil(parent_active) or &1 in parent_active) and
+          (is_nil(parent) or
+             Handbeam.Agent.Delegation.Policy.authorized_child?(parent, config.run_id)))
+    )
   end
 
   defp unknown_tool(name, id, input) do

@@ -173,8 +173,7 @@ defmodule Handbeam.Agent.Subagent.Profile do
     rest
     |> String.trim_trailing("]")
     |> String.split(",")
-    |> Enum.map(&String.trim/1)
-    |> Enum.map(&unwrap/1)
+    |> Enum.map(&(&1 |> String.trim() |> unwrap()))
     |> Enum.reject(&(&1 == ""))
   end
 

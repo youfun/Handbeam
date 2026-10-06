@@ -412,9 +412,8 @@ defmodule Handbeam.Agent.Coordinator do
     workspace_path = Keyword.fetch!(opts, :workspace_path)
     om = Keyword.get(opts, :om, %{})
 
-    with :ok <- memory_model_allowed(workspace_path, om[:observer_model], :observer),
-         :ok <- memory_model_allowed(workspace_path, om[:reflector_model], :reflector) do
-      :ok
+    with :ok <- memory_model_allowed(workspace_path, om[:observer_model], :observer) do
+      memory_model_allowed(workspace_path, om[:reflector_model], :reflector)
     end
   end
 

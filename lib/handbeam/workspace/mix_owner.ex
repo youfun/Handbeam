@@ -327,9 +327,8 @@ defmodule Handbeam.Workspace.MixOwner do
          :ok <- restore_mix(snapshot),
          :ok <- restore_project_stack(snapshot.mix_project),
          :ok <- restore_code_path(snapshot.code_path),
-         :ok <- restore_protocols(snapshot.protocols),
-         :ok <- restore_hex_state(snapshot.hex_state) do
-      :ok
+         :ok <- restore_protocols(snapshot.protocols) do
+      restore_hex_state(snapshot.hex_state)
     end
   rescue
     exception -> {:error, Exception.message(exception)}

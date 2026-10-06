@@ -1,4 +1,6 @@
 defmodule Handbeam.Tool.Builtin.CreateThread do
+  @moduledoc "Create a persistent delegated thread in the current workspace."
+
   use Handbeam.Tool.ThreadTool,
     name: "create_thread",
     module: Handbeam.Threads.Collaboration,

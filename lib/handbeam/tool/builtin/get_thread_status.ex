@@ -1,4 +1,6 @@
 defmodule Handbeam.Tool.Builtin.GetThreadStatus do
+  @moduledoc "Read a durable thread's runtime status."
+
   use Handbeam.Tool.ThreadTool,
     name: "get_thread_status",
     module: Handbeam.Threads,

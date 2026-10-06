@@ -40,8 +40,7 @@ defmodule Handbeam.CsvProfile.Analyzer do
       content
       |> String.trim_trailing()
       |> String.split("\n", trim: false)
-      |> Enum.map(&String.trim_trailing(&1, "\r"))
-      |> Enum.map(&parse_csv_line/1)
+      |> Enum.map(&(&1 |> String.trim_trailing("\r") |> parse_csv_line()))
 
     if Enum.any?(rows, &match?({:error, _}, &1)) do
       {:error, %Error{code: :invalid_csv, message: "invalid CSV format"}}
