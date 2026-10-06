@@ -43,117 +43,26 @@ defmodule Handbeam.Agent.Turn do
   @spec resume_after_tool_approval(State.t(), [map()], keyword()) :: State.t()
   def resume_after_tool_approval(%State{status: :interrupted} = state, decisions, opts) do
     interrupt_data = state.interrupt_data || %{}
-
-    hitl_ids =
-      Handbeam.Utils.SafeMap.get_first_truthy(
-        interrupt_data,
-        :hitl_tool_call_ids,
-        "hitl_tool_call_ids"
-      ) || []
+    hitl_ids = interrupt_id_list(interrupt_data, :hitl_tool_call_ids, "hitl_tool_call_ids")
 
     _auto_ids =
-      Handbeam.Utils.SafeMap.get_first_truthy(
+      interrupt_id_list(
         interrupt_data,
         :auto_approved_tool_call_ids,
         "auto_approved_tool_call_ids"
-      ) || []
+      )
 
     tool_calls = last_tool_calls_from_state(state)
+    decision_by_id = decision_lookup(decisions)
 
-    # Build decision lookup keyed by tool_call_id
-    decision_by_id =
-      Map.new(decisions, fn d ->
-        {d["tool_call_id"] || d[:tool_call_id], d}
-      end)
-
-    # Partition HITL calls into denied vs still-executable.
     {_denied_calls, denied_blocks, remembered_overrides, denied_ids} =
-      Enum.reduce(hitl_ids, {[], [], %{}, MapSet.new()}, fn call_id,
-                                                            {calls, blocks, overrides, denied} ->
-        call = Enum.find(tool_calls, &((&1[:id] || &1["id"]) == call_id))
-        decision = Map.get(decision_by_id, call_id, %{})
-        action = decision["action"] || decision[:action] || "deny"
+      partition_hitl_decisions(hitl_ids, tool_calls, decision_by_id)
 
-        if to_string(action) == "approve" do
-          {calls, blocks, remember_session_grant(overrides, decision, call), denied}
-        else
-          tool_name =
-            (call && (call[:name] || call["name"])) || decision["tool_name"] || "unknown"
+    approved_calls = calls_not_denied(tool_calls, denied_ids)
+    state = apply_approval_resume_state(state, denied_blocks, remembered_overrides)
 
-          block = denied_result_block(call_id, tool_name, action)
-
-          new_overrides =
-            if decision["remember"] || decision[:remember] do
-              Map.put(overrides, tool_name, :deny)
-            else
-              overrides
-            end
-
-          {[call | calls], [block | blocks], new_overrides, MapSet.put(denied, call_id)}
-        end
-      end)
-
-    # Approved = user-approved HITL calls + auto-approved siblings
-    approved_calls =
-      Enum.reject(tool_calls, fn call ->
-        id = call[:id] || call["id"]
-        MapSet.member?(denied_ids, id)
-      end)
-
-    # Merge remembered overrides with existing
-    {remembered_overrides, session_allow} = split_session_grants(remembered_overrides)
-    merged_overrides = Map.merge(state.tool_guard_overrides || %{}, remembered_overrides)
-
-    session_allow =
-      Enum.uniq((state.tool_guard_session_allow || []) ++ session_allow)
-
-    # Clean interrupt state, set denied blocks, set overrides
-    state =
-      state
-      |> Map.put(:status, :running)
-      |> Map.put(:interrupt_data, nil)
-      |> Map.put(:tool_guard_result_blocks, denied_blocks)
-      |> Map.put(:tool_guard_overrides, merged_overrides)
-      |> Map.put(:tool_guard_session_allow, session_allow)
-
-    # Execute approved + auto-approved tool calls
-    if approved_calls == [] do
-      # All denied — inject denied blocks as tool_result and continue
-      result_msg = Message.tool_results(denied_blocks |> Enum.reverse())
-
-      state
-      |> State.append_messages([result_msg])
-      |> mw_run(:after_tool_execution)
-      |> inject_candidate_messages(opts, :steer)
-      |> do_turn(opts)
-    else
-      {executable, _already_denied} =
-        Enum.split_with(approved_calls, fn call ->
-          id = call[:id] || call["id"]
-
-          not Enum.any?(
-            denied_blocks,
-            &(Handbeam.Utils.SafeMap.get_first_truthy(&1, :tool_use_id, "tool_use_id") == id)
-          )
-        end)
-
-      case Executor.execute_all_with_details(executable, state) do
-        {:ok, result_msg, ui_blocks} ->
-          # Merge denied blocks with executed results
-          all_ui_blocks = order_guarded_blocks(approved_calls, ui_blocks ++ denied_blocks)
-          merged_msg = %{result_msg | content: Enum.map(all_ui_blocks, &Executor.strip_details/1)}
-
-          # Emit tool_end events for executed calls
-          emit_tool_end_events(executable, ui_blocks, opts)
-
-          state
-          |> State.append_messages([merged_msg])
-          |> Map.update!(:messages, &Handbeam.Tool.Images.bound_history/1)
-          |> mw_run(:after_tool_execution)
-          |> inject_candidate_messages(opts, :steer)
-          |> do_turn(opts)
-      end
-    end
+    state
+    |> continue_after_approval(approved_calls, denied_blocks, opts)
     |> finish_run(opts)
   end
 
@@ -166,6 +75,143 @@ defmodule Handbeam.Agent.Turn do
   end
 
   # ── Resume helpers ──
+
+  defp interrupt_id_list(interrupt_data, atom_key, string_key) do
+    Handbeam.Utils.SafeMap.get_first_truthy(interrupt_data, atom_key, string_key) || []
+  end
+
+  defp decision_lookup(decisions) do
+    Map.new(decisions, fn d ->
+      {d["tool_call_id"] || d[:tool_call_id], d}
+    end)
+  end
+
+  defp partition_hitl_decisions(hitl_ids, tool_calls, decision_by_id) do
+    Enum.reduce(hitl_ids, {[], [], %{}, MapSet.new()}, fn call_id, acc ->
+      call = Enum.find(tool_calls, &((&1[:id] || &1["id"]) == call_id))
+      decision = Map.get(decision_by_id, call_id, %{})
+      fold_hitl_decision(acc, call_id, call, decision)
+    end)
+  end
+
+  defp fold_hitl_decision({calls, blocks, overrides, denied}, call_id, call, decision) do
+    action = decision["action"] || decision[:action] || "deny"
+
+    if to_string(action) == "approve" do
+      {calls, blocks, remember_session_grant(overrides, decision, call), denied}
+    else
+      deny_hitl_call(%{
+        calls: calls,
+        blocks: blocks,
+        overrides: overrides,
+        denied: denied,
+        call_id: call_id,
+        call: call,
+        decision: decision,
+        action: action
+      })
+    end
+  end
+
+  defp deny_hitl_call(hitl) do
+    tool_name =
+      (hitl.call && (hitl.call[:name] || hitl.call["name"])) || hitl.decision["tool_name"] ||
+        "unknown"
+
+    block = denied_result_block(hitl.call_id, tool_name, hitl.action)
+    new_overrides = remember_deny_override(hitl.overrides, hitl.decision, tool_name)
+
+    {[hitl.call | hitl.calls], [block | hitl.blocks], new_overrides,
+     MapSet.put(hitl.denied, hitl.call_id)}
+  end
+
+  defp remember_deny_override(overrides, decision, tool_name) do
+    if decision["remember"] || decision[:remember] do
+      Map.put(overrides, tool_name, :deny)
+    else
+      overrides
+    end
+  end
+
+  defp calls_not_denied(tool_calls, denied_ids) do
+    Enum.reject(tool_calls, fn call ->
+      id = call[:id] || call["id"]
+      MapSet.member?(denied_ids, id)
+    end)
+  end
+
+  defp apply_approval_resume_state(state, denied_blocks, remembered_overrides) do
+    {remembered_overrides, session_allow} = split_session_grants(remembered_overrides)
+    merged_overrides = Map.merge(state.tool_guard_overrides || %{}, remembered_overrides)
+    session_allow = Enum.uniq((state.tool_guard_session_allow || []) ++ session_allow)
+
+    state
+    |> Map.put(:status, :running)
+    |> Map.put(:interrupt_data, nil)
+    |> Map.put(:tool_guard_result_blocks, denied_blocks)
+    |> Map.put(:tool_guard_overrides, merged_overrides)
+    |> Map.put(:tool_guard_session_allow, session_allow)
+  end
+
+  defp continue_after_approval(state, [], denied_blocks, opts) do
+    result_msg = Message.tool_results(denied_blocks |> Enum.reverse())
+
+    state
+    |> State.append_messages([result_msg])
+    |> mw_run(:after_tool_execution)
+    |> inject_candidate_messages(opts, :steer)
+    |> do_turn(opts)
+  end
+
+  defp continue_after_approval(state, approved_calls, denied_blocks, opts) do
+    {executable, _already_denied} = executable_approved_calls(approved_calls, denied_blocks)
+
+    case Executor.execute_all_with_details(executable, state) do
+      {:ok, result_msg, ui_blocks} ->
+        merge_approved_execution(%{
+          state: state,
+          approved_calls: approved_calls,
+          executable: executable,
+          result_msg: result_msg,
+          ui_blocks: ui_blocks,
+          denied_blocks: denied_blocks,
+          opts: opts
+        })
+    end
+  end
+
+  defp executable_approved_calls(approved_calls, denied_blocks) do
+    Enum.split_with(approved_calls, fn call ->
+      id = call[:id] || call["id"]
+
+      not Enum.any?(
+        denied_blocks,
+        &(Handbeam.Utils.SafeMap.get_first_truthy(&1, :tool_use_id, "tool_use_id") == id)
+      )
+    end)
+  end
+
+  defp merge_approved_execution(execution) do
+    all_ui_blocks =
+      order_guarded_blocks(
+        execution.approved_calls,
+        execution.ui_blocks ++ execution.denied_blocks
+      )
+
+    merged_msg = %{
+      execution.result_msg
+      | content: Enum.map(all_ui_blocks, &Executor.strip_details/1)
+    }
+
+    emit_tool_end_events(execution.executable, execution.ui_blocks, execution.opts)
+
+    execution.state
+    |> State.append_messages([merged_msg])
+    |> Map.update!(:messages, &Handbeam.Tool.Images.bound_history/1)
+    |> mw_run(:after_tool_execution)
+    |> inject_candidate_messages(execution.opts, :steer)
+    |> do_turn(execution.opts)
+  end
 
   # "This session" remembers the suggested pattern, not `bash => :auto`.
   # A tool-name grant sits under the unsandboxed gate and would still skip every
@@ -739,54 +785,92 @@ defmodule Handbeam.Agent.Turn do
   defp do_provider_completion(state, opts, outbound_messages, provider_config) do
     provider = state.config.provider
     streaming? = Keyword.get(opts, :streaming, false)
+    {chunk_tracker, streamed_text_tracker} = start_stream_trackers(streaming?)
+    on_chunk = completion_on_chunk(opts, streaming?, chunk_tracker, streamed_text_tracker)
+    provider_config = prepare_completion_config(provider_config, opts, streaming?, on_chunk)
+    {provider_config, tool_defs} = completion_tool_defs(state, opts, provider_config)
 
-    chunk_tracker = if streaming?, do: :counters.new(1, []), else: nil
+    Logger.debug(
+      "[Turn] provider call provider=#{inspect(provider)} streaming=#{streaming?} " <>
+        "tool_defs=#{length(tool_defs)} messages=#{length(outbound_messages)}"
+    )
 
-    streamed_text_tracker =
-      if streaming?,
-        do: Agent.start_link(fn -> %{text: "", phases: %{}} end) |> elem(1),
-        else: nil
+    provider_t0 = System.monotonic_time(:millisecond)
 
-    on_chunk =
-      cond do
-        is_function(Keyword.get(opts, :on_chunk), 1) ->
-          user_on_chunk = Keyword.fetch!(opts, :on_chunk)
+    completion = %{
+      provider: provider,
+      state: state,
+      outbound_messages: outbound_messages,
+      tool_defs: tool_defs,
+      provider_config: provider_config,
+      streaming?: streaming?,
+      on_chunk: on_chunk,
+      chunk_tracker: chunk_tracker,
+      streamed_text_tracker: streamed_text_tracker,
+      opts: opts
+    }
 
-          fn chunk ->
-            track_chunk(chunk_tracker, chunk_text(chunk))
-            track_streamed_text(streamed_text_tracker, chunk)
-            notify_progress(opts, :message_delta)
-            user_on_chunk.(chunk_text(chunk))
-          end
+    {provider_result, streamed_text} = invoke_provider_completion(completion)
 
-        streaming? ->
-          fn chunk ->
-            track_chunk(chunk_tracker, chunk_text(chunk))
-            track_streamed_text(streamed_text_tracker, chunk)
-            emit_stream_chunk(opts, chunk)
-          end
+    dispatch_provider_result(provider_result, completion, streamed_text, provider_t0)
+  end
 
-        true ->
-          nil
-      end
+  defp start_stream_trackers(false), do: {nil, nil}
 
-    provider_config =
-      provider_config
-      |> Map.put(:stream, streaming?)
-      |> Map.put(:retry_owner, :turn)
-      |> maybe_put_provider_event_callback(opts)
-      |> then(fn pc ->
-        if is_function(on_chunk, 1), do: Map.put(pc, :on_chunk, on_chunk), else: pc
-      end)
+  defp start_stream_trackers(true) do
+    {:counters.new(1, []), Agent.start_link(fn -> %{text: "", phases: %{}} end) |> elem(1)}
+  end
 
+  defp completion_on_chunk(opts, streaming?, chunk_tracker, streamed_text_tracker) do
+    cond do
+      is_function(Keyword.get(opts, :on_chunk), 1) ->
+        user_on_chunk = Keyword.fetch!(opts, :on_chunk)
+        user_completion_chunk(opts, chunk_tracker, streamed_text_tracker, user_on_chunk)
+
+      streaming? ->
+        streamed_completion_chunk(opts, chunk_tracker, streamed_text_tracker)
+
+      true ->
+        nil
+    end
+  end
+
+  defp user_completion_chunk(opts, chunk_tracker, streamed_text_tracker, user_on_chunk) do
+    fn chunk ->
+      track_chunk(chunk_tracker, chunk_text(chunk))
+      track_streamed_text(streamed_text_tracker, chunk)
+      notify_progress(opts, :message_delta)
+      user_on_chunk.(chunk_text(chunk))
+    end
+  end
+
+  defp streamed_completion_chunk(opts, chunk_tracker, streamed_text_tracker) do
+    fn chunk ->
+      track_chunk(chunk_tracker, chunk_text(chunk))
+      track_streamed_text(streamed_text_tracker, chunk)
+      emit_stream_chunk(opts, chunk)
+    end
+  end
+
+  defp prepare_completion_config(provider_config, opts, streaming?, on_chunk) do
+    provider_config
+    |> Map.put(:stream, streaming?)
+    |> Map.put(:retry_owner, :turn)
+    |> maybe_put_provider_event_callback(opts)
+    |> maybe_put_on_chunk(on_chunk)
+  end
+
+  defp maybe_put_on_chunk(provider_config, on_chunk) do
+    if is_function(on_chunk, 1),
+      do: Map.put(provider_config, :on_chunk, on_chunk),
+      else: provider_config
+  end
+
+  defp completion_tool_defs(state, opts, provider_config) do
     authorized_tools = Executor.authorized_tools(state.config)
 
     tool_defs =
-      Keyword.get(opts, :session_id)
-      |> case do
-        nil -> Handbeam.Tool.Registry.tool_defs()
-        sid -> Handbeam.Tool.Registry.tool_defs_for_session(sid)
-      end
+      session_tool_defs(Keyword.get(opts, :session_id))
       |> Handbeam.MCP.Access.filter(state.config.context)
       |> Enum.filter(&(&1.name in authorized_tools))
       |> Enum.map(
@@ -796,161 +880,225 @@ defmodule Handbeam.Agent.Turn do
     final_turn? = state.turn + 1 >= state.config.max_turns
     provider_config = maybe_require_final_answer(provider_config, final_turn?)
     tool_defs = if final_turn?, do: [], else: tool_defs
+    {provider_config, tool_defs}
+  end
 
+  defp session_tool_defs(nil), do: Handbeam.Tool.Registry.tool_defs()
+  defp session_tool_defs(sid), do: Handbeam.Tool.Registry.tool_defs_for_session(sid)
+
+  defp invoke_provider_completion(completion) do
+    try do
+      result =
+        call_provider_with_retry(
+          completion.provider,
+          completion.state,
+          completion.outbound_messages,
+          completion.tool_defs,
+          completion.provider_config,
+          completion.streaming?,
+          completion.on_chunk,
+          completion.chunk_tracker,
+          0,
+          completion.opts
+        )
+
+      {result, take_streamed_text(completion.streamed_text_tracker)}
+    after
+      stop_streamed_text_tracker(completion.streamed_text_tracker)
+    end
+  end
+
+  defp dispatch_provider_result(
+         {:ok, %{stop_reason: :tool_use, messages: new_msgs, usage: usage} = response},
+         completion,
+         _streamed_text,
+         provider_t0
+       ) do
+    accept_tool_use_response(completion, new_msgs, usage, response, provider_t0)
+  end
+
+  defp dispatch_provider_result(
+         {:ok, %{stop_reason: :end_turn, messages: new_msgs, usage: usage} = response},
+         completion,
+         streamed_text,
+         provider_t0
+       ) do
+    accept_end_turn_response(completion, new_msgs, usage, response, streamed_text, provider_t0)
+  end
+
+  defp dispatch_provider_result({:error, reason}, completion, _streamed_text, provider_t0) do
+    handle_provider_error(completion, reason, provider_t0)
+  end
+
+  defp accept_tool_use_response(completion, new_msgs, usage, response, provider_t0) do
     Logger.debug(
-      "[Turn] provider call provider=#{inspect(provider)} streaming=#{streaming?} " <>
-        "tool_defs=#{length(tool_defs)} messages=#{length(outbound_messages)}"
+      "[Turn] provider returned tool_use new_msgs=#{length(new_msgs)} " <>
+        "duration_ms=#{System.monotonic_time(:millisecond) - provider_t0}"
     )
 
-    provider_t0 = System.monotonic_time(:millisecond)
+    state =
+      record_provider_response(
+        completion.state,
+        completion.opts,
+        new_msgs,
+        usage,
+        response,
+        :after_tool_request
+      )
 
-    {provider_result, streamed_text} =
-      try do
-        result =
-          call_provider_with_retry(
-            provider,
-            state,
-            outbound_messages,
-            tool_defs,
-            provider_config,
-            streaming?,
-            on_chunk,
-            chunk_tracker,
-            0,
-            opts
-          )
+    continue_after_tool_request(state, new_msgs, completion.opts)
+  end
 
-        {result, take_streamed_text(streamed_text_tracker)}
-      after
-        stop_streamed_text_tracker(streamed_text_tracker)
-      end
+  defp accept_end_turn_response(completion, new_msgs, usage, response, streamed_text, provider_t0) do
+    Logger.debug(
+      "[Turn] provider returned end_turn new_msgs=#{length(new_msgs)} " <>
+        "duration_ms=#{System.monotonic_time(:millisecond) - provider_t0} " <>
+        "usage=#{inspect(usage)}"
+    )
 
-    case provider_result do
-      {:ok, %{stop_reason: :tool_use, messages: new_msgs, usage: usage} = response} ->
-        Logger.debug(
-          "[Turn] provider returned tool_use new_msgs=#{length(new_msgs)} " <>
-            "duration_ms=#{System.monotonic_time(:millisecond) - provider_t0}"
-        )
+    state =
+      record_provider_response(
+        completion.state,
+        completion.opts,
+        new_msgs,
+        usage,
+        response,
+        :after_completion
+      )
 
-        emit_provider_items(opts, new_msgs)
+    emit_completion_messages(
+      completion.opts,
+      new_msgs,
+      completion.streaming?,
+      completion.chunk_tracker,
+      streamed_text
+    )
 
-        state =
-          state
-          |> State.append_messages(new_msgs)
-          |> State.increment_turn()
-          |> State.merge_usage(usage)
-          |> State.merge_provider_state(Map.get(response, :provider_state, %{}))
-          |> State.put_provider_response_metadata(Map.get(response, :response_metadata, %{}))
+    continue_after_end_turn(state, new_msgs, completion.opts)
+  end
 
-        emit(opts, :usage_updated, %{usage: state.usage})
-        if state.config.delegated?, do: emit(opts, :delegation_usage, state.usage)
+  defp record_provider_response(state, opts, new_msgs, usage, response, middleware) do
+    emit_provider_items(opts, new_msgs)
 
-        state = mw_run(state, :after_tool_request)
+    state =
+      state
+      |> State.append_messages(new_msgs)
+      |> State.increment_turn()
+      |> State.merge_usage(usage)
+      |> State.merge_provider_state(Map.get(response, :provider_state, %{}))
+      |> State.put_provider_response_metadata(Map.get(response, :response_metadata, %{}))
 
-        cond do
-          state.status == :interrupted ->
-            emit(opts, :tool_approval_requested, state.interrupt_data || %{})
-            state
+    emit(opts, :usage_updated, %{usage: state.usage})
+    if state.config.delegated?, do: emit(opts, :delegation_usage, state.usage)
+    mw_run(state, middleware)
+  end
 
-          # Auto-review can latch a stop inside this batch. Do not execute the
-          # approved siblings; the turn is already over.
-          state.status == :halted ->
-            finish_halted_tool_review(state, new_msgs, opts)
+  defp continue_after_tool_request(%State{status: :interrupted} = state, _new_msgs, opts) do
+    emit(opts, :tool_approval_requested, state.interrupt_data || %{})
+    state
+  end
 
-          true ->
-            handle_tool_use(state, new_msgs, opts)
-        end
+  # Auto-review can latch a stop inside this batch. Do not execute the
+  # approved siblings; the turn is already over.
+  defp continue_after_tool_request(%State{status: :halted} = state, new_msgs, opts) do
+    finish_halted_tool_review(state, new_msgs, opts)
+  end
 
-      {:ok, %{stop_reason: :end_turn, messages: new_msgs, usage: usage} = response} ->
-        Logger.debug(
-          "[Turn] provider returned end_turn new_msgs=#{length(new_msgs)} " <>
-            "duration_ms=#{System.monotonic_time(:millisecond) - provider_t0} " <>
-            "usage=#{inspect(usage)}"
-        )
+  defp continue_after_tool_request(state, new_msgs, opts) do
+    handle_tool_use(state, new_msgs, opts)
+  end
 
-        emit_provider_items(opts, new_msgs)
+  defp continue_after_end_turn(state, new_msgs, opts) do
+    cond do
+      missing_final_answer?(new_msgs) and not Keyword.get(opts, :empty_end_turn_retried, false) ->
+        retry_missing_final_answer(state, opts)
 
-        state =
-          state
-          |> State.append_messages(new_msgs)
-          |> State.increment_turn()
-          |> State.merge_usage(usage)
-          |> State.merge_provider_state(Map.get(response, :provider_state, %{}))
-          |> State.put_provider_response_metadata(Map.get(response, :response_metadata, %{}))
+      missing_final_answer?(new_msgs) ->
+        fail_missing_final_answer(state, new_msgs)
 
-        emit(opts, :usage_updated, %{usage: state.usage})
-        if state.config.delegated?, do: emit(opts, :delegation_usage, state.usage)
-
-        state = mw_run(state, :after_completion)
-
-        emit_completion_messages(opts, new_msgs, streaming?, chunk_tracker, streamed_text)
-
-        cond do
-          missing_final_answer?(new_msgs) and
-              not Keyword.get(opts, :empty_end_turn_retried, false) ->
-            Logger.warning(
-              "[Turn] commentary without a final answer — requesting the final answer once"
-            )
-
-            do_turn(state, Keyword.put(opts, :empty_end_turn_retried, true))
-
-          missing_final_answer?(new_msgs) ->
-            error_msg =
-              if commentary_only_turn?(new_msgs),
-                do: "Provider ended the turn without a final answer",
-                else: "Provider ended the turn with no visible assistant response or tool call"
-
-            Logger.warning("[Turn] #{error_msg}")
-
-            state
-            |> Map.put(:status, :error)
-            |> Map.put(:error, error_msg)
-            |> mw_run(:on_error)
-
-          true ->
-            continue_with_pending_or_complete(state, opts)
-        end
-
-      {:error, reason} ->
-        error_msg = format_provider_error(provider_config, reason)
-
-        if not Keyword.get(opts, :prompt_too_long_retried, false) and prompt_too_long?(error_msg) do
-          Logger.info("[Turn] Prompt too long — forcing compaction and retrying")
-
-          compacted_state = Compactor.force_compact(state)
-
-          if compacted_state.messages == state.messages do
-            state = %{state | status: :error, error: error_msg}
-            mw_run(state, :on_error)
-          else
-            do_completion(compacted_state, Keyword.put(opts, :prompt_too_long_retried, true))
-          end
-        else
-          follow_ups = drain_candidate_messages(opts, :follow_up)
-
-          if follow_ups != [] and not Keyword.get(opts, :error_follow_up_retried, false) do
-            Logger.warning(
-              "[Turn] provider error, continuing with queued follow_up " <>
-                "count=#{length(follow_ups)} error=#{error_msg}"
-            )
-
-            continue_with_follow_up(
-              state,
-              follow_ups,
-              Keyword.put(opts, :error_follow_up_retried, true)
-            )
-          else
-            Logger.error(
-              "[Turn] Provider error provider=#{inspect(provider)} " <>
-                "duration_ms=#{System.monotonic_time(:millisecond) - provider_t0} " <>
-                "error=#{error_msg}"
-            )
-
-            state = %{state | status: :error, error: error_msg}
-            mw_run(state, :on_error)
-          end
-        end
+      true ->
+        continue_with_pending_or_complete(state, opts)
     end
+  end
+
+  defp retry_missing_final_answer(state, opts) do
+    Logger.warning("[Turn] commentary without a final answer — requesting the final answer once")
+    do_turn(state, Keyword.put(opts, :empty_end_turn_retried, true))
+  end
+
+  defp fail_missing_final_answer(state, new_msgs) do
+    error_msg = missing_final_answer_error(new_msgs)
+    Logger.warning("[Turn] #{error_msg}")
+
+    state
+    |> Map.put(:status, :error)
+    |> Map.put(:error, error_msg)
+    |> mw_run(:on_error)
+  end
+
+  defp missing_final_answer_error(new_msgs) do
+    if commentary_only_turn?(new_msgs),
+      do: "Provider ended the turn without a final answer",
+      else: "Provider ended the turn with no visible assistant response or tool call"
+  end
+
+  defp handle_provider_error(completion, reason, provider_t0) do
+    error_msg = format_provider_error(completion.provider_config, reason)
+
+    if not Keyword.get(completion.opts, :prompt_too_long_retried, false) and
+         prompt_too_long?(error_msg) do
+      retry_prompt_too_long(completion.state, completion.opts, error_msg)
+    else
+      continue_or_fail_provider_error(
+        completion.state,
+        completion.opts,
+        completion.provider,
+        error_msg,
+        provider_t0
+      )
+    end
+  end
+
+  defp retry_prompt_too_long(state, opts, error_msg) do
+    Logger.info("[Turn] Prompt too long — forcing compaction and retrying")
+    compacted_state = Compactor.force_compact(state)
+
+    if compacted_state.messages == state.messages do
+      state = %{state | status: :error, error: error_msg}
+      mw_run(state, :on_error)
+    else
+      do_completion(compacted_state, Keyword.put(opts, :prompt_too_long_retried, true))
+    end
+  end
+
+  defp continue_or_fail_provider_error(state, opts, provider, error_msg, provider_t0) do
+    follow_ups = drain_candidate_messages(opts, :follow_up)
+
+    if follow_ups != [] and not Keyword.get(opts, :error_follow_up_retried, false) do
+      Logger.warning(
+        "[Turn] provider error, continuing with queued follow_up " <>
+          "count=#{length(follow_ups)} error=#{error_msg}"
+      )
+
+      continue_with_follow_up(
+        state,
+        follow_ups,
+        Keyword.put(opts, :error_follow_up_retried, true)
+      )
+    else
+      fail_provider_error(state, provider, error_msg, provider_t0)
+    end
+  end
+
+  defp fail_provider_error(state, provider, error_msg, provider_t0) do
+    Logger.error(
+      "[Turn] Provider error provider=#{inspect(provider)} " <>
+        "duration_ms=#{System.monotonic_time(:millisecond) - provider_t0} " <>
+        "error=#{error_msg}"
+    )
+
+    state = %{state | status: :error, error: error_msg}
+    mw_run(state, :on_error)
   end
 
   defp continue_with_follow_up(state, follow_up_messages, opts) do
@@ -1547,87 +1695,110 @@ defmodule Handbeam.Agent.Turn do
     tool_calls = extract_tool_calls(new_msgs)
     session_id = Keyword.get(opts, :session_id)
 
-    tool_names = Enum.map(tool_calls, & &1[:name])
-
     Logger.debug(
-      "[Turn] handle_tool_use count=#{length(tool_calls)} tools=#{inspect(tool_names)}"
+      "[Turn] handle_tool_use count=#{length(tool_calls)} tools=#{inspect(Enum.map(tool_calls, & &1[:name]))}"
     )
 
-    # Get active set for execution-side guard
     active_set = if session_id, do: Handbeam.Tool.Registry.active_for_session(session_id)
 
-    # Run each tool_call through extension hooks + active set guard:
-    # - extensions may block/transform tools
-    # - active set blocks tools not in the allowed list
     {blocked_calls, allowed_calls_w_ctx} =
-      if session_id do
-        Enum.reduce(tool_calls, {[], []}, fn call, {blocked, allowed} ->
-          case run_extension_hook(
-                 state,
-                 session_id,
-                 {:tool_call,
-                  %{
-                    tool_use_id: call[:id],
-                    tool_name: call[:name],
-                    args: call[:input] || %{},
-                    session_id: session_id,
-                    parent_tool_call_id: nil
-                  }}
-               ) do
-            {:block, reason} ->
-              {[{call, {:extension, reason}} | blocked], allowed}
+      gate_tool_calls(state, tool_calls, session_id, active_set)
 
-            {:transform, %{args: transformed_args} = ctx} when is_map(transformed_args) ->
-              # Mutate args from transform, keep other transformed fields for context
-              mutated = %{call | input: Map.merge(call[:input] || %{}, transformed_args)}
-              {blocked, [{mutated, ctx} | allowed]}
+    {blocked_calls, allowed_calls_w_ctx} =
+      reject_unauthorized_rewrites(state, blocked_calls, allowed_calls_w_ctx, active_set)
 
-            {:transform, _ctx} ->
-              # Transform without args mutation — pass through as-is
-              {blocked, [{call, %{}} | allowed]}
+    emit_allowed_tool_starts(allowed_calls_w_ctx, opts)
 
-            _ ->
-              # Check active set execution guard
-              if active_set != nil and call[:name] not in active_set do
-                {[{call, :active_set} | blocked], allowed}
-              else
-                {blocked, [{call, %{}} | allowed]}
-              end
-          end
-        end)
-        |> then(fn {b, a} -> {Enum.reverse(b), Enum.reverse(a)} end)
-      else
-        {[], Enum.map(tool_calls, &{&1, %{}})}
-      end
-
-    # Hooks cannot bypass the active set. An argument rewrite must also be
-    # independently authorized: approval of the original call ID is not
-    # approval of different arguments under that same ID.
-    {unauthorized, allowed_calls_w_ctx} =
-      Enum.split_with(allowed_calls_w_ctx, fn {call, ctx} ->
-        inactive? = active_set != nil and call[:name] not in active_set
-        rewritten? = Map.has_key?(ctx, :args)
-
-        policy =
-          Handbeam.Permissions.ToolPolicy.from_workspace(
-            state.config.working_directory,
-            %{},
-            state.tool_guard_session_allow || []
-          )
-
-        inactive? or
-          (rewritten? and Handbeam.Permissions.ToolPolicy.decision(policy, call) != :auto)
+    denied_blocks =
+      Enum.map(blocked_calls, fn {call, block_source} ->
+        blocked_tool_result_block(call, block_source)
       end)
 
-    blocked_calls =
-      blocked_calls ++
-        Enum.map(unauthorized, fn {call, _} ->
-          {call,
-           {:extension,
-            "Transformed call is not authorized by workspace permissions or active tools"}}
-        end)
+    allowed_calls = Enum.map(allowed_calls_w_ctx, fn {call, _ctx} -> call end)
+    execute_or_skip_blocked_tools(state, allowed_calls, denied_blocks, opts)
+  end
 
-    # Emit tool_start only for allowed (unblocked) calls
+  defp gate_tool_calls(_state, tool_calls, nil, _active_set) do
+    {[], Enum.map(tool_calls, &{&1, %{}})}
+  end
+
+  defp gate_tool_calls(state, tool_calls, session_id, active_set) do
+    Enum.reduce(tool_calls, {[], []}, fn call, acc ->
+      fold_tool_call_gate(state, session_id, active_set, call, acc)
+    end)
+    |> then(fn {blocked, allowed} -> {Enum.reverse(blocked), Enum.reverse(allowed)} end)
+  end
+
+  defp fold_tool_call_gate(state, session_id, active_set, call, {blocked, allowed}) do
+    case run_extension_hook(state, session_id, tool_call_hook_event(call, session_id)) do
+      {:block, reason} ->
+        {[{call, {:extension, reason}} | blocked], allowed}
+
+      {:transform, %{args: transformed_args} = ctx} when is_map(transformed_args) ->
+        mutated = %{call | input: Map.merge(call[:input] || %{}, transformed_args)}
+        {blocked, [{mutated, ctx} | allowed]}
+
+      {:transform, _ctx} ->
+        {blocked, [{call, %{}} | allowed]}
+
+      _ ->
+        classify_active_set(call, active_set, blocked, allowed)
+    end
+  end
+
+  defp tool_call_hook_event(call, session_id) do
+    {:tool_call,
+     %{
+       tool_use_id: call[:id],
+       tool_name: call[:name],
+       args: call[:input] || %{},
+       session_id: session_id,
+       parent_tool_call_id: nil
+     }}
+  end
+
+  defp classify_active_set(call, active_set, blocked, allowed) do
+    if active_set != nil and call[:name] not in active_set do
+      {[{call, :active_set} | blocked], allowed}
+    else
+      {blocked, [{call, %{}} | allowed]}
+    end
+  end
+
+  # Hooks cannot bypass the active set. An argument rewrite must also be
+  # independently authorized: approval of the original call ID is not
+  # approval of different arguments under that same ID.
+  defp reject_unauthorized_rewrites(state, blocked_calls, allowed_calls_w_ctx, active_set) do
+    {unauthorized, allowed_calls_w_ctx} =
+      Enum.split_with(allowed_calls_w_ctx, fn {call, ctx} ->
+        unauthorized_rewrite?(state, call, ctx, active_set)
+      end)
+
+    {blocked_calls ++ unauthorized_extension_blocks(unauthorized), allowed_calls_w_ctx}
+  end
+
+  defp unauthorized_rewrite?(state, call, ctx, active_set) do
+    inactive? = active_set != nil and call[:name] not in active_set
+    rewritten? = Map.has_key?(ctx, :args)
+
+    policy =
+      Handbeam.Permissions.ToolPolicy.from_workspace(
+        state.config.working_directory,
+        %{},
+        state.tool_guard_session_allow || []
+      )
+
+    inactive? or (rewritten? and Handbeam.Permissions.ToolPolicy.decision(policy, call) != :auto)
+  end
+
+  defp unauthorized_extension_blocks(unauthorized) do
+    Enum.map(unauthorized, fn {call, _} ->
+      {call,
+       {:extension, "Transformed call is not authorized by workspace permissions or active tools"}}
+    end)
+  end
+
+  defp emit_allowed_tool_starts(allowed_calls_w_ctx, opts) do
     Enum.each(allowed_calls_w_ctx, fn {call, _ctx} ->
       emit(opts, :tool_start, %{
         tool_use_id: call[:id],
@@ -1636,90 +1807,98 @@ defmodule Handbeam.Agent.Turn do
         parent_tool_call_id: nil
       })
     end)
+  end
 
-    # Build denied result blocks for blocked calls
-    denied_blocks =
-      Enum.map(blocked_calls, fn {call, block_source} ->
-        blocked_tool_result_block(call, block_source)
-      end)
+  defp execute_or_skip_blocked_tools(state, [], denied_blocks, opts) do
+    result_msg = Message.tool_results(Enum.reverse(denied_blocks))
 
+    state
+    |> State.append_messages([result_msg])
+    |> mw_run(:after_tool_execution)
+    |> inject_candidate_messages(opts, :steer)
+    |> do_turn(opts)
+  end
+
+  defp execute_or_skip_blocked_tools(state, allowed_calls, denied_blocks, opts) do
     t0 = System.monotonic_time(:millisecond)
 
-    allowed_calls = Enum.map(allowed_calls_w_ctx, fn {call, _ctx} -> call end)
-
-    if allowed_calls == [] do
-      # All tools blocked — inject denied blocks directly and continue
-      result_msg = Message.tool_results(Enum.reverse(denied_blocks))
-
-      state
-      |> State.append_messages([result_msg])
-      |> mw_run(:after_tool_execution)
-      |> inject_candidate_messages(opts, :steer)
-      |> do_turn(opts)
-    else
-      # Execute allowed calls normally, then merge denied blocks with results
-      case execute_tool_calls_with_guard_results(allowed_calls, state) do
-        {:ok, result_msg, ui_blocks} ->
-          duration_ms = System.monotonic_time(:millisecond) - t0
-
-          Logger.debug(
-            "[Turn] tool execution complete count=#{length(allowed_calls)} duration_ms=#{duration_ms}"
-          )
-
-          all_ui_blocks = ui_blocks ++ denied_blocks
-
-          # Build tool_use_id → ui_block lookup (only for executed calls)
-          ui_block_by_id =
-            Map.new(ui_blocks, fn block ->
-              {block[:tool_use_id], block}
-            end)
-
-          Enum.each(allowed_calls, fn call ->
-            ui_block = Map.get(ui_block_by_id, call[:id])
-            details = (ui_block && ui_block[:details]) || %{}
-
-            # Extract file_path from details or fall back to call input
-            file_path =
-              details[:file_path] || details["file_path"] || call[:input][:file_path] ||
-                call[:input]["file_path"]
-
-            payload = %{
-              tool_use_id: call[:id],
-              tool: call[:name],
-              parent_tool_call_id: nil,
-              duration_ms: duration_ms,
-              details: bounded_tool_details(details),
-              file_path: file_path,
-              images: Handbeam.Tool.Images.project(ui_block && ui_block[:images]),
-              output: bounded_tool_output(ui_block && ui_block[:content])
-            }
-
-            # Add error if present
-            payload =
-              if ui_block && ui_block[:is_error] do
-                Map.put(payload, :error, bounded_tool_error(ui_block[:content]))
-              else
-                payload
-              end
-
-            record_tool_receipt(state, call, ui_block)
-            emit(opts, :tool_end, payload)
-          end)
-
-          # Merge denied blocks into result content
-          merged_msg = %{
-            result_msg
-            | content: Enum.map(all_ui_blocks, &Executor.strip_details/1)
-          }
-
-          state
-          |> State.append_messages([merged_msg])
-          |> Map.update!(:messages, &Handbeam.Tool.Images.bound_history/1)
-          |> mw_run(:after_tool_execution)
-          |> inject_candidate_messages(opts, :steer)
-          |> do_turn(opts)
-      end
+    case execute_tool_calls_with_guard_results(allowed_calls, state) do
+      {:ok, result_msg, ui_blocks} ->
+        finish_allowed_tool_execution(%{
+          state: state,
+          allowed_calls: allowed_calls,
+          result_msg: result_msg,
+          ui_blocks: ui_blocks,
+          denied_blocks: denied_blocks,
+          opts: opts,
+          t0: t0
+        })
     end
+  end
+
+  defp finish_allowed_tool_execution(execution) do
+    duration_ms = System.monotonic_time(:millisecond) - execution.t0
+
+    Logger.debug(
+      "[Turn] tool execution complete count=#{length(execution.allowed_calls)} duration_ms=#{duration_ms}"
+    )
+
+    emit_executed_tool_ends(
+      execution.state,
+      execution.allowed_calls,
+      execution.ui_blocks,
+      execution.opts,
+      duration_ms
+    )
+
+    merged_msg = %{
+      execution.result_msg
+      | content:
+          Enum.map(execution.ui_blocks ++ execution.denied_blocks, &Executor.strip_details/1)
+    }
+
+    execution.state
+    |> State.append_messages([merged_msg])
+    |> Map.update!(:messages, &Handbeam.Tool.Images.bound_history/1)
+    |> mw_run(:after_tool_execution)
+    |> inject_candidate_messages(execution.opts, :steer)
+    |> do_turn(execution.opts)
+  end
+
+  defp emit_executed_tool_ends(state, allowed_calls, ui_blocks, opts, duration_ms) do
+    ui_block_by_id = Map.new(ui_blocks, fn block -> {block[:tool_use_id], block} end)
+
+    Enum.each(allowed_calls, fn call ->
+      ui_block = Map.get(ui_block_by_id, call[:id])
+      record_tool_receipt(state, call, ui_block)
+      emit(opts, :tool_end, executed_tool_end_payload(call, ui_block, duration_ms))
+    end)
+  end
+
+  defp executed_tool_end_payload(call, ui_block, duration_ms) do
+    details = (ui_block && ui_block[:details]) || %{}
+
+    payload = %{
+      tool_use_id: call[:id],
+      tool: call[:name],
+      parent_tool_call_id: nil,
+      duration_ms: duration_ms,
+      details: bounded_tool_details(details),
+      file_path: tool_end_file_path(details, call),
+      images: Handbeam.Tool.Images.project(ui_block && ui_block[:images]),
+      output: bounded_tool_output(ui_block && ui_block[:content])
+    }
+
+    if ui_block && ui_block[:is_error] do
+      Map.put(payload, :error, bounded_tool_error(ui_block[:content]))
+    else
+      payload
+    end
+  end
+
+  defp tool_end_file_path(details, call) do
+    details[:file_path] || details["file_path"] || call[:input][:file_path] ||
+      call[:input]["file_path"]
   end
 
   defp execute_tool_calls_with_guard_results(

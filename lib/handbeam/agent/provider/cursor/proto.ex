@@ -616,34 +616,54 @@ defmodule Handbeam.Agent.Provider.Cursor.Proto do
 
   defp decode_exec(bin) do
     f = nested(bin)
-    id = field(f, 1) || 0
-    exec_id = decode_string(field(f, 15) || "")
+    {kind, payload, result_field} = exec_dispatch(f)
 
-    {kind, payload, result_field} =
-      cond do
-        (v = field(f, 2)) != nil -> {:shell, decode_shell_args(v), 2}
-        (v = field(f, 3)) != nil -> {:write, decode_write_args(v), 3}
-        (v = field(f, 4)) != nil -> {:delete, decode_path_args(v), 4}
-        (v = field(f, 5)) != nil -> {:grep, decode_grep_args(v), 5}
-        (v = field(f, 7)) != nil -> {:read, decode_path_args(v), 7}
-        (v = field(f, 8)) != nil -> {:ls, decode_ls_args(v), 8}
-        field(f, 9) != nil -> {:unsupported, %{}, 9}
-        field(f, 10) != nil -> {:request_context, %{}, 10}
-        (v = field(f, 11)) != nil -> {:mcp, decode_mcp_args(v), 11}
-        (v = field(f, 14)) != nil -> {:shell_stream, decode_shell_args(v), 14}
-        field(f, 16) != nil -> {:unsupported, %{}, 16}
-        field(f, 17) != nil -> {:unsupported, %{}, 17}
-        field(f, 18) != nil -> {:unsupported, %{}, 18}
-        (v = field(f, 20)) != nil -> {:fetch, decode_fetch_args(v), 20}
-        field(f, 21) != nil -> {:unsupported, %{}, 21}
-        field(f, 22) != nil -> {:unsupported, %{}, 22}
-        field(f, 23) != nil -> {:unsupported, %{}, 23}
-        (v = field(f, 36)) != nil -> {:start_grind_planning, decode_grind_args(v), 36}
-        true -> {:unknown, %{}, 0}
-      end
-
-    %{id: id, exec_id: exec_id, kind: kind, payload: payload, result_field: result_field}
+    %{
+      id: field(f, 1) || 0,
+      exec_id: decode_string(field(f, 15) || ""),
+      kind: kind,
+      payload: payload,
+      result_field: result_field
+    }
   end
+
+  # Field number, kind, payload decoder. Presence-only kinds use an empty payload.
+  # First matching field wins, matching the previous cond order.
+  defp exec_dispatch(fields) do
+    exec_fields()
+    |> Enum.find_value({:unknown, %{}, 0}, fn {number, kind, decoder} ->
+      case field(fields, number) do
+        nil -> nil
+        value -> {kind, exec_payload(decoder, value), number}
+      end
+    end)
+  end
+
+  defp exec_fields do
+    [
+      {2, :shell, &decode_shell_args/1},
+      {3, :write, &decode_write_args/1},
+      {4, :delete, &decode_path_args/1},
+      {5, :grep, &decode_grep_args/1},
+      {7, :read, &decode_path_args/1},
+      {8, :ls, &decode_ls_args/1},
+      {9, :unsupported, nil},
+      {10, :request_context, nil},
+      {11, :mcp, &decode_mcp_args/1},
+      {14, :shell_stream, &decode_shell_args/1},
+      {16, :unsupported, nil},
+      {17, :unsupported, nil},
+      {18, :unsupported, nil},
+      {20, :fetch, &decode_fetch_args/1},
+      {21, :unsupported, nil},
+      {22, :unsupported, nil},
+      {23, :unsupported, nil},
+      {36, :start_grind_planning, &decode_grind_args/1}
+    ]
+  end
+
+  defp exec_payload(nil, _value), do: %{}
+  defp exec_payload(decoder, value), do: decoder.(value)
 
   defp decode_grind_args(bin) do
     f = nested(bin)

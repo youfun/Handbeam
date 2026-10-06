@@ -91,44 +91,51 @@ defmodule Handbeam.Tool.Extension.Beam.SessionSnapshot do
     payload = get_payload(event)
     _seq = get_seq(event)
 
-    case kind do
-      :run_start ->
-        " [run_start] model=#{safe_get_in(payload, [:model])} workspace=#{safe_get_in(payload, [:workspace_path])}"
+    format_event(kind, payload)
+  end
 
-      :user_message ->
-        content = safe_get_in(payload, [:content]) || ""
-        " [user] #{trunc_str(content, 500)}"
+  defp format_event(:run_start, payload) do
+    " [run_start] model=#{safe_get_in(payload, [:model])} workspace=#{safe_get_in(payload, [:workspace_path])}"
+  end
 
-      :assistant_message ->
-        content = safe_get_in(payload, [:content]) || ""
-        " [assistant] #{trunc_str(content, 500)}"
+  defp format_event(:user_message, payload) do
+    content = safe_get_in(payload, [:content]) || ""
+    " [user] #{trunc_str(content, 500)}"
+  end
 
-      :tool_start ->
-        name = safe_get_in(payload, [:name]) || "unknown"
-        inp = safe_get_in(payload, [:input]) || %{}
-        " [tool_start] #{name}(#{trunc_str(inspect(inp), 200)})"
+  defp format_event(:assistant_message, payload) do
+    content = safe_get_in(payload, [:content]) || ""
+    " [assistant] #{trunc_str(content, 500)}"
+  end
 
-      :tool_end ->
-        name = safe_get_in(payload, [:name]) || "unknown"
-        is_err = safe_get_in(payload, [:is_error]) || false
-        result = safe_get_in(payload, [:result]) || ""
-        status = if is_err, do: "ERROR", else: "OK"
-        " [tool_end] #{name} → #{status} #{trunc_str(result, 200)}"
+  defp format_event(:tool_start, payload) do
+    name = safe_get_in(payload, [:name]) || "unknown"
+    inp = safe_get_in(payload, [:input]) || %{}
+    " [tool_start] #{name}(#{trunc_str(inspect(inp), 200)})"
+  end
 
-      :message_delta ->
-        # Skip individual deltas — they're noise in cross-session context
-        nil
+  defp format_event(:tool_end, payload) do
+    name = safe_get_in(payload, [:name]) || "unknown"
+    is_err = safe_get_in(payload, [:is_error]) || false
+    result = safe_get_in(payload, [:result]) || ""
+    status = if is_err, do: "ERROR", else: "OK"
+    " [tool_end] #{name} → #{status} #{trunc_str(result, 200)}"
+  end
 
-      :run_end ->
-        " [run_end] usage=#{inspect(safe_get_in(payload, [:usage]) || %{})}"
+  # Skip individual deltas — they're noise in cross-session context
+  defp format_event(:message_delta, _payload), do: nil
 
-      :interrupted ->
-        reason = safe_get_in(payload, [:reason]) || "unknown"
-        " [interrupted] reason=#{reason}"
+  defp format_event(:run_end, payload) do
+    " [run_end] usage=#{inspect(safe_get_in(payload, [:usage]) || %{})}"
+  end
 
-      _ ->
-        " [#{kind}] #{trunc_str(inspect(payload), 300)}"
-    end
+  defp format_event(:interrupted, payload) do
+    reason = safe_get_in(payload, [:reason]) || "unknown"
+    " [interrupted] reason=#{reason}"
+  end
+
+  defp format_event(kind, payload) do
+    " [#{kind}] #{trunc_str(inspect(payload), 300)}"
   end
 
   defp maybe_filter_events(events, "messages") do
@@ -175,23 +182,19 @@ defmodule Handbeam.Tool.Extension.Beam.SessionSnapshot do
   # ── Struct-agnostic field access (events may be maps or structs) ──
 
   defp get_kind(%{kind: kind}), do: kind
-
-  defp get_kind(%{"kind" => kind}) when is_binary(kind) do
-    case kind do
-      "run_start" -> :run_start
-      "user_message" -> :user_message
-      "assistant_message" -> :assistant_message
-      "tool_start" -> :tool_start
-      "tool_end" -> :tool_end
-      "message_delta" -> :message_delta
-      "run_end" -> :run_end
-      "interrupted" -> :interrupted
-      other -> other
-    end
-  end
-
+  defp get_kind(%{"kind" => kind}) when is_binary(kind), do: known_kind(kind)
   defp get_kind(%{"kind" => kind}) when is_atom(kind), do: kind
   defp get_kind(_), do: :unknown
+
+  defp known_kind("run_start"), do: :run_start
+  defp known_kind("user_message"), do: :user_message
+  defp known_kind("assistant_message"), do: :assistant_message
+  defp known_kind("tool_start"), do: :tool_start
+  defp known_kind("tool_end"), do: :tool_end
+  defp known_kind("message_delta"), do: :message_delta
+  defp known_kind("run_end"), do: :run_end
+  defp known_kind("interrupted"), do: :interrupted
+  defp known_kind(other), do: other
 
   defp get_payload(%{payload: p}), do: p
   defp get_payload(%{"payload" => p}), do: p
