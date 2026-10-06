@@ -1,7 +1,7 @@
 # Pack the Web UI OTP release for Linux x86_64, Windows amd64, and macOS
 # arm64, the native macOS WebKit app, both Android APKs, and a re-signable
 # iOS IPA. Manual runs upload artifacts unless publication is requested.
-# Pushes to main or v* tags publish packages to GitHub Releases.
+# Pushes to dev or v* tags publish packages to GitHub Releases.
 # Windows ARM64 is not built here: OTP has no ARM64 installer, and the
 # hosted ARM runner cannot install WSL without a reboot.
 name: Pack
@@ -14,7 +14,7 @@ on:
         default: false
         type: boolean
   push:
-    branches: [main]
+    branches: [dev]
     tags:
       - "v*"
 
@@ -30,6 +30,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Validate release metadata and tag
         run: |
@@ -96,8 +98,14 @@ jobs:
       - name: Check formatting
         run: mix format --check-formatted
 
+      - name: Static review of this update
+        run: bash scripts/ci/review_static.sh
+
       - name: Default ExUnit suite
         run: mix test
+
+      - name: Slow tests
+        run: mix test --include slow --only slow
 
       - name: FakeProvider Agent end-to-end path
         run: mix test --include e2e test/handbeam/e2e/fake_provider_e2e_test.exs
@@ -225,7 +233,7 @@ jobs:
       needs.checks.result == 'success' &&
       ((github.event_name == 'workflow_dispatch' && inputs.publish_release) ||
        (github.event_name == 'push' &&
-        (github.ref == 'refs/heads/main' ||
+        (github.ref == 'refs/heads/dev' ||
          startsWith(github.ref, 'refs/tags/v'))))
     runs-on: ubuntu-latest
     permissions:

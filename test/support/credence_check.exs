@@ -1,4 +1,13 @@
-files = Path.wildcard("lib/**/*.ex") ++ Path.wildcard("test/support/**/*.ex")
+files =
+  case System.get_env("HANDBEAM_CREDENCE_FILES") do
+    nil ->
+      Path.wildcard("lib/**/*.ex") ++ Path.wildcard("test/support/**/*.ex")
+
+    path ->
+      path
+      |> File.read!()
+      |> String.split("\n", trim: true)
+  end
 
 issues =
   Enum.flat_map(files, fn file ->
@@ -19,4 +28,6 @@ else
     line = issue.meta[:line] || "?"
     IO.puts("#{file}:#{line} #{issue.rule} #{issue.message}")
   end)
+
+  System.halt(1)
 end
