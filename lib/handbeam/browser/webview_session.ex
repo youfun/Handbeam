@@ -291,9 +291,9 @@ defmodule Handbeam.Browser.WebViewSession do
   defp accept_result(%{pending: nil} = state, _payload), do: state
 
   defp accept_result(%{pending: pending} = state, payload) do
-    request_id = payload[:request_id] || payload["request_id"]
-    generation = payload[:generation] || payload["generation"]
-    session_id = payload[:session_id] || payload["session_id"]
+    request_id = Handbeam.Utils.SafeMap.get_first_truthy(payload, :request_id, "request_id")
+    generation = Handbeam.Utils.SafeMap.get_first_truthy(payload, :generation, "generation")
+    session_id = Handbeam.Utils.SafeMap.get_first_truthy(payload, :session_id, "session_id")
 
     cond do
       session_id && session_id != state.session_id ->
@@ -341,9 +341,9 @@ defmodule Handbeam.Browser.WebViewSession do
   defp timeout_pending(state, _request_id), do: state
 
   defp finish_pending(state, pending, payload) do
-    case payload[:error] || payload["error"] do
+    case Handbeam.Utils.SafeMap.get_first_truthy(payload, :error, "error") do
       nil ->
-        decode_eval(state, pending.action, payload[:result] || payload["result"] || payload)
+        decode_eval(state, pending.action, Handbeam.Utils.SafeMap.get_first_truthy(payload, :result, "result") || payload)
 
       reason ->
         {:error, format_reason(reason), base_details(state, pending.action)}
@@ -559,7 +559,7 @@ defmodule Handbeam.Browser.WebViewSession do
   defp maybe_bump_refs(state, _action), do: state
 
   defp maybe_put_url(state, payload) do
-    case payload[:url] || payload["url"] do
+    case Handbeam.Utils.SafeMap.get_first_truthy(payload, :url, "url") do
       url when is_binary(url) -> %{state | url: url}
       _ -> state
     end

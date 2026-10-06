@@ -43,11 +43,10 @@ defmodule Handbeam.Agent.Turn do
   @spec resume_after_tool_approval(State.t(), [map()], keyword()) :: State.t()
   def resume_after_tool_approval(%State{status: :interrupted} = state, decisions, opts) do
     interrupt_data = state.interrupt_data || %{}
-    hitl_ids = interrupt_data[:hitl_tool_call_ids] || interrupt_data["hitl_tool_call_ids"] || []
+    hitl_ids = Handbeam.Utils.SafeMap.get_first_truthy(interrupt_data, :hitl_tool_call_ids, "hitl_tool_call_ids") || []
 
     _auto_ids =
-      interrupt_data[:auto_approved_tool_call_ids] ||
-        interrupt_data["auto_approved_tool_call_ids"] || []
+      Handbeam.Utils.SafeMap.get_first_truthy(interrupt_data, :auto_approved_tool_call_ids, "auto_approved_tool_call_ids") || []
 
     tool_calls = last_tool_calls_from_state(state)
 
@@ -121,7 +120,7 @@ defmodule Handbeam.Agent.Turn do
       {executable, _already_denied} =
         Enum.split_with(approved_calls, fn call ->
           id = call[:id] || call["id"]
-          not Enum.any?(denied_blocks, &((&1[:tool_use_id] || &1["tool_use_id"]) == id))
+          not Enum.any?(denied_blocks, &((Handbeam.Utils.SafeMap.get_first_truthy(&1, :tool_use_id, "tool_use_id")) == id))
         end)
 
       case Executor.execute_all_with_details(executable, state) do
@@ -221,7 +220,7 @@ defmodule Handbeam.Agent.Turn do
 
   defp blocked_tool_result_block(call, block_source) do
     call_id = call[:id] || call["id"]
-    name = call[:name] || call["name"]
+    name = Handbeam.Utils.SafeMap.get_first_truthy(call, :name, "name")
 
     {content, blocked_by} =
       case block_source do

@@ -83,25 +83,25 @@ defmodule Handbeam.Attachments do
 
   def persistable(map) when is_map(map) do
     %{
-      "id" => map[:id] || map["id"],
-      "kind" => to_string(map[:kind] || map["kind"] || kind_from(map)),
-      "mime_type" => map[:mime_type] || map["mime_type"],
+      "id" => Handbeam.Utils.SafeMap.get_first_truthy(map, :id, "id"),
+      "kind" => to_string(Handbeam.Utils.SafeMap.get_first_truthy(map, :kind, "kind") || kind_from(map)),
+      "mime_type" => Handbeam.Utils.SafeMap.get_first_truthy(map, :mime_type, "mime_type"),
       "filename" =>
-        map[:filename] || map["filename"] || map[:display_name] || map["display_name"],
-      "size_bytes" => map[:size_bytes] || map["size_bytes"],
-      "relative_path" => map[:relative_path] || map["relative_path"],
+        Handbeam.Utils.SafeMap.get_first_truthy(map, :filename, "filename") || Handbeam.Utils.SafeMap.get_first_truthy(map, :display_name, "display_name"),
+      "size_bytes" => Handbeam.Utils.SafeMap.get_first_truthy(map, :size_bytes, "size_bytes"),
+      "relative_path" => Handbeam.Utils.SafeMap.get_first_truthy(map, :relative_path, "relative_path"),
       "source" => source_string(map),
-      "url" => map[:url] || map["url"]
+      "url" => Handbeam.Utils.SafeMap.get_first_truthy(map, :url, "url")
     }
     |> Map.reject(fn {_k, v} -> is_nil(v) end)
   end
 
   defp kind_from(map) do
-    if image?(to_string(map[:mime_type] || map["mime_type"])), do: "image", else: "text"
+    if image?(to_string(Handbeam.Utils.SafeMap.get_first_truthy(map, :mime_type, "mime_type"))), do: "image", else: "text"
   end
 
   defp source_string(map) do
-    case map[:source] || map["source"] do
+    case Handbeam.Utils.SafeMap.get_first_truthy(map, :source, "source") do
       nil -> nil
       value -> to_string(value)
     end
@@ -113,8 +113,7 @@ defmodule Handbeam.Attachments do
 
   defp actual_size(map, opts) when is_map(map) do
     path =
-      map[:controlled_path] || map["controlled_path"] || map[:storage_path] ||
-        map["storage_path"] ||
+      Handbeam.Utils.SafeMap.get_first_truthy(map, :controlled_path, "controlled_path") || Handbeam.Utils.SafeMap.get_first_truthy(map, :storage_path, "storage_path") ||
         resolve_declared(map, opts)
 
     file_size(path, map[:size_bytes] || map["size_bytes"])

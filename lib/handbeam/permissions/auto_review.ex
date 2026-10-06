@@ -379,7 +379,7 @@ defmodule Handbeam.Permissions.AutoReview do
   defp decision_items(_other, _requests), do: {:error, :unparseable}
 
   defp assign_single_id(item, [request]) do
-    if blank_id?(item["tool_call_id"] || item[:tool_call_id]) do
+    if blank_id?(Handbeam.Utils.SafeMap.get_first_truthy(item, "tool_call_id", :tool_call_id)) do
       Map.put(item, "tool_call_id", request_id(request))
     else
       item
@@ -405,9 +405,9 @@ defmodule Handbeam.Permissions.AutoReview do
   end
 
   defp normalize_decision(item) when is_map(item) do
-    decision = item["decision"] || item[:decision]
-    rationale = item["rationale"] || item[:rationale] || ""
-    id = item["tool_call_id"] || item[:tool_call_id]
+    decision = Handbeam.Utils.SafeMap.get_first_truthy(item, "decision", :decision)
+    rationale = Handbeam.Utils.SafeMap.get_first_truthy(item, "rationale", :rationale) || ""
+    id = Handbeam.Utils.SafeMap.get_first_truthy(item, "tool_call_id", :tool_call_id)
 
     cond do
       decision not in ["approve", "deny"] ->
@@ -447,7 +447,7 @@ defmodule Handbeam.Permissions.AutoReview do
     end
   end
 
-  defp request_id(request), do: request[:tool_call_id] || request["tool_call_id"]
+  defp request_id(request), do: Handbeam.Utils.SafeMap.get_first_truthy(request, :tool_call_id, "tool_call_id")
 
   defp decision_kind(%{decision: decision}) when decision in [:approve, :deny], do: decision
   defp decision_kind(%{"decision" => "approve"}), do: :approve
@@ -505,21 +505,21 @@ defmodule Handbeam.Permissions.AutoReview do
   defp visible_content(_other), do: ""
 
   defp visible_block(block) when is_map(block) do
-    type = block[:type] || block["type"]
+    type = Handbeam.Utils.SafeMap.get_first_truthy(block, :type, "type")
 
     cond do
       hidden_type?(type) ->
         ""
 
       type == "text" ->
-        block[:text] || block["text"] || ""
+        Handbeam.Utils.SafeMap.get_first_truthy(block, :text, "text") || ""
 
       type == "tool_use" ->
-        name = block[:name] || block["name"]
-        "tool_use #{name} #{encode_compact(block[:input] || block["input"] || %{})}"
+        name = Handbeam.Utils.SafeMap.get_first_truthy(block, :name, "name")
+        "tool_use #{name} #{encode_compact(Handbeam.Utils.SafeMap.get_first_truthy(block, :input, "input") || %{})}"
 
       type == "tool_result" ->
-        "tool_result #{truncate(to_string(block[:content] || block["content"] || ""))}"
+        "tool_result #{truncate(to_string(Handbeam.Utils.SafeMap.get_first_truthy(block, :content, "content") || ""))}"
 
       true ->
         ""
@@ -537,9 +537,9 @@ defmodule Handbeam.Permissions.AutoReview do
 
   defp format_requests(requests) do
     Enum.map_join(requests, "\n", fn request ->
-      id = request[:tool_call_id] || request["tool_call_id"]
-      name = request[:tool_name] || request["tool_name"]
-      args = request[:arguments] || request["arguments"] || %{}
+      id = Handbeam.Utils.SafeMap.get_first_truthy(request, :tool_call_id, "tool_call_id")
+      name = Handbeam.Utils.SafeMap.get_first_truthy(request, :tool_name, "tool_name")
+      args = Handbeam.Utils.SafeMap.get_first_truthy(request, :arguments, "arguments") || %{}
       "- tool_call_id=#{id} tool=#{name} arguments=#{encode_compact(args)}"
     end)
   end
@@ -591,6 +591,6 @@ defmodule Handbeam.Permissions.AutoReview do
     _ -> text
   end
 
-  defp call_id(call), do: call[:id] || call["id"]
-  defp call_name(call), do: call[:name] || call["name"]
+  defp call_id(call), do: Handbeam.Utils.SafeMap.get_first_truthy(call, :id, "id")
+  defp call_name(call), do: Handbeam.Utils.SafeMap.get_first_truthy(call, :name, "name")
 end

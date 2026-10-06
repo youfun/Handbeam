@@ -305,11 +305,11 @@ defmodule HandbeamWeb.Live.Settings.ModelAIPanel do
   end
 
   defp model_value(m) when is_map(m) do
-    provider = Map.get(m, :provider) || Map.get(m, "provider")
-    model = Map.get(m, :model) || Map.get(m, "model")
-    provider_id = Map.get(m, :provider_id) || Map.get(m, "provider_id")
-    model_id = Map.get(m, :model_id) || Map.get(m, "model_id")
-    id = Map.get(m, :id) || Map.get(m, "id")
+    provider = Handbeam.Utils.SafeMap.get_first_truthy(m, :provider, "provider")
+    model = Handbeam.Utils.SafeMap.get_first_truthy(m, :model, "model")
+    provider_id = Handbeam.Utils.SafeMap.get_first_truthy(m, :provider_id, "provider_id")
+    model_id = Handbeam.Utils.SafeMap.get_first_truthy(m, :model_id, "model_id")
+    id = Handbeam.Utils.SafeMap.get_first_truthy(m, :id, "id")
 
     cond do
       provider && model -> "#{provider}/#{model}"
@@ -323,12 +323,12 @@ defmodule HandbeamWeb.Live.Settings.ModelAIPanel do
   defp model_value(_), do: ""
 
   defp model_display(m) when is_map(m) do
-    provider = Map.get(m, :provider) || Map.get(m, "provider")
-    model = Map.get(m, :model) || Map.get(m, "model")
-    provider_id = Map.get(m, :provider_id) || Map.get(m, "provider_id")
-    model_id = Map.get(m, :model_id) || Map.get(m, "model_id")
-    id = Map.get(m, :id) || Map.get(m, "id")
-    name = Map.get(m, :name) || Map.get(m, "name")
+    provider = Handbeam.Utils.SafeMap.get_first_truthy(m, :provider, "provider")
+    model = Handbeam.Utils.SafeMap.get_first_truthy(m, :model, "model")
+    provider_id = Handbeam.Utils.SafeMap.get_first_truthy(m, :provider_id, "provider_id")
+    model_id = Handbeam.Utils.SafeMap.get_first_truthy(m, :model_id, "model_id")
+    id = Handbeam.Utils.SafeMap.get_first_truthy(m, :id, "id")
+    name = Handbeam.Utils.SafeMap.get_first_truthy(m, :name, "name")
 
     cond do
       provider && model -> "#{provider} / #{model}"

@@ -227,7 +227,7 @@ defmodule Handbeam.Agent.Advisor do
   not parse the wrapper.
   """
   def child_text({_status, _wrapper, data}) when is_map(data) do
-    case data[:report] || data["report"] do
+    case Handbeam.Utils.SafeMap.get_first_truthy(data, :report, "report") do
       text when is_binary(text) and text != "" -> text
       _ -> nil
     end

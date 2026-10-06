@@ -34,7 +34,7 @@ defmodule Handbeam.Extension.CommandSpec do
       spec = %__MODULE__{
         extension: extension,
         name: namespaced,
-        description: Map.get(opts, :description) || Map.get(opts, "description")
+        description: Handbeam.Utils.SafeMap.get_first_truthy(opts, :description, "description")
       }
 
       {:ok, spec}

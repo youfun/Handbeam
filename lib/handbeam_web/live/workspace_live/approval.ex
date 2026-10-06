@@ -7,7 +7,7 @@ defmodule HandbeamWeb.WorkspaceLive.Approval do
   def action_requests(%{"action_requests" => requests}) when is_list(requests), do: requests
 
   def action_requests(pending) when is_map(pending),
-    do: pending[:action_requests] || pending["action_requests"] || []
+    do: Handbeam.Utils.SafeMap.get_first_truthy(pending, :action_requests, "action_requests") || []
 
   def action_requests(_), do: []
 
@@ -34,8 +34,7 @@ defmodule HandbeamWeb.WorkspaceLive.Approval do
 
     Enum.each(action_requests(pending), fn request ->
       pattern =
-        request[:suggested_pattern] || request["suggested_pattern"] || request[:tool_name] ||
-          request["tool_name"]
+        Handbeam.Utils.SafeMap.get_first_truthy(request, :suggested_pattern, "suggested_pattern") || Handbeam.Utils.SafeMap.get_first_truthy(request, :tool_name, "tool_name")
 
       if is_binary(pattern) and String.trim(pattern) != "" do
         case Handbeam.WorkspaceSettings.append_tool_rule(workspace_root, list, pattern) do
@@ -57,7 +56,7 @@ defmodule HandbeamWeb.WorkspaceLive.Approval do
     Enum.map(action_requests(pending), fn request ->
       %{
         "tool_call_id" => request[:tool_call_id] || request["tool_call_id"],
-        "tool_name" => request[:tool_name] || request["tool_name"],
+        "tool_name" => Handbeam.Utils.SafeMap.get_first_truthy(request, :tool_name, "tool_name"),
         "action" => Atom.to_string(action),
         "remember" => remember == :session
       }

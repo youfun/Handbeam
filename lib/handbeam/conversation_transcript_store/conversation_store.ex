@@ -106,7 +106,7 @@ defmodule Handbeam.ConversationTranscriptStore.ConversationStore do
     |> Map.put_new("conversation_id", conversation_id)
     |> maybe_put_sequence(opts)
     |> Map.put_new("created_at", now)
-    |> Map.put("updated_at", Map.get(entry, "updated_at") || Map.get(entry, :updated_at) || now)
+    |> Map.put("updated_at", Handbeam.Utils.SafeMap.get_first_truthy(entry, "updated_at", :updated_at) || now)
   end
 
   defp maybe_put_sequence(entry, opts) do

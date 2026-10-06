@@ -110,7 +110,7 @@ defmodule Handbeam.Tool.Builtin.Grep do
   def execute(_input, _context), do: {:error, "pattern is required"}
 
   defp inventory(index, workspace, prefix, input) do
-    excludes = input["exclude"] || input[:exclude] || []
+    excludes = Handbeam.Utils.SafeMap.get_first_truthy(input, "exclude", :exclude) || []
     collect_inventory(index, workspace, prefix, List.wrap(excludes), nil, [], nil)
   end
 
@@ -136,7 +136,7 @@ defmodule Handbeam.Tool.Builtin.Grep do
 
   defp search(pattern, regex, inventory, workspace, input) do
     started_at = System.monotonic_time(:millisecond)
-    cursor = decode_cursor(input["cursor"] || input[:cursor], input, workspace)
+    cursor = decode_cursor(Handbeam.Utils.SafeMap.get_first_truthy(input, "cursor", :cursor), input, workspace)
     wanted = limit(input) + 1
 
     if cursor == :invalid do
@@ -145,7 +145,7 @@ defmodule Handbeam.Tool.Builtin.Grep do
 
     files =
       inventory.paths
-      |> Enum.filter(&glob_match?(&1, input["glob"] || input[:glob]))
+      |> Enum.filter(&glob_match?(&1, Handbeam.Utils.SafeMap.get_first_truthy(input, "glob", :glob)))
       |> Enum.sort()
 
     {matcher, hits, partial?} =
@@ -343,7 +343,7 @@ defmodule Handbeam.Tool.Builtin.Grep do
         hit = hit |> normalize_rg_hit() |> bound_hit()
 
         if MapSet.member?(inventory, hit.path) and
-             glob_match?(hit.path, input["glob"] || input[:glob]) and
+             glob_match?(hit.path, Handbeam.Utils.SafeMap.get_first_truthy(input, "glob", :glob)) and
              after_cursor?(hit, cursor) do
           [hit | acc]
         else
@@ -377,8 +377,8 @@ defmodule Handbeam.Tool.Builtin.Grep do
       Integer.to_string(@max_file_bytes)
     ]
 
-    base = if truthy?(input["ignore_case"] || input[:ignore_case]), do: base ++ ["-i"], else: base
-    if truthy?(input["literal"] || input[:literal]), do: base ++ ["-F"], else: base
+    base = if truthy?(Handbeam.Utils.SafeMap.get_first_truthy(input, "ignore_case", :ignore_case)), do: base ++ ["-i"], else: base
+    if truthy?(Handbeam.Utils.SafeMap.get_first_truthy(input, "literal", :literal)), do: base ++ ["-F"], else: base
   end
 
   defp rg_sensitive_globs do
@@ -582,10 +582,10 @@ defmodule Handbeam.Tool.Builtin.Grep do
       :sha256,
       :erlang.term_to_binary({
         input["pattern"] || input[:pattern],
-        input["path"] || input[:path],
-        input["glob"] || input[:glob],
-        input["literal"] || input[:literal],
-        input["ignore_case"] || input[:ignore_case]
+        Handbeam.Utils.SafeMap.get_first_truthy(input, "path", :path),
+        Handbeam.Utils.SafeMap.get_first_truthy(input, "glob", :glob),
+        Handbeam.Utils.SafeMap.get_first_truthy(input, "literal", :literal),
+        Handbeam.Utils.SafeMap.get_first_truthy(input, "ignore_case", :ignore_case)
       })
     )
     |> Base.encode16(case: :lower)
@@ -676,7 +676,7 @@ defmodule Handbeam.Tool.Builtin.Grep do
   defp resolve_scope(input, context) do
     workspace = context[:working_directory] || context["working_directory"] || File.cwd!()
     workspace = Path.expand(workspace)
-    raw_path = input["path"] || input[:path] || input["file_path"] || input[:file_path] || "."
+    raw_path = Handbeam.Utils.SafeMap.get_first_truthy(input, "path", :path) || Handbeam.Utils.SafeMap.get_first_truthy(input, "file_path", :file_path) || "."
     raw_path = Handbeam.Agent.Tool.Helpers.expand_tilde(raw_path)
 
     requested =

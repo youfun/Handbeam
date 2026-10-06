@@ -99,10 +99,10 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
       end
 
     Message.tool_result_block(
-      call[:id] || call["id"],
+      Handbeam.Utils.SafeMap.get_first_truthy(call, :id, "id"),
       reason,
       true,
-      %{permission: :denied, tool: call[:name] || call["name"]}
+      %{permission: :denied, tool: Handbeam.Utils.SafeMap.get_first_truthy(call, :name, "name")}
     )
   end
 end

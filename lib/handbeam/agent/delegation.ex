@@ -411,7 +411,7 @@ defmodule Handbeam.Agent.Delegation do
   end
 
   def handle_info({:child_event, id, run_id, {:tool_start, payload}}, state) do
-    update_job(state, id, run_id, &progress(&1, payload[:tool] || payload["tool"]))
+    update_job(state, id, run_id, &progress(&1, Handbeam.Utils.SafeMap.get_first_truthy(payload, :tool, "tool")))
   end
 
   def handle_info({:child_event, id, run_id, {:tool_approval_requested, payload}}, state) do
@@ -788,11 +788,11 @@ defmodule Handbeam.Agent.Delegation do
   end
 
   defp child_prompt(%Profile{name: "advisor", source: :builtin}, input),
-    do: input["prompt"] || input[:prompt]
+    do: Handbeam.Utils.SafeMap.get_first_truthy(input, "prompt", :prompt)
 
   defp child_prompt(_profile, input) do
-    task = input["task"] || input[:task] || ""
-    criteria = input["criteria"] || input[:criteria] || ""
+    task = Handbeam.Utils.SafeMap.get_first_truthy(input, "task", :task) || ""
+    criteria = Handbeam.Utils.SafeMap.get_first_truthy(input, "criteria", :criteria) || ""
     task <> "\n\nCompletion criteria:\n" <> criteria
   end
 

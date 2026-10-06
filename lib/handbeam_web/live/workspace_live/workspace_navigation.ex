@@ -89,8 +89,8 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
   def close_file_browser(socket), do: assign(socket, :show_file_browser, false)
 
   def import_workspace(socket, item) when is_map(item) do
-    path = item[:path] || item["path"]
-    name = item[:name] || item["name"] || Path.basename(to_string(path || ""))
+    path = Handbeam.Utils.SafeMap.get_first_truthy(item, :path, "path")
+    name = Handbeam.Utils.SafeMap.get_first_truthy(item, :name, "name") || Path.basename(to_string(path || ""))
 
     cond do
       not is_binary(path) or path == "" ->

@@ -71,7 +71,7 @@ defmodule HandbeamWeb.ChangeHelper do
   and top-level `entry` fields, applying defaults for missing keys.
   """
   def change_from_entry(entry) do
-    details = Map.get(entry, "details") || Map.get(entry, :details) || %{}
+    details = Handbeam.Utils.SafeMap.get_first_truthy(entry, "details", :details) || %{}
     raw_change = value(entry, "change") || value(details, "change") || %{}
 
     raw_change

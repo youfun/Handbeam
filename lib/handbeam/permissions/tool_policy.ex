@@ -71,7 +71,7 @@ defmodule Handbeam.Permissions.ToolPolicy do
 
   @spec decision(t(), map()) :: ApprovalMode.t()
   def decision(%__MODULE__{} = policy, call) when is_map(call) do
-    name = to_string(call[:name] || call["name"] || "")
+    name = to_string(Handbeam.Utils.SafeMap.get_first_truthy(call, :name, "name") || "")
 
     cond do
       Map.get(policy.overrides, name) == :deny ->
@@ -134,9 +134,9 @@ defmodule Handbeam.Permissions.ToolPolicy do
 
   # YOLO auto-approves the gates that full access still asks about, and the
   defp computer_decision(policy, call) do
-    input = call[:input] || call["input"] || %{}
+    input = Handbeam.Utils.SafeMap.get_first_truthy(call, :input, "input") || %{}
 
-    case input["action"] || input[:action] do
+    case Handbeam.Utils.SafeMap.get_first_truthy(input, "action", :action) do
       action when action in ["list", "observe", "stop"] -> :auto
       _ when policy.default_mode == :deny -> :deny
       _ -> :prompt
@@ -199,7 +199,7 @@ defmodule Handbeam.Permissions.ToolPolicy do
   defp bash_browser_decision(_policy, _name, _call), do: nil
 
   defp unsandboxed_bash?("bash", call) do
-    input = call[:input] || call["input"] || %{}
+    input = Handbeam.Utils.SafeMap.get_first_truthy(call, :input, "input") || %{}
     Map.get(input, "unsandboxed") == true or Map.get(input, :unsandboxed) == true
   end
 
@@ -208,8 +208,8 @@ defmodule Handbeam.Permissions.ToolPolicy do
   @doc false
   @spec sensitive_call?(t(), map()) :: boolean()
   def sensitive_call?(%__MODULE__{} = policy, call) when is_map(call) do
-    name = to_string(call[:name] || call["name"] || "")
-    input = call[:input] || call["input"] || %{}
+    name = to_string(Handbeam.Utils.SafeMap.get_first_truthy(call, :name, "name") || "")
+    input = Handbeam.Utils.SafeMap.get_first_truthy(call, :input, "input") || %{}
     root = policy.workspace_root
 
     case name do
@@ -287,15 +287,15 @@ defmodule Handbeam.Permissions.ToolPolicy do
   defp map_value(_input, _string_key, _atom_key), do: nil
 
   defp worktree_apply?("task_status", call) do
-    input = call[:input] || call["input"] || %{}
-    (Map.get(input, "action") || Map.get(input, :action)) == "apply"
+    input = Handbeam.Utils.SafeMap.get_first_truthy(call, :input, "input") || %{}
+    (Handbeam.Utils.SafeMap.get_first_truthy(input, "action", :action)) == "apply"
   end
 
   defp worktree_apply?(_name, _call), do: false
 
   defp bash_command(call) when is_map(call) do
-    input = call[:input] || call["input"] || %{}
-    Map.get(input, "command") || Map.get(input, :command) || ""
+    input = Handbeam.Utils.SafeMap.get_first_truthy(call, :input, "input") || %{}
+    Handbeam.Utils.SafeMap.get_first_truthy(input, "command", :command) || ""
   end
 
   defp agent_browser_command?(command) when is_binary(command) do
@@ -305,12 +305,12 @@ defmodule Handbeam.Permissions.ToolPolicy do
   defp agent_browser_command?(_), do: false
 
   defp classify_browser_call(call) when is_map(call) do
-    input = call[:input] || call["input"] || %{}
+    input = Handbeam.Utils.SafeMap.get_first_truthy(call, :input, "input") || %{}
 
     if Handbeam.Tool.Builtin.Browser.backend() == :webview do
       BrowserPolicy.classify_native(input)
     else
-      args = Map.get(input, "args") || Map.get(input, :args) || []
+      args = Handbeam.Utils.SafeMap.get_first_truthy(input, "args", :args) || []
       BrowserPolicy.classify(args)
     end
   end

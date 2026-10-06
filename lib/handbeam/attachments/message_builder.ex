@@ -50,31 +50,31 @@ defmodule Handbeam.Attachments.MessageBuilder do
   defp promote(map, opts) when is_map(map) do
     workspace = Keyword.get(opts, :workspace_path)
     conversation_id = Keyword.get(opts, :conversation_id)
-    relative = map[:relative_path] || map["relative_path"]
-    storage = map[:storage_path] || map["storage_path"]
-    controlled = map[:controlled_path] || map["controlled_path"]
+    relative = Handbeam.Utils.SafeMap.get_first_truthy(map, :relative_path, "relative_path")
+    storage = Handbeam.Utils.SafeMap.get_first_truthy(map, :storage_path, "storage_path")
+    controlled = Handbeam.Utils.SafeMap.get_first_truthy(map, :controlled_path, "controlled_path")
 
     cond do
       Keyword.get(opts, :chat_scope) == :free and is_binary(relative) and
           is_binary(conversation_id) ->
         with {:ok, path} <- Access.resolve_free_upload(conversation_id, Path.basename(relative)),
-             :ok <- Access.verify_canonical(path, map[:mime_type] || map["mime_type"]) do
+             :ok <- Access.verify_canonical(path, Handbeam.Utils.SafeMap.get_first_truthy(map, :mime_type, "mime_type")) do
           {:ok, promoted_map(map, path, Path.basename(relative))}
         end
 
       is_binary(relative) and is_binary(workspace) and is_binary(conversation_id) ->
         with {:ok, path} <- Access.resolve_upload(workspace, conversation_id, relative),
-             :ok <- Access.verify_canonical(path, map[:mime_type] || map["mime_type"]) do
+             :ok <- Access.verify_canonical(path, Handbeam.Utils.SafeMap.get_first_truthy(map, :mime_type, "mime_type")) do
           {:ok, promoted_map(map, path, relative)}
         end
 
       is_binary(controlled) ->
         imported = %Imported{
-          attachment_id: map[:id] || map["id"] || map[:attachment_id] || Ecto.UUID.generate(),
-          source: map[:source] || map["source"] || :picker,
-          display_name: map[:filename] || map["filename"] || map[:display_name] || "attachment",
-          canonical_type: map[:mime_type] || map["mime_type"] || map[:canonical_type],
-          source_mime: map[:source_mime] || map["source_mime"],
+          attachment_id: Handbeam.Utils.SafeMap.get_first_truthy(map, :id, "id") || map[:attachment_id] || Ecto.UUID.generate(),
+          source: Handbeam.Utils.SafeMap.get_first_truthy(map, :source, "source") || :picker,
+          display_name: Handbeam.Utils.SafeMap.get_first_truthy(map, :filename, "filename") || map[:display_name] || "attachment",
+          canonical_type: Handbeam.Utils.SafeMap.get_first_truthy(map, :mime_type, "mime_type") || map[:canonical_type],
+          source_mime: Handbeam.Utils.SafeMap.get_first_truthy(map, :source_mime, "source_mime"),
           size_bytes: 0,
           controlled_path: controlled,
           state: :staged
@@ -115,15 +115,15 @@ defmodule Handbeam.Attachments.MessageBuilder do
     {:ok, %File.Stat{size: size}} = File.lstat(path)
 
     %{
-      id: map[:id] || map["id"],
-      kind: map[:kind] || map["kind"],
-      mime_type: map[:mime_type] || map["mime_type"],
-      filename: map[:filename] || map["filename"] || map[:display_name],
+      id: Handbeam.Utils.SafeMap.get_first_truthy(map, :id, "id"),
+      kind: Handbeam.Utils.SafeMap.get_first_truthy(map, :kind, "kind"),
+      mime_type: Handbeam.Utils.SafeMap.get_first_truthy(map, :mime_type, "mime_type"),
+      filename: Handbeam.Utils.SafeMap.get_first_truthy(map, :filename, "filename") || map[:display_name],
       size_bytes: size,
       storage_path: path,
       relative_path: relative,
-      source: map[:source] || map["source"] || :picker,
-      url: map[:url] || map["url"]
+      source: Handbeam.Utils.SafeMap.get_first_truthy(map, :source, "source") || :picker,
+      url: Handbeam.Utils.SafeMap.get_first_truthy(map, :url, "url")
     }
   end
 

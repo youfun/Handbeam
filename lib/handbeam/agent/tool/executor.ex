@@ -154,8 +154,8 @@ defmodule Handbeam.Agent.Tool.Executor do
 
           {{:exit, reason}, idx} ->
             tc = Enum.at(concurrent, idx)
-            tool_id = (tc && (tc[:id] || tc["id"] || Map.get(tc, :id))) || "unknown"
-            tool_name = (tc && (tc[:name] || tc["name"])) || "unknown"
+            tool_id = (tc && (Handbeam.Utils.SafeMap.get_first_truthy(tc, :id, "id") || Map.get(tc, :id))) || "unknown"
+            tool_name = (tc && (Handbeam.Utils.SafeMap.get_first_truthy(tc, :name, "name"))) || "unknown"
 
             Logger.warning(fn ->
               "[Executor] concurrent tool timeout/exit tool=#{tool_name} id=#{tool_id} " <>
@@ -241,8 +241,8 @@ defmodule Handbeam.Agent.Tool.Executor do
   # hung tool (e.g. a bash subprocess that never EOFs on its port) cannot
   # block the whole Turn forever.
   defp execute_one_with_timeout(call, tool_fns, context, timeout_ms) do
-    tool_id = (call && (call[:id] || call["id"] || Map.get(call, :id))) || "unknown"
-    tool_name = (call && (call[:name] || call["name"])) || "unknown"
+    tool_id = (call && (Handbeam.Utils.SafeMap.get_first_truthy(call, :id, "id") || Map.get(call, :id))) || "unknown"
+    tool_name = (call && (Handbeam.Utils.SafeMap.get_first_truthy(call, :name, "name"))) || "unknown"
 
     start_task = if context.delegation_config.delegated?, do: :async, else: :async_nolink
 
@@ -480,7 +480,7 @@ defmodule Handbeam.Agent.Tool.Executor do
   defp advisor_tool_allowed?(_name, _config), do: true
 
   defp timeout_for(call, tool_fns, state) do
-    name = call[:name] || call["name"]
+    name = Handbeam.Utils.SafeMap.get_first_truthy(call, :name, "name")
 
     tool_cap =
       case Map.get(tool_fns, name) do
@@ -534,7 +534,7 @@ defmodule Handbeam.Agent.Tool.Executor do
 
   defp partition_by_concurrency(tool_calls, tool_fns) do
     Enum.split_with(tool_calls, fn call ->
-      name = call[:name] || call["name"]
+      name = Handbeam.Utils.SafeMap.get_first_truthy(call, :name, "name")
 
       case Map.fetch(tool_fns, name) do
         {:ok, entry} -> entry.concurrent? == false

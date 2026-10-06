@@ -214,7 +214,7 @@ defmodule Handbeam.Runtime.TaskTracker do
 
       _pid ->
         %{meta: meta} = Handbeam.PubSub.Session.snapshot(conversation_id)
-        meta[:run_id] || meta["run_id"]
+        Handbeam.Utils.SafeMap.get_first_truthy(meta, :run_id, "run_id")
     end
   catch
     :exit, _ -> nil

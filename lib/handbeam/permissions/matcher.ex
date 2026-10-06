@@ -9,10 +9,10 @@ defmodule Handbeam.Permissions.Matcher do
   @spec match?(String.t(), map()) :: boolean()
   def match?(pattern, call) when is_binary(pattern) and is_map(call) do
     {tool_pattern, arg_pattern} = split_pattern(pattern)
-    tool_name = normalize_name(call[:name] || call["name"])
+    tool_name = normalize_name(Handbeam.Utils.SafeMap.get_first_truthy(call, :name, "name"))
 
     glob_match?(tool_pattern, tool_name) and
-      arg_match?(tool_name, arg_pattern, call[:input] || call["input"] || %{})
+      arg_match?(tool_name, arg_pattern, Handbeam.Utils.SafeMap.get_first_truthy(call, :input, "input") || %{})
   end
 
   def match?(_pattern, _call), do: false

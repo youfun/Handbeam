@@ -51,9 +51,9 @@ defmodule Handbeam.Uploads do
           {:ok, map()} | {:error, term()}
   def promote_path(workspace_path, conversation_id, source_path, meta, opts \\ [])
       when is_binary(workspace_path) and is_binary(conversation_id) and is_binary(source_path) do
-    mime = meta[:mime_type] || meta["mime_type"]
-    ext = allowed_ext(mime) || safe_ext(meta[:filename] || meta["filename"])
-    id = meta[:id] || meta["id"] || Ecto.UUID.generate()
+    mime = Handbeam.Utils.SafeMap.get_first_truthy(meta, :mime_type, "mime_type")
+    ext = allowed_ext(mime) || safe_ext(Handbeam.Utils.SafeMap.get_first_truthy(meta, :filename, "filename"))
+    id = Handbeam.Utils.SafeMap.get_first_truthy(meta, :id, "id") || Ecto.UUID.generate()
     roots = List.wrap(Keyword.get(opts, :staging_roots, []))
 
     with true <- is_binary(ext),
@@ -70,11 +70,11 @@ defmodule Handbeam.Uploads do
          id: id,
          kind: if(Attachments.image?(mime), do: "image", else: "text"),
          mime_type: mime,
-         filename: meta[:filename] || meta["filename"] || Path.basename(dest),
+         filename: Handbeam.Utils.SafeMap.get_first_truthy(meta, :filename, "filename") || Path.basename(dest),
          size_bytes: size,
          storage_path: dest,
          relative_path: relative,
-         source: meta[:source] || meta["source"]
+         source: Handbeam.Utils.SafeMap.get_first_truthy(meta, :source, "source")
        }}
     else
       false -> {:error, :unsupported_type}

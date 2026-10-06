@@ -694,9 +694,9 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
     answers =
       Enum.map(questions, fn question ->
         %{
-          "index" => question["index"] || question[:index],
-          "question" => question["question"] || question[:question],
-          "answer" => List.first(question["options"] || question[:options] || []) || ""
+          "index" => Handbeam.Utils.SafeMap.get_first_truthy(question, "index", :index),
+          "question" => Handbeam.Utils.SafeMap.get_first_truthy(question, "question", :question),
+          "answer" => List.first(Handbeam.Utils.SafeMap.get_first_truthy(question, "options", :options) || []) || ""
         }
       end)
 

@@ -111,7 +111,7 @@ defmodule Handbeam.Agent.Provider.Cursor.Native do
     end
   end
 
-  defp read_input(payload), do: %{"file_path" => payload[:path] || payload["path"]}
+  defp read_input(payload), do: %{"file_path" => Handbeam.Utils.SafeMap.get_first_truthy(payload, :path, "path")}
 
   defp write_input(payload) do
     content =

@@ -16,7 +16,7 @@ defmodule Handbeam.Agent.Tool.SavedInput do
   @spec prepare(String.t(), map(), map(), [String.t()]) ::
           {:ok, map(), String.t()} | {:error, String.t(), map()}
   def prepare(tool, input, context, overridable) when is_map(input) do
-    case Map.get(input, "retry_of") || Map.get(input, :retry_of) do
+    case Handbeam.Utils.SafeMap.get_first_truthy(input, "retry_of", :retry_of) do
       ref when is_binary(ref) and ref != "" ->
         resolve(tool, ref, input, context, overridable)
 
@@ -240,6 +240,6 @@ defmodule Handbeam.Agent.Tool.SavedInput do
   defp ref_from(receipt), do: receipt["operation_id"] || "missing"
 
   defp conversation_id(context) do
-    context[:conversation_id] || context["conversation_id"]
+    Handbeam.Utils.SafeMap.get_first_truthy(context, :conversation_id, "conversation_id")
   end
 end

@@ -81,8 +81,8 @@ defmodule Handbeam.Tool.Builtin.CodeSearch do
   defp search_opts(input, context, parent) do
     [
       limit: limit(input),
-      path: blank_to_nil(input["path"] || input[:path]),
-      glob: blank_to_nil(input["glob"] || input[:glob]),
+      path: blank_to_nil(Handbeam.Utils.SafeMap.get_first_truthy(input, "path", :path)),
+      glob: blank_to_nil(Handbeam.Utils.SafeMap.get_first_truthy(input, "glob", :glob)),
       cancel: fn -> not Process.alive?(parent) end,
       models_file: context[:models_file]
     ]
@@ -90,7 +90,7 @@ defmodule Handbeam.Tool.Builtin.CodeSearch do
   end
 
   defp fetch_query(input) do
-    query = input["query"] || input[:query]
+    query = Handbeam.Utils.SafeMap.get_first_truthy(input, "query", :query)
 
     if is_binary(query) and String.trim(query) != "" do
       {:ok, String.trim(query)}
@@ -100,7 +100,7 @@ defmodule Handbeam.Tool.Builtin.CodeSearch do
   end
 
   defp workspace(context) do
-    root = context[:working_directory] || context["working_directory"] || File.cwd!()
+    root = Handbeam.Utils.SafeMap.get_first_truthy(context, :working_directory, "working_directory") || File.cwd!()
 
     if File.dir?(root) do
       {:ok, Path.expand(root)}
@@ -110,7 +110,7 @@ defmodule Handbeam.Tool.Builtin.CodeSearch do
   end
 
   defp workspace_id(root, context) do
-    case context[:workspace_id] || context["workspace_id"] do
+    case Handbeam.Utils.SafeMap.get_first_truthy(context, :workspace_id, "workspace_id") do
       id when is_binary(id) and id != "" ->
         {:ok, id}
 
@@ -127,7 +127,7 @@ defmodule Handbeam.Tool.Builtin.CodeSearch do
   end
 
   defp limit(input) do
-    case input["limit"] || input[:limit] do
+    case Handbeam.Utils.SafeMap.get_first_truthy(input, "limit", :limit) do
       n when is_integer(n) -> n |> max(1) |> min(@max_limit)
       _ -> @default_limit
     end
@@ -181,8 +181,8 @@ defmodule Handbeam.Tool.Builtin.CodeSearch do
   end
 
   defp filter_hits(hits, input) do
-    path = input["path"] || input[:path]
-    glob = input["glob"] || input[:glob]
+    path = Handbeam.Utils.SafeMap.get_first_truthy(input, "path", :path)
+    glob = Handbeam.Utils.SafeMap.get_first_truthy(input, "glob", :glob)
 
     Enum.filter(hits, fn hit ->
       path_ok?(hit.path, path) and glob_ok?(hit.path, glob)

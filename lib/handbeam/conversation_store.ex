@@ -442,7 +442,7 @@ defmodule Handbeam.ConversationStore do
   def pinned_conversation?(_), do: false
 
   defp pin_value(conversation) do
-    Map.get(conversation, "pinned_at") || Map.get(conversation, :pinned_at)
+    Handbeam.Utils.SafeMap.get_first_truthy(conversation, "pinned_at", :pinned_at)
   end
 
   @title_max_length 80

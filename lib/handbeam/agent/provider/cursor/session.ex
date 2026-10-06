@@ -864,9 +864,9 @@ defmodule Handbeam.Agent.Provider.Cursor.Session do
           Enum.map(List.wrap(content), fn block ->
             Handbeam.JSON.encode!(%{
               "role" => "tool",
-              "tool_use_id" => block[:tool_use_id] || block["tool_use_id"],
+              "tool_use_id" => Handbeam.Utils.SafeMap.get_first_truthy(block, :tool_use_id, "tool_use_id"),
               "content" => tool_result_text(block),
-              "is_error" => block[:is_error] || block["is_error"] || false
+              "is_error" => Handbeam.Utils.SafeMap.get_first_truthy(block, :is_error, "is_error") || false
             })
           end)
 
@@ -891,9 +891,9 @@ defmodule Handbeam.Agent.Provider.Cursor.Session do
       %{type: "tool_use"} = block ->
         %{
           "type" => "tool_use",
-          "id" => block[:id] || block["id"],
-          "name" => block[:name] || block["name"],
-          "input" => block[:input] || block["input"] || %{}
+          "id" => Handbeam.Utils.SafeMap.get_first_truthy(block, :id, "id"),
+          "name" => Handbeam.Utils.SafeMap.get_first_truthy(block, :name, "name"),
+          "input" => Handbeam.Utils.SafeMap.get_first_truthy(block, :input, "input") || %{}
         }
 
       %{"type" => "tool_use"} = block ->
@@ -966,9 +966,9 @@ defmodule Handbeam.Agent.Provider.Cursor.Session do
   defp assistant_steps(_), do: []
 
   defp tool_use_step(block) do
-    id = block[:id] || block["id"]
-    name = block[:name] || block["name"]
-    input = block[:input] || block["input"] || %{}
+    id = Handbeam.Utils.SafeMap.get_first_truthy(block, :id, "id")
+    name = Handbeam.Utils.SafeMap.get_first_truthy(block, :name, "name")
+    input = Handbeam.Utils.SafeMap.get_first_truthy(block, :input, "input") || %{}
     {:pending_mcp, id, name, input}
   end
 
@@ -1010,7 +1010,7 @@ defmodule Handbeam.Agent.Provider.Cursor.Session do
   end
 
   defp attach_tool_result(steps, block) do
-    id = block[:tool_use_id] || block["tool_use_id"]
+    id = Handbeam.Utils.SafeMap.get_first_truthy(block, :tool_use_id, "tool_use_id")
     result = mcp_result_from_block(block)
 
     Enum.map(steps, fn
@@ -1028,7 +1028,7 @@ defmodule Handbeam.Agent.Provider.Cursor.Session do
 
   defp mcp_result_from_block(block) do
     text = tool_result_text(block)
-    is_error? = block[:is_error] || block["is_error"] || false
+    is_error? = Handbeam.Utils.SafeMap.get_first_truthy(block, :is_error, "is_error") || false
     {:success, text, is_error?}
   end
 
@@ -1115,9 +1115,9 @@ defmodule Handbeam.Agent.Provider.Cursor.Session do
       _ -> false
     end)
     |> Map.new(fn block ->
-      id = block[:tool_use_id] || block["tool_use_id"]
-      content = block[:content] || block["content"] || ""
-      is_error? = block[:is_error] || block["is_error"] || false
+      id = Handbeam.Utils.SafeMap.get_first_truthy(block, :tool_use_id, "tool_use_id")
+      content = Handbeam.Utils.SafeMap.get_first_truthy(block, :content, "content") || ""
+      is_error? = Handbeam.Utils.SafeMap.get_first_truthy(block, :is_error, "is_error") || false
       {id, {content, is_error?}}
     end)
   end
@@ -1140,13 +1140,13 @@ defmodule Handbeam.Agent.Provider.Cursor.Session do
 
   defp tool_def(def) do
     %{
-      name: def[:name] || def["name"],
-      description: def[:description] || def["description"] || "",
-      schema: def[:input_schema] || def["input_schema"] || %{}
+      name: Handbeam.Utils.SafeMap.get_first_truthy(def, :name, "name"),
+      description: Handbeam.Utils.SafeMap.get_first_truthy(def, :description, "description") || "",
+      schema: Handbeam.Utils.SafeMap.get_first_truthy(def, :input_schema, "input_schema") || %{}
     }
   end
 
-  defp tool_name(def), do: def[:name] || def["name"]
+  defp tool_name(def), do: Handbeam.Utils.SafeMap.get_first_truthy(def, :name, "name")
 
   defp usage(acc) do
     %{

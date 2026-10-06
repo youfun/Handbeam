@@ -381,9 +381,9 @@ defmodule Handbeam.Agent.Provider.OpenAI do
   end
 
   defp format_assistant_function_call_item(block) when is_map(block) do
-    id = block[:id] || block["id"]
-    name = block[:name] || block["name"]
-    input = block[:input] || block["input"] || %{}
+    id = Handbeam.Utils.SafeMap.get_first_truthy(block, :id, "id")
+    name = Handbeam.Utils.SafeMap.get_first_truthy(block, :name, "name")
+    input = Handbeam.Utils.SafeMap.get_first_truthy(block, :input, "input") || %{}
 
     %{
       "type" => "function_call",
@@ -394,8 +394,8 @@ defmodule Handbeam.Agent.Provider.OpenAI do
   end
 
   defp reasoning_replay_item?(item) when is_map(item) do
-    type = item["type"] || item[:type]
-    encrypted = item["encrypted_content"] || item[:encrypted_content]
+    type = Handbeam.Utils.SafeMap.get_first_truthy(item, "type", :type)
+    encrypted = Handbeam.Utils.SafeMap.get_first_truthy(item, "encrypted_content", :encrypted_content)
     type == "reasoning" and is_binary(encrypted) and encrypted != ""
   end
 

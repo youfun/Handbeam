@@ -86,7 +86,7 @@ defmodule Handbeam.Agent.Delegation.Policy do
     # Provider-native tools bypass Registry/Executor authorization; only web search survives.
     native =
       Enum.filter(Map.get(config, :built_in_tools, []) || [], fn tool ->
-        is_map(tool) and (tool[:type] || tool["type"]) in ["web_search", "web_search_preview"]
+        is_map(tool) and (Handbeam.Utils.SafeMap.get_first_truthy(tool, :type, "type")) in ["web_search", "web_search_preview"]
       end)
 
     config

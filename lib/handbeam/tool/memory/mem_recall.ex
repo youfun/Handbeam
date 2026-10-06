@@ -62,7 +62,7 @@ defmodule Handbeam.Tool.Memory.MemRecall do
   defp scope(%{short_term: true}), do: "short-term"
 
   defp scope(%{metadata: %{} = metadata}) do
-    Map.get(metadata, "scope") || Map.get(metadata, :scope) || "long-term"
+    Handbeam.Utils.SafeMap.get_first_truthy(metadata, "scope", :scope) || "long-term"
   end
 
   defp scope(_engram), do: "long-term"

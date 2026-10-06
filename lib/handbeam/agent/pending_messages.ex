@@ -165,7 +165,7 @@ defmodule Handbeam.Agent.PendingMessages do
 
   defp queued_from_session(item, pending, entries) do
     id = item_id(item)
-    deliver_as = normalize_deliver_as(item[:deliver_as] || item["deliver_as"])
+    deliver_as = normalize_deliver_as(Handbeam.Utils.SafeMap.get_first_truthy(item, :deliver_as, "deliver_as"))
 
     if id == "" or deliver_as not in [:steer, :follow_up] do
       []

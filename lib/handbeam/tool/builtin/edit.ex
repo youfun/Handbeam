@@ -219,9 +219,9 @@ defmodule Handbeam.Tool.Builtin.Edit do
   end
 
   defp normalize_replacement_item(item, index) when is_map(item) do
-    old = item["old_string"] || item[:old_string] || item["oldText"] || item[:oldText]
-    new = item["new_string"] || item[:new_string] || item["newText"] || item[:newText]
-    replace_all = item["replace_all"] || item[:replace_all] || false
+    old = Handbeam.Utils.SafeMap.get_first_truthy(item, "old_string", :old_string) || Handbeam.Utils.SafeMap.get_first_truthy(item, "oldText", :oldText)
+    new = Handbeam.Utils.SafeMap.get_first_truthy(item, "new_string", :new_string) || Handbeam.Utils.SafeMap.get_first_truthy(item, "newText", :newText)
+    replace_all = Handbeam.Utils.SafeMap.get_first_truthy(item, "replace_all", :replace_all) || false
 
     if is_binary(old) and is_binary(new) do
       {:ok, %{old_string: old, new_string: new, replace_all: replace_all}}

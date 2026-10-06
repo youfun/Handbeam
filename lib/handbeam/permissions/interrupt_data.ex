@@ -24,11 +24,11 @@ defmodule Handbeam.Permissions.InterruptData do
     %{
       tool_call_id: call_id(call),
       tool_name: call_name(call),
-      arguments: call[:input] || call["input"] || %{},
+      arguments: Handbeam.Utils.SafeMap.get_first_truthy(call, :input, "input") || %{},
       suggested_pattern: Remember.pattern(call)
     }
   end
 
-  defp call_id(call), do: call[:id] || call["id"]
-  defp call_name(call), do: call[:name] || call["name"]
+  defp call_id(call), do: Handbeam.Utils.SafeMap.get_first_truthy(call, :id, "id")
+  defp call_name(call), do: Handbeam.Utils.SafeMap.get_first_truthy(call, :name, "name")
 end

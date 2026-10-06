@@ -113,7 +113,7 @@ defmodule Handbeam.Browser.Display do
   defp conversation_id(%{meta: meta}), do: conversation_id(meta)
 
   defp conversation_id(meta) when is_map(meta),
-    do: meta[:conversation_id] || meta["conversation_id"]
+    do: Handbeam.Utils.SafeMap.get_first_truthy(meta, :conversation_id, "conversation_id")
 
   defp conversation_id(_), do: nil
 

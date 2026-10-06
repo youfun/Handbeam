@@ -319,7 +319,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
       entries
       |> Enum.filter(&running_tool_for_run?(&1, conversation_id, run_id))
       |> Enum.reduce([], fn entry, acc ->
-        id = Map.get(entry, "id") || Map.get(entry, :id)
+        id = Handbeam.Utils.SafeMap.get_first_truthy(entry, "id", :id)
 
         cond do
           not is_binary(id) ->
@@ -379,14 +379,14 @@ defmodule Handbeam.Agent.TranscriptPersistence do
   defp tool_entry?(_entry), do: false
 
   defp same_conversation?(entry, conversation_id) do
-    case Map.get(entry, "conversation_id") || Map.get(entry, :conversation_id) do
+    case Handbeam.Utils.SafeMap.get_first_truthy(entry, "conversation_id", :conversation_id) do
       nil -> true
       id -> to_string(id) == to_string(conversation_id)
     end
   end
 
   defp same_run?(entry, run_id) do
-    entry_run = Map.get(entry, "run_id") || Map.get(entry, :run_id)
+    entry_run = Handbeam.Utils.SafeMap.get_first_truthy(entry, "run_id", :run_id)
     not blank?(entry_run) and to_string(entry_run) == to_string(run_id)
   end
 

@@ -133,12 +133,12 @@ defmodule Handbeam.Attachments.History do
   end
 
   defp restore_attachment(att, workspace_path, conversation_id, entry) do
-    mime = att["mime_type"] || att[:mime_type]
-    name = att["filename"] || att[:filename] || "attachment"
-    relative = att["relative_path"] || att[:relative_path]
+    mime = Handbeam.Utils.SafeMap.get_first_truthy(att, "mime_type", :mime_type)
+    name = Handbeam.Utils.SafeMap.get_first_truthy(att, "filename", :filename) || "attachment"
+    relative = Handbeam.Utils.SafeMap.get_first_truthy(att, "relative_path", :relative_path)
 
     cond do
-      not is_nil(att["storage_path"] || att[:storage_path]) ->
+      not is_nil(Handbeam.Utils.SafeMap.get_first_truthy(att, "storage_path", :storage_path)) ->
         [%{type: "text", text: "Image attachment rejected: absolute storage path (#{name})"}]
 
       Attachments.image?(to_string(mime)) ->

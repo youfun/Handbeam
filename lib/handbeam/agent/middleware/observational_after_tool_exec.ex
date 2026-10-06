@@ -67,9 +67,9 @@ defmodule Handbeam.Agent.Middleware.ObservationalAfterToolExec do
     tool_results = if tool_result_msg, do: extract_tool_results(tool_result_msg), else: %{}
 
     Enum.each(tool_calls, fn call ->
-      call_id = call[:id] || call["id"]
-      tool_name = call[:name] || call["name"] || "unknown"
-      input = call[:input] || call["input"] || %{}
+      call_id = Handbeam.Utils.SafeMap.get_first_truthy(call, :id, "id")
+      tool_name = Handbeam.Utils.SafeMap.get_first_truthy(call, :name, "name") || "unknown"
+      input = Handbeam.Utils.SafeMap.get_first_truthy(call, :input, "input") || %{}
       result = Map.get(tool_results, call_id)
 
       obs = build_tool_observation(tool_name, input, result, state)
@@ -115,21 +115,21 @@ defmodule Handbeam.Agent.Middleware.ObservationalAfterToolExec do
     # Extract the most relevant arg for each tool type
     case tool_name do
       "read" ->
-        path = input[:file_path] || input["file_path"]
+        path = Handbeam.Utils.SafeMap.get_first_truthy(input, :file_path, "file_path")
         "read(#{path || "?"})"
 
       "edit" ->
-        path = input[:file_path] || input["file_path"]
-        edits = input[:edits] || input["edits"]
+        path = Handbeam.Utils.SafeMap.get_first_truthy(input, :file_path, "file_path")
+        edits = Handbeam.Utils.SafeMap.get_first_truthy(input, :edits, "edits")
         edit_count = if is_list(edits), do: length(edits), else: 0
         "edit(#{path || "?"}, #{edit_count} edits)"
 
       "write" ->
-        path = input[:file_path] || input["file_path"]
+        path = Handbeam.Utils.SafeMap.get_first_truthy(input, :file_path, "file_path")
         "write(#{path || "?"})"
 
       "bash" ->
-        command = input[:command] || input["command"] || ""
+        command = Handbeam.Utils.SafeMap.get_first_truthy(input, :command, "command") || ""
         preview = String.slice(to_string(command), 0, @max_input_chars)
         "bash(#{preview})"
 
@@ -160,7 +160,7 @@ defmodule Handbeam.Agent.Middleware.ObservationalAfterToolExec do
   defp extract_file_path(tool_name, input, _result) do
     case tool_name do
       t when t in ["read", "edit", "write"] ->
-        input[:file_path] || input["file_path"]
+        Handbeam.Utils.SafeMap.get_first_truthy(input, :file_path, "file_path")
 
       "bash" ->
         # Try to extract a meaningful path from command or working dir

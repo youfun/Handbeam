@@ -182,8 +182,8 @@ defmodule Handbeam.MCP.HTTP do
   end
 
   defp maybe_put_name(headers, %{"params" => params}) when is_map(params) do
-    name = Map.get(params, "name") || Map.get(params, :name)
-    uri = Map.get(params, "uri") || Map.get(params, :uri)
+    name = Handbeam.Utils.SafeMap.get_first_truthy(params, "name", :name)
+    uri = Handbeam.Utils.SafeMap.get_first_truthy(params, "uri", :uri)
 
     cond do
       is_binary(name) -> Map.put(headers, "mcp-name", name)

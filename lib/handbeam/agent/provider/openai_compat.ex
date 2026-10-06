@@ -342,7 +342,7 @@ defmodule Handbeam.Agent.Provider.OpenAICompat do
   end
 
   defp get_error_message(error) when is_map(error) do
-    Map.get(error, "message") || Map.get(error, :message) || inspect(error)
+    Handbeam.Utils.SafeMap.get_first_truthy(error, "message", :message) || inspect(error)
   end
 
   defp get_error_message(error) when is_binary(error), do: error

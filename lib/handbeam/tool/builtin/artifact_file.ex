@@ -105,9 +105,9 @@ defmodule Handbeam.Tool.Builtin.ArtifactFile do
 
   defp finish(result) when is_map(result) do
     finish(%{
-      outcome: to_string(result[:outcome] || result["outcome"] || "outcome_unknown"),
-      snapshot_id: result[:snapshot_id] || result["snapshot_id"],
-      relative_path: result[:relative_path] || result["relative_path"]
+      outcome: to_string(Handbeam.Utils.SafeMap.get_first_truthy(result, :outcome, "outcome") || "outcome_unknown"),
+      snapshot_id: Handbeam.Utils.SafeMap.get_first_truthy(result, :snapshot_id, "snapshot_id"),
+      relative_path: Handbeam.Utils.SafeMap.get_first_truthy(result, :relative_path, "relative_path")
     })
   end
 

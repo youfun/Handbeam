@@ -102,7 +102,7 @@ defmodule Handbeam.Agent.Middleware.ProgressGuard do
 
   defp path_of(use) do
     input = block_value(use, :input) || %{}
-    input["file_path"] || input["path"] || input[:file_path] || input[:path]
+    Handbeam.Utils.SafeMap.get_first_truthy(input, "file_path", "path") || Handbeam.Utils.SafeMap.get_first_truthy(input, :file_path, :path)
   end
 
   defp block_id(block), do: block_value(block, :id) || block_value(block, :tool_use_id)

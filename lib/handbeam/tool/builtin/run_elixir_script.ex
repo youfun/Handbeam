@@ -65,7 +65,7 @@ defmodule Handbeam.Tool.Builtin.RunElixirScript do
 
   @impl true
   def execute(%{"path" => path} = input, context) when is_binary(path) do
-    workspace = context[:working_directory] || context["working_directory"]
+    workspace = Handbeam.Utils.SafeMap.get_first_truthy(context, :working_directory, "working_directory")
 
     with {:ok, workspace} <- require_workspace(workspace),
          {:ok, args} <- parse_args(Map.get(input, "args", [])),
