@@ -445,36 +445,27 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
 
     workspace_path = ConversationState.current_workspace_path(socket)
 
-    with {:ok, provider_config, model_id} <-
-           ModelSelection.resolve_selected_model(workspace_path, selected_model) do
-      model_entry =
-        ModelSelection.model_entry_for(selected_model, socket.assigns.available_models)
-
-      provider_config =
-        Handbeam.Agent.Reasoning.apply_provider_options(
-          provider_config,
-          model_entry,
-          selected_reasoning_level
-        )
-
+    with {:ok, built} <-
+           Handbeam.Agent.RunOpts.for_selection(
+             workspace_path,
+             selected_model,
+             selected_reasoning_level,
+             socket.assigns.effective_settings
+           ) do
       msg_id = Keyword.get(opts, :message_id)
-
-      om_opts = ModelSelection.om_from_effective(socket.assigns.effective_settings)
 
       Handbeam.Agent.Coordinator.add_message(
         conv_id,
         content,
-        run_opts(socket,
-          provider_config: provider_config,
-          model: model_id,
-          reasoning_level: selected_reasoning_level,
-          workspace_path: workspace_path,
-          deliver_as: Keyword.get(opts, :deliver_as, :steer),
-          transcript_id: msg_id,
-          message_id: msg_id,
-          inbound_id: msg_id,
-          attachments: Keyword.get(opts, :attachments, []),
-          om: Keyword.get(om_opts, :om)
+        run_opts(
+          socket,
+          Keyword.merge(built,
+            deliver_as: Keyword.get(opts, :deliver_as, :steer),
+            transcript_id: msg_id,
+            message_id: msg_id,
+            inbound_id: msg_id,
+            attachments: Keyword.get(opts, :attachments, [])
+          )
         )
       )
     end
@@ -504,6 +495,7 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
       end
 
     Keyword.merge(base, extra)
+    |> Keyword.put_new(:user_time_zone, socket.assigns[:user_time_zone])
   end
 
   def mark_stale_running_message_rejected(socket) do
@@ -748,18 +740,13 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
 
     workspace_path = ConversationState.current_workspace_path(socket)
 
-    case ModelSelection.resolve_selected_model(workspace_path, selected_model) do
-      {:ok, provider_config, model_id} ->
-        model_entry =
-          ModelSelection.model_entry_for(selected_model, socket.assigns.available_models)
-
-        provider_config =
-          Handbeam.Agent.Reasoning.apply_provider_options(
-            provider_config,
-            model_entry,
-            selected_reasoning_level
-          )
-
+    case Handbeam.Agent.RunOpts.for_selection(
+           workspace_path,
+           selected_model,
+           selected_reasoning_level,
+           socket.assigns.effective_settings
+         ) do
+      {:ok, built} ->
         msg_id = RuntimeProjection.unique_id("msg-user")
         content = put_inbound_message_id(content, msg_id)
 
@@ -794,19 +781,16 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
         # Run it after LiveView has acknowledged and rendered the user message.
         send(self(), {:schedule_auto_title, conv_id, message})
 
-        om_opts = ModelSelection.om_from_effective(socket.assigns.effective_settings)
-
         run_opts =
-          run_opts(socket,
-            provider_config: provider_config,
-            model: model_id,
-            reasoning_level: selected_reasoning_level,
-            workspace_path: workspace_path,
-            transcript_id: msg_id,
-            message_id: msg_id,
-            inbound_id: msg_id,
-            attachments: attachments,
-            om: Keyword.get(om_opts, :om)
+          run_opts(
+            socket,
+            Keyword.merge(built,
+              workspace_path: workspace_path,
+              transcript_id: msg_id,
+              message_id: msg_id,
+              inbound_id: msg_id,
+              attachments: attachments
+            )
           )
 
         if ConversationState.free_chat?(socket) do

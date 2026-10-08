@@ -11,6 +11,9 @@ config :handbeam,
   ecto_repos: [Handbeam.Repo],
   generators: [timestamp_type: :utc_datetime]
 
+# IANA zones ship inside Tz. No network and no disk writes at runtime.
+config :elixir, :time_zone_database, Tz.TimeZoneDatabase
+
 # Configure the endpoint
 config :handbeam, HandbeamWeb.Endpoint,
   url: [host: "localhost"],

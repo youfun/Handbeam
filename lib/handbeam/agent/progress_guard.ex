@@ -31,12 +31,10 @@ defmodule Handbeam.Agent.ProgressGuard do
   def enabled?(%{delegated?: true}), do: false
 
   # Interactive runs stay under user control instead of pausing on heuristic signals.
-  def enabled?(%{source: source}) when source in [:sns, :webhook, :cli],
-    do: true
-
+  def enabled?(%{source: source}), do: Handbeam.Agent.Channel.unattended?(source)
   def enabled?(_), do: false
 
-  def interactive?(%{source: source}) when source in [:live_view, :native], do: true
+  def interactive?(%{source: source}), do: Handbeam.Agent.Channel.interactive?(source)
   def interactive?(_), do: false
 
   def grant(progress) do

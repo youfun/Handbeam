@@ -102,17 +102,29 @@ defmodule Handbeam.Threads.Collaboration do
   end
 
   def create(input, context) do
-    with :ok <- Threads.validate(input, ~w(title message request_id)),
+    with :ok <-
+           Threads.validate(input, ~w(title message request_id provider model mode approval)),
          {:ok, source} <- Threads.identity(context),
          {:ok, title} <- Threads.text(input, "title", nil, 200),
          {:ok, key} <- Threads.text(input, "request_id", nil, 128),
          {:ok, _} <- Threads.text(input, "message", nil, 8000),
-         true <- is_nil(source["collaboration"]) do
+         {:ok, read_only, approval} <- access(input),
+         {:ok, selection} <- model_selection(input),
+         true <- is_nil(source["collaboration"]),
+         {:ok, pinned} <- resolve_selection(selection, context) do
       locked(source, fn ->
         id = "delegated-" <> digest({source["id"], key})
 
         with {:ok, target} <-
-               child(source, id, title, "handoff-" <> digest({source["id"], key})) do
+               child(
+                 source,
+                 id,
+                 title,
+                 "handoff-" <> digest({source["id"], key}),
+                 read_only,
+                 approval,
+                 pinned
+               ) do
           deliver(input, context, source, target, false)
         end
       end)
@@ -122,25 +134,84 @@ defmodule Handbeam.Threads.Collaboration do
     end
   end
 
-  defp child(source, id, title, handoff_id) do
+  defp access(input) do
+    mode = Map.get(input, "mode", "read_only")
+    approval = Map.get(input, "approval")
+
+    cond do
+      mode == "read_only" and is_nil(approval) -> {:ok, true, nil}
+      mode == "write" and approval in [nil, "auto_review"] -> {:ok, false, "auto_review"}
+      mode == "write" and approval == "yolo" -> {:ok, false, "yolo"}
+      true -> {:error, :invalid_input}
+    end
+  end
+
+  defp model_selection(input) do
+    provider = Map.get(input, "provider")
+    model = Map.get(input, "model")
+
+    cond do
+      is_nil(provider) and is_nil(model) -> {:ok, nil}
+      catalog_id?(provider) and catalog_id?(model) -> {:ok, {provider, model}}
+      true -> {:error, :invalid_input}
+    end
+  end
+
+  defp catalog_id?(value) do
+    is_binary(value) and String.valid?(value) and value != "" and String.length(value) <= 128 and
+      not String.contains?(value, ["/", "\n", "\r", "\0"])
+  end
+
+  defp resolve_selection(nil, _context), do: {:ok, nil}
+
+  defp resolve_selection({provider, model}, context) do
+    path = workspace_path(context)
+
+    if is_binary(path) and path != "" do
+      case Handbeam.Agent.ModelConfig.resolve_model_for_workspace(path, "#{provider}/#{model}") do
+        {:ok, _config, model_id} -> {:ok, %{"provider" => provider, "model" => model_id}}
+        {:error, reason} when is_binary(reason) -> {:error, reason}
+        {:error, reason} -> {:error, "Model is not allowed: #{inspect(reason)}"}
+      end
+    else
+      {:error, :missing_runtime_configuration}
+    end
+  end
+
+  defp workspace_path(context) do
+    opts = context[:thread_run_opts] || []
+    Keyword.get(opts, :workspace_path) || Keyword.get(opts, :working_directory)
+  end
+
+  defp child(source, id, title, handoff_id, read_only, approval, pinned) do
+    spec =
+      %{"parent" => source["id"], "read_only" => read_only, "handoff_id" => handoff_id}
+      |> maybe_put("approval", approval)
+      |> maybe_put("provider", pinned && pinned["provider"])
+      |> maybe_put("model", pinned && pinned["model"])
+
     case ConversationStore.get_metadata(id) do
       {:ok, target} ->
-        {:ok, target}
+        if child_matches?(target, spec), do: {:ok, target}, else: {:error, :idempotency_conflict}
 
       _ ->
-        with {:ok, target} <-
-               ConversationStore.create(source["workspace_id"],
-                 id: id,
-                 title: title,
-                 collaboration: %{
-                   "parent" => source["id"],
-                   "read_only" => true,
-                   "handoff_id" => handoff_id
-                 }
-               ) do
-          {:ok, target}
-        end
+        ConversationStore.create(source["workspace_id"],
+          id: id,
+          title: title,
+          collaboration: spec
+        )
     end
+  end
+
+  defp maybe_put(map, _key, nil), do: map
+  defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp child_matches?(target, spec) do
+    collab = target["collaboration"] || %{}
+
+    Enum.all?(~w(parent read_only handoff_id approval provider model), fn key ->
+      Map.get(collab, key) == Map.get(spec, key)
+    end)
   end
 
   defp deliver(input, context, source, target, important) do
@@ -271,30 +342,68 @@ defmodule Handbeam.Threads.Collaboration do
       "important" => important
     }
 
-    opts = context[:thread_run_opts] || []
+    with {:ok, base} <- pinned_run_opts(target, context) do
+      if Keyword.has_key?(base, :provider_config) do
+        opts =
+          base
+          |> Keyword.merge(
+            workspace_id: source["workspace_id"],
+            source: :thread,
+            channel: :thread,
+            origin: origin,
+            message_id: id,
+            transcript_id: id,
+            inbound_id: id,
+            deliver_as: if(mode == "follow_up", do: :follow_up, else: :steer),
+            tools: Handbeam.Agent.default_tools()
+          )
+          |> put_approval(target)
 
-    if Keyword.has_key?(opts, :provider_config) do
-      opts =
-        Keyword.merge(opts,
-          workspace_id: source["workspace_id"],
-          source: :thread,
-          channel: :thread,
-          origin: origin,
-          message_id: id,
-          transcript_id: id,
-          inbound_id: id,
-          deliver_as: if(mode == "follow_up", do: :follow_up, else: :steer),
-          tools: Handbeam.Agent.default_tools()
+        Handbeam.Agent.Coordinator.add_message(
+          target["id"],
+          "[Task from another thread. Carry out the requested work and reply with the result. Do not send an empty acknowledgment.]\n" <>
+            message,
+          opts
         )
+      else
+        {:error, :missing_runtime_configuration}
+      end
+    end
+  end
 
-      Handbeam.Agent.Coordinator.add_message(
-        target["id"],
-        "[Task from another thread. Carry out the requested work and reply with the result. Do not send an empty acknowledgment.]\n" <>
-          message,
-        opts
-      )
+  defp pinned_run_opts(target, context) do
+    base = context[:thread_run_opts] || []
+    provider = get_in(target, ["collaboration", "provider"])
+    model = get_in(target, ["collaboration", "model"])
+
+    if is_binary(provider) and is_binary(model) do
+      case Handbeam.Agent.ModelConfig.resolve_model_for_workspace(
+             workspace_path(%{thread_run_opts: base}),
+             "#{provider}/#{model}"
+           ) do
+        {:ok, provider_config, model_id} ->
+          {:ok,
+           base
+           |> Keyword.delete(:provider)
+           |> Keyword.put(:model, "#{provider}/#{model_id}")
+           |> Keyword.put(:provider_config, provider_config)}
+
+        {:error, reason} when is_binary(reason) ->
+          {:error, reason}
+
+        {:error, reason} ->
+          {:error, "Model is not allowed: #{inspect(reason)}"}
+      end
     else
-      {:error, :missing_runtime_configuration}
+      {:ok, base}
+    end
+  end
+
+  defp put_approval(opts, target) do
+    case get_in(target, ["collaboration", "approval"]) do
+      "yolo" -> Keyword.put(opts, :delegated_approval, :yolo)
+      "auto_review" -> Keyword.put(opts, :delegated_approval, :auto_review)
+      _ -> opts
     end
   end
 

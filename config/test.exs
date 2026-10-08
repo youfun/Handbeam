@@ -32,6 +32,10 @@ config :phoenix_live_view,
 config :phoenix,
   sort_verified_routes_query_params: true
 
+# The app Clock must not claim rows while tests drive time themselves.
+config :handbeam, :schedule_clock, enabled: false
+config :handbeam, :schedule_dispatch, :sync
+
 # Fix the test environment to use its own paths — never fall back to dev ~/.handbeam/... paths.
 fixture_models_path = Path.expand("../test/fixtures/models.json", __DIR__)
 fixture_workspace_path = Path.expand("../test/fixtures/workspace", __DIR__)

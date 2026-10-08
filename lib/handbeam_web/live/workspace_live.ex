@@ -32,6 +32,7 @@ defmodule HandbeamWeb.WorkspaceLive do
   alias HandbeamWeb.WorkspaceLive.SidebarComponents
   alias HandbeamWeb.WorkspaceLive.ViewComponents
   alias HandbeamWeb.WorkspaceLive.WorkspaceComponents
+  alias HandbeamWeb.WorkspaceLive.Schedules
   alias HandbeamWeb.WorkspaceLive.WorkspaceNavigation
 
   import SidebarComponents, only: [mobile_header: 1, projects_sidebar: 1]
@@ -145,6 +146,7 @@ defmodule HandbeamWeb.WorkspaceLive do
       |> assign(:conversation_menu_id, nil)
       |> assign(:rename_conversation, nil)
       |> assign(:pending_approval, nil)
+      |> Schedules.defaults()
       |> assign(:show_permission_menu, false)
       |> assign(:skill_suggestions, [])
       |> assign(:ext_status_text, nil)
@@ -152,6 +154,7 @@ defmodule HandbeamWeb.WorkspaceLive do
       |> assign(:ext_widget_data, nil)
       |> WorkspaceNavigation.load_permission_mode_into_socket()
       |> subscribe_to_conversation_updates()
+      |> subscribe_schedules()
       |> RuntimeProjection.subscribe_session()
       |> RuntimeProjection.subscribe_tasks()
       |> restore_session()
@@ -1165,6 +1168,38 @@ defmodule HandbeamWeb.WorkspaceLive do
     {:noreply, push_event(socket, "scroll_chat_to_bottom", %{})}
   end
 
+  def handle_event("toggle_schedules", _params, socket) do
+    {:noreply, Schedules.toggle(socket)}
+  end
+
+  def handle_event("schedule_create", params, socket) do
+    {:noreply, Schedules.create(socket, params)}
+  end
+
+  def handle_event("schedule_update", params, socket) do
+    {:noreply, Schedules.update(socket, params)}
+  end
+
+  def handle_event("schedule_pause", %{"id" => id}, socket) do
+    {:noreply, Schedules.pause(socket, id)}
+  end
+
+  def handle_event("schedule_resume", %{"id" => id}, socket) do
+    {:noreply, Schedules.resume(socket, id)}
+  end
+
+  def handle_event("schedule_delete", %{"id" => id}, socket) do
+    {:noreply, Schedules.delete(socket, id)}
+  end
+
+  def handle_event("schedule_run_now", %{"id" => id}, socket) do
+    {:noreply, Schedules.run_now(socket, id)}
+  end
+
+  def handle_event("schedule_edit", %{"id" => id}, socket) do
+    {:noreply, Schedules.edit(socket, id)}
+  end
+
   defp create_conversation_in_workspace(socket, ws_id, opts) do
     socket = drop_composer_for_switch(socket)
 
@@ -1377,6 +1412,17 @@ defmodule HandbeamWeb.WorkspaceLive do
     MessageSubmission.start_free_chat_run(socket, conv_id, content, run_opts)
   end
 
+  def handle_info({:schedule_notice, conv_id, entry}, socket) do
+    socket =
+      if socket.assigns.current_conversation_id == conv_id do
+        RuntimeProjection.timeline_insert(socket, entry)
+      else
+        socket
+      end
+
+    {:noreply, Schedules.reload(socket)}
+  end
+
   def handle_info(msg, socket) do
     Logger.debug("[WorkspaceLive] unhandled message: #{inspect(msg)}")
     {:noreply, socket}
@@ -1462,6 +1508,14 @@ defmodule HandbeamWeb.WorkspaceLive do
   defp subscribe_to_conversation_updates(socket) do
     if connected?(socket) do
       Phoenix.PubSub.subscribe(Handbeam.PubSub, "conversation:updated")
+    end
+
+    socket
+  end
+
+  defp subscribe_schedules(socket) do
+    if connected?(socket) do
+      Phoenix.PubSub.subscribe(Handbeam.PubSub, "runtime:schedules")
     end
 
     socket

@@ -68,6 +68,42 @@ defmodule Handbeam.Permissions.AutoReviewTest do
     end)
   end
 
+  test "delegated write defaults to smart review without a separate approval" do
+    state =
+      guard_state(%{"tools" => %{"default_mode" => "prompt"}}, [
+        %{type: "tool_use", id: "b1", name: "bash", input: %{"command" => "mix test"}}
+      ])
+
+    state = put_in(state.config.context, %{delegated_approval: :auto_review})
+    parent = self()
+
+    Process.put(AutoReview.transport_key(), fn request ->
+      send(parent, {:reviewed, request})
+      {:ok, ~s({"decisions":[{"tool_call_id":"b1","decision":"approve","rationale":"ok"}]})}
+    end)
+
+    assert %State{status: :running} = ToolGuard.call(:after_tool_request, state)
+    assert_received {:reviewed, _}
+  end
+
+  test "delegated yolo skips the prompt that smart review would see" do
+    state =
+      guard_state(%{"tools" => %{"default_mode" => "prompt"}}, [
+        %{type: "tool_use", id: "b1", name: "bash", input: %{"command" => "mix test"}}
+      ])
+
+    state = put_in(state.config.context, %{delegated_approval: :yolo})
+    parent = self()
+
+    Process.put(AutoReview.transport_key(), fn _request ->
+      send(parent, :reviewed)
+      {:ok, ~s({"decision":"approve","rationale":"ok"})}
+    end)
+
+    assert %State{status: :running} = ToolGuard.call(:after_tool_request, state)
+    refute_received :reviewed
+  end
+
   test "missing approvals_reviewer still interrupts a prompt" do
     state =
       guard_state(%{"tools" => %{"per_tool" => %{"bash" => "prompt"}}}, [

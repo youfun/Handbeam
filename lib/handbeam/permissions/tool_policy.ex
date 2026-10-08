@@ -91,6 +91,9 @@ defmodule Handbeam.Permissions.ToolPolicy do
       name == "computer" ->
         computer_decision(policy, call)
 
+      name == "schedule" ->
+        schedule_decision(policy, call)
+
       # Allow rules and session grants were given for sandboxed execution.
       # Leaving the OS sandbox is a fresh decision, except in yolo.
       unsandboxed_bash?(name, call) ->
@@ -133,6 +136,35 @@ defmodule Handbeam.Permissions.ToolPolicy do
   end
 
   # YOLO auto-approves the gates that full access still asks about, and the
+  @schedule_prompt_actions MapSet.new(["create", "run_now"])
+
+  defp schedule_decision(policy, call) do
+    input = Handbeam.Utils.SafeMap.get_first_truthy(call, :input, "input") || %{}
+    action = to_string(Handbeam.Utils.SafeMap.get_first_truthy(input, "action", :action) || "")
+
+    cond do
+      action in ["list", "get", "history", "pause", "resume", "delete"] ->
+        :auto
+
+      action == "update" and not schedule_update_prompts?(input) ->
+        :auto
+
+      policy.default_mode == :yolo ->
+        :auto
+
+      action in @schedule_prompt_actions or schedule_update_prompts?(input) ->
+        :prompt
+
+      true ->
+        :prompt
+    end
+  end
+
+  defp schedule_update_prompts?(input) do
+    Map.has_key?(input, "rule") or Map.has_key?(input, :rule) or
+      Map.has_key?(input, "instruction") or Map.has_key?(input, :instruction)
+  end
+
   defp computer_decision(policy, call) do
     input = Handbeam.Utils.SafeMap.get_first_truthy(call, :input, "input") || %{}
 

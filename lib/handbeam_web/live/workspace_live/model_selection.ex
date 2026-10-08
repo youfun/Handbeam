@@ -505,14 +505,7 @@ defmodule HandbeamWeb.WorkspaceLive.ModelSelection do
     do: {:error, "Configure models before sending"}
 
   def resolve_selected_model(workspace_path, selected_model) do
-    if is_binary(workspace_path) and workspace_path != "" do
-      case Handbeam.Agent.ModelConfig.resolve_model_for_workspace(workspace_path, selected_model) do
-        {:ok, provider_config, model_id} -> {:ok, provider_config, model_id}
-        {:error, reason} -> {:error, reason}
-      end
-    else
-      resolve_global_model(selected_model)
-    end
+    Handbeam.Agent.RunOpts.resolve_model(workspace_path, selected_model)
   end
 
   def resolve_global_model(selected_model) do

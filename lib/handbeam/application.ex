@@ -58,7 +58,9 @@ defmodule Handbeam.Application do
         ] ++
         Handbeam.Runtime.MacNotify.children() ++
         [
-          Handbeam.Runtime.TaskTracker
+          Handbeam.Runtime.TaskTracker,
+          Handbeam.Schedule.Clock,
+          Handbeam.Schedule.Recorder
         ] ++
         mcp_children() ++
         [HandbeamWeb.Endpoint] ++ recovery_children()

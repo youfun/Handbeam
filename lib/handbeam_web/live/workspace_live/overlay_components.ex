@@ -408,6 +408,7 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
                   </div>
                   <div class="approval-arguments text-xs text-secondary font-mono rounded p-2">
                     <pre>{format_arguments(request["arguments"] || request[:arguments] || %{})}</pre>
+                    <div class="mt-2 whitespace-pre-wrap font-sans">{schedule_preview(request)}</div>
                   </div>
                 </div>
               <% end %>
@@ -590,5 +591,39 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
       </div>
     </div>
     """
+  end
+
+  defp schedule_preview(request) do
+    name = request[:tool_name] || request["tool_name"]
+    args = request[:arguments] || request["arguments"] || %{}
+    action = to_string(args["action"] || args[:action] || "")
+
+    if name == "schedule" and action in ["create", "update", "run_now"] do
+      rule = args["rule"] || args[:rule]
+      zone = args["time_zone"] || args[:time_zone] || "UTC"
+
+      upcoming =
+        if is_map(rule) and Handbeam.Schedule.Rule.valid_zone?(zone) do
+          case Handbeam.Schedule.Rule.upcoming(rule, zone, DateTime.utc_now(), 3) do
+            {:ok, times} ->
+              Enum.map_join(times, "\n", &Handbeam.Schedule.Rule.format_local(&1, zone))
+
+            _ ->
+              ""
+          end
+        else
+          ""
+        end
+
+      [
+        Handbeam.Schedule.Rule.describe(rule || %{}),
+        zone,
+        upcoming
+      ]
+      |> Enum.reject(&(&1 in [nil, ""]))
+      |> Enum.join("\n")
+    else
+      ""
+    end
   end
 end

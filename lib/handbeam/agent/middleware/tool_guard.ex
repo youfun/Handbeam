@@ -19,6 +19,7 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
         state.tool_guard_overrides || %{},
         state.tool_guard_session_allow || []
       )
+      |> delegated_policy(state)
 
     {denied, rest} = Enum.split_with(tool_calls, &(ToolPolicy.decision(policy, &1) == :deny))
 
@@ -49,8 +50,7 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
   # rewrites allow rules or session overrides, and a failed review is the
   # existing human interrupt — not a deny.
   defp review_or_interrupt(state, pending, auto_approved) do
-    if AutoReview.enabled?(state.config.working_directory) and
-         not Enum.any?(pending, &(&1[:name] == "computer")) do
+    if auto_review?(state) and not Enum.any?(pending, &(&1[:name] == "computer")) do
       case AutoReview.review(state, pending) do
         {:ok, %State{status: :halted} = reviewed} ->
           {:tool_guard_denied, reviewed}
@@ -67,6 +67,31 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
     else
       interrupt(state, pending, auto_approved)
     end
+  end
+
+  defp delegated_policy(policy, %State{} = state) do
+    if state.config.context[:delegated_approval] == :yolo,
+      do: %{policy | default_mode: :yolo},
+      else: policy
+  end
+
+  defp auto_review?(%State{} = state) do
+    AutoReview.enabled?(state.config.working_directory) or
+      state.config.context[:delegated_approval] == :auto_review
+  end
+
+  defp interrupt(%{config: %{source: :schedule}} = state, pending, _auto_approved) do
+    tool =
+      pending
+      |> List.first()
+      |> then(&Handbeam.Utils.SafeMap.get_first_truthy(&1 || %{}, :name, "name"))
+      |> case do
+        name when is_binary(name) and name != "" -> name
+        _ -> "tool"
+      end
+
+    halted = %{state | status: :halted, error: "定时运行不能等待人工批准：#{tool}"}
+    {:tool_guard_denied, halted}
   end
 
   defp interrupt(state, pending, auto_approved) do

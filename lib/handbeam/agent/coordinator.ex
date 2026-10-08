@@ -40,9 +40,40 @@ defmodule Handbeam.Agent.Coordinator do
   defp admit_message(id, content, opts, attempts) do
     case status(id) do
       {:ok, %{running?: true} = active} ->
-        if present_task_instructions?(opts) do
-          {:error, :run_in_progress}
+        cond do
+          Keyword.get(opts, :require_idle?, false) ->
+            {:error, :busy}
+
+          present_task_instructions?(opts) ->
+            {:error, :run_in_progress}
+
+          true ->
+            admit_running(id, content, opts, attempts, active)
+        end
+
+      {:ok, %{running?: false} = inactive} ->
+        if Keyword.get(opts, :require_running?, false) do
+          {:error, :no_active_run}
         else
+          with :ok <- await_run_exit(inactive[:run_supervisor]) do
+            case start_run(id, content, opts) do
+              {:error, :run_in_progress} ->
+                if Keyword.get(opts, :require_idle?, false),
+                  do: {:error, :busy},
+                  else: admit_message(id, content, opts, attempts - 1)
+
+              result ->
+                result
+            end
+          end
+        end
+
+      error ->
+        error
+    end
+  end
+
+  defp admit_running(id, content, opts, attempts, active) do
           candidate_opts =
             opts
             |> Keyword.put_new(:deliver_as, :steer)
@@ -63,23 +94,6 @@ defmodule Handbeam.Agent.Coordinator do
             error ->
               error
           end
-        end
-
-      {:ok, %{running?: false} = inactive} ->
-        if Keyword.get(opts, :require_running?, false) do
-          {:error, :no_active_run}
-        else
-          with :ok <- await_run_exit(inactive[:run_supervisor]) do
-            case start_run(id, content, opts) do
-              {:error, :run_in_progress} -> admit_message(id, content, opts, attempts - 1)
-              result -> result
-            end
-          end
-        end
-
-      error ->
-        error
-    end
   end
 
   # Wait for the exact old tree, not a timer or a lookup that could stop a new run.

@@ -63,7 +63,10 @@ let Hooks = { StreamingMarkdown, ChatScroll, ConversationNav, ComposerPasteUploa
 try {
   let liveSocket = new LiveSocket("/live", Socket, {
     hooks: Hooks,
-    params: {_csrf_token: csrfToken},
+    params: {
+      _csrf_token: csrfToken,
+      time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone
+    },
     longPollFallbackMs: 2500
   });
 
@@ -71,6 +74,12 @@ try {
   liveSocket.disableDebug();
   liveSocket.connect();
   window.liveSocket = liveSocket;
+  window.addEventListener("phx:scroll-to-run", (event) => {
+    const runId = event.detail && event.detail.run_id;
+    if (!runId) return;
+    const node = document.querySelector(`[data-run-id="${CSS.escape(runId)}"]`);
+    if (node) node.scrollIntoView({behavior: "smooth", block: "center"});
+  });
 } catch (error) {
   console.error("Handbeam LiveSocket failed to start", error);
 }

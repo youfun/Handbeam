@@ -3,6 +3,28 @@ defmodule Handbeam.ThreadCollaborationTest do
   alias Handbeam.{ConversationStore, ConversationTranscriptStore, Threads}
   alias Handbeam.Threads.Collaboration
 
+  defmodule CaptureProvider do
+    @behaviour Handbeam.Agent.Provider
+
+    def complete(_messages, _tools, config) do
+      if pid = Process.whereis(:thread_model_capture), do: send(pid, {:captured, config, self()})
+
+      receive do
+        :release -> :ok
+      end
+
+      {:ok,
+       %{
+         stop_reason: :end_turn,
+         messages: [Handbeam.Agent.Message.assistant("ok")],
+         usage: %{input_tokens: 1, output_tokens: 1},
+         response_metadata: %{}
+       }}
+    end
+
+    def stream(messages, tools, config, _chunk), do: complete(messages, tools, config)
+  end
+
   defmodule HoldProvider do
     @behaviour Handbeam.Agent.Provider
     def complete(_messages, _tools, config) do
@@ -309,5 +331,133 @@ defmodule Handbeam.ThreadCollaborationTest do
     assert report["origin"]["handoff_id"] == first.handoff_id
     assert report["content"] =~ "no task-specific result inferred"
     refute report["content"] =~ "BETA private result"
+  end
+
+  test "write mode edits the shared workspace and defaults to smart review", c do
+    {:ok, receipt} =
+      Collaboration.create(
+        %{"title" => "Patch", "message" => "Edit", "request_id" => "write", "mode" => "write"},
+        c.context
+      )
+
+    assert_receive {:held, _, _}, 2000
+    {:ok, meta} = ConversationStore.get_metadata(receipt.thread)
+    assert get_in(meta, ["collaboration", "read_only"]) == false
+    assert get_in(meta, ["collaboration", "approval"]) == "auto_review"
+    child = %{c.context | conversation_id: receipt.thread}
+    assert Collaboration.tool_allowed?("write", child)
+    assert Collaboration.tool_allowed?("edit", child)
+    assert Collaboration.tool_allowed?("bash", child)
+    {:ok, status} = Handbeam.Agent.Runner.status(receipt.thread)
+    state = :sys.get_state(status.run_pid)
+    refute state.opts[:delegated_read_only]
+    assert state.opts[:delegated_approval] == :auto_review
+
+    assert {:error, :idempotency_conflict} =
+             Collaboration.create(
+               %{"title" => "Patch", "message" => "Edit", "request_id" => "write"},
+               c.context
+             )
+  end
+
+  test "write yolo is explicit and read-only rejects an approval override", c do
+    {:ok, receipt} =
+      Collaboration.create(
+        %{
+          "title" => "Patch",
+          "message" => "Edit",
+          "request_id" => "yolo",
+          "mode" => "write",
+          "approval" => "yolo"
+        },
+        c.context
+      )
+
+    assert_receive {:held, _, _}, 2000
+    {:ok, status} = Handbeam.Agent.Runner.status(receipt.thread)
+    assert :sys.get_state(status.run_pid).opts[:delegated_approval] == :yolo
+
+    assert {:error, :invalid_input} =
+             Collaboration.create(
+               %{
+                 "title" => "Audit",
+                 "message" => "Read",
+                 "request_id" => "bad-approval",
+                 "approval" => "yolo"
+               },
+               c.context
+             )
+  end
+
+  test "a selected model resolves its own provider config", c do
+    File.write!(System.get_env("HANDBEAM_MODELS_FILE"), catalog())
+    previous = Application.get_env(:handbeam, :test_provider)
+    Application.put_env(:handbeam, :test_provider, %{module: __MODULE__.CaptureProvider})
+    Process.register(self(), :thread_model_capture)
+
+    on_exit(fn ->
+      if previous,
+        do: Application.put_env(:handbeam, :test_provider, previous),
+        else: Application.delete_env(:handbeam, :test_provider)
+
+      if Process.whereis(:thread_model_capture) == self(),
+        do: Process.unregister(:thread_model_capture)
+    end)
+
+    before = length(ConversationStore.list_metadata("ws"))
+
+    assert {:error, message} =
+             Collaboration.create(
+               %{
+                 "title" => "Other",
+                 "message" => "Nope",
+                 "request_id" => "missing-model",
+                 "provider" => "other",
+                 "model" => "missing"
+               },
+               c.context
+             )
+
+    assert message =~ "not allowed"
+    assert length(ConversationStore.list_metadata("ws")) == before
+
+    assert {:error, :invalid_input} =
+             Collaboration.create(
+               %{
+                 "title" => "Other",
+                 "message" => "Nope",
+                 "request_id" => "half",
+                 "provider" => "other"
+               },
+               c.context
+             )
+
+    {:ok, receipt} =
+      Collaboration.create(
+        %{
+          "title" => "Other",
+          "message" => "Use other",
+          "request_id" => "other",
+          "provider" => "other",
+          "model" => "other-model",
+          "mode" => "write"
+        },
+        c.context
+      )
+
+    assert_receive {:captured, config, _provider}, 2000
+    refute Map.has_key?(config, :notify)
+    assert config[:provider_key] == "other"
+    assert config[:api_key] == "other-key"
+    refute_received {:held, _, _}
+    {:ok, status} = Handbeam.Agent.Runner.status(receipt.thread)
+    opts = :sys.get_state(status.run_pid).opts
+    assert opts[:model] == "other-model"
+    refute opts[:provider] == HoldProvider
+    assert opts[:delegated_approval] == :auto_review
+  end
+
+  defp catalog do
+    ~s({"providers":{"fake":{"baseUrl":"http://localhost","api":"openai-chat-completions","apiKey":"fake","models":[{"id":"fake-model","name":"Fake"}]},"other":{"baseUrl":"http://127.0.0.1:9","api":"openai-chat-completions","apiKey":"other-key","provider":"openai-compat","models":[{"id":"other-model","name":"Other"}]}}})
   end
 end

@@ -109,6 +109,17 @@
     />
   </div>
   <.approval_overlay pending_approval={@pending_approval} />
+  <HandbeamWeb.WorkspaceLive.Schedules.panel
+    chat_scope={@chat_scope}
+    show={@show_schedules}
+    schedules={@schedules}
+    runs={@schedule_runs}
+    draft={@schedule_draft}
+    error={@schedule_error}
+    time_zone={@user_time_zone}
+    models={@available_models}
+    selected_model={@selected_model}
+  />
   <.status_bar
     current_conversation_id={@current_conversation_id}
     current_workspace_id={@current_workspace_id}

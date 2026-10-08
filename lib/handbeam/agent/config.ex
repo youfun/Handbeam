@@ -214,8 +214,11 @@ defmodule Handbeam.Agent.Config do
       workspace_id: Keyword.get(opts, :workspace_id),
       conversation_id: Keyword.get(opts, :conversation_id),
       run_id: Keyword.get(opts, :run_id),
+      source: Keyword.get(opts, :source),
+      user_time_zone: Keyword.get(opts, :user_time_zone),
       thread_handoff_id: get_in(Keyword.get(opts, :origin) || %{}, ["handoff_id"]),
       delegated_read_only: Keyword.get(opts, :delegated_read_only, false),
+      delegated_approval: Keyword.get(opts, :delegated_approval),
       browser_runner: Keyword.get(opts, :browser_runner),
       memory_scope: om_value(om, :memory_scope),
       privacy_mode: om_value(om, :privacy_mode),
@@ -493,9 +496,11 @@ defmodule Handbeam.Agent.Config do
   end
 
   defp channel_max_turns(opts) do
+    source = Keyword.get(opts, :source)
+
     cond do
-      Keyword.get(opts, :source) in [:sns, :webhook, :cli] -> 200
-      Keyword.get(opts, :source) in [:live_view, :native] -> 200
+      Handbeam.Agent.Channel.unattended?(source) -> 200
+      Handbeam.Agent.Channel.interactive?(source) -> 200
       true -> @default_max_turns
     end
   end

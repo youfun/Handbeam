@@ -34,10 +34,19 @@ takes no target.
 
 `send_thread_message` always uses Coordinator; running conversations default to
 `steer`, with `follow_up` only by explicit input. New runs inherit the caller's
-provider/model, subject to existing workspace model policy. `create_thread`
-creates a persistent read-only child in the same shared directory, **not an
-isolated checkout or sandbox**. A runtime execution allowlist rejects mutating,
-shell, browser, extension and unknown tools, including after approval/resume.
+provider/model unless `create_thread` passes `provider` and `model`. That pair
+must be a workspace-allowed catalog entry. The child resolves that provider's
+config itself; it does not copy the caller's provider module or provider config.
+Later wakes of a pinned child keep that pair.
+
+`create_thread` defaults to a persistent read-only child in the same shared
+directory, **not an isolated checkout or sandbox**. `mode: write` removes the
+read-only allowlist so the child can edit this workspace. Write mode does not
+raise a separate approval. Its prompts use smart review (`approval` defaults to
+`auto_review`). `approval: yolo` skips those prompts for that child only and
+does not change workspace settings; built-in sensitive-path denies still apply.
+A runtime execution allowlist still rejects mutating, shell, browser, extension
+and unknown tools on read-only children, including after approval/resume.
 
 Messages are capped at 8,000 characters.
 

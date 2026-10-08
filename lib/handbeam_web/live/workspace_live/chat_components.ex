@@ -333,7 +333,7 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
             class={["space-y-3", if(@timeline == [], do: "", else: "turn-group")]}
             data-running={@running}
           >
-            <div :for={{dom_id, entry} <- @streams.timeline} id={dom_id}>
+            <div :for={{dom_id, entry} <- @streams.timeline} id={dom_id} data-run-id={entry["run_id"]}>
               <HandbeamWeb.ThreadHandoff.card
                 :if={HandbeamWeb.ThreadHandoff.show?(entry, @timeline)}
                 entry={entry}

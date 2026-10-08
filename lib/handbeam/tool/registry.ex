@@ -180,6 +180,7 @@ defmodule Handbeam.Tool.Registry do
       Handbeam.Tool.Builtin.SendThreadMessage,
       Handbeam.Tool.Builtin.ReplyToParentThread,
       Handbeam.Tool.Builtin.CreateThread,
+      Handbeam.Tool.Builtin.Schedule,
       Handbeam.Tool.Memory.MemAssociate,
       Handbeam.Tool.Memory.MemLearn,
       Handbeam.Tool.Memory.MemRecall,
