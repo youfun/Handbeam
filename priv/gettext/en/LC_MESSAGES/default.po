@@ -1605,3 +1605,21 @@ msgstr "Use global"
 
 msgid "Use the model selected above"
 msgstr "Use the model selected above"
+
+msgid "Theme"
+msgstr "Theme"
+
+msgid "Light, dark, or follow the system."
+msgstr "Light, dark, or follow the system."
+
+msgid "Light"
+msgstr "Light"
+
+msgid "Dark"
+msgstr "Dark"
+
+msgid "System"
+msgstr "System"
+
+msgid "Could not save theme preference."
+msgstr "Could not save theme preference."

@@ -30,13 +30,16 @@ import { LocalWebGPUProbe } from "./hooks/local_webgpu_probe.js";
 import { GhosttyTerminal } from "../vendor/ghostty.js";
 import { installImageLightbox } from "./image_lightbox.js";
 
-// Theme initialization
-let theme = 'light';
-try {
-  theme = localStorage.getItem('handbeam-theme') || 'light';
-} catch (_) {}
-
-document.documentElement.setAttribute('data-theme', theme);
+// Server-rendered data-theme is the source of truth. Do not replace it
+// with a localStorage default, or a saved dark/system theme never paints.
+const serverTheme = document.documentElement.getAttribute("data-theme");
+if (!serverTheme) {
+  let theme = "light";
+  try {
+    theme = localStorage.getItem("handbeam-theme") || "light";
+  } catch (_) {}
+  document.documentElement.setAttribute("data-theme", theme);
+}
 installImageLightbox();
 window.addEventListener("phx:scroll_to_file_change", ({ detail }) => {
   requestAnimationFrame(() => {
@@ -47,8 +50,15 @@ window.addEventListener("phx:scroll_to_file_change", ({ detail }) => {
 // MobHook — Mob LiveView bridge. Native WebView injects window.mob pointing
 // at the NIF. In LiveView mode this hook replaces it so handle_event/3 in
 // LiveView receives JS messages. Requires #mob-bridge in root.html.heex.
+function applyTheme(theme) {
+  if (!theme) return;
+  document.documentElement.setAttribute("data-theme", theme);
+  try { localStorage.setItem("handbeam-theme", theme); } catch (_) {}
+}
+
 const MobHook = {
   mounted() {
+    this.handleEvent("set-theme", ({theme}) => applyTheme(theme));
     window.mob = {
       send: (data) => this.pushEvent("mob_message", data),
       onMessage: (handler) => this.handleEvent("mob_push", handler),

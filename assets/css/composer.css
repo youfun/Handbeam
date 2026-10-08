@@ -339,17 +339,17 @@
 }
 
 .btn:active {
-  transform: translateY(1px);
+  transform: scale(0.96);
 }
 
 .btn.primary {
-  background: var(--sig-accent);
+  background: var(--sig-accent-fill);
   border-color: transparent;
-  color: #fff;
+  color: var(--sig-on-accent);
 }
 
 .btn.primary:hover {
-  background: var(--sig-accent-hover);
+  background: var(--sig-accent-fill-hover);
 }
 
 .btn.stop {
@@ -441,9 +441,10 @@
   background: var(--sig-bg-elevated);
   border: 1px solid var(--sig-border-default);
   border-radius: var(--sig-radius-lg);
-  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+  box-shadow: var(--sig-pop-shadow);
   padding: 4px;
-  min-width: 160px;
+  min-width: 180px;
+  border-radius: 12px;
   /* Clear the conversation-nav buttons that sit over the composer corner.
      Keep the offset on the element; the entrance animation must not own transform,
      or the menu snaps back under those buttons when the animation ends. */
@@ -480,10 +481,23 @@
   background: var(--sig-bg-surface-hover);
 }
 
+.permission-dropdown-item {
+  border-radius: 8px;
+  font-weight: 500;
+  min-height: 32px;
+}
+
 .permission-dropdown-item.active {
-  background: var(--sig-accent-subtle);
+  background: var(--sig-sel);
+  color: var(--sig-text-primary);
+  font-weight: 500;
+}
+
+.permission-dropdown-item.active::after {
+  content: "\2713";
+  margin-left: auto;
   color: var(--sig-accent);
-  font-weight: 600;
+  font-size: 12px;
 }
 
 

@@ -108,6 +108,16 @@ defmodule HandbeamWeb.SettingsLive do
      |> push_patch(to: ~p"/settings?#{query}")}
   end
 
+  def handle_event("set_theme", %{"theme" => theme}, socket) do
+    case Handbeam.Settings.UI.save_theme(theme) do
+      :ok ->
+        {:noreply, socket |> assign(:theme, theme) |> push_event("set-theme", %{theme: theme})}
+
+      {:error, _reason} ->
+        {:noreply, put_flash(socket, :error, gettext("Could not save theme preference."))}
+    end
+  end
+
   def handle_event("set_locale", %{"locale" => locale}, socket) do
     case Handbeam.Settings.UI.save_locale(locale) do
       :ok ->

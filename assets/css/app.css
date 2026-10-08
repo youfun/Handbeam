@@ -279,27 +279,15 @@
   border-radius: var(--sig-radius-lg);
   font-size: 0.875rem;
   font-weight: 500;
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
-  border: 1px solid rgba(74, 222, 128, 0.2);
-  background-color: #ecfdf5; /* Light green */
-  color: #065f46;
+  box-shadow: var(--sig-pop-shadow);
+  border: 1px solid color-mix(in srgb, var(--sig-success) 28%, transparent);
+  background-color: var(--sig-success-bg);
+  color: var(--sig-success);
   animation: slide-down-fade-in-out 3s forwards;
 }
 
-[data-theme="dark"] .toast-notification {
-  background-color: #064e3b;
-  color: #a7f3d0;
-  border-color: rgba(52, 211, 153, 0.2);
-}
-
 .toast-notification.toast-error {
-  background-color: #fef2f2;
-  color: #991b1b;
-  border-color: rgba(239, 68, 68, 0.2);
-}
-
-[data-theme="dark"] .toast-notification.toast-error {
-  background-color: #7f1d1d;
-  color: #fca5a5;
-  border-color: rgba(248, 113, 113, 0.2);
+  background-color: var(--sig-error-bg);
+  color: var(--sig-error);
+  border-color: color-mix(in srgb, var(--sig-error) 28%, transparent);
 }

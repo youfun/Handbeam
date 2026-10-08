@@ -310,7 +310,7 @@
                   </div>
                 </div>
                 <div class="settings-field-control">
-                  <div class="flex gap-2">
+                  <div class="settings-seg" role="group" aria-label={gettext("Language")}>
                     <button
                       id="ui-locale-zh_CN"
                       type="button"
@@ -340,6 +340,54 @@
                       ]}
                     >
                       {gettext("English")}
+                    </button>
+                  </div>
+                </div>
+              </div>
+              <div class="settings-field-row">
+                <div class="settings-field-copy">
+                  <div class="settings-field-title">{gettext("Theme")}</div>
+                  <div class="settings-field-desc">
+                    {gettext("Light, dark, or follow the system.")}
+                  </div>
+                </div>
+                <div class="settings-field-control">
+                  <div class="settings-seg" role="group" aria-label={gettext("Theme")}>
+                    <button
+                      id="ui-theme-light"
+                      type="button"
+                      phx-click="set_theme"
+                      phx-value-theme="light"
+                      class={[
+                        "settings-chip",
+                        @theme == "light" && "active"
+                      ]}
+                    >
+                      {gettext("Light")}
+                    </button>
+                    <button
+                      id="ui-theme-dark"
+                      type="button"
+                      phx-click="set_theme"
+                      phx-value-theme="dark"
+                      class={[
+                        "settings-chip",
+                        @theme == "dark" && "active"
+                      ]}
+                    >
+                      {gettext("Dark")}
+                    </button>
+                    <button
+                      id="ui-theme-system"
+                      type="button"
+                      phx-click="set_theme"
+                      phx-value-theme="system"
+                      class={[
+                        "settings-chip",
+                        @theme == "system" && "active"
+                      ]}
+                    >
+                      {gettext("System")}
                     </button>
                   </div>
                 </div>

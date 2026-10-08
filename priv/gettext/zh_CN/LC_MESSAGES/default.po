@@ -1584,3 +1584,21 @@ msgstr "使用全局设置"
 
 msgid "Use the model selected above"
 msgstr "使用上方所选模型"
+
+msgid "Theme"
+msgstr "主题"
+
+msgid "Light, dark, or follow the system."
+msgstr "浅色、深色，或跟随系统。"
+
+msgid "Light"
+msgstr "浅色"
+
+msgid "Dark"
+msgstr "深色"
+
+msgid "System"
+msgstr "跟随系统"
+
+msgid "Could not save theme preference."
+msgstr "无法保存主题偏好。"

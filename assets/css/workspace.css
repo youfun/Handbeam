@@ -22,7 +22,7 @@
   --spacing-xl: 2rem;
 
   /* ── Typography ── */
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-sans: var(--sig-font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei UI", "Noto Sans SC", sans-serif);
   --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   --font-size-xs: 0.75rem;
   --font-size-sm: 0.875rem;
@@ -804,9 +804,9 @@ textarea::placeholder {
 }
 
 .conversation-nav.is-open .conversation-nav-btn[data-conversation-nav-toggle] {
-  color: var(--sig-text-inverse, #fff);
-  background: var(--sig-accent, #1a1815);
-  border-color: var(--sig-accent, #1a1815);
+  color: var(--sig-on-accent, #fff);
+  background: var(--sig-accent-fill, var(--sig-accent, #1a1815));
+  border-color: var(--sig-accent-fill, var(--sig-accent, #1a1815));
 }
 
 #workspace-panel.files-panel {
@@ -875,9 +875,9 @@ textarea::placeholder {
 }
 
 #activity-bar .session-item.active {
-  background-color: var(--sig-bg-surface-active);
+  background-color: var(--sig-sel, var(--sig-bg-surface-active));
   color: var(--sig-text-primary);
-  box-shadow: inset 2px 0 0 var(--sig-text-tertiary);
+  box-shadow: none;
 }
 
 #activity-bar .session-item.active .session-status {
@@ -1082,11 +1082,33 @@ textarea::placeholder {
 }
 
 #ai-messages .tool-status-line {
-  margin-top: 0.3rem;
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  margin-top: 6px;
+  padding: 0 8px;
+  border-radius: 999px;
+  background: var(--sig-bg-surface-hover);
   color: var(--sig-text-tertiary);
   font-size: 11px;
-  font-weight: 400;
+  font-weight: 500;
   letter-spacing: 0;
+  width: fit-content;
+}
+
+#ai-messages .tool-status-line.text-warning {
+  background: var(--sig-warning-bg);
+  color: var(--sig-warning);
+}
+
+#ai-messages .tool-status-line.text-success {
+  background: var(--sig-success-bg);
+  color: var(--sig-success);
+}
+
+#ai-messages .tool-status-line.text-error {
+  background: var(--sig-error-bg);
+  color: var(--sig-error);
 }
 
 #ai-messages .tool-event .tool-name {
@@ -1847,6 +1869,7 @@ button.workspace-file-row:hover,
   width: 240px;
   min-width: 240px;
   height: 100%;
+  font-size: 13px;
 }
 
 /* ── Sidebar header ── */
@@ -2073,8 +2096,16 @@ button.workspace-file-row:hover,
 /* ── Conversations list ── */
 .conversations-list {
   position: relative;
-  margin: 0.1rem 0 0.2rem;
+  margin: 4px 8px 10px;
   padding-left: 0;
+  border: 1px solid var(--sig-border-subtle);
+  border-radius: 12px;
+  background: var(--sig-bg-elevated);
+  overflow: hidden;
+}
+
+.conversations-list:empty {
+  display: none;
 }
 
 /* ── Conversation row (item + inline action) ── */
@@ -2083,10 +2114,15 @@ button.workspace-file-row:hover,
   display: flex;
   align-items: center;
   gap: 0;
-  margin: 0.05rem 0;
-  border-radius: var(--radius-md);
+  margin: 0;
+  min-height: 40px;
+  border-radius: 0;
   transition: background-color 0.15s ease;
   min-width: 0;
+}
+
+.conversation-row + .conversation-row {
+  box-shadow: inset 0 1px 0 var(--sig-border-subtle);
 }
 
 .conversation-hover {
@@ -2099,7 +2135,7 @@ button.workspace-file-row:hover,
   border: 1px solid var(--sig-border-subtle);
   border-radius: var(--sig-radius-lg);
   background: var(--sig-bg-elevated);
-  box-shadow: 0 8px 24px rgba(26, 24, 21, 0.1);
+  box-shadow: var(--sig-pop-shadow, 0 16px 44px rgba(26, 24, 21, 0.12));
   color: var(--sig-text-primary);
   pointer-events: none;
 }
@@ -2286,17 +2322,19 @@ button.workspace-file-row:hover,
   z-index: 30;
 }
 
-.conversation-row:hover {
-  background-color: var(--color-surface-hover);
+.conversation-row:hover:not(:has(.conversation-item-active)) {
+  background-color: var(--sig-bg-surface-hover, var(--color-surface-hover));
 }
 
 .conversation-item {
   position: relative;
-  min-height: 1.75rem;
+  min-height: 40px;
   padding-left: 0.5rem;
   padding-right: 0.25rem;
-  border-radius: var(--radius-md);
-  color: var(--color-text-tertiary);
+  border-radius: 0;
+  color: var(--sig-text-secondary, var(--color-text-secondary));
+  font-size: 13px;
+  font-weight: 500;
   transition: color 0.15s ease;
   background: transparent;
   border: none;
@@ -2307,11 +2345,11 @@ button.workspace-file-row:hover,
   color: var(--color-text-secondary);
 }
 
-.conversation-item-active {
-  background-color: var(--sig-bg-surface-active);
-  color: var(--color-text-primary);
-  font-weight: var(--font-weight-medium);
-  box-shadow: none;
+.conversation-item-active,
+.conversation-row:has(.conversation-item-active) {
+  background-color: var(--sig-sel, var(--sig-bg-surface-active));
+  color: var(--sig-text-primary, var(--color-text-primary));
+  font-weight: 500;
 }
 
 /* Reserve the lane even when idle so finishing a run never shifts the title. */
@@ -3492,7 +3530,7 @@ body > .settings-overlay,
 }
 
 input:checked + .settings-toggle-track {
-  background: var(--color-primary);
+  background: var(--sig-accent-fill, var(--color-primary));
 }
 
 input:checked + .settings-toggle-track .settings-toggle-thumb {
@@ -3510,7 +3548,7 @@ input:checked + .settings-toggle-track .settings-toggle-thumb {
 }
 
 .settings-toggle-button[aria-pressed="true"] .settings-toggle-track {
-  background: var(--color-primary);
+  background: var(--sig-accent-fill, var(--color-primary));
 }
 
 .settings-toggle-button[aria-pressed="true"] .settings-toggle-thumb {
@@ -3861,15 +3899,15 @@ input:checked + .settings-toggle-track .settings-toggle-thumb {
 }
 
 .settings-btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: #fff;
+  background: var(--sig-accent-fill, var(--accent));
+  border-color: var(--sig-accent-fill, var(--accent));
+  color: var(--sig-on-accent, #fff);
 }
 
 .settings-btn-primary:hover {
-  background: var(--accent-hover);
-  border-color: var(--accent-hover);
-  color: #fff;
+  background: var(--sig-accent-fill-hover, var(--accent-hover));
+  border-color: var(--sig-accent-fill-hover, var(--accent-hover));
+  color: var(--sig-on-accent, #fff);
 }
 
 .settings-btn-accent {
@@ -4189,18 +4227,11 @@ select.settings-input {
 }
 
 .settings-menu-item-active {
-  background-color: var(--sig-bg-surface-active);
+  background-color: var(--sig-sel, var(--sig-bg-surface-active));
 }
 
 .settings-menu-item-active::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0.45rem;
-  bottom: 0.45rem;
-  width: 2px;
-  border-radius: 1px;
-  background-color: var(--sig-text-tertiary);
+  display: none;
 }
 
 .settings-page-shell {
@@ -4221,8 +4252,11 @@ select.settings-input {
 
 .settings-content-wrap {
   width: 100%;
-  max-width: 1040px;
+  max-width: 960px;
+  margin-left: auto;
+  margin-right: auto;
   padding: 24px 32px 32px;
+  animation: sig-view-in 240ms var(--sig-motion-ease, cubic-bezier(0.22, 1, 0.36, 1));
 }
 
 .settings-content-card {
@@ -4475,6 +4509,38 @@ select.settings-input {
   border-color: var(--color-primary);
   background: var(--color-bg-surface);
   color: var(--color-text-primary);
+}
+
+.settings-seg {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 9px;
+  background: var(--sig-bg-input);
+}
+
+.settings-seg .settings-chip {
+  border: 0;
+  background: transparent;
+  border-radius: 7px;
+  min-height: 28px;
+  color: var(--sig-text-secondary);
+}
+
+.settings-seg .settings-chip:hover {
+  background: transparent;
+  color: var(--sig-text-primary);
+}
+
+.settings-seg .settings-chip.active {
+  background: var(--sig-bg-elevated);
+  color: var(--sig-text-primary);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), inset 0 0 0 0.5px var(--sig-border-default);
+}
+
+.settings-seg .settings-chip:active {
+  transform: scale(0.96);
 }
 
 .settings-model-list {

@@ -10,6 +10,7 @@ defmodule HandbeamWeb.Router do
     plug :protect_from_forgery
     plug :put_secure_browser_headers
     plug :put_locale
+    plug :put_theme
   end
 
   # query param > SQLite preference > session > Accept-Language > default
@@ -25,6 +26,10 @@ defmodule HandbeamWeb.Router do
 
     Gettext.put_locale(HandbeamWeb.Gettext, locale)
     put_session(conn, :locale, locale)
+  end
+
+  defp put_theme(conn, _opts) do
+    assign(conn, :theme, Handbeam.Settings.UI.theme())
   end
 
   pipeline :api do
