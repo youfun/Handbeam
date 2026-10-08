@@ -12,9 +12,14 @@
 set -eu
 
 libs="${HANDREAM_ISH_LIBS:-}"
+include="${HANDREAM_ISH_INCLUDE:-}"
 if [ -z "$libs" ]; then
   echo "HANDREAM_ISH_LIBS is empty; iOS links without the iSH guest." >&2
   exit 0
+fi
+if [ -z "$include" ] || [ ! -f "$include/kernel/init.h" ]; then
+  echo "HANDREAM_ISH_INCLUDE must be the ish-arm64 source root." >&2
+  exit 1
 fi
 
 old_ifs=$IFS
@@ -27,4 +32,4 @@ for lib in $libs; do
 done
 IFS=$old_ifs
 
-echo "-Dish_libs=$libs"
+echo "-Dish_libs=$libs -Dish_include=$include"

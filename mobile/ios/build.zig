@@ -75,6 +75,7 @@ pub fn build(b: *std.Build) void {
     const plugin_c_nifs = b.option([]const u8, "plugin_c_nifs", "Comma-separated absolute paths to plugin C NIF sources; basename = NIF module name; empty if none") orelse "";
     const plugin_static_libs = b.option([]const u8, "plugin_static_libs", "Comma-separated absolute paths to plugin cpp_archive .a files (pre-built by mob_dev); empty if none") orelse "";
     const ish_libs = b.option([]const u8, "ish_libs", "Comma-separated absolute paths to iSH static archives; empty if the guest is not linked") orelse "";
+    const ish_include = b.option([]const u8, "ish_include", "Absolute path to the ish-arm64 source root, required when ish_libs is set") orelse "";
     // MLX + EMLX. See build_device.zig.eex for full rationale.
     const mlx_static = b.option(bool, "mlx_static", "EMLX NIF statically linked + libmlx.a included (-DMOB_STATIC_EMLX_NIF on driver_tab)") orelse false;
     const mlx_dir = b.option([]const u8, "mlx_dir", "Absolute path to extracted MLX bundle (libmlx.a + libemlx.a + include/)") orelse "";
@@ -335,6 +336,7 @@ pub fn build(b: *std.Build) void {
                     .otp_root = otp_root,
                     .erts_vsn = erts_vsn,
                     .sdkroot = sdkroot,
+                    .ish_include = ish_include,
                 }), "handbeam_ios_guest.o");
             }
 
@@ -452,6 +454,7 @@ const CObjectOptions = struct {
     otp_root: []const u8,
     erts_vsn: []const u8,
     sdkroot: []const u8,
+    ish_include: []const u8 = "",
 };
 
 const ZigObjectOptions = struct {
@@ -518,6 +521,9 @@ fn addCObject(b: *std.Build, opts: CObjectOptions) std.Build.LazyPath {
     mod.addFrameworkPath(.{
         .cwd_relative = b.fmt("{s}/System/Library/Frameworks", .{opts.sdkroot}),
     });
+    if (opts.ish_include.len > 0) {
+        mod.addIncludePath(.{ .cwd_relative = opts.ish_include });
+    }
 
     const obj = b.addObject(.{
         .name = opts.name,

@@ -96,6 +96,7 @@ pub fn build(b: *std.Build) void {
     // iSH guest, statically linked into the one Mach-O. Empty unless
     // -Dish_libs names libish_emu.a,libish.a,libfakefs.a.
     const ish_libs = b.option([]const u8, "ish_libs", "Comma-separated absolute paths to iSH static archives; empty if the guest is not linked") orelse "";
+    const ish_include = b.option([]const u8, "ish_include", "Absolute path to the ish-arm64 source root, required when ish_libs is set") orelse "";
 
     const objects_step = b.step("objects", "Compile C, ObjC, and Swift objects for iOS device");
     const binary_step = b.step("binary", "Compile + link the iOS device binary (default)");
@@ -386,6 +387,7 @@ pub fn build(b: *std.Build) void {
                     .otp_root = otp_root,
                     .erts_vsn = erts_vsn,
                     .sdkroot = sdkroot,
+                    .ish_include = ish_include,
                 }), "handbeam_ios_guest.o");
             }
 
@@ -503,6 +505,7 @@ const CObjectOptions = struct {
     otp_root: []const u8,
     erts_vsn: []const u8,
     sdkroot: []const u8,
+    ish_include: []const u8 = "",
 };
 
 const ZigObjectOptions = struct {
@@ -564,6 +567,9 @@ fn addCObject(b: *std.Build, opts: CObjectOptions) std.Build.LazyPath {
     mod.addFrameworkPath(.{
         .cwd_relative = b.fmt("{s}/System/Library/Frameworks", .{opts.sdkroot}),
     });
+    if (opts.ish_include.len > 0) {
+        mod.addIncludePath(.{ .cwd_relative = opts.ish_include });
+    }
 
     const obj = b.addObject(.{
         .name = opts.name,
