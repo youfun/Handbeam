@@ -1840,10 +1840,6 @@ button.workspace-file-row:hover,
   background: transparent;
 }
 
-.workspace-title-row.is-active .workspace-header-active::before {
-  display: none;
-}
-
 .workspace-row-actions {
   display: flex;
   align-items: center;
@@ -1892,17 +1888,6 @@ button.workspace-file-row:hover,
 .workspace-header-active {
   color: var(--color-text-primary);
   background-color: var(--sig-bg-surface-active);
-}
-
-.workspace-header-active::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0.4rem;
-  bottom: 0.4rem;
-  width: 2px;
-  border-radius: 1px;
-  background-color: var(--sig-text-tertiary);
 }
 
 .workspace-chevron {
@@ -1969,17 +1954,19 @@ button.workspace-file-row:hover,
 .workspace-icon {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 22px;
+  flex: 0 0 20px;
   color: var(--color-text-tertiary);
-  font-size: 0.78rem;
-  flex-shrink: 0;
   opacity: 0.85;
 }
 
 /* ── Conversations list ── */
 .conversations-list {
   position: relative;
-  margin: 0.1rem 0.25rem 0.2rem 0.85rem;
-  padding-left: 0.15rem;
+  margin: 0.1rem 0 0.2rem;
+  padding-left: 0;
 }
 
 /* ── Conversation row (item + inline action) ── */
@@ -2198,7 +2185,7 @@ button.workspace-file-row:hover,
 .conversation-item {
   position: relative;
   min-height: 1.75rem;
-  padding-left: 0.35rem;
+  padding-left: 0.5rem;
   padding-right: 0.25rem;
   border-radius: var(--radius-md);
   color: var(--color-text-tertiary);
@@ -2217,17 +2204,6 @@ button.workspace-file-row:hover,
   color: var(--color-text-primary);
   font-weight: var(--font-weight-medium);
   box-shadow: none;
-}
-
-.conversation-item-active::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0.3rem;
-  bottom: 0.3rem;
-  width: 2px;
-  border-radius: 1px;
-  background-color: var(--sig-text-tertiary);
 }
 
 /* Reserve the lane even when idle so finishing a run never shifts the title. */

@@ -453,8 +453,8 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
             >
               <span class="workspace-icon" aria-hidden="true">
                 <svg
-                  width="12"
-                  height="12"
+                  width="20"
+                  height="22"
                   viewBox="0 0 24 24"
                   fill="none"
                   stroke="currentColor"
