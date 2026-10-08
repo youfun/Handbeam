@@ -13,6 +13,7 @@ defmodule Handbeam.Tool.Memory.MemRecall do
   @impl true
   def description do
     "Search your memory for relevant facts, patterns, and preferences. " <>
+      "Keyword queries work best: pass distinctive words rather than a full sentence. " <>
       "Use before making assumptions about the user or project."
   end
 
@@ -21,7 +22,11 @@ defmodule Handbeam.Tool.Memory.MemRecall do
     %{
       type: "object",
       properties: %{
-        query: %{type: "string", description: "Search query for memory recall"},
+        query: %{
+          type: "string",
+          description:
+            "Keywords to search for. Distinctive words work better than a full sentence."
+        },
         limit: %{type: "integer", description: "Max results", default: 10}
       },
       required: ["query"]

@@ -71,36 +71,13 @@ defmodule Handbeam.Agent.Middleware.ObservationalSessionStart do
   end
 
   defp recall_relevant_memories(query, %State{} = state) do
-    opts = [
+    MemoryStore.recall(query,
       limit: @max_relevant_memories,
+      min_matches: 3,
       workspace_id: context_value(state, :workspace_id),
       memory_scope: context_value(state, :memory_scope),
       privacy_mode: context_value(state, :privacy_mode)
-    ]
-
-    memories = MemoryStore.recall(query, opts)
-
-    if memories == [] do
-      query
-      |> extract_query_terms()
-      |> Enum.reduce_while([], fn term, _acc ->
-        case MemoryStore.recall(term, opts) do
-          [] -> {:cont, []}
-          found -> {:halt, found}
-        end
-      end)
-    else
-      memories
-    end
-  end
-
-  defp extract_query_terms(query) do
-    query
-    |> String.downcase()
-    |> String.replace(~r/[^[:alnum:]_\s-]/u, " ")
-    |> String.split(~r/\s+/, trim: true)
-    |> Enum.reject(&(String.length(&1) < 4))
-    |> Enum.uniq()
+    )
   end
 
   defp build_memory_section(memories) do

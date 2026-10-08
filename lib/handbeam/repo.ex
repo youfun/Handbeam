@@ -6,10 +6,12 @@ defmodule Handbeam.Repo do
   @impl true
   def init(_type, config) do
     config =
-      if Handbeam.Host.configured?() do
-        Keyword.put(config, :database, Path.join(Handbeam.Host.data_dir(), "handbeam.db"))
-      else
-        config
+      case Handbeam.Host.get(:data_dir) do
+        dir when is_binary(dir) and dir != "" ->
+          Keyword.put(config, :database, Path.join(dir, "handbeam.db"))
+
+        _ ->
+          config
       end
 
     {:ok, config}

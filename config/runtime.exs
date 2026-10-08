@@ -15,7 +15,15 @@ if match?({:unix, :darwin}, :os.type()) and System.get_env("HANDBEAM_COMPUTER_PO
          String.to_integer(System.fetch_env!("HANDBEAM_COMPUTER_PORT"))
 
   config :handbeam, :computer_use_token, System.fetch_env!("HANDBEAM_COMPUTER_TOKEN")
-  config :handbeam, :host, %{computer_use_backend: Handbeam.ComputerUse.Native}
+  host = %{computer_use_backend: Handbeam.ComputerUse.Native}
+
+  host =
+    case System.get_env("HANDBEAM_DATA_DIR") do
+      dir when is_binary(dir) and dir != "" -> Map.put(host, :data_dir, dir)
+      _ -> host
+    end
+
+  config :handbeam, :host, host
 end
 
 # config/runtime.exs is executed for all environments, including
