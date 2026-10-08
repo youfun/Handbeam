@@ -30,6 +30,25 @@ function after(fn) {
 
 {
   const el = document.querySelector("#wrapper");
+  el.dataset.source = "[CHANGELOG.md](/workspace/CHANGELOG.md:12)";
+  el.dataset.entryId = "assistant-changelog";
+  el.dataset.streaming = "false";
+  const events = [];
+  const hook = { ...StreamingMarkdown, el, pushEvent: (...args) => events.push(args) };
+  hook.mounted();
+  const link = el.querySelector("a");
+  const click = new window.MouseEvent("click", { bubbles: true, cancelable: true });
+  link.dispatchEvent(click);
+  assert.equal(click.defaultPrevented, true);
+  assert.deepEqual(events, [["open_file_change", {
+    path: "/workspace/CHANGELOG.md", message_id: "assistant-changelog"
+  }]]);
+  hook.destroyed();
+  el.dataset.source = "# Done";
+}
+
+{
+  const el = document.querySelector("#wrapper");
   const hook = { ...StreamingMarkdown, el };
   hook.mounted();
 

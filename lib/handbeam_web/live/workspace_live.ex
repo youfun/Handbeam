@@ -457,6 +457,48 @@ defmodule HandbeamWeb.WorkspaceLive do
     {:noreply, WorkspaceNavigation.close_mobile_panel(socket)}
   end
 
+  def handle_event("open_file_change", %{"path" => path} = params, socket)
+      when is_binary(path) do
+    root = ConversationState.current_workspace_path(socket)
+    requested = Path.expand(path, root)
+    message_id = params["message_id"]
+
+    entry =
+      socket.assigns.timeline
+      |> Enum.take_while(&(is_nil(message_id) or &1["id"] != message_id))
+      |> Enum.reverse()
+      |> Enum.find(fn entry ->
+        file_path = HandbeamWeb.ChangeHelper.change_from_entry(entry)["file_path"]
+
+        HandbeamWeb.FileChangeCard.change_entry?(entry) and is_binary(file_path) and
+          Path.expand(file_path, root) == requested
+      end)
+
+    if entry do
+      expanded = Map.get(socket.assigns, :expanded_file_changes, MapSet.new())
+      socket = assign(socket, :expanded_file_changes, MapSet.put(expanded, entry["id"]))
+
+      socket =
+        if group_id = entry["work_group_id"] do
+          groups = Map.get(socket.assigns, :expanded_tool_groups, MapSet.new())
+
+          socket
+          |> assign(:expanded_tool_groups, MapSet.put(groups, group_id))
+          |> RuntimeProjection.refresh_tool_work(group_id)
+        else
+          socket
+        end
+
+      {:noreply,
+       socket
+       |> RuntimeProjection.refresh_file_change(entry["id"])
+       |> push_event("scroll_to_file_change", %{id: "chat-file-change-#{entry["id"]}"})}
+    else
+      relative = Path.relative_to(requested, root)
+      handle_event("select_workspace_file", %{"path" => relative}, socket)
+    end
+  end
+
   def handle_event("toggle_file_change", params, socket) do
     case params do
       %{"id" => id} when is_binary(id) ->

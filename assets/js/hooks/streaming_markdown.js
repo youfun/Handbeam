@@ -26,6 +26,20 @@ export const StreamingMarkdown = {
     // Event delegation for copy buttons
     this.clickHandler = (e) => {
       handleHtmlPreviewClick(e);
+      const link = e.target.closest("a[href]");
+      if (link && this.el.contains(link)) {
+        const href = link.getAttribute("href");
+        const localHref = href?.replace(/:\d+(?::\d+)?(?=[?#]|$)/, "");
+        // Only local paths belong to the workspace; leave web links untouched.
+        if (localHref && !/^(?:[a-z][a-z0-9+.-]*:|\/\/|#|\?)/i.test(localHref)) {
+          e.preventDefault();
+          let path;
+          try { path = decodeURIComponent(href.split(/[?#]/)[0]); } catch { return; }
+          path = path.replace(/:\d+(?::\d+)?$/, "");
+          this.pushEvent("open_file_change", { path, message_id: this.el.dataset.entryId });
+          return;
+        }
+      }
       const btn = e.target.closest(".code-block-copy, .msg-copy-btn");
       if (!btn) return;
       this.handleCopyClick(btn);

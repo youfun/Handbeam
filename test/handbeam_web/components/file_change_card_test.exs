@@ -1,6 +1,8 @@
 defmodule HandbeamWeb.FileChangeCardTest do
   use ExUnit.Case, async: true
 
+  require Phoenix.LiveViewTest
+
   alias Handbeam.ChangeSnapshot
   alias HandbeamWeb.FileChangeCard
 
@@ -34,6 +36,44 @@ defmodule HandbeamWeb.FileChangeCardTest do
   end
 
   describe "changes/1 session net diff" do
+    test "restored bounded tool details load the persisted snapshots and render the net diff" do
+      path = "CHANGELOG.md"
+      conversation_id = "net-preview-#{System.unique_integer([:positive])}"
+
+      entries =
+        Enum.map(
+          [
+            {"restored-1", "before\n", "before\nadded\n"},
+            {"restored-2", "before\nadded\n", "before\nlatest\n"}
+          ],
+          fn {id, before, after_content} ->
+            snapshot = ChangeSnapshot.build_edit_snapshot(path, before, after_content)
+            details = ChangeSnapshot.result_details(snapshot, %{conversation_id: conversation_id})
+
+            %{
+              "id" => id,
+              "tool_name" => "edit",
+              "tool_status" => "done",
+              "file_path" => path,
+              "details" => details,
+              "change" => %{"diff_lines" => nil}
+            }
+          end
+        )
+
+      assert [row] = FileChangeCard.changes(entries)
+      assert row["change_type"] == "edit"
+      assert change(row, "before_content") == "before\n"
+      assert change(row, "after_content") == "before\nlatest\n"
+
+      html =
+        Phoenix.LiveViewTest.render_component(&FileChangeCard.card/1, entry: row, open?: true)
+
+      assert html =~ "latest"
+      assert html =~ "diff-ins"
+      assert html =~ "+1"
+    end
+
     test "two successful writes of one path are one row from first baseline to latest" do
       path = "lib/notes.ex"
 

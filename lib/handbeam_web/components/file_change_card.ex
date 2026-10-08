@@ -93,6 +93,9 @@ defmodule HandbeamWeb.FileChangeCard do
             {Gettext.gettext(HandbeamWeb.Gettext, "Cancel")}
           </button>
         </div>
+        <p :if={@lines == []} class="file-change-note">
+          {Gettext.gettext(HandbeamWeb.Gettext, "No diff content is available for this change.")}
+        </p>
         <div :for={line <- @lines} class={["diff-line", "diff-#{line.type}"]}>
           <span class="diff-lineno">{line.number}</span>
           <span class="diff-op">{HandbeamWeb.WorkspaceHelper.diff_prefix(line.type)}</span>
@@ -150,6 +153,25 @@ defmodule HandbeamWeb.FileChangeCard do
   end
 
   defp net_entry(source, baseline, current) do
+    if is_binary(current["after_content"]) and
+         (baseline["existed_before"] == false or is_binary(baseline["before_content"])) do
+      build_net_entry(source, baseline, current)
+    else
+      change =
+        current
+        |> Map.put("change_id", net_id(source))
+        |> Map.put("reversible", false)
+        |> Map.put("revert_status", "unavailable")
+        |> Map.put("revert_reason", "snapshot_unavailable")
+
+      source
+      |> Map.put("id", net_id(source))
+      |> Map.put("change", change)
+      |> Map.put("diff_lines", change["diff_lines"])
+    end
+  end
+
+  defp build_net_entry(source, baseline, current) do
     before_content = Map.get(baseline, "before_content")
     after_content = Map.get(current, "after_content")
     existed_before = Map.get(baseline, "existed_before") == true
@@ -196,7 +218,9 @@ defmodule HandbeamWeb.FileChangeCard do
 
   defp baseline_current?(entry) do
     change = Map.get(entry, "change") || %{}
-    Map.get(change, "before_sha256") == Map.get(change, "after_sha256")
+
+    is_binary(Map.get(change, "before_sha256")) and
+      Map.get(change, "before_sha256") == Map.get(change, "after_sha256")
   end
 
   defp net_order(entry), do: Map.get(entry, "net_order") || Map.get(entry, "id") || ""
@@ -206,8 +230,7 @@ defmodule HandbeamWeb.FileChangeCard do
   end
 
   defp change_snapshot(entry) do
-    raw = Handbeam.Utils.SafeMap.get_first_truthy(entry, "change", :change) || %{}
-    ChangeHelper.stringify_keys(raw)
+    ChangeHelper.change_from_entry(entry)
   end
 
   defp net_path(entry) do
@@ -282,10 +305,23 @@ defmodule HandbeamWeb.FileChangeCard do
 
         {number, old, new} =
           case type do
-            "del" -> {old, old + 1, new}
-            "ins" -> {new, old, new + 1}
-            "skip" -> {nil, old, new}
-            _ -> {new, old + 1, new + 1}
+            "del" ->
+              {old, old + 1, new}
+
+            "ins" ->
+              {new, old, new + 1}
+
+            "skip" ->
+              skipped =
+                case Regex.run(~r/\.\.\. (\d+) unchanged lines \.\.\./, line["text"]) do
+                  [_, count] -> String.to_integer(count)
+                  _ -> 0
+                end
+
+              {nil, old + skipped, new + skipped}
+
+            _ ->
+              {new, old + 1, new + 1}
           end
 
         {acc ++ [%{type: type, text: line["text"], number: number}], old, new}

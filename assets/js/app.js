@@ -38,6 +38,11 @@ try {
 
 document.documentElement.setAttribute('data-theme', theme);
 installImageLightbox();
+window.addEventListener("phx:scroll_to_file_change", ({ detail }) => {
+  requestAnimationFrame(() => {
+    document.getElementById(detail.id)?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  });
+});
 
 // MobHook — Mob LiveView bridge. Native WebView injects window.mob pointing
 // at the NIF. In LiveView mode this hook replaces it so handle_event/3 in

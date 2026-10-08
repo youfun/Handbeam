@@ -1,10 +1,10 @@
 defmodule HandbeamWeb.ChangeHelper do
   @moduledoc """
-  Pure data transformation helpers for change and reversion logic,
+  Data transformation helpers for change and reversion logic,
   extracted from `HandbeamWeb.WorkspaceLive`.
 
-  These functions operate on plain maps and lists — they have no
-  dependency on LiveView socket or assigns.
+  These functions operate on plain maps and lists without LiveView assigns.
+  Recorded snapshot references are resolved when extracting a change.
   """
 
   alias Handbeam.TranscriptEntry
@@ -73,6 +73,19 @@ defmodule HandbeamWeb.ChangeHelper do
   def change_from_entry(entry) do
     details = Handbeam.Utils.SafeMap.get_first_truthy(entry, "details", :details) || %{}
     raw_change = value(entry, "change") || value(details, "change") || %{}
+    ref = value(raw_change, "change_snapshot_ref") || value(details, "change_snapshot_ref")
+
+    raw_change =
+      case Handbeam.ChangeSnapshot.load(ref) do
+        {:ok, snapshot} ->
+          metadata =
+            raw_change |> stringify_keys() |> Map.reject(fn {_key, value} -> is_nil(value) end)
+
+          Map.merge(snapshot, metadata)
+
+        {:error, _reason} ->
+          raw_change
+      end
 
     raw_change
     |> stringify_keys()

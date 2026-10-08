@@ -443,6 +443,7 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
                   <span class="sr-only">{entry["content"]}</span>
                   <div
                     id={"assistant-md-wrapper-#{entry["id"]}"}
+                    data-entry-id={entry["id"]}
                     data-source={entry["content"] || ""}
                     data-final={
                       to_string(
