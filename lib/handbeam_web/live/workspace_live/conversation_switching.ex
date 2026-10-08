@@ -895,6 +895,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
 
   # Active chats stay above archived ones. Within each group, the most recently
   # updated conversation is first so a new chat appears at the top of the sidebar.
+  # Opening a chat must not change this key; only transcript activity should.
   defp sort_sidebar_conversations(conversations) do
     Enum.sort_by(conversations, &sidebar_sort_key/1, :desc)
   end

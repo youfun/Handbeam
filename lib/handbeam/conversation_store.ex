@@ -691,21 +691,28 @@ defmodule Handbeam.ConversationStore do
   Returns `{:ok, meta_map}` on success — the returned map contains meta fields
   only (id, title, workspace_id, etc.), **not** the full conversation.
   Use `get/1` to obtain the full conversation after updating meta.
+
+  `updated_at` is the sidebar recency key. It moves only when `touch: true`
+  (the default) or when `updated_at` is passed explicitly with `touch: false`.
+  Opening a conversation must use `touch: false` so viewing does not reorder it.
   """
   @usage_meta_keys ~w(token_usage run_usage usage_legacy run_usage_replace)
 
   @spec update_meta(String.t(), keyword()) :: {:ok, map()} | {:error, :not_found | term()}
   def update_meta(id, updates) when is_binary(id) and is_list(updates) do
     ensure_conversation_dir(id)
+    {touch?, updates} = Keyword.pop(updates, :touch, true)
 
     with {:ok, merged} <-
            transact_meta(id, fn existing ->
-             updates
-             |> Enum.reject(fn {key, _} -> to_string(key) in @usage_meta_keys end)
-             |> Enum.reduce(existing, fn {key, value}, acc ->
-               Map.put(acc, to_string(key), value)
-             end)
-             |> Map.put("updated_at", now_iso8601())
+             merged =
+               updates
+               |> Enum.reject(fn {key, _} -> to_string(key) in @usage_meta_keys end)
+               |> Enum.reduce(existing, fn {key, value}, acc ->
+                 Map.put(acc, to_string(key), value)
+               end)
+
+             if touch?, do: Map.put(merged, "updated_at", now_iso8601()), else: merged
            end),
          :ok <- sync_index_entry(merged) do
       {:ok, merged}

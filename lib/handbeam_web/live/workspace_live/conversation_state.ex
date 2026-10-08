@@ -272,13 +272,26 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
     updated =
       if Enum.any?(current_convs, &(conversation_id(&1) == conv_id)) do
         Enum.map(current_convs, fn existing ->
-          if conversation_id(existing) == conv_id, do: conv, else: existing
+          if conversation_id(existing) == conv_id,
+            do: preserve_sidebar_sort_key(conv, existing),
+            else: existing
         end)
       else
         current_convs ++ [conv]
       end
 
     assign(socket, :conversations_by_workspace, Map.put(convs, ws_id, updated))
+  end
+
+  # Selecting a chat reloads its metadata. Keep the sidebar timestamps so a
+  # view, or a newer disk copy, does not move the row.
+  defp preserve_sidebar_sort_key(incoming, existing) do
+    Enum.reduce(["updated_at", "created_at"], incoming, fn key, acc ->
+      case conv_value(existing, key, nil) do
+        nil -> acc
+        value -> put_conversation_value(acc, key, value)
+      end
+    end)
   end
 
   def merge_conversation_state(conversation, socket) do
@@ -357,7 +370,8 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
       _ =
         Handbeam.ConversationStore.update_meta(conv_id,
           selected_model: socket.assigns.selected_model,
-          selected_reasoning_level: socket.assigns.selected_reasoning_level
+          selected_reasoning_level: socket.assigns.selected_reasoning_level,
+          touch: false
         )
 
       :ok

@@ -924,6 +924,26 @@ defmodule Handbeam.ConversationStoreTest do
       assert {:error, :not_found} =
                ConversationStore.update_meta("nonexistent-id", title: "Nope")
     end
+
+    test "touch: false keeps updated_at so opening a chat does not reorder it" do
+      {:ok, conv} = ConversationStore.create("ws_um", title: "Stay put")
+      id = conv["id"]
+      {:ok, _} = ConversationStore.update_meta(id, updated_at: "2020-01-01T00:00:00Z", touch: false)
+
+      {:ok, updated} =
+        ConversationStore.update_meta(id,
+          selected_model: "xai/grok",
+          selected_reasoning_level: "medium",
+          touch: false
+        )
+
+      assert updated["updated_at"] == "2020-01-01T00:00:00Z"
+      assert updated["selected_model"] == "xai/grok"
+
+      {:ok, index} = File.read!(ConversationStore.index_path()) |> Jason.decode()
+      [entry] = index["conversations"]
+      assert entry["updated_at"] == "2020-01-01T00:00:00Z"
+    end
   end
 
   describe "rename/2" do
