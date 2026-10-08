@@ -2,8 +2,9 @@ defmodule Handbeam.Agent.Channel do
   @moduledoc """
   Channel classification for a run source.
 
-  Unattended channels share the turn cap and progress guard. Interactive
-  channels are the only place a person can change a schedule.
+  Unattended channels share the progress guard. Interactive channels are the
+  only place a person can change a schedule. Runs are not capped by turn count
+  unless the caller sets `max_turns`.
   """
 
   @unattended [:sns, :webhook, :cli, :schedule]

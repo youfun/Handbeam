@@ -675,6 +675,37 @@ defmodule Handbeam.Agent.TurnTest do
       assert chunks == ["partial"]
     end
 
+    test "nil max_turns does not stop a run past the old channel cap" do
+      config = %Config{
+        provider: FakeProvider,
+        model: "fake",
+        max_turns: nil,
+        provider_config: %{scenario: :simple_answer}
+      }
+
+      result = Turn.run_loop(%{State.init(config, "hi") | turn: 200}, [])
+
+      assert result.status == :completed
+      assert result.turn == 201
+    end
+
+    test "unlimited runs do not strip tools to force a final answer" do
+      config = %Config{
+        provider: FinalTurnProvider,
+        model: "fake",
+        max_turns: nil,
+        system_prompt: "base prompt",
+        provider_config: %{notify: self()}
+      }
+
+      result = Turn.run_loop(State.init(config, "finish"), [])
+
+      assert_receive {:final_turn_request, tools, system_prompt}
+      assert tools != []
+      refute system_prompt =~ "final agent step"
+      assert result.status == :completed
+    end
+
     test "returns max_turns state when limit exceeded" do
       config = %Config{
         provider: FakeProvider,

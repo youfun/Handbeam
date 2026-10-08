@@ -683,9 +683,9 @@ defmodule Handbeam.Agent.Turn do
     state
   end
 
-  defp do_turn(%State{turn: turn, config: config} = state, _opts)
-       when turn >= config.max_turns do
-    Logger.warning(fn -> "[Turn] max_turns reached turn=#{turn} max=#{config.max_turns}" end)
+  defp do_turn(%State{turn: turn, config: %{max_turns: max_turns}} = state, _opts)
+       when is_integer(max_turns) and turn >= max_turns do
+    Logger.warning(fn -> "[Turn] max_turns reached turn=#{turn} max=#{max_turns}" end)
     %{state | status: :max_turns}
   end
 
@@ -885,7 +885,8 @@ defmodule Handbeam.Agent.Turn do
         &Handbeam.Tool.Builtin.Task.contextualize_def(&1, state.config, authorized_tools)
       )
 
-    final_turn? = state.turn + 1 >= state.config.max_turns
+    max_turns = state.config.max_turns
+    final_turn? = is_integer(max_turns) and state.turn + 1 >= max_turns
     provider_config = maybe_require_final_answer(provider_config, final_turn?)
     tool_defs = if final_turn?, do: [], else: tool_defs
     {provider_config, tool_defs}

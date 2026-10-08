@@ -90,9 +90,12 @@ defmodule Handbeam.Agent.ConfigTest do
     end
   end
 
-  test "interactive channels use a bounded 200-turn budget" do
-    assert Config.from_opts(source: :live_view).max_turns == 200
-    assert Config.from_opts(source: :native).max_turns == 200
+  test "runs are unlimited unless the caller sets max_turns" do
+    for source <- [nil, :live_view, :native, :cli, :sns, :webhook, :schedule] do
+      assert Config.from_opts(source: source).max_turns == nil
+    end
+
+    assert Config.from_opts(source: :live_view, max_turns: 3).max_turns == 3
   end
 
   test "appends task_instructions after the default prompt and workspace contract" do

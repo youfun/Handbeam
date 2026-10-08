@@ -48,7 +48,7 @@ defmodule Handbeam.Agent.Config do
           system_prompt: String.t() | nil,
           working_directory: String.t(),
           model: String.t(),
-          max_turns: pos_integer(),
+          max_turns: pos_integer() | nil,
           max_budget_cents: pos_integer() | nil,
           timeout_ms: pos_integer(),
           tool_timeout: pos_integer(),
@@ -75,7 +75,6 @@ defmodule Handbeam.Agent.Config do
         }
 
   @default_model "step-router-v1"
-  @default_max_turns 50
   @default_timeout_ms 300_000
   @default_max_messages 200
   @default_max_tokens 200_000
@@ -117,7 +116,7 @@ defmodule Handbeam.Agent.Config do
       system_prompt: build_system_prompt(opts),
       working_directory: working_directory(opts),
       model: Keyword.get(opts, :model, @default_model),
-      max_turns: Keyword.get(opts, :max_turns, channel_max_turns(opts)),
+      max_turns: Keyword.get(opts, :max_turns),
       max_budget_cents: Keyword.get(opts, :max_budget_cents),
       timeout_ms: Keyword.get(opts, :timeout_ms, @default_timeout_ms),
       tool_timeout: Keyword.get(opts, :tool_timeout, @default_tool_timeout),
@@ -493,16 +492,6 @@ defmodule Handbeam.Agent.Config do
        the file to get the current exact text, then retry with the correct old_string.
        Do not abandon the task — adjust and try again.
     """ <> "\n\n" <> String.trim_trailing(memory_section) <> "\n"
-  end
-
-  defp channel_max_turns(opts) do
-    source = Keyword.get(opts, :source)
-
-    cond do
-      Handbeam.Agent.Channel.unattended?(source) -> 200
-      Handbeam.Agent.Channel.interactive?(source) -> 200
-      true -> @default_max_turns
-    end
   end
 
   defp default_middleware(observational) do

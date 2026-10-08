@@ -90,7 +90,7 @@ defmodule Handbeam.Agent do
     - `:tools` - list of tool modules (default: all built-in + memory tools)
     - `:model` - provider model string (default: configured in config)
     - `:system_prompt` - system prompt override
-    - `:max_turns` - max agent loop iterations (default: 50)
+    - `:max_turns` - optional agent loop cap. Omitted means unlimited; callers such as subagents may still set one.
     - `:working_directory` - file access root (default: cwd)
     - `:streaming` - enable streaming chunks (default: true)
     - `:on_chunk` - stream callback fn
