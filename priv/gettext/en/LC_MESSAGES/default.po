@@ -922,6 +922,21 @@ msgstr "Use kebab-case; cannot be changed after creation"
 msgid "短横线命名，创建后不可修改。留空则根据名称自动生成。"
 msgstr "Use kebab-case; cannot be changed after creation. Leave blank to generate one from the name."
 
+msgid "拉取模型"
+msgstr "Fetch models"
+
+msgid "全部关闭"
+msgstr "Disable all"
+
+msgid "启用"
+msgstr "Enabled"
+
+msgid "启用后出现在模型选择中"
+msgstr "Shown in the model picker when enabled"
+
+msgid "Fetched %{total} models, %{added} new"
+msgstr "Fetched %{total} models, %{added} new"
+
 #: lib/sigil_web/live/available_models_live.ex:462
 #: lib/sigil_web/live/available_models_live.html.heex:803
 #, elixir-autogen, elixir-format
