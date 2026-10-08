@@ -1,5 +1,5 @@
 -module(handbeam_ios).
--export([present_file/2]).
+-export([present_file/2, guest_linked/0, guest_exec/3]).
 -on_load(init/0).
 
 init() ->
@@ -10,3 +10,9 @@ init() ->
 
 present_file(_Path, _Mode) ->
     {error, nif_not_loaded}.
+
+guest_linked() ->
+    false.
+
+guest_exec(_TimeoutMs, _Root, _Command) ->
+    {error, guest_not_linked}.

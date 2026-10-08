@@ -11,10 +11,10 @@ defmodule HandbeamProbe.Platform.IOS.GuestTest do
     assert Guest.exec("", "/tmp/alpine", 1_000) == {:error, :invalid_command}
   end
 
-  test "a linked binary still refuses to run before the guest is booted" do
+  test "a linked flag without the NIF does not invent a running guest" do
     Application.put_env(:handbeam_probe, :ios_guest_linked, true)
 
-    assert Guest.exec("echo hi", "/tmp/alpine", 1_000) == {:error, :guest_not_booted}
+    assert Guest.exec("echo hi", "/tmp/alpine", 1_000) == {:error, :guest_not_linked}
   after
     Application.delete_env(:handbeam_probe, :ios_guest_linked)
   end

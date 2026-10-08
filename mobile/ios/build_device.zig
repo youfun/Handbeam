@@ -368,10 +368,26 @@ pub fn build(b: *std.Build) void {
         var c_it = std.mem.splitScalar(u8, project_c_nifs, ',');
         while (c_it.next()) |nif_name| {
             if (nif_name.len == 0) continue;
-            const flags = b.allocator.alloc([]const u8, c_flags_base.len + 2) catch unreachable;
+            const extra: usize = if (std.mem.eql(u8, nif_name, "handbeam_ios") and ish_libs.len > 0) 3 else 2;
+            const flags = b.allocator.alloc([]const u8, c_flags_base.len + extra) catch unreachable;
             @memcpy(flags[0..c_flags_base.len], c_flags_base);
             flags[c_flags_base.len] = "-DSTATIC_ERLANG_NIF";
             flags[c_flags_base.len + 1] = b.fmt("-DSTATIC_ERLANG_NIF_LIBNAME={s}", .{nif_name});
+            if (extra == 3) flags[c_flags_base.len + 2] = "-DHANDREAM_IOS_GUEST";
+
+            if (extra == 3) {
+                installAndCollect(b, objects_step, &objs, addCObject(b, .{
+                    .name = "handbeam_ios_guest",
+                    .source = b.fmt("{s}/c_src/handbeam_ios_guest.c", .{project_root}),
+                    .target = target,
+                    .optimize = optimize,
+                    .c_flags = flags,
+                    .mob_dir = mob_dir,
+                    .otp_root = otp_root,
+                    .erts_vsn = erts_vsn,
+                    .sdkroot = sdkroot,
+                }), "handbeam_ios_guest.o");
+            }
 
             installAndCollect(b, objects_step, &objs, addCObject(b, .{
                 .name = nif_name,
