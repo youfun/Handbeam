@@ -1124,14 +1124,6 @@ msgid "Hide Work"
 msgstr "Hide Work"
 
 #: lib/sigil_web/live/workspace_live.html.heex
-msgid "本对话使用"
-msgstr "This conversation"
-
-#: lib/sigil_web/live/workspace_live.html.heex
-msgid "下一条使用"
-msgstr "Next message"
-
-#: lib/sigil_web/live/workspace_live.html.heex
 msgid "可在对话中途更换模型"
 msgstr "Switch model mid-conversation"
 

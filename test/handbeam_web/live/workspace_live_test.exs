@@ -4844,7 +4844,10 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert html =~ "composer-turn-controls"
       assert has_element?(view, "#model-picker")
       assert has_element?(view, "#reasoning-picker")
-      assert html =~ "This conversation" or html =~ "本对话使用"
+      refute html =~ "This conversation"
+      refute html =~ "Next message"
+      refute html =~ "本对话使用"
+      refute html =~ "下一条使用"
     end
   end
 

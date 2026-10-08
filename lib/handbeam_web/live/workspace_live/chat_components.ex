@@ -783,9 +783,6 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
           </div>
 
           <div class="composer-turn-controls">
-            <div class="composer-turn-label">
-              {if(@running, do: gettext("下一条使用"), else: gettext("本对话使用"))}
-            </div>
             <div class="composer-turn-pickers">
               <div :if={@available_clis != []} class="model-control">
                 <select

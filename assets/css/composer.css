@@ -84,13 +84,6 @@
   padding: 0 6px 2px;
 }
 
-.composer-turn-label {
-  flex-shrink: 0;
-  font-size: 11px;
-  color: var(--sig-text-tertiary);
-  white-space: nowrap;
-}
-
 .composer-turn-pickers {
   display: flex;
   align-items: center;
@@ -703,10 +696,6 @@
     min-height: 0;
     padding: 0 2px;
     gap: 6px;
-  }
-
-  .composer-turn-label {
-    font-size: 10px;
   }
 
   .textarea-wrap {
