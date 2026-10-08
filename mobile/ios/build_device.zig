@@ -93,6 +93,9 @@ pub fn build(b: *std.Build) void {
     const plugin_frameworks = b.option([]const u8, "plugin_frameworks", "Comma-separated iOS framework names contributed by plugins; empty if none") orelse "";
     const plugin_c_nifs = b.option([]const u8, "plugin_c_nifs", "Comma-separated absolute paths to plugin C NIF sources; basename = NIF module name; empty if none") orelse "";
     const plugin_static_libs = b.option([]const u8, "plugin_static_libs", "Comma-separated absolute paths to plugin cpp_archive .a files (pre-built by mob_dev); empty if none") orelse "";
+    // iSH guest, statically linked into the one Mach-O. Empty unless
+    // -Dish_libs names libish_emu.a,libish.a,libfakefs.a.
+    const ish_libs = b.option([]const u8, "ish_libs", "Comma-separated absolute paths to iSH static archives; empty if the guest is not linked") orelse "";
 
     const objects_step = b.step("objects", "Compile C, ObjC, and Swift objects for iOS device");
     const binary_step = b.step("binary", "Compile + link the iOS device binary (default)");
@@ -455,6 +458,7 @@ pub fn build(b: *std.Build) void {
         .project_rust_libs = project_rust_libs,
         .plugin_static_libs = plugin_static_libs,
         .plugin_frameworks = plugin_frameworks,
+        .ish_libs = ish_libs,
         .objects = objs.items,
     });
 }
@@ -704,6 +708,8 @@ const LinkOptions = struct {
     plugin_static_libs: []const u8 = "",
     // Plugin-contributed extra iOS frameworks (comma-separated).
     plugin_frameworks: []const u8 = "",
+    // iSH static archives, linked into the main Mach-O. Not copied into the bundle.
+    ish_libs: []const u8 = "",
     objects: []const std.Build.LazyPath,
 };
 
@@ -791,6 +797,19 @@ fn addLink(b: *std.Build, step: *std.Build.Step, opts: LinkOptions) void {
             const lp: std.Build.LazyPath = .{ .cwd_relative = lib_path };
             run.addFileArg(lp);
         }
+    }
+
+    // iSH stays inside the main Mach-O. addFileArg feeds the linker a path;
+    // it does not install the archive into the app bundle.
+    if (opts.ish_libs.len > 0) {
+        var ish_it = std.mem.splitScalar(u8, opts.ish_libs, ',');
+        while (ish_it.next()) |lib_path| {
+            if (lib_path.len == 0) continue;
+            const lp: std.Build.LazyPath = .{ .cwd_relative = lib_path };
+            run.addFileArg(lp);
+        }
+        run.addArgs(&.{ "-lsqlite3", "-lresolv" });
+        run.addArgs(&.{ "-Xlinker", "-framework", "-Xlinker", "SystemConfiguration" });
     }
 
     run.addArgs(&.{ "-lz", "-lc++", "-lpthread" });
