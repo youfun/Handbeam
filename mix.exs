@@ -27,6 +27,8 @@ defmodule Handbeam.MixProject do
       make_clean: ["clean"],
       listeners: [Phoenix.CodeReloader],
       package: [
+        # Hex and other source packages stay FSL. An iOS binary that
+        # statically links iSH is a separate GPLv3 distribution; see LICENSE.iOS.
         licenses: ["FSL-1.1-ALv2"],
         links: %{"GitHub" => "https://github.com/youfun/Handbeam"}
       ]

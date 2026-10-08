@@ -165,4 +165,6 @@ See [`mobile/README.md`](mobile/README.md) for full instructions. Use `--abi x86
 
 ## License
 
-Licensed under [FSL-1.1-ALv2](LICENSE). Copyright (C) 2026 youfun.
+Source and non-iOS builds are licensed under [FSL-1.1-ALv2](LICENSE). Copyright (C) 2026 youfun.
+
+iOS builds that statically link [ish-arm64](https://github.com/youfun/ish-arm64) are licensed under [GPLv3](LICENSE.GPLv3). The corresponding source for that binary, including the Handbeam code linked into it, is offered under GPLv3. See [LICENSE.iOS](LICENSE.iOS).

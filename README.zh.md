@@ -163,4 +163,6 @@ mix ios.native
 
 ## 许可协议
 
-本项目采用 [FSL-1.1-ALv2](LICENSE)（Functional Source License 1.1, Apache-2.0 Future License）授权。Copyright (C) 2026 youfun。
+源码以及非 iOS 发行采用 [FSL-1.1-ALv2](LICENSE)（Functional Source License 1.1, Apache-2.0 Future License）。Copyright (C) 2026 youfun。
+
+静态链接 [ish-arm64](https://github.com/youfun/ish-arm64) 的 iOS 发行采用 [GPLv3](LICENSE.GPLv3)。该二进制的对应源码，包括链入其中的 Handbeam 代码，按 GPLv3 提供。见 [LICENSE.iOS](LICENSE.iOS)。
