@@ -16,7 +16,10 @@ config :handbeam, Handbeam.Repo,
 config :handbeam, HandbeamWeb.Endpoint,
   # Bind all interfaces in Amp orbs so portal health checks can reach $PORT.
   # Keep loopback-only on a normal local machine.
-  http: [ip: if(System.get_env("AMP_ORB") == "1", do: {0, 0, 0, 0}, else: {127, 0, 0, 1})],
+  http: [
+    ip: if(System.get_env("AMP_ORB") == "1", do: {0, 0, 0, 0}, else: {127, 0, 0, 1}),
+    port: String.to_integer(System.get_env("PORT") || "4010")
+  ],
   check_origin: true,
   code_reloader: true,
   debug_errors: true,
