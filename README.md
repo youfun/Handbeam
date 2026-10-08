@@ -60,7 +60,7 @@ Prebuilt packages with a bundled OTP runtime are available on GitHub Releases un
 ### Prerequisites
 - **Elixir**: `>= 1.20.0`
 - **Erlang/OTP**: `28+`
-- **Node.js** (for asset bundling)
+- **Node.js**: `24` (LTS, for asset bundling)
 
 ### Setup & run
 

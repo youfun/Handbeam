@@ -50,9 +50,9 @@ jobs:
           otp-version: "29.0"
           elixir-version: "1.20"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
-          node-version: "22"
+          node-version: "24"
           cache: npm
 
       - name: Frontend assets
@@ -103,7 +103,7 @@ jobs:
               | sudo tee /usr/include/git2/sys/errors.h >/dev/null
           fi
 
-      - uses: actions/cache@v4
+      - uses: actions/cache@v6
         with:
           path: |
             ~/.mob/cache
@@ -123,7 +123,7 @@ jobs:
           LIBGIT2_DIR: /usr
         run: bash script/pack_android_apks.sh --artifacts artifacts
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: handbeam-android-apk
           path: mobile/artifacts/*.apk
