@@ -20,12 +20,15 @@ defmodule Handbeam.Tool.Builtin.Schedule do
 
   @impl true
   def description do
-    "Manage schedules on the current conversation only. " <>
-      "create/update/run_now need an explicit rule, instruction, and IANA time zone; " <>
-      "there is no default frequency. Saving a schedule does not run it. " <>
-      "run_now does not move the next planned time. " <>
-      "Weekly weekdays are 1=Monday through 7=Sunday. " <>
-      "A scheduled run cannot create, update, pause, resume, or delete a schedule."
+    """
+    Manage schedules on the current conversation. The user says when and what in ordinary language. Turn that into a rule. There is no default frequency. Do not ask them to fill weekday numbers, cron, or a form.
+
+    create and update need an explicit rule, the saved instruction, and an IANA time zone. Use the conversation time zone when they did not name one. Weekdays are 1=Monday through 7=Sunday. weekly is {kind, weekdays, times}. interval is {kind, every_minutes} with every_minutes >= 1. Saving does not run the task. run_now does not move the next planned time.
+
+    After create or update succeeds, reply in this chat in plain language: time zone, frequency, clock time, that each run is delivered in this chat, and the next local time from next_runs. Say they can change the frequency, time, or language by telling you. Do not dump the raw rule.
+
+    A scheduled run cannot create, update, pause, resume, or delete a schedule.
+    """
   end
 
   @impl true
@@ -44,8 +47,14 @@ defmodule Handbeam.Tool.Builtin.Schedule do
           description:
             "weekly: {kind, weekdays, times}. interval: {kind, every_minutes} with every_minutes >= 1."
         },
-        time_zone: %{type: "string", description: "IANA time zone. Required when context has none."},
-        model: %{type: "string", description: "Composite model id. Defaults to the current run model."},
+        time_zone: %{
+          type: "string",
+          description: "IANA time zone. Required when context has none."
+        },
+        model: %{
+          type: "string",
+          description: "Composite model id. Defaults to the current run model."
+        },
         reasoning_level: %{type: "string"}
       }
     }
@@ -198,7 +207,10 @@ defmodule Handbeam.Tool.Builtin.Schedule do
       true ->
         opts = context[:thread_run_opts] || []
         model = opts[:model]
-        provider = get_in(opts, [:provider_config, :provider_key]) || get_in(opts, [:provider_config, :provider])
+
+        provider =
+          get_in(opts, [:provider_config, :provider_key]) ||
+            get_in(opts, [:provider_config, :provider])
 
         if is_binary(provider) and is_binary(model) and model != "" do
           {:ok, "#{provider}/#{model}"}
@@ -287,6 +299,7 @@ defmodule Handbeam.Tool.Builtin.Schedule do
       reasoning_level: entry.reasoning_level,
       status: entry.status,
       next_run_at: iso(entry.next_run_at),
+      next_runs: upcoming_local(entry),
       version: entry.version,
       created_by: entry.created_by
     }
@@ -301,6 +314,13 @@ defmodule Handbeam.Tool.Builtin.Schedule do
       reason: run.reason,
       run_id: run.run_id
     }
+  end
+
+  defp upcoming_local(entry) do
+    case Rule.upcoming(entry.rule, entry.time_zone, DateTime.utc_now(), 3) do
+      {:ok, times} -> Enum.map(times, &Rule.format_local(&1, entry.time_zone))
+      _ -> []
+    end
   end
 
   defp iso(%DateTime{} = dt), do: DateTime.to_iso8601(dt)

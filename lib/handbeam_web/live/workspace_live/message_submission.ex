@@ -15,6 +15,35 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
 
   require Logger
 
+  def send_schedule_request(socket, message) do
+    message = String.trim(to_string(message || ""))
+    draft_input = socket.assigns.input_value
+    draft_attachments = socket.assigns.pending_attachments
+
+    if message == "" do
+      {:noreply, socket}
+    else
+      running? =
+        ConversationState.running_for_current_conversation?(socket) or
+          not is_nil(socket.assigns.pending_approval)
+
+      socket = if running?, do: socket, else: ensure_current_conversation(socket)
+      conv_id = socket.assigns.current_conversation_id
+
+      {:noreply, socket} =
+        if running? do
+          queue_running_agent_message(socket, conv_id, message, message, [], :steer)
+        else
+          start_new_agent_run(socket, conv_id, message, message, [])
+        end
+
+      {:noreply,
+       socket
+       |> assign(:input_value, draft_input)
+       |> assign(:pending_attachments, draft_attachments)}
+    end
+  end
+
   def send_message(socket, params) do
     message = String.trim(params["message"] || "")
     socket = ModelSelection.apply_submitted(socket, params)

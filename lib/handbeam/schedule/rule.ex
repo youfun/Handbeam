@@ -259,7 +259,13 @@ defmodule Handbeam.Schedule.Rule do
   defp describe_interval(minutes), do: "每 #{minutes} 分钟"
 
   defp describe_weekly(days, times) do
-    prefix = if days == Enum.to_list(1..7), do: "每天", else: "每周" <> weekday_labels(days)
+    prefix =
+      cond do
+        days == Enum.to_list(1..7) -> "每天"
+        days == Enum.to_list(1..5) -> "工作日"
+        true -> "每周" <> weekday_labels(days)
+      end
+
     prefix <> " " <> Enum.map_join(times, "、", &format_time/1)
   end
 

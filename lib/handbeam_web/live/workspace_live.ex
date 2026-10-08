@@ -1172,12 +1172,15 @@ defmodule HandbeamWeb.WorkspaceLive do
     {:noreply, Schedules.toggle(socket)}
   end
 
-  def handle_event("schedule_create", params, socket) do
-    {:noreply, Schedules.create(socket, params)}
+  def handle_event("schedule_request", %{"request" => request}, socket) do
+    {:noreply, Schedules.remember_request(socket, request)}
   end
 
-  def handle_event("schedule_update", params, socket) do
-    {:noreply, Schedules.update(socket, params)}
+  def handle_event("schedule_ask", %{"request" => request}, socket) do
+    case Schedules.prepare_ask(socket, request) do
+      {:ok, socket, text} -> MessageSubmission.send_schedule_request(socket, text)
+      {:error, socket} -> {:noreply, socket}
+    end
   end
 
   def handle_event("schedule_pause", %{"id" => id}, socket) do
@@ -1196,8 +1199,8 @@ defmodule HandbeamWeb.WorkspaceLive do
     {:noreply, Schedules.run_now(socket, id)}
   end
 
-  def handle_event("schedule_edit", %{"id" => id}, socket) do
-    {:noreply, Schedules.edit(socket, id)}
+  def handle_event("schedule_revise", %{"id" => id}, socket) do
+    {:noreply, Schedules.revise(socket, id)}
   end
 
   defp create_conversation_in_workspace(socket, ws_id, opts) do
@@ -1429,10 +1432,24 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   defp project_event(socket, event) do
-    socket
-    |> RuntimeProjection.apply(event)
-    |> WorkspaceNavigation.finish_runtime()
+    socket = RuntimeProjection.apply(socket, event)
+
+    socket =
+      if schedule_tool_finished?(event) and socket.assigns.show_schedules do
+        Schedules.reload(socket)
+      else
+        socket
+      end
+
+    WorkspaceNavigation.finish_runtime(socket)
   end
+
+  defp schedule_tool_finished?(%{kind: kind, payload: payload})
+       when kind in [:tool_end, "tool_end"] do
+    to_string(payload[:tool] || payload["tool"] || "") == "schedule"
+  end
+
+  defp schedule_tool_finished?(_event), do: false
 
   defp drop_composer_for_switch(socket, next_id \\ :new) do
     socket
