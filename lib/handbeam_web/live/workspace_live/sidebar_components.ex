@@ -838,7 +838,43 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
           _ -> nil
         end
       }
-    ><span class="conversation-run-marble" aria-hidden="true"></span></span>
+    >
+      <svg
+        class="conversation-run-sprite"
+        viewBox="0 0 24 26"
+        width="20"
+        height="22"
+        shape-rendering="crispEdges"
+        aria-hidden="true"
+      >
+        <path class="run-shadow" d="M6 24h12v1H6z" />
+        <g class="run-character">
+          <g class="run-outline">
+            <path class="run-leg-left" d="M8 21h2v3H7v-1h1z" />
+            <path class="run-leg-right" d="M15 21h2v2h1v1h-3z" />
+            <g class="run-arm-left">
+              <path d="M4 16h1v4H4z" />
+              <path class="run-fill" d="M3 19h2v2H3z" />
+            </g>
+            <g class="run-arm-right">
+              <path d="M19 16h1v4h-1z" />
+              <path class="run-fill" d="M19 19h2v2h-2z" />
+            </g>
+          </g>
+          <g class="run-leaf">
+            <path class="run-outline" d="M11 5h1v3h-1zM11 3h1v3h-1zM12 2h4v1h1v1h-1v1h-4V4h-1V3h1z" />
+            <path class="run-fill" d="M12 3h4v1h-4z" />
+            <path class="run-highlight" d="M13 2h2v1h-2z" />
+          </g>
+          <path class="run-outline" d="M9 8h6v1h2v1h1v1h1v10h-1v1h-1v1H7v-1H6v-1H5V11h1v-1h1V9h2z" />
+          <path class="run-fill" d="M9 9h6v1h2v1h1v10h-1v1H7v-1H6V11h1v-1h2z" />
+          <path class="run-highlight" d="M9 9h6v1h-1v1h-2v1H8v1H7v-2h1v-1h1z" />
+          <path class="run-shade" d="M17 17h1v4h-1v1H7v-1h8v-1h1v-1h1z" />
+          <path fill="#263b25" d="M8 14h2v2H8zM14 14h2v2h-2z" />
+          <path fill="#db9968" d="M7 17h1v1H7zM16 17h1v1h-1z" />
+        </g>
+      </svg>
+    </span>
     """
   end
 

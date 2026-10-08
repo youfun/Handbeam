@@ -31,18 +31,19 @@ export const ConversationActivity = {
       let hash = 2166136261;
       for (const ch of id) hash = Math.imul(hash ^ ch.codePointAt(0), 16777619);
       hash >>>= 0;
-      const body = this.bodies.get(id) || {
+      const body = next.get(id) || this.bodies.get(id) || {
         phase: (hash % 1000) / 1000 * Math.PI * 2,
-        period: 1.9 + (hash % 40) / 100,
+        period: 0.9 + (hash % 20) / 100,
         boost: 0,
       };
       body.state = el.dataset.runState;
-      body.marble = el.querySelector(".conversation-run-marble");
+      const sprite = el.querySelector(".conversation-run-sprite");
+      if (!sprite) continue;
+      if (!next.has(id)) body.sprites = [];
+      body.sprites.push(sprite);
       el.style.setProperty("--run-color", ["#7eb8c9", "#c9846a", "#6a9a72", "#8b7ec4"][hash % 4]);
-      if (body.state !== "running" || this.motion.matches) {
-        body.boost = 0;
-        body.marble.style.transform = "translateY(0px)";
-      }
+      if (body.state !== "running" || this.motion.matches) body.boost = 0;
+      this.paint(body);
       next.set(id, body);
     }
     this.bodies = next;
@@ -61,6 +62,16 @@ export const ConversationActivity = {
     this.frame = requestAnimationFrame(now => this.tick(now));
   },
 
+  paint(body) {
+    const moving = body.state === "running" && !this.motion.matches;
+    const frame = moving ? Math.floor(body.phase / (Math.PI * 2) * 8) % 8 : 0;
+    for (const sprite of body.sprites) {
+      sprite.style.setProperty("--run-hop", moving && frame % 4 >= 2 ? "-1px" : "0px");
+      sprite.style.setProperty("--run-step", frame < 4 ? "0px" : "-1px");
+      sprite.style.setProperty("--run-sway", moving && frame % 4 >= 2 ? "1px" : "0px");
+    }
+  },
+
   tick(now) {
     const dt = Math.min(0.05, (now - this.last) / 1000);
     this.last = now;
@@ -69,8 +80,7 @@ export const ConversationActivity = {
       body.boost *= Math.exp(-dt / 0.7);
       const pull = 0.8 + 0.5 * Math.sin(body.phase) ** 2;
       body.phase = (body.phase + dt * Math.PI * 2 / body.period * pull * (1 + body.boost)) % (Math.PI * 2);
-      // Centered 14px lane; no squash/stretch and no discontinuity at the wrap.
-      body.marble.style.transform = `translateY(${(-7 * Math.cos(body.phase)).toFixed(2)}px)`;
+      this.paint(body);
     }
     this.frame = requestAnimationFrame(now => this.tick(now));
   },
