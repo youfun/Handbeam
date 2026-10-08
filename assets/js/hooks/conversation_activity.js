@@ -1,3 +1,17 @@
+const conversationColors = [
+  "#7eb8c9", "#c9846a", "#6a9a72", "#8b7ec4",
+  "#c5a552", "#c47d9b", "#58aaa0", "#6e94cc",
+];
+
+// Mix all hash bits before selecting a color, rather than just FNV's low bits.
+function conversationHash(id) {
+  let hash = 2166136261;
+  for (const ch of id) hash = Math.imul(hash ^ ch.codePointAt(0), 16777619);
+  hash = Math.imul(hash ^ (hash >>> 16), 0x85ebca6b);
+  hash = Math.imul(hash ^ (hash >>> 13), 0xc2b2ae35);
+  return (hash ^ (hash >>> 16)) >>> 0;
+}
+
 // Runtime state stays in LiveView; only phase and short-lived momentum live here.
 export const ConversationActivity = {
   mounted() {
@@ -28,9 +42,7 @@ export const ConversationActivity = {
     const next = new Map();
     for (const el of this.el.querySelectorAll("[data-run-id]")) {
       const id = el.dataset.runId;
-      let hash = 2166136261;
-      for (const ch of id) hash = Math.imul(hash ^ ch.codePointAt(0), 16777619);
-      hash >>>= 0;
+      const hash = conversationHash(id);
       const body = next.get(id) || this.bodies.get(id) || {
         phase: (hash % 1000) / 1000 * Math.PI * 2,
         period: 0.9 + (hash % 20) / 100,
@@ -41,7 +53,7 @@ export const ConversationActivity = {
       if (!sprite) continue;
       if (!next.has(id)) body.sprites = [];
       body.sprites.push(sprite);
-      el.style.setProperty("--run-color", ["#7eb8c9", "#c9846a", "#6a9a72", "#8b7ec4"][hash % 4]);
+      el.style.setProperty("--run-color", conversationColors[hash % conversationColors.length]);
       if (body.state !== "running" || this.motion.matches) body.boost = 0;
       this.paint(body);
       next.set(id, body);
