@@ -22,6 +22,7 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
     private var origin = AppOrigin(hosts: DesktopConfig.loopbackHosts, port: DesktopConfig.defaultPort)
     private var loadedURL: URL?
     private var lastState: BackendController.State = .idle
+    private var pendingConversation: (String, String)?
     var onRetry: (() -> Void)?
 
     init() {
@@ -68,6 +69,39 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
         }
     }
 
+    func showConversation(workspaceID: String, conversationID: String) {
+        show()
+        pendingConversation = (workspaceID, conversationID)
+        loadPendingConversation()
+    }
+
+    private func loadPendingConversation() {
+        guard let pending = pendingConversation else { return }
+        guard let path = NotifyProtocol.conversationPath(
+            workspaceID: pending.0,
+            conversationID: pending.1
+        ) else {
+            pendingConversation = nil
+            return
+        }
+        guard case .ready(let base, _) = lastState,
+              var components = URLComponents(url: base, resolvingAgainstBaseURL: false) else {
+            return
+        }
+        components.path = path
+        components.query = nil
+        components.fragment = nil
+        guard let url = components.url,
+              NavigationPolicy.decide(url: url, origin: origin, mainFrame: true) == .allow else {
+            pendingConversation = nil
+            return
+        }
+        pendingConversation = nil
+        loadedURL = url
+        hideOverlay()
+        webView.load(URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 30))
+    }
+
     func apply(_ state: BackendController.State) {
         lastState = state
         switch state {
@@ -76,7 +110,10 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
         case .ready(let url, _):
             origin = AppOrigin(pageURL: url)
             window?.title = "Handbeam"
-            if loadedURL != url {
+            if pendingConversation != nil {
+                loadPendingConversation()
+            }
+            if loadedURL == nil {
                 loadedURL = url
                 showOverlay("正在載入工作區…", retry: false)
                 webView.load(URLRequest(url: url, cachePolicy: .useProtocolCachePolicy, timeoutInterval: 30))

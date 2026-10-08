@@ -1,6 +1,8 @@
 defmodule Handbeam.Runtime.NotifyAdapter do
   @moduledoc """
-  Host-facing notification actions. Desktop and tests use `Noop`.
+  Host-facing notification actions. Mix, tests, and an attached desktop
+  server use `Noop`. The macOS app installs `MacNotify` only in the BEAM it
+  spawned. Android installs `AndroidNotify`.
   """
 
   alias Handbeam.Runtime.Notify

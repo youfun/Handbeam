@@ -44,6 +44,8 @@ Links that leave the Handbeam origin open in the system browser. The shell does 
 
 Phase 1 quits when the window closes. `MenuBarController` is a stub for a later `NSStatusItem` menu (pinned/recent threads, keep-awake, Open Handbeam). That phase should keep the backend alive until Quit.
 
+A backend this app spawns gets a loopback notification bridge. When the window is in the background, minimized, or fully occluded, a finished reply is posted with `UNUserNotificationCenter` as `com.youfun.handbeam`. Clicking it opens that conversation. The in-app toast is unchanged while the window is frontmost, and an attached server is not given the bridge. The first run asks for notification permission; a denial is left denied.
+
 ## Build
 
 From the repository root, build the current source and package the complete native client:

@@ -54,7 +54,10 @@ defmodule Handbeam.Application do
           Handbeam.AgentRunSupervisor,
           {Task.Supervisor, name: Handbeam.AgentRunTaskSupervisor},
           Handbeam.Platform.ProcessRunner.InvocationSupervisor,
-          Handbeam.Agent.Delegation,
+          Handbeam.Agent.Delegation
+        ] ++
+        Handbeam.Runtime.MacNotify.children() ++
+        [
           Handbeam.Runtime.TaskTracker
         ] ++
         mcp_children() ++

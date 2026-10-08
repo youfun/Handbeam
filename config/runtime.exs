@@ -1,5 +1,14 @@
 import Config
 
+if match?({:unix, :darwin}, :os.type()) and System.get_env("HANDBEAM_NOTIFY_PORT") do
+  config :handbeam,
+         :macos_notify_port,
+         String.to_integer(System.fetch_env!("HANDBEAM_NOTIFY_PORT"))
+
+  config :handbeam, :macos_notify_token, System.fetch_env!("HANDBEAM_NOTIFY_TOKEN")
+  config :handbeam, :runtime_notify_adapter, Handbeam.Runtime.MacNotify
+end
+
 if match?({:unix, :darwin}, :os.type()) and System.get_env("HANDBEAM_COMPUTER_PORT") do
   config :handbeam,
          :computer_use_port,

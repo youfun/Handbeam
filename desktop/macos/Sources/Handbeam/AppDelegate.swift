@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windows: WebWindowController?
     private var activity: NSObjectProtocol?
     private var signalSources: [DispatchSourceSignal] = []
+    private var visibilityObservers: [NSObjectProtocol] = []
 
     static func main() {
         let application = NSApplication.shared
@@ -54,6 +55,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menuBar.install()
         self.menuBar = menuBar
 
+        MacNotifications.shared.install()
+        installVisibilityObservers()
+
         let backend = BackendController()
         let window = WebWindowController()
         window.onRetry = { [weak backend] in
@@ -64,8 +68,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         self.backend = backend
         self.windows = window
+        MacNotifications.shared.setOpenHandler { [weak window] workspaceID, conversationID in
+            window?.showConversation(workspaceID: workspaceID, conversationID: conversationID)
+        }
+        backend.appVisible = { [weak self] in
+            self?.appIsVisible() ?? true
+        }
         window.show()
         window.apply(.starting)
+        publishAppVisibility()
         backend.start()
     }
 
@@ -87,6 +98,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             windows?.show()
         }
         return true
+    }
+
+    private func installVisibilityObservers() {
+        let names: [Notification.Name] = [
+            NSApplication.didBecomeActiveNotification,
+            NSApplication.didResignActiveNotification,
+            NSWindow.didMiniaturizeNotification,
+            NSWindow.didDeminiaturizeNotification,
+            NSWindow.didBecomeKeyNotification,
+            NSWindow.didChangeOcclusionStateNotification,
+        ]
+        for name in names {
+            let token = NotificationCenter.default.addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                self?.publishAppVisibility()
+            }
+            visibilityObservers.append(token)
+        }
+    }
+
+    private func publishAppVisibility() {
+        let visible = appIsVisible()
+        Task { @MainActor in
+            self.backend?.noteAppVisibility(visible)
+        }
+    }
+
+    private func appIsVisible() -> Bool {
+        guard let window = windows?.window else { return false }
+        return NSApp.isActive && window.isVisible && !window.isMiniaturized &&
+            window.occlusionState.contains(.visible)
     }
 
     private func activateExistingInstance() {

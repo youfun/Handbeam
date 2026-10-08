@@ -17,6 +17,8 @@ final class BackendController {
 
     private var process: Process?
     private var computerBridge: ComputerBridge?
+    private var notifyBridge: NotifyBridge?
+    var appVisible: () -> Bool = { true }
     private var logHandle: FileHandle?
     private var intentionalStop = false
     private var startGeneration = 0
@@ -44,8 +46,7 @@ final class BackendController {
     /// SIGTERM the backend this process spawned, then SIGKILL if it is still alive.
     /// Does nothing when this launch only attached to an existing server.
     func stopOwnedBackend() {
-        computerBridge?.stop()
-        computerBridge = nil
+        stopBridges()
         startGeneration += 1
         intentionalStop = true
         guard let process else {
@@ -167,15 +168,28 @@ final class BackendController {
         computerBridge = bridge
         let computerEnvironment: [String: String]
         do { computerEnvironment = try await bridge.start() }
-        catch { bridge.stop(); throw error }
+        catch {
+            stopBridges()
+            throw error
+        }
         guard generation == startGeneration, self.process?.isRunning != true else {
-            bridge.stop()
+            stopBridges()
+            return
+        }
+        let notifyEnvironment = await startNotifyBridge()
+        guard generation == startGeneration, self.process?.isRunning != true else {
+            stopBridges()
             return
         }
         let handle: FileHandle
         do { handle = try openLog() }
-        catch { bridge.stop(); computerBridge = nil; throw error }
-        process.environment = launch.environment.merging(computerEnvironment) { _, computer in computer }
+        catch {
+            stopBridges()
+            throw error
+        }
+        process.environment = launch.environment
+            .merging(computerEnvironment) { _, computer in computer }
+            .merging(notifyEnvironment) { _, notify in notify }
         process.currentDirectoryURL = URL(fileURLWithPath: launch.workingDirectory)
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = handle
@@ -192,8 +206,7 @@ final class BackendController {
         do {
             try process.run()
         } catch {
-            bridge.stop()
-            computerBridge = nil
+            stopBridges()
             try? handle.close()
             if let stderr = process.standardError as? FileHandle, stderr !== handle { try? stderr.close() }
             throw ShellError.launchFailed(error.localizedDescription)
@@ -205,8 +218,7 @@ final class BackendController {
     }
 
     private func noteExit(code: Int32) {
-        computerBridge?.stop()
-        computerBridge = nil
+        stopBridges()
         let intentional = intentionalStop
         process = nil
         closeLog()
@@ -218,6 +230,33 @@ final class BackendController {
     }
 
     func stopComputerUse() { computerBridge?.controller.stop() }
+
+    func noteAppVisibility(_ visible: Bool) {
+        notifyBridge?.setVisible(visible)
+    }
+
+    private func startNotifyBridge() async -> [String: String] {
+        do {
+            let bridge = try NotifyBridge()
+            bridge.currentVisibility = { [weak self] in
+                self?.appVisible() ?? true
+            }
+            let environment = try await bridge.start()
+            notifyBridge = bridge
+            bridge.setVisible(appVisible())
+            return environment
+        } catch {
+            ShellLog.write("system notifications unavailable")
+            return [:]
+        }
+    }
+
+    private func stopBridges() {
+        computerBridge?.stop()
+        computerBridge = nil
+        notifyBridge?.stop()
+        notifyBridge = nil
+    }
 
     private func probe(port: Int? = nil, timeout: TimeInterval = 3) async -> Bool {
         let candidatePort = port ?? self.port
