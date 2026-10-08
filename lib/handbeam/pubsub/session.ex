@@ -23,13 +23,18 @@ defmodule Handbeam.PubSub.Session do
   @max_snapshot_events 500
   @throttle_default_ms 50
 
-  # Disk-save throttle window for high-frequency events (e.g. :message_delta).
+  # Disk-save throttle window for bursty events (e.g. :message_delta).
   # Structural events (run_start, tool_start/end, run_end) always force-save.
   @save_throttle_ms 500
 
   # Events that are emitted at high frequency during streaming.
   # These are broadcast via cast (no waiting) and their disk snapshot is throttled.
   @high_freq_events [:message_delta, :thinking_delta]
+
+  # turn_end events unwind in a burst when a multi-turn run finishes. Persisting
+  # every event rewrites the full snapshot repeatedly and can delay the terminal
+  # mark_run_finished call beyond GenServer's timeout. run_end still force-saves.
+  @throttled_snapshot_events @high_freq_events ++ [:turn_end]
 
   @doc false
   def throttle_default_ms, do: @throttle_default_ms
@@ -429,7 +434,7 @@ defmodule Handbeam.PubSub.Session do
     else
       # Cast path: used for high-frequency events; throttle disk saves to avoid
       # blocking the agent task on slow filesystems.
-      force? = kind not in @high_freq_events
+      force? = kind not in @throttled_snapshot_events
       new_state = do_broadcast_event(state, kind, payload, force_save?: force?)
       {:noreply, new_state}
     end
@@ -446,7 +451,10 @@ defmodule Handbeam.PubSub.Session do
     }
 
     maybe_record_event(new_state, event)
-    new_state = maybe_save_throttled(new_state, force?: event.kind not in @high_freq_events)
+
+    new_state =
+      maybe_save_throttled(new_state, force?: event.kind not in @throttled_snapshot_events)
+
     {:noreply, new_state}
   end
 

@@ -342,6 +342,57 @@ defmodule Handbeam.PubSub.SessionTest do
   end
 
   describe "SessionStore integration" do
+    test "turn_end burst is throttled until run_end persists the terminal snapshot" do
+      sid = "stored-turn-end-#{System.unique_integer([:positive])}"
+      store_dir = Path.join(System.tmp_dir!(), "sigil_session_test_#{Ecto.UUID.generate()}")
+      on_exit(fn -> File.rm_rf!(store_dir) end)
+
+      {:ok, pid} =
+        Session.start_or_get(
+          session_id: sid,
+          model: "fake",
+          session_store_enabled?: true,
+          session_store_dir: store_dir
+        )
+
+      {:ok, queue} = Handbeam.Agent.CandidateQueue.start_link(session_id: sid, owner: self())
+      :ok = Session.attach_run(sid, self(), queue, run_id: "run-1")
+      Session.broadcast_event(sid, :run_start, %{run_id: "run-1", model: "fake"})
+      assert %{last_seq: 1} = Session.snapshot(sid)
+
+      :sys.replace_state(pid, &%{&1 | last_throttle: System.monotonic_time(:millisecond)})
+
+      for turn <- 1..20 do
+        Session.broadcast_event(sid, :turn_end, %{
+          run_id: "run-1",
+          turn: turn,
+          status: :completed
+        })
+      end
+
+      assert %{last_seq: 21} = Session.snapshot(sid)
+
+      assert {:ok, %{"seq" => 1}} =
+               Handbeam.SessionStore.File.load(sid, session_store_dir: store_dir)
+
+      Session.append_event(
+        sid,
+        AgentEvent.new(
+          Session.session_topic(sid),
+          :run_end,
+          %{run_id: "run-1", status: :completed, turns: 20},
+          22
+        )
+      )
+
+      assert %{last_seq: 22} = Session.snapshot(sid)
+
+      assert {:ok, %{"seq" => 22, "events" => [%{"kind" => "run_end"} | _]}} =
+               Handbeam.SessionStore.File.load(sid, session_store_dir: store_dir)
+
+      assert :ok = Session.mark_run_finished(sid, "run-1")
+    end
+
     test "restarts with persisted snapshot and next_turn messages without runtime pids" do
       sid = "stored-session-#{System.unique_integer([:positive])}"
 
