@@ -94,6 +94,31 @@ hook.updated();
 assert.equal(target.querySelector("iframe").getAttribute("sandbox"), "allow-scripts");
 assert.match(target.querySelector("code").textContent, /Nested/);
 
+// A partial line must stay paused. Treating it as closed flips the toolbar
+// between 隔离运行 and 脚本暂停 and reloads the iframe on every line.
+el.dataset.streaming = "true";
+el.dataset.final = "false";
+const growing = "```widget\n<div class=\"card\">partial";
+hook.controller.reset(growing);
+hook.renderSnapshot();
+const growingFrame = target.querySelector("iframe");
+assert.equal(growingFrame.getAttribute("sandbox"), "");
+assert.equal(target.querySelector(".html-preview-status").textContent, "生成中 · 脚本暂停");
+hook.controller.reset(growing + " more");
+hook.renderSnapshot();
+assert.equal(target.querySelector("iframe"), growingFrame, "mid-line growth must not reload the preview");
+assert.equal(growingFrame.getAttribute("sandbox"), "");
+hook.controller.reset(growing + " more\n");
+hook.renderSnapshot();
+assert.equal(target.querySelector("iframe"), growingFrame);
+assert.equal(target.querySelector("code").textContent, "<div class=\"card\">partial more\n");
+hook.controller.reset("> ~~~~HTML\n> <p>Nest");
+hook.renderSnapshot();
+assert.equal(target.querySelector("iframe").getAttribute("sandbox"), "");
+hook.controller.reset(growing + " more\n</div>\n```");
+hook.renderSnapshot();
+assert.equal(target.querySelector("iframe").getAttribute("sandbox"), "allow-scripts");
+
 // Reconnect renders from the persisted Markdown alone, without a new store.
 hook.destroyed();
 target.innerHTML = '<div class="markdown-noscript-fallback"></div>';

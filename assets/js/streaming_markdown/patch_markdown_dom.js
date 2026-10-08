@@ -17,9 +17,7 @@ function patchChildren(parent, incomingChildren, selection) {
     if (match) {
       used.add(match);
       if (match.dataset?.htmlPreview || incoming.dataset?.htmlPreview) {
-        const samePreview = match.dataset?.htmlPreview === incoming.dataset?.htmlPreview &&
-          match.querySelector("code")?.textContent === incoming.querySelector("code")?.textContent;
-        nextChildren.push(samePreview ? match : cloneNode(incoming));
+        nextChildren.push(reuseHtmlPreview(match, incoming) || cloneNode(incoming));
       } else {
         patchNode(match, incoming, selection);
         nextChildren.push(match);
@@ -30,6 +28,53 @@ function patchChildren(parent, incomingChildren, selection) {
   }
 
   replaceChildren(parent, nextChildren);
+}
+
+function reuseHtmlPreview(match, incoming) {
+  const sameState = match.dataset?.htmlPreview === incoming.dataset?.htmlPreview;
+  const code = match.querySelector?.("code");
+  const nextCode = incoming.querySelector?.("code");
+  const sameCode = code?.textContent === nextCode?.textContent;
+  if (sameState && sameCode) return match;
+  // Keep the paused frame while the fence is still being typed. Replacing it
+  // on every token blanks the preview; scripts start only after a real close.
+  if (!sameState || match.dataset?.htmlPreview !== "streaming" || !code || !nextCode) return null;
+
+  const nextText = nextCode.textContent ?? "";
+  code.textContent = nextText;
+  const frame = match.querySelector("iframe:not(.html-preview-frame-pending)");
+  const nextFrame = incoming.querySelector("iframe");
+  if (frame && nextFrame && nextText.endsWith("\n")) stageStreamingSrcdoc(frame, nextFrame.srcdoc, nextText);
+  return match;
+}
+
+function stageStreamingSrcdoc(frame, srcdoc, source) {
+  const pending = frame.parentNode?.querySelector(".html-preview-frame-pending");
+  if ((pending || frame).dataset.previewSource === source) return;
+  const target = pending || createPendingFrame(frame);
+  const epoch = String(Number(target.dataset.epoch || 0) + 1);
+  target.dataset.epoch = epoch;
+  target.dataset.previewSource = source;
+  target.onload = () => {
+    if (!target.isConnected || target.dataset.epoch !== epoch) return;
+    const current = target.previousElementSibling;
+    if (!current || current === target) return;
+    target.classList.remove("html-preview-frame-pending");
+    target.hidden = current.hidden;
+    if (current.style?.height) target.style.height = current.style.height;
+    target.onload = null;
+    current.remove();
+  };
+  target.srcdoc = srcdoc;
+}
+
+function createPendingFrame(frame) {
+  const pending = frame.cloneNode(false);
+  pending.classList.add("html-preview-frame-pending");
+  pending.hidden = true;
+  pending.removeAttribute("srcdoc");
+  frame.after(pending);
+  return pending;
 }
 
 function patchNode(current, incoming, selection) {

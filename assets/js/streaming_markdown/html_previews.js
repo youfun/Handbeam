@@ -14,9 +14,9 @@ export function decorateHtmlPreviews(fragment, markdown) {
     const wrapper = code.closest(".code-block-wrapper");
     if (!wrapper) return;
 
-    // MarkdownIt's map includes the closing fence, content doesn't. Use the
-    // original stream, never the synthetic close added by Markdown repair.
-    const closed = token.map[1] - token.map[0] > token.content.split("\n").length;
+    // MarkdownIt's map includes a real closing fence; content does not. A
+    // mid-line unclosed fence has the same span, so require a trailing newline.
+    const closed = fenceClosed(token);
     code.textContent = token.content;
     wrapper.dataset.htmlPreview = closed ? "ready" : "streaming";
     const toolbar = document.createElement("div");
@@ -38,6 +38,7 @@ export function decorateHtmlPreviews(fragment, markdown) {
     frame.setAttribute("referrerpolicy", "no-referrer");
     frame.setAttribute("allow", "camera 'none'; microphone 'none'; geolocation 'none'; clipboard-read 'none'; clipboard-write 'none'");
     frame.srcdoc = previewDocument(token.content, closed);
+    if (!closed) frame.dataset.previewSource = token.content;
     wrapper.appendChild(frame);
   });
 }
@@ -60,6 +61,16 @@ export function resizeHtmlPreview(root, event) {
   const frame = [...root.querySelectorAll(".html-preview-frame")]
     .find((candidate) => candidate.contentWindow === event.source);
   if (frame) frame.style.height = `${Math.max(220, Math.min(720, Math.ceil(event.data.height)))}px`;
+}
+
+function fenceClosed(token) {
+  if (!token?.map) return false;
+  const content = token.content ?? "";
+  // The closer is always its own line, so captured content is empty or ends
+  // with a newline. Treating a partial line as closed reloads the iframe on
+  // every line and flashes the preview between paused and isolated-run.
+  if (content !== "" && !content.endsWith("\n")) return false;
+  return token.map[1] - token.map[0] > content.split("\n").length;
 }
 
 function previewDocument(source, closed) {

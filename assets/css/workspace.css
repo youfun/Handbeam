@@ -2689,6 +2689,10 @@ button.workspace-file-row:hover,
   background: var(--panel);
 }
 
+.html-preview-frame-pending {
+  display: none !important;
+}
+
 [data-html-preview] [hidden] {
   display: none;
 }
