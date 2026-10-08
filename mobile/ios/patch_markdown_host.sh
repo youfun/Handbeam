@@ -48,7 +48,7 @@ impl = ensure(
     "MobNode.m",
 )
 
-nif = load("mob_nif.m")
+nif = load("mob_nif.m").replace('#import "MobDemo-Bridging-Header.h"\n', "", 1)
 nif = ensure(
     nif,
     "    MOB_PROP_width,\n    MOB_PROP__COUNT\n",

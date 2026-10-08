@@ -118,10 +118,11 @@ pub fn build(b: *std.Build) void {
         module_name,
         "-import-objc-header",
     });
-    swift_run.addArg(b.fmt("{s}/ios/MobDemo-Bridging-Header.h", .{mob_dir}));
-    // Patched MobNode.h must win over the hex copy so `markdown` is visible to Swift.
     const markdown_overlay = addMarkdownOverlay(b, mob_dir, project_ios_dir);
-    swift_run.addPrefixedDirectoryArg("-I", markdown_overlay.header.dirname());
+    const bridge = addGuestBridge(b, mob_dir, markdown_overlay.header);
+    swift_run.addFileArg(bridge);
+    swift_run.addArg("-I");
+    swift_run.addDirectoryArg(markdown_overlay.header.dirname());
     swift_run.addArg("-I");
     swift_run.addArg(b.fmt("{s}/ios", .{mob_dir}));
     swift_run.addArgs(&.{ "-parse-as-library", "-wmo" });
@@ -265,7 +266,7 @@ pub fn build(b: *std.Build) void {
         .{
             .name = "mob_nif",
             .source = b.fmt("{s}/ios/mob_nif.m", .{mob_dir}),
-            .extra_flags = &.{"-DSTATIC_ERLANG_NIF"},
+            .extra_flags = &.{ "-DSTATIC_ERLANG_NIF", "-include", "MobNode.h" },
             .swift_header = swift_header,
             .source_file = markdown_overlay.nif,
             .prepend_include = markdown_overlay.header.dirname(),
@@ -586,6 +587,21 @@ const MarkdownOverlay = struct {
     root: std.Build.LazyPath,
 };
 
+fn addGuestBridge(b: *std.Build, mob_dir: []const u8, header: std.Build.LazyPath) std.Build.LazyPath {
+    const run = b.addSystemCommand(&.{ "python3", "-c" });
+    run.addArg(
+        \\import pathlib, sys
+        \\src, header, out = sys.argv[1:]
+        \\header = str(pathlib.Path(header).resolve())
+        \\text = pathlib.Path(src).read_text()
+        \\text = text.replace('#import "MobNode.h"', '#import "' + header + '"', 1)
+        \\pathlib.Path(out).write_text(text)
+    );
+    run.addArg(b.fmt("{s}/ios/MobDemo-Bridging-Header.h", .{mob_dir}));
+    run.addFileArg(header);
+    return run.addOutputFileArg("Handbeam-Bridging-Header.h");
+}
+
 fn addMarkdownOverlay(b: *std.Build, mob_dir: []const u8, project_ios_dir: []const u8) MarkdownOverlay {
     const run = b.addSystemCommand(&.{"bash"});
     run.addFileArg(.{ .cwd_relative = b.fmt("{s}/patch_markdown_host.sh", .{project_ios_dir}) });
@@ -632,7 +648,8 @@ fn addObjcObject(b: *std.Build, opts: ObjcObjectOptions) std.Build.LazyPath {
     run.addArg(b.fmt("-I{s}/{s}/include", .{ opts.otp_root, opts.erts_vsn }));
     run.addArg(b.fmt("-I{s}/{s}/include/internal", .{ opts.otp_root, opts.erts_vsn }));
     if (opts.prepend_include) |inc| {
-        run.addPrefixedDirectoryArg("-I", inc);
+        run.addArg("-I");
+        run.addDirectoryArg(inc);
     }
     run.addArg(b.fmt("-I{s}/ios", .{opts.mob_dir}));
     run.addArg(b.fmt("-isysroot{s}", .{opts.sdkroot}));
