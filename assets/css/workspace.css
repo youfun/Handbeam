@@ -804,9 +804,9 @@ textarea::placeholder {
 }
 
 .conversation-nav.is-open .conversation-nav-btn[data-conversation-nav-toggle] {
-  color: var(--sig-on-accent, #fff);
-  background: var(--sig-accent-fill, var(--sig-accent, #1a1815));
-  border-color: var(--sig-accent-fill, var(--sig-accent, #1a1815));
+  color: var(--sig-text-inverse, #fff);
+  background: var(--sig-text-primary, #1a1815);
+  border-color: var(--sig-text-primary, #1a1815);
 }
 
 #workspace-panel.files-panel {
@@ -875,9 +875,9 @@ textarea::placeholder {
 }
 
 #activity-bar .session-item.active {
-  background-color: var(--sig-sel, var(--sig-bg-surface-active));
+  background-color: var(--sig-bg-surface-active);
   color: var(--sig-text-primary);
-  box-shadow: none;
+  box-shadow: inset 2px 0 0 var(--sig-text-tertiary);
 }
 
 #activity-bar .session-item.active .session-status {
@@ -1869,7 +1869,6 @@ button.workspace-file-row:hover,
   width: 240px;
   min-width: 240px;
   height: 100%;
-  font-size: 13px;
 }
 
 /* ── Sidebar header ── */
@@ -2096,16 +2095,8 @@ button.workspace-file-row:hover,
 /* ── Conversations list ── */
 .conversations-list {
   position: relative;
-  margin: 4px 8px 10px;
+  margin: 0.1rem 0 0.2rem;
   padding-left: 0;
-  border: 1px solid var(--sig-border-subtle);
-  border-radius: 12px;
-  background: var(--sig-bg-elevated);
-  overflow: hidden;
-}
-
-.conversations-list:empty {
-  display: none;
 }
 
 /* ── Conversation row (item + inline action) ── */
@@ -2114,15 +2105,10 @@ button.workspace-file-row:hover,
   display: flex;
   align-items: center;
   gap: 0;
-  margin: 0;
-  min-height: 40px;
-  border-radius: 0;
+  margin: 0.05rem 0;
+  border-radius: var(--radius-md);
   transition: background-color 0.15s ease;
   min-width: 0;
-}
-
-.conversation-row + .conversation-row {
-  box-shadow: inset 0 1px 0 var(--sig-border-subtle);
 }
 
 .conversation-hover {
@@ -2135,7 +2121,7 @@ button.workspace-file-row:hover,
   border: 1px solid var(--sig-border-subtle);
   border-radius: var(--sig-radius-lg);
   background: var(--sig-bg-elevated);
-  box-shadow: var(--sig-pop-shadow, 0 16px 44px rgba(26, 24, 21, 0.12));
+  box-shadow: 0 8px 24px rgba(26, 24, 21, 0.1);
   color: var(--sig-text-primary);
   pointer-events: none;
 }
@@ -2322,19 +2308,17 @@ button.workspace-file-row:hover,
   z-index: 30;
 }
 
-.conversation-row:hover:not(:has(.conversation-item-active)) {
-  background-color: var(--sig-bg-surface-hover, var(--color-surface-hover));
+.conversation-row:hover {
+  background-color: var(--color-surface-hover);
 }
 
 .conversation-item {
   position: relative;
-  min-height: 40px;
+  min-height: 1.75rem;
   padding-left: 0.5rem;
   padding-right: 0.25rem;
-  border-radius: 0;
-  color: var(--sig-text-secondary, var(--color-text-secondary));
-  font-size: 13px;
-  font-weight: 500;
+  border-radius: var(--radius-md);
+  color: var(--color-text-tertiary);
   transition: color 0.15s ease;
   background: transparent;
   border: none;
@@ -2345,11 +2329,11 @@ button.workspace-file-row:hover,
   color: var(--color-text-secondary);
 }
 
-.conversation-item-active,
-.conversation-row:has(.conversation-item-active) {
-  background-color: var(--sig-sel, var(--sig-bg-surface-active));
-  color: var(--sig-text-primary, var(--color-text-primary));
-  font-weight: 500;
+.conversation-item-active {
+  background-color: var(--sig-bg-surface-active);
+  color: var(--color-text-primary);
+  font-weight: var(--font-weight-medium);
+  box-shadow: none;
 }
 
 /* Reserve the lane even when idle so finishing a run never shifts the title. */
