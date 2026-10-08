@@ -39,17 +39,25 @@ defmodule HandbeamWeb.ThreadHandoff do
         []
       end
 
+    viewer =
+      case Handbeam.ConversationStore.get_metadata(assigns.conversation_id) do
+        {:ok, meta} -> meta
+        _ -> nil
+      end
+
     assigns =
       assigns
       |> assign(:target, target)
       |> assign(:messages, messages)
       |> assign(:handoff_id, association(assigns.entry))
       |> assign(:important, origin["important"] == true)
+      |> assign(:access_label, access_label(viewer, target))
 
     ~H"""
     <section
       class="rounded-lg border border-base-300 bg-base-200/50 p-3 text-sm"
       data-thread-handoff={@handoff_id}
+      data-thread-access={@access_label}
     >
       <div class="flex flex-wrap items-center gap-2 text-xs opacity-80">
         <span>↗ {if @important, do: "Thread result", else: "Thread handoff"}</span>
@@ -67,7 +75,9 @@ defmodule HandbeamWeb.ThreadHandoff do
         <p class="whitespace-pre-wrap">{@entry["content"]}</p>
       </div>
       <details :if={@target && !@important} class="mt-2">
-        <summary class="cursor-pointer">View exchange (read-only)</summary>
+        <summary class="cursor-pointer">
+          View exchange<span :if={@access_label}> ({@access_label})</span>
+        </summary>
         <p class="mt-2 text-xs opacity-60">
           Latest 20 reports. Open the task thread to read all messages or give instructions.
         </p>
@@ -85,6 +95,35 @@ defmodule HandbeamWeb.ThreadHandoff do
     </section>
     """
   end
+
+  # The label is the delegated child's access, whether this card is on the parent or the child.
+  # The exchange itself stays a projection: expanding it never dispatches.
+  defp access_label(viewer, target) do
+    case delegated_child(viewer, target) do
+      %{"collaboration" => %{"read_only" => false, "approval" => "yolo"}} ->
+        "write · yolo"
+
+      %{"collaboration" => %{"read_only" => false}} ->
+        "write"
+
+      %{"collaboration" => %{"read_only" => true}} ->
+        "read-only"
+
+      _ ->
+        nil
+    end
+  end
+
+  defp delegated_child(viewer, target) do
+    cond do
+      delegated?(viewer) -> viewer
+      delegated?(target) -> target
+      true -> nil
+    end
+  end
+
+  defp delegated?(%{"collaboration" => %{"parent" => parent}}) when is_binary(parent), do: true
+  defp delegated?(_), do: false
 
   defp body(message) do
     text = message["content"] || ""

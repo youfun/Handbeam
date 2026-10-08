@@ -79,7 +79,7 @@ automatic acknowledgment is sent.
 ## UI
 
 One compact entry per associated handoff (even with the same peer) expands existing persisted reports using native
-`details`; there is no input box or separate channel/storage. Important parent
+`details`; there is no input box or separate channel/storage. The summary shows the delegated child's access (`read-only`, `write`, or `write · yolo`) from collaboration metadata, on either side of the exchange. A peer without that metadata has no access label. Important parent
 reports remain visible in the main timeline. Source titles/links come from
 authorized metadata, never body text. Unavailable sources show a placeholder.
 Human text cannot impersonate the report card. Known webhook/SNS/scheduler inputs

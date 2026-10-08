@@ -191,4 +191,73 @@ defmodule HandbeamWeb.ThreadHandoffTest do
       assert Handbeam.Agent.Runner.status(conversation) == {:error, :not_found}
     end
   end
+
+  test "exchange label follows the child access mode on both sides", c do
+    {:ok, writer} =
+      ConversationStore.create(c.ws,
+        title: "Writer",
+        collaboration: %{
+          "parent" => c.parent,
+          "read_only" => false,
+          "approval" => "yolo",
+          "handoff_id" => "write-a"
+        }
+      )
+
+    {:ok, reader} =
+      ConversationStore.create(c.ws,
+        title: "Reader",
+        collaboration: %{
+          "parent" => c.parent,
+          "read_only" => true,
+          "handoff_id" => "read-a"
+        }
+      )
+
+    for {child, association, body} <- [
+          {writer, "write-a", "Edit the file"},
+          {reader, "read-a", "Inspect the file"}
+        ] do
+      {:ok, _} =
+        ConversationTranscriptStore.append(c.parent, %{
+          "id" => "out-#{association}",
+          "handoff_id" => association,
+          "content_type" => "thread_handoff",
+          "target" => child["id"],
+          "content" => body
+        })
+
+      {:ok, _} =
+        ConversationTranscriptStore.append(child["id"], %{
+          "id" => "in-#{association}",
+          "role" => "user",
+          "content_type" => "user_msg",
+          "content" => body,
+          "origin" => %{
+            "kind" => "thread",
+            "conversation_id" => c.parent,
+            "handoff_id" => association
+          }
+        })
+    end
+
+    {:ok, view, _} = live(c.conn, "/w/" <> c.ws <> "/c/" <> c.parent)
+
+    assert has_element?(
+             view,
+             "[data-thread-handoff='write-a'][data-thread-access='write · yolo']"
+           )
+
+    assert has_element?(view, "[data-thread-handoff='read-a'][data-thread-access='read-only']")
+    refute has_element?(view, "[data-thread-handoff='audit-a'][data-thread-access]")
+
+    render_patch(view, "/w/" <> c.ws <> "/c/" <> writer["id"])
+
+    assert has_element?(
+             view,
+             "[data-thread-handoff='write-a'][data-thread-access='write · yolo']"
+           )
+
+    refute has_element?(view, "[data-thread-handoff='write-a'] summary", "read-only")
+  end
 end
