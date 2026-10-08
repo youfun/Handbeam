@@ -108,6 +108,24 @@ defmodule HandbeamWeb.SettingsLive do
      |> push_patch(to: ~p"/settings?#{query}")}
   end
 
+  def handle_event("set_locale", %{"locale" => locale}, socket) do
+    case Handbeam.Settings.UI.save_locale(locale) do
+      :ok ->
+        query =
+          %{
+            "tab" => "ui",
+            "workspace_id" => socket.assigns.workspace["id"],
+            "conversation_id" => socket.assigns.conversation_id
+          }
+          |> Map.reject(fn {_key, value} -> is_nil(value) end)
+
+        {:noreply, redirect(socket, to: ~p"/settings?#{query}")}
+
+      {:error, _reason} ->
+        {:noreply, put_flash(socket, :error, gettext("Could not save language preference."))}
+    end
+  end
+
   def handle_event("update_field", params, socket) do
     {field, value} = extract_field_value(params)
     form = update_form_field(socket.assigns.form, field, value)

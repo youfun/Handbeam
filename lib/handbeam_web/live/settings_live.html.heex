@@ -311,8 +311,11 @@
                 </div>
                 <div class="settings-field-control">
                   <div class="flex gap-2">
-                    <a
-                      href="?locale=zh_CN"
+                    <button
+                      id="ui-locale-zh_CN"
+                      type="button"
+                      phx-click="set_locale"
+                      phx-value-locale="zh_CN"
                       class={[
                         "settings-chip no-underline inline-flex items-center justify-center text-xs px-3 py-1.5 rounded border transition-colors",
                         if(@locale == "zh_CN",
@@ -322,9 +325,12 @@
                       ]}
                     >
                       {gettext("中文 (简体)")}
-                    </a>
-                    <a
-                      href="?locale=en"
+                    </button>
+                    <button
+                      id="ui-locale-en"
+                      type="button"
+                      phx-click="set_locale"
+                      phx-value-locale="en"
                       class={[
                         "settings-chip no-underline inline-flex items-center justify-center text-xs px-3 py-1.5 rounded border transition-colors",
                         if(@locale == "en",
@@ -334,7 +340,7 @@
                       ]}
                     >
                       {gettext("English")}
-                    </a>
+                    </button>
                   </div>
                 </div>
               </div>
