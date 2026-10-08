@@ -14,6 +14,7 @@ defmodule HandbeamWeb.AvailableModelsLive do
 
   alias Handbeam.Agent.Provider.Codex.Models, as: CodexModels
   alias Handbeam.Agent.Provider.Cursor.Models, as: CursorModels
+  alias Handbeam.Agent.Provider.ModelCatalog
   alias Handbeam.Agent.ModelConfig
   alias Handbeam.Agent.Reasoning
   alias Handbeam.LlmDbDefaults
@@ -53,6 +54,7 @@ defmodule HandbeamWeb.AvailableModelsLive do
       |> assign(:subscription_oauth, nil)
       |> assign(:codex_discover_attempt, nil)
       |> assign(:cursor_discover_attempt, nil)
+      |> assign(:catalog_discover_attempt, nil)
       |> assign(:show_subscription_login, false)
       |> assign(:subscription_methods, Subscriptions.methods())
       |> schedule_catalog_prices(providers)
@@ -123,6 +125,15 @@ defmodule HandbeamWeb.AvailableModelsLive do
      apply_cursor_models(socket, attempt_id, {:error, gettext("Model discovery failed")})}
   end
 
+  def handle_async({:provider_models, attempt_id}, {:ok, result}, socket) do
+    {:noreply, apply_provider_models(socket, attempt_id, result)}
+  end
+
+  def handle_async({:provider_models, attempt_id}, {:exit, _reason}, socket) do
+    {:noreply,
+     apply_provider_models(socket, attempt_id, {:error, gettext("Model discovery failed")})}
+  end
+
   def handle_async({:catalog_prices, generation}, {:ok, prices}, socket) do
     if socket.assigns.catalog_price_generation == generation do
       providers = apply_catalog_prices(socket.assigns.providers, prices)
@@ -174,6 +185,10 @@ defmodule HandbeamWeb.AvailableModelsLive do
   def handle_event("refresh_cursor_models", _params, socket) do
     attempt_id = System.unique_integer([:positive])
     {:noreply, maybe_discover_cursor_models(socket, "cursor", attempt_id)}
+  end
+
+  def handle_event("refresh_provider_models", _params, socket) do
+    {:noreply, discover_provider_models(socket)}
   end
 
   def handle_event("disable_all_models", _params, socket) do
@@ -775,6 +790,40 @@ defmodule HandbeamWeb.AvailableModelsLive do
 
   defp maybe_discover_cursor_models(socket, _provider_id, _attempt_id), do: socket
 
+  defp discover_provider_models(socket) do
+    provider_id = socket.assigns.selected_provider_id
+    attempt_id = System.unique_integer([:positive])
+
+    socket
+    |> cancel_discovery_async(:provider)
+    |> start_async({:provider_models, attempt_id}, fn -> ModelCatalog.discover(provider_id) end)
+    |> assign(:catalog_discover_attempt, attempt_id)
+  end
+
+  defp apply_provider_models(socket, attempt_id, result) do
+    if socket.assigns[:catalog_discover_attempt] == attempt_id do
+      socket = assign(socket, :catalog_discover_attempt, nil)
+
+      case result do
+        {:ok, %{added: added, total: total}} ->
+          Process.send_after(self(), :clear_toast, 3000)
+
+          socket
+          |> reload_providers()
+          |> assign(:toast, %{
+            type: :success,
+            message: gettext("Fetched %{total} models, %{added} new", total: total, added: added),
+            id: System.unique_integer([:positive])
+          })
+
+        {:error, message} ->
+          assign(socket, :form_error, message)
+      end
+    else
+      socket
+    end
+  end
+
   defp apply_cursor_models(socket, attempt_id, result) do
     current = socket.assigns[:cursor_discover_attempt]
 
@@ -830,6 +879,7 @@ defmodule HandbeamWeb.AvailableModelsLive do
     |> put_oauth(nil)
     |> assign(:codex_discover_attempt, nil)
     |> assign(:cursor_discover_attempt, nil)
+    |> assign(:catalog_discover_attempt, nil)
   end
 
   defp cancel_discovery_async(socket, :codex) do
@@ -843,6 +893,13 @@ defmodule HandbeamWeb.AvailableModelsLive do
     case socket.assigns[:cursor_discover_attempt] do
       nil -> socket
       attempt_id -> cancel_async(socket, {:cursor_models, attempt_id})
+    end
+  end
+
+  defp cancel_discovery_async(socket, :provider) do
+    case socket.assigns[:catalog_discover_attempt] do
+      nil -> socket
+      attempt_id -> cancel_async(socket, {:provider_models, attempt_id})
     end
   end
 
@@ -1004,6 +1061,7 @@ defmodule HandbeamWeb.AvailableModelsLive do
         base_url: Map.get(pc, "baseUrl", ""),
         api_key: Map.get(pc, "apiKey", ""),
         auth_type: Map.get(pc, "authType", "api_key"),
+        fetchable: ModelCatalog.fetchable?(pc),
         is_default: id == default,
         provider: Map.get(pc, "provider", id),
         models:

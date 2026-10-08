@@ -65,6 +65,112 @@ defmodule Handbeam.LlmDbDefaults do
   end
 
   @doc """
+  Catalog fields for a discovered model id.
+
+  Gateway ids are `provider/model`. The prefix is tried as an llm_db provider,
+  then the bare id is tried across the loaded catalog. A miss returns only the
+  id and display name so discovery can still save the row.
+  """
+  @spec enrich_model(String.t(), String.t() | nil, (-> :ok | {:error, term()})) :: map()
+  def enrich_model(model_id, name \\ nil, load \\ &ensure_loaded/0)
+
+  def enrich_model(model_id, name, load) when is_binary(model_id) and is_function(load, 0) do
+    base = %{
+      "id" => model_id,
+      "name" => present_name(name, model_id),
+      "input" => ["text"]
+    }
+
+    try do
+      case load.() do
+        :ok -> Map.merge(base, catalog_fields(find_catalog_model(model_id)))
+        _ -> base
+      end
+    rescue
+      # Android flattens Hex apps onto the code path. llm_db then raises
+      # `unknown application` from Application.app_dir/1 while loading its
+      # snapshot. Discovery must still keep the remote id.
+      ArgumentError ->
+        base
+    end
+  end
+
+  defp find_catalog_model(model_id) do
+    {provider_hint, bare_id} = split_gateway_id(model_id)
+
+    with {:ok, provider} <- normalize_provider(provider_hint),
+         {:ok, model} <- LLMDB.model(provider, bare_id) do
+      model
+    else
+      _ -> find_model_by_id(bare_id) || find_model_by_id(model_id)
+    end
+  end
+
+  defp find_model_by_id(model_id) do
+    LLMDB.models()
+    |> Enum.find(fn model -> model.id == model_id or model_id in (model.aliases || []) end)
+  end
+
+  defp catalog_fields(nil), do: %{}
+
+  defp catalog_fields(%LLMDB.Model{} = model) do
+    limits = model.limits || %{}
+    reasoning = reasoning_fields(model.capabilities && model.capabilities.reasoning)
+
+    %{}
+    |> maybe_put("name", model.name)
+    |> maybe_put("contextWindow", Map.get(limits, :context))
+    |> maybe_put("maxTokens", Map.get(limits, :output))
+    |> maybe_put_cost(model)
+    |> Map.merge(reasoning)
+  end
+
+  defp catalog_fields(_model), do: %{}
+
+  defp reasoning_fields(%{enabled: true} = reasoning) do
+    effort = Map.get(reasoning, :effort) || %{}
+
+    %{}
+    |> Map.put("reasoning", true)
+    |> maybe_put("reasoningLevels", present_list(Map.get(effort, :values)))
+    |> maybe_put("defaultReasoning", Map.get(effort, :default))
+  end
+
+  defp reasoning_fields(_reasoning), do: %{}
+
+  defp maybe_put_cost(fields, model) do
+    case catalog_cost(model) do
+      nil -> fields
+      cost -> Map.put(fields, "cost", cost)
+    end
+  end
+
+  defp split_gateway_id(model_id) do
+    case String.split(model_id, "/", parts: 2) do
+      [provider, id] when provider != "" and id != "" -> {provider, id}
+      _ -> {nil, model_id}
+    end
+  end
+
+  defp present_name(name, fallback) when is_binary(name) do
+    case String.trim(name) do
+      "" -> fallback
+      trimmed -> trimmed
+    end
+  end
+
+  defp present_name(_name, fallback), do: fallback
+
+  defp present_list(values) when is_list(values) do
+    case Enum.filter(values, &(is_binary(&1) and &1 != "")) do
+      [] -> nil
+      levels -> levels
+    end
+  end
+
+  defp present_list(_values), do: nil
+
+  @doc """
   Official upstream price for a model id.
 
   Cursor is not an llm_db provider. Its catalog ids are upstream models plus

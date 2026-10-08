@@ -1174,6 +1174,16 @@ msgstr "编辑模型"
 msgid "Edit provider"
 msgstr "编辑提供商"
 
+#: lib/handbeam_probe/model_settings/render.ex
+#, elixir-autogen, elixir-format
+msgid "Fetch models"
+msgstr "拉取模型"
+
+#: lib/handbeam_probe/home_screen/settings.ex
+#, elixir-autogen, elixir-format
+msgid "Fetching models…"
+msgstr "正在拉取模型…"
+
 #: lib/handbeam_probe/native_workspaces.ex:600
 #, elixir-autogen, elixir-format
 msgid "Enter a display name"

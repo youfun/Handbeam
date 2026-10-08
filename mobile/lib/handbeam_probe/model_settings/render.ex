@@ -373,10 +373,13 @@ defmodule HandbeamProbe.ModelSettings.Render do
         else: gettext("%{count} models", count: length(models))
 
     card([
-      row([
-        text(provider.name, text_size: 15, weight: 1),
-        secondary_button(gettext("Edit provider"), {:edit_provider, provider.id})
-      ]),
+      row(
+        [
+          text(provider.name, text_size: 15, weight: 1)
+          | provider_actions(provider)
+        ],
+        align: "center"
+      ),
       text(Labels.key_status(provider.key_status),
         text_size: 12,
         text_color: color(:hint),
@@ -387,36 +390,53 @@ defmodule HandbeamProbe.ModelSettings.Render do
     ])
   end
 
+  defp provider_actions(provider) do
+    fetch =
+      if provider.fetchable do
+        [secondary_button(gettext("Fetch models"), {:fetch_models, provider.id})]
+      else
+        []
+      end
+
+    fetch ++ [secondary_button(gettext("Edit provider"), {:edit_provider, provider.id})]
+  end
+
   defp model_row(model) do
     enabled? = Map.get(model, :enabled, true)
+    edit = {:edit_model, model.provider_id, model.model_id}
 
-    card([
-      row([
-        text(model.name, text_size: 15, weight: 1),
-        secondary_button(gettext("Edit model"), {:edit_model, model.provider_id, model.model_id})
-      ]),
-      text(model.id, text_size: 12, text_color: color(:hint), padding_top: 6, padding_bottom: 8),
-      row([
-        text(
-          if(enabled?, do: gettext("Model on"), else: gettext("Model off")),
-          text_size: 13,
-          text_color: color(:muted),
-          weight: 1
+    node(
+      :row,
+      [
+        fill_width: true,
+        align: "center",
+        padding: 10,
+        padding_bottom: 2,
+        background: color(:card),
+        border_color: color(:border),
+        border_width: 1,
+        corner_radius: 8,
+        on_tap: {self(), edit},
+        id: "model-row-#{model.provider_id}-#{model.model_id}"
+      ],
+      [
+        node(
+          :column,
+          [weight: 1, fill_width: true, on_tap: {self(), edit}],
+          [
+            text(model.name, text_size: 15, weight: 1, max_lines: 1),
+            text(model.id, text_size: 12, text_color: color(:hint), max_lines: 1)
+          ]
         ),
         node(
           :toggle,
           value: enabled?,
-          label: gettext("Show in model choices"),
           on_change:
             {self(), {:toggle_model_enabled, model.provider_id, model.model_id, not enabled?}},
           id: "toggle-model-#{model.provider_id}-#{model.model_id}"
         )
-      ]),
-      danger_button(
-        gettext("Delete model"),
-        {:ask_delete_model, model.provider_id, model.model_id}
-      )
-    ])
+      ]
+    )
   end
 
   defp default_model_options(state) do

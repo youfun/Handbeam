@@ -78,6 +78,10 @@ defmodule HandbeamProbe.HomeScreen.Settings do
     action(socket, :cancel_subscription_login)
   end
 
+  def handle({:tap, {:fetch_models, provider}}, socket) when is_binary(provider) do
+    fetch_models(socket, provider)
+  end
+
   def handle({:tap, action}, socket), do: action(socket, action)
 
   def handle({:models_updated}, socket) do
@@ -164,6 +168,12 @@ defmodule HandbeamProbe.HomeScreen.Settings do
     |> load_models()
   end
 
+  def handle_subscription(:models_fetched, result, socket) do
+    socket
+    |> assign(:models, %{socket.assigns.models | notice: nil})
+    |> apply_fetched_models(result)
+  end
+
   def handle_subscription(:subscription_discovered, {:error, message}, socket) do
     socket
     |> assign(:subscription_provider_id, nil)
@@ -171,6 +181,36 @@ defmodule HandbeamProbe.HomeScreen.Settings do
   end
 
   def handle_subscription(_kind, _result, socket), do: socket
+
+  defp fetch_models(socket, provider_id) do
+    {generation, socket} = Requests.bump(socket, @scope)
+
+    task =
+      Task.Supervisor.async_nolink(HandbeamProbe.TaskSupervisor, fn ->
+        {:models_fetched, generation, Handbeam.Agent.Provider.ModelCatalog.discover(provider_id)}
+      end)
+
+    socket
+    |> action({:fetch_models, provider_id})
+    |> assign(:models, %{socket.assigns.models | notice: gettext("Fetching models…")})
+    |> Requests.register(task.ref, :models_fetched, scope: @scope, generation: generation)
+  end
+
+  defp apply_fetched_models(socket, {:ok, %{added: added, total: total}}) do
+    socket
+    |> load_models()
+    |> Notice.put_info(
+      gettext("Fetched %{total} models, %{added} new", total: total, added: added)
+    )
+  end
+
+  defp apply_fetched_models(socket, {:error, message}) when is_binary(message) do
+    Notice.put_error(socket, message)
+  end
+
+  defp apply_fetched_models(socket, _result) do
+    Notice.put_error(socket, gettext("Model discovery failed"))
+  end
 
   defp start_subscription(socket, provider_id) do
     {_generation, socket} = Requests.bump(socket, @subscription_scope)

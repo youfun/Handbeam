@@ -390,7 +390,8 @@ defmodule HandbeamProbe.ModelSettingsTest do
 
     tree = ModelSettings.render(state)
     assert tap_change?(tree, {:toggle_model_enabled, "alpha", "one", true})
-    assert flatten_text(tree) =~ gettext("Model off")
+    assert tap?(tree, {:edit_model, "alpha", "one"})
+    refute tap?(tree, {:ask_delete_model, "alpha", "one"})
 
     state = ModelSettings.action({:toggle_model_enabled, "alpha", "one", true}, state, ws)
     one = Enum.find(read_models()["providers"]["alpha"]["models"], &(&1["id"] == "one"))
@@ -477,7 +478,8 @@ defmodule HandbeamProbe.ModelSettingsTest do
           {"Add provider", add_provider},
           {"Add model", add_model},
           {"No models yet for this provider.", no_models},
-          {"This provider has no models yet.", provider_empty}
+          {"This provider has no models yet.", provider_empty},
+          {"Fetch models", gettext("Fetch models")}
         ] do
       refute translated == msgid, "zh_CN translation missing for #{inspect(msgid)}"
     end

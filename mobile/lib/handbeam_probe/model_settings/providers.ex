@@ -31,7 +31,8 @@ defmodule HandbeamProbe.ModelSettings.Providers do
             name: display_name(id, entry),
             model_count: length(entry["models"] || []),
             key_status: ModelCatalog.key_status(entry),
-            max_tokens: entry["maxTokens"]
+            max_tokens: entry["maxTokens"],
+            fetchable: Handbeam.Agent.Provider.ModelCatalog.fetchable?(entry)
           }
         end)
         |> Enum.sort_by(& &1.name)

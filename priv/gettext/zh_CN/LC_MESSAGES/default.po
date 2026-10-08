@@ -1374,6 +1374,12 @@ msgstr "非官方 Cursor 协议接入。费用未知，不会显示为 0 或免�
 msgid "刷新订阅模型"
 msgstr "刷新订阅模型"
 
+msgid "拉取模型"
+msgstr "拉取模型"
+
+msgid "Fetched %{total} models, %{added} new"
+msgstr "已拉取 %{total} 个模型，新增 %{added} 个"
+
 msgid "刷新 Cursor 模型"
 msgstr "刷新 Cursor 模型"
 

@@ -179,6 +179,14 @@
               {gettext("刷新 Cursor 模型")}
             </button>
             <button
+              :if={@selected_provider.fetchable}
+              phx-click="refresh_provider_models"
+              disabled={not is_nil(@catalog_discover_attempt)}
+              class="settings-btn"
+            >
+              {gettext("拉取模型")}
+            </button>
+            <button
               phx-click="open_edit_provider"
               phx-value-id={@selected_provider.id}
               class="settings-btn"

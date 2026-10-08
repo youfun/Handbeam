@@ -149,6 +149,11 @@ defmodule HandbeamProbe.ModelSettings do
     do: Providers.edit_model(state, provider, model)
 
   def action({:edit_provider, provider}, state, _ws), do: Providers.edit_provider(state, provider)
+
+  def action({:fetch_models, provider}, state, _ws) when is_binary(provider) do
+    %{state | selected_provider: provider, confirm: nil}
+  end
+
   def action({:catalog_model, model}, state, _ws), do: Providers.catalog_model(state, model)
   def action(:cancel_model, state, _ws), do: Providers.cancel(state)
   def action(:cancel_confirm, state, _ws), do: %{state | confirm: nil}

@@ -368,6 +368,9 @@ defmodule HandbeamProbe.HomeScreen do
   defp async_result(:model_settings_loaded, result, socket),
     do: Settings.handle_loaded(socket, result)
 
+  defp async_result(:models_fetched, result, socket),
+    do: Settings.handle_subscription(:models_fetched, result, socket)
+
   defp async_result(:model_settings_refs, {target, result}, socket),
     do: Settings.handle_refs(socket, target, result)
 
