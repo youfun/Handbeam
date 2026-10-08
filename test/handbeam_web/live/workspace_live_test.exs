@@ -1758,7 +1758,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
              error: "agent-browser is not installed",
              details: %{
                failure_category: "missing-binary",
-               install_command: "npm install -g agent-browser && agent-browser install",
+               install_command: Handbeam.Browser.InstallPrompt.command(),
                next_actions: [%{id: "install-agent-browser"}]
              }
            },
@@ -1771,15 +1771,14 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert has_element?(
                view,
                "#browser-install-tool-tu_browser_missing",
-               "npm install -g agent-browser && agent-browser install"
+               Handbeam.Browser.InstallPrompt.command()
              )
 
       assert has_element?(view, "#browser-install-copy-tool-tu_browser_missing")
 
       html = render(view)
 
-      assert html =~ "npm install -g agent-browser &amp;&amp; agent-browser install" or
-               html =~ "npm install -g agent-browser && agent-browser install"
+      assert html =~ "npm install -g agent-browser" and html =~ "/usr/local/bin/agent-browser"
 
       refute html =~ ~s("agent-browser is not installed")
     end

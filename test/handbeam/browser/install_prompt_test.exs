@@ -17,8 +17,11 @@ defmodule Handbeam.Browser.InstallPromptTest do
       prompt = InstallPrompt.from_details(parsed.details)
 
       assert prompt.title =~ "agent-browser"
-      assert prompt.command == "npm install -g agent-browser && agent-browser install"
-      assert prompt.hint =~ "retry"
+      assert prompt.command == InstallPrompt.command()
+      assert prompt.command =~ "npm install -g agent-browser && agent-browser install"
+      assert prompt.command =~ "/usr/local/bin/agent-browser"
+      assert prompt.hint =~ "each computer"
+      assert prompt.hint =~ "another machine"
       assert prompt.hint =~ "Handbeam"
     end
 
@@ -29,7 +32,8 @@ defmodule Handbeam.Browser.InstallPromptTest do
           "next_actions" => [%{"id" => "install-agent-browser"}]
         })
 
-      assert prompt.command == "npm install -g agent-browser && agent-browser install"
+      assert prompt.command == InstallPrompt.command()
+      assert prompt.command =~ "/usr/local/bin/agent-browser"
     end
 
     test "returns nil for other failures and empty input" do
@@ -48,8 +52,7 @@ defmodule Handbeam.Browser.InstallPromptTest do
         "details" => %{failure_category: "missing-binary"}
       }
 
-      assert InstallPrompt.from_entry(entry).command ==
-               "npm install -g agent-browser && agent-browser install"
+      assert InstallPrompt.from_entry(entry).command == InstallPrompt.command()
     end
 
     test "returns nil when the entry has no missing-binary details" do
@@ -62,11 +65,13 @@ defmodule Handbeam.Browser.InstallPromptTest do
     test "exposes install_command for UI and a model-facing recipe" do
       parsed = Result.missing_binary("agent-browser")
 
-      assert parsed.details.install_command ==
-               "npm install -g agent-browser && agent-browser install"
+      assert parsed.details.install_command == InstallPrompt.command()
 
       assert parsed.content =~ "npm install -g agent-browser && agent-browser install"
+      assert parsed.content =~ "more than one computer"
+      assert parsed.content =~ "/usr/local/bin"
       assert parsed.content =~ "Do not install it with the bash tool"
+      assert parsed.content =~ "another computer"
     end
   end
 end

@@ -325,7 +325,7 @@ defmodule HandbeamWeb.WorkspaceHelperTest do
           "details" => %{"failure_category" => "missing-binary"}
         })
 
-      assert prompt.command == "npm install -g agent-browser && agent-browser install"
+      assert prompt.command == Handbeam.Browser.InstallPrompt.command()
       assert prompt.title =~ "agent-browser"
     end
 

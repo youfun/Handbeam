@@ -92,7 +92,7 @@ defmodule Handbeam.Agent.HostEnvironment do
 
   defp text(:desktop_browser),
     do:
-      "The browser backend is agent-browser CLI when exposed; the executable and browser runtime must be installed. Browser access does not grant shell permission."
+      "The browser backend is agent-browser CLI when exposed. Handbeam is installed on more than one computer; the executable and browser runtime must be installed on the computer running this conversation and visible to this process PATH. A shell, mise, or npm global install on another computer, or only in a login shell, does not count. A desktop app sees /usr/local/bin and /usr/bin. Browser access does not grant shell permission."
 
   defp text(:webview_browser),
     do:

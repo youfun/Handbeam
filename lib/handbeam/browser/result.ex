@@ -50,13 +50,20 @@ defmodule Handbeam.Browser.Result do
     failure(
       "missing-binary",
       """
-      #{binary} is not installed or not on PATH.
+      #{binary} is not installed, or not on this Handbeam process's PATH.
 
-      Install it with:
+      Handbeam is installed on more than one computer. Install on the computer \
+      running this conversation, not on a development machine that already has it. \
+      A GUI or desktop app only searches /usr/local/bin and /usr/bin, so a shell, \
+      mise, or npm global install is invisible until it is linked there.
+
+      Run this on that computer:
       #{command}
 
-      Then retry the same browser call. Handbeam can keep running. \
-      Do not install it with the bash tool unless the user approves.
+      Then restart Handbeam on that computer and retry the same browser call. \
+      Handbeam can keep running while you install. \
+      Do not install it with the bash tool unless the user approves. \
+      Do not treat another computer's install as success.
       """,
       next_actions: [%{id: "install-agent-browser", command: command}],
       install_command: command
