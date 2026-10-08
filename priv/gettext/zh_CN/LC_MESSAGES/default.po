@@ -471,6 +471,9 @@ msgstr "差异："
 msgid "Revert"
 msgstr "回滚"
 
+msgid "Copy relative path"
+msgstr "复制相对路径"
+
 #: lib/sigil_web/live/workspace_live.html.heex:924
 #, elixir-autogen
 msgid "Confirm revert"

@@ -1512,13 +1512,26 @@ button.workspace-file-row:hover,
   background: var(--color-surface);
 }
 
+.file-change-card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px 8px;
+}
+
+.file-change-card-head:hover {
+  background: var(--color-surface-hover);
+}
+
 .file-change-card-toggle {
-  width: 100%;
+  flex: 1 1 auto;
+  width: auto;
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 8px;
+  padding: 0;
   border: 0;
   background: transparent;
   color: var(--color-text-secondary);
@@ -1528,9 +1541,47 @@ button.workspace-file-row:hover,
   cursor: pointer;
 }
 
-.file-change-card-toggle:hover {
-  background: var(--color-surface-hover);
+.file-change-card-head:hover .file-change-card-toggle {
   color: var(--color-text-primary);
+}
+
+.file-change-copy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--color-text-tertiary);
+  cursor: pointer;
+}
+
+.file-change-copy:hover,
+.file-change-copy[data-copied="true"] {
+  color: var(--color-text-primary);
+}
+
+.file-change-copy .copy-done {
+  display: none;
+}
+
+.file-change-copy[data-copied="true"] .copy-idle {
+  display: none;
+}
+
+.file-change-copy[data-copied="true"] .copy-done {
+  display: block;
+}
+
+.file-change-counts {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  cursor: pointer;
 }
 
 .file-change-chevron {

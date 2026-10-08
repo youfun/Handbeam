@@ -45,20 +45,80 @@ defmodule HandbeamWeb.FileChangeCard do
 
     ~H"""
     <article id={@card_id} class={["file-change-card", @class, @open? && "open"]}>
-      <button
-        type="button"
-        id={"#{@card_id}-toggle"}
-        class="file-change-card-toggle"
-        phx-click={@toggle_event}
-        phx-value-id={@entry_id}
-        aria-expanded={to_string(@open?)}
-      >
-        <span class="file-change-chevron" aria-hidden="true">{if @open?, do: "⌄", else: "›"}</span>
-        <span class="file-change-label">{@label}</span>
-        <span class="file-change-path truncate" title={@path}>{@path}</span>
-        <span :if={@added > 0} class="file-change-count added">+{@added}</span>
-        <span :if={@removed > 0} class="file-change-count removed">−{@removed}</span>
-      </button>
+      <div class="file-change-card-head">
+        <button
+          type="button"
+          id={"#{@card_id}-toggle"}
+          class="file-change-card-toggle"
+          phx-click={@toggle_event}
+          phx-value-id={@entry_id}
+          aria-expanded={to_string(@open?)}
+        >
+          <span class="file-change-chevron" aria-hidden="true">{if @open?, do: "⌄", else: "›"}</span>
+          <span class="file-change-label">{@label}</span>
+          <span class="file-change-path truncate" title={@path}>{@path}</span>
+        </button>
+        <button
+          :if={@path != ""}
+          type="button"
+          id={"#{@card_id}-copy-path"}
+          class="file-change-copy"
+          phx-hook="CopyText"
+          data-copy={@path}
+          title={Gettext.gettext(HandbeamWeb.Gettext, "Copy relative path")}
+          aria-label={Gettext.gettext(HandbeamWeb.Gettext, "Copy relative path")}
+        >
+          <svg
+            class="copy-idle"
+            width="12"
+            height="12"
+            viewBox="0 0 12 12"
+            fill="none"
+            aria-hidden="true"
+          >
+            <rect
+              x="4.25"
+              y="3.25"
+              width="5.5"
+              height="6.5"
+              rx="0.75"
+              stroke="currentColor"
+              stroke-width="1.1"
+            />
+            <path
+              d="M3.25 8.75H2.75A.75.75 0 0 1 2 8V2.75A.75.75 0 0 1 2.75 2H8a.75.75 0 0 1 .75.75V3.25"
+              stroke="currentColor"
+              stroke-width="1.1"
+              stroke-linecap="round"
+            />
+          </svg>
+          <svg
+            class="copy-done"
+            width="12"
+            height="12"
+            viewBox="0 0 12 12"
+            fill="none"
+            aria-hidden="true"
+          >
+            <path
+              d="M2.5 6.2 4.8 8.5 9.5 3.5"
+              stroke="currentColor"
+              stroke-width="1.2"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+        </button>
+        <span
+          :if={@added > 0 or @removed > 0}
+          class="file-change-counts"
+          phx-click={@toggle_event}
+          phx-value-id={@entry_id}
+        >
+          <span :if={@added > 0} class="file-change-count added">+{@added}</span>
+          <span :if={@removed > 0} class="file-change-count removed">−{@removed}</span>
+        </span>
+      </div>
       <div :if={@open?} id={"#{@card_id}-diff"} class="file-change-diff">
         <div class="file-change-actions">
           <span class="file-change-status">{@change["revert_status"] || "review-only"}</span>

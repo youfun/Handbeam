@@ -460,6 +460,9 @@ msgstr "Diff: "
 msgid "Revert"
 msgstr "Revert"
 
+msgid "Copy relative path"
+msgstr "Copy relative path"
+
 #: lib/sigil_web/live/workspace_live.html.heex:924
 #, elixir-autogen
 msgid "Confirm revert"

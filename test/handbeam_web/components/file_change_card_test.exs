@@ -72,6 +72,9 @@ defmodule HandbeamWeb.FileChangeCardTest do
       assert html =~ "latest"
       assert html =~ "diff-ins"
       assert html =~ "+1"
+      assert html =~ ~s(phx-hook="CopyText")
+      assert html =~ ~s(data-copy="CHANGELOG.md")
+      assert html =~ "Copy relative path"
     end
 
     test "two successful writes of one path are one row from first baseline to latest" do
