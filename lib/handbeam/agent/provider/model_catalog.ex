@@ -158,10 +158,18 @@ defmodule Handbeam.Agent.Provider.ModelCatalog do
   end
 
   defp parse_models(%{"data" => data}) when is_list(data) do
-    models =
+    entries =
       data
-      |> Enum.flat_map(&catalog_model/1)
-      |> Enum.uniq_by(& &1["id"])
+      |> Enum.flat_map(fn
+        %{"id" => id} = model when is_binary(id) and id != "" ->
+          [{id, model["name"] || model["display_name"]}]
+
+        _ ->
+          []
+      end)
+      |> Enum.uniq_by(&elem(&1, 0))
+
+    models = entries |> LlmDbDefaults.enrich_models() |> Map.values()
 
     case models do
       [] -> {:error, "The provider returned no models. The existing list was kept."}
@@ -179,12 +187,6 @@ defmodule Handbeam.Agent.Provider.ModelCatalog do
   defp parse_models(_body) do
     {:error, "The provider returned an unreadable model list. The existing list was kept."}
   end
-
-  defp catalog_model(%{"id" => id} = model) when is_binary(id) and id != "" do
-    [LlmDbDefaults.enrich_model(id, model["name"] || model["display_name"])]
-  end
-
-  defp catalog_model(_model), do: []
 
   defp prefer_existing(existing, remote) when existing in [nil, "", []], do: remote
   defp prefer_existing(existing, _remote), do: existing

@@ -40,6 +40,17 @@ defmodule Handbeam.Agent.ReasoningTest do
       assert levels == ["medium", "high", "xhigh"]
     end
 
+    test "uses catalog reasoning levels instead of the generic list" do
+      levels =
+        Reasoning.supported_levels(%{
+          id: "gpt-6.1-sol",
+          reasoning: true,
+          reasoning_levels: ["low", "medium", "high", "xhigh", "max"]
+        })
+
+      assert levels == ["off", "low", "medium", "high", "xhigh", "max"]
+    end
+
     test "includes off and hides levels mapped to nil" do
       model = %{
         reasoning: true,

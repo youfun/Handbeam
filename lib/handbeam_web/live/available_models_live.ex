@@ -280,14 +280,7 @@ defmodule HandbeamWeb.AvailableModelsLive do
 
   def handle_event("update_add_provider", %{"add_provider" => params}, socket) do
     previous = socket.assigns.add_provider_form
-    force? = provider_source_changed?(previous, params)
-
-    form =
-      previous
-      |> Map.merge(params)
-      |> maybe_apply_subscription_preset()
-      |> hydrate_add_provider_form(force?)
-
+    form = previous |> Map.merge(params) |> maybe_apply_subscription_preset()
     {:noreply, assign(socket, :add_provider_form, form)}
   end
 
@@ -301,14 +294,18 @@ defmodule HandbeamWeb.AvailableModelsLive do
       socket.assigns.add_provider_form
       |> Map.merge(params)
       |> maybe_apply_subscription_preset()
+      |> hydrate_add_provider_form(true)
 
-    provider_id = params["id"] |> to_string() |> String.trim()
     name = params["name"] |> to_string() |> String.trim()
     api = params["api"] |> to_string() |> String.trim()
     base_url = params["base_url"] |> to_string() |> String.trim()
     api_key = params["api_key"] |> to_string() |> String.trim()
-    model_id = params["model_id"] |> to_string() |> String.trim()
-    model_name = params["model_name"] |> to_string() |> String.trim()
+
+    provider_id =
+      params["id"]
+      |> to_string()
+      |> String.trim()
+      |> present_or(generated_provider_id(name, socket.assigns.providers))
 
     cond do
       provider_id == "" ->
@@ -317,9 +314,6 @@ defmodule HandbeamWeb.AvailableModelsLive do
       not String.match?(provider_id, ~r/^[a-z0-9_-]+$/) ->
         {:noreply, assign(socket, :form_error, gettext("Provider ID 只能包含小写字母、数字、横线和下划线"))}
 
-      model_id == "" and subscription_seed_models(provider_id) == [] ->
-        {:noreply, assign(socket, :form_error, gettext("需要至少一个模型"))}
-
       true ->
         provider_attrs = %{
           "provider" => runtime_provider(params, provider_id),
@@ -327,7 +321,7 @@ defmodule HandbeamWeb.AvailableModelsLive do
           "api" => api,
           "apiKey" => api_key,
           "name" => present_or(name, display_name(provider_id)),
-          "models" => provider_models(params, provider_id, model_id, model_name)
+          "models" => subscription_seed_models(provider_id)
         }
 
         case ModelConfig.add_provider(provider_id, provider_attrs) do
@@ -520,6 +514,7 @@ defmodule HandbeamWeb.AvailableModelsLive do
 
   def handle_event("submit_add_model", %{"add_model" => params}, socket) do
     provider_id = socket.assigns.selected_provider_id
+    params = socket.assigns.add_model_form |> Map.merge(params) |> hydrate_add_model_form(true)
 
     model_id = params["id"] |> to_string() |> String.trim()
     model_name = params["name"] |> to_string() |> String.trim()
@@ -1113,27 +1108,7 @@ defmodule HandbeamWeb.AvailableModelsLive do
         |> Map.put("base_url", preset["baseUrl"])
         |> Map.put("api", preset["api"])
         |> Map.put("provider_runtime", preset["provider"])
-    end
-  end
-
-  defp provider_models(params, provider_id, model_id, model_name) do
-    case subscription_seed_models(provider_id) do
-      [_ | _] = models ->
-        models
-
-      [] ->
-        [
-          %{
-            "id" => model_id,
-            "name" => present_or(model_name, model_id),
-            "input" => ["text"],
-            "contextWindow" => parse_int(params["context_window"], 128_000),
-            "maxTokens" => parse_int(params["max_tokens"], 8192),
-            "cost" => build_cost_map(params)
-          }
-          |> maybe_put_reasoning(params, model_id)
-          |> maybe_drop_empty_cost()
-        ]
+        |> Map.put("subscription_preset", true)
     end
   end
 
@@ -1186,30 +1161,55 @@ defmodule HandbeamWeb.AvailableModelsLive do
     }
   end
 
+  defp hydrate_add_provider_form(%{"subscription_preset" => true} = form, _force?), do: form
+
   defp hydrate_add_provider_form(form, force?) do
-    defaults = LlmDbDefaults.defaults_for(form["id"], form["model_id"])
+    defaults = LlmDbDefaults.defaults_for(form["id"], form["name"], form["base_url"], nil)
 
     form
+    |> put_default("id", defaults.provider_id, false)
     |> put_default("name", defaults.provider[:provider_name], force?)
     |> put_default("base_url", defaults.provider[:base_url], force?)
     |> put_default("api", defaults.provider[:api], force?)
     |> put_default("provider_runtime", defaults.provider[:provider_runtime], force?)
-    |> put_default("model_name", defaults.model[:model_name], force?)
-    |> put_default("context_window", to_string_or_nil(defaults.model[:context_window]), force?)
-    |> put_default("max_tokens", to_string_or_nil(defaults.model[:max_tokens]), force?)
-    |> put_default("price_input", to_string_or_nil(defaults.model[:price_input]), force?)
-    |> put_default("price_output", to_string_or_nil(defaults.model[:price_output]), force?)
-    |> put_default(
-      "price_cache_read",
-      to_string_or_nil(defaults.model[:price_cache_read]),
-      force?
-    )
-    |> put_default(
-      "price_cache_write",
-      to_string_or_nil(defaults.model[:price_cache_write]),
-      force?
-    )
-    |> put_default("price_reasoning", to_string_or_nil(defaults.model[:price_reasoning]), force?)
+  end
+
+  defp hydrate_add_model_form(form, force?) do
+    defaults = LlmDbDefaults.model_form_defaults(form["id"])
+
+    form
+    |> put_default("name", defaults[:model_name], force?)
+    |> put_default("context_window", to_string_or_nil(defaults[:context_window]), force?)
+    |> put_default("max_tokens", to_string_or_nil(defaults[:max_tokens]), force?)
+    |> put_default("price_input", to_string_or_nil(defaults[:price_input]), force?)
+    |> put_default("price_output", to_string_or_nil(defaults[:price_output]), force?)
+    |> put_default("price_cache_read", to_string_or_nil(defaults[:price_cache_read]), force?)
+    |> put_default("price_cache_write", to_string_or_nil(defaults[:price_cache_write]), force?)
+    |> put_default("price_reasoning", to_string_or_nil(defaults[:price_reasoning]), force?)
+  end
+
+  defp generated_provider_id(name, providers) do
+    existing = Enum.map(providers, & &1.id)
+
+    base =
+      name
+      |> String.downcase()
+      |> String.replace(~r/[^a-z0-9]+/, "-")
+      |> String.trim("-")
+      |> case do
+        "" -> "provider"
+        slug -> slug
+      end
+
+    if base in existing do
+      Stream.iterate(2, &(&1 + 1))
+      |> Enum.find_value(fn n ->
+        candidate = "#{base}-#{n}"
+        unless candidate in existing, do: candidate
+      end)
+    else
+      base
+    end
   end
 
   defp runtime_provider(params, provider_id) do
@@ -1297,11 +1297,6 @@ defmodule HandbeamWeb.AvailableModelsLive do
     provider_id = form["provider_id"] || form["id"]
 
     Reasoning.configurable_levels(%{id: model_id, provider_id: provider_id, reasoning: true})
-  end
-
-  defp provider_source_changed?(previous, params) do
-    present_or(params["id"], previous["id"]) != previous["id"] or
-      present_or(params["model_id"], previous["model_id"]) != previous["model_id"]
   end
 
   defp put_default(form, _key, nil, _force?), do: form

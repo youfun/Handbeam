@@ -90,7 +90,7 @@ defmodule Handbeam.Agent.Provider.ModelCatalogTest do
     assert mini["enabled"] == false
     assert mini["contextWindow"] == 128_000
     assert mini["maxTokens"] == 16_384
-    assert deepseek["name"] == "DeepSeek V3/Deepseek Chat"
+    assert deepseek["name"] == "DeepSeek-V3.2 (Non-thinking Mode)"
     assert is_integer(deepseek["contextWindow"])
     assert gone["unavailable"] == true
   end

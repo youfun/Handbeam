@@ -2,8 +2,8 @@ defmodule Handbeam.LlmDbDefaults do
   @moduledoc """
   Adapter layer for pulling provider and model defaults from `llm_db`.
 
-  The settings UI uses this to prefill provider/model metadata when the user
-  enters IDs that exist in the catalog.
+  The settings UI uses this to prefill metadata. Provider fields match a
+  catalog provider id, display name, or base URL. Model fields match a model id.
   """
 
   @type provider_defaults :: %{
@@ -29,13 +29,32 @@ defmodule Handbeam.LlmDbDefaults do
           model: model_defaults()
         }
   def defaults_for(provider_id, model_id) do
+    defaults_for(provider_id, nil, nil, model_id)
+  end
+
+  @doc """
+  Prefill from a catalog provider matched by id, display name, or base URL.
+
+  Name and URL are only used when the typed id is blank or is not itself a
+  catalog id, so an explicit id still wins.
+  """
+  @spec defaults_for(String.t() | nil, String.t() | nil, String.t() | nil, String.t() | nil) :: %{
+          provider: provider_defaults(),
+          model: model_defaults(),
+          provider_id: String.t() | nil
+        }
+  def defaults_for(provider_id, name, base_url, model_id) do
     with :ok <- ensure_loaded() do
+      resolved = resolve_provider(provider_id, name, base_url)
+      catalog_id = if(resolved, do: Atom.to_string(resolved.id))
+
       %{
-        provider: provider_defaults(provider_id),
-        model: model_defaults(provider_id, model_id)
+        provider: provider_defaults_from(resolved),
+        model: model_defaults(catalog_id, model_id),
+        provider_id: catalog_id
       }
     else
-      _ -> %{provider: %{}, model: %{}}
+      _ -> %{provider: %{}, model: %{}, provider_id: nil}
     end
   end
 
@@ -43,21 +62,98 @@ defmodule Handbeam.LlmDbDefaults do
   def provider_defaults(provider_id) do
     with {:ok, provider_atom} <- normalize_provider(provider_id),
          {:ok, provider} <- LLMDB.provider(provider_atom) do
-      %{}
-      |> maybe_put(:provider_name, provider.name)
-      |> maybe_put(:base_url, provider_base_url(provider))
-      |> maybe_put(:api, api_type_for(provider.id))
-      |> maybe_put(:provider_runtime, runtime_provider_for(provider.id))
+      provider_defaults_from(provider)
     else
       _ -> %{}
     end
   end
+
+  defp provider_defaults_from(nil), do: %{}
+
+  defp provider_defaults_from(provider) do
+    %{}
+    |> maybe_put(:provider_name, provider.name)
+    |> maybe_put(:base_url, provider_base_url(provider))
+    |> maybe_put(:api, api_type_for(provider.id))
+    |> maybe_put(:provider_runtime, runtime_provider_for(provider.id))
+  end
+
+  # Exact id first. A typed id that is already in the catalog is never
+  # replaced by a name or URL that points somewhere else.
+  defp resolve_provider(provider_id, name, base_url) do
+    providers = LLMDB.providers()
+
+    find_provider_by_id(providers, provider_id) ||
+      find_provider_by_name(providers, name) ||
+      find_provider_by_url(providers, base_url)
+  end
+
+  defp find_provider_by_id(_providers, id) when not is_binary(id), do: nil
+
+  defp find_provider_by_id(providers, id) do
+    needle = String.trim(id)
+    if needle == "", do: nil, else: Enum.find(providers, &(Atom.to_string(&1.id) == needle))
+  end
+
+  defp find_provider_by_name(_providers, name) when not is_binary(name), do: nil
+
+  defp find_provider_by_name(providers, name) do
+    needle = normalize_label(name)
+    if needle == "", do: nil, else: Enum.find(providers, &(normalize_label(&1.name) == needle))
+  end
+
+  defp find_provider_by_url(_providers, url) when not is_binary(url), do: nil
+
+  defp find_provider_by_url(providers, url) do
+    needle = normalize_url(url)
+
+    if needle == "" do
+      nil
+    else
+      Enum.find(providers, fn provider -> normalize_url(provider_base_url(provider)) == needle end)
+    end
+  end
+
+  defp normalize_label(value) when is_binary(value) do
+    value
+    |> String.trim()
+    |> String.downcase()
+    |> String.replace(~r/[^a-z0-9]+/, "")
+  end
+
+  defp normalize_label(_value), do: ""
+
+  defp normalize_url(value) when is_binary(value) do
+    value
+    |> String.trim()
+    |> String.trim_trailing("/")
+    |> String.downcase()
+  end
+
+  defp normalize_url(_value), do: ""
 
   @spec model_defaults(String.t() | nil, String.t() | nil) :: model_defaults()
   def model_defaults(provider_id, model_id) do
     with {:ok, provider_atom} <- normalize_provider(provider_id),
          {:ok, model_id} <- normalize_model_id(model_id),
          {:ok, model} <- LLMDB.model(provider_atom, model_id) do
+      model_defaults_from(model)
+    else
+      _ -> %{}
+    end
+  end
+
+  @doc """
+  Form defaults for a model id, independent of the local provider id.
+
+  The catalog is searched by model id and alias. A miss returns an empty map
+  so the form keeps what the user typed.
+  """
+  @spec model_form_defaults(String.t() | nil) :: model_defaults()
+  def model_form_defaults(model_id) do
+    with :ok <- ensure_loaded(),
+         {:ok, model_id} <- normalize_model_id(model_id),
+         %{} = model <- find_catalog_model(catalog_index(), model_id) do
       model_defaults_from(model)
     else
       _ -> %{}
@@ -75,40 +171,89 @@ defmodule Handbeam.LlmDbDefaults do
   def enrich_model(model_id, name \\ nil, load \\ &ensure_loaded/0)
 
   def enrich_model(model_id, name, load) when is_binary(model_id) and is_function(load, 0) do
-    base = %{
+    enrich_models([{model_id, name}], load) |> Map.fetch!(model_id)
+  end
+
+  @doc """
+  Enrich many discovered model ids from one catalog load.
+
+  `enrich_model/3` reloads and scans the catalog per id. A provider list of a
+  few dozen models then spends about a second per row, so discovery looks stuck.
+  """
+  @spec enrich_models([{String.t(), String.t() | nil}], (-> :ok | {:error, term()})) :: %{
+          optional(String.t()) => map()
+        }
+  def enrich_models(entries, load \\ &ensure_loaded/0) when is_list(entries) do
+    index = catalog_index(load)
+
+    Map.new(entries, fn {model_id, name} ->
+      {model_id, enriched_model(index, model_id, name)}
+    end)
+  end
+
+  defp enriched_model(_index, model_id, name) when not is_binary(model_id) do
+    %{"id" => model_id, "name" => present_name(name, to_string(model_id)), "input" => ["text"]}
+  end
+
+  defp enriched_model(index, model_id, name) do
+    %{
       "id" => model_id,
       "name" => present_name(name, model_id),
       "input" => ["text"]
     }
+    |> Map.merge(catalog_fields(find_catalog_model(index, model_id)))
+  end
 
+  # Built once per discovery. LLMDB.models/0 walks every provider, and calling
+  # it once per remote id is what made "拉取模型" take tens of seconds.
+  defp catalog_index(load \\ &ensure_loaded/0) do
     try do
       case load.() do
-        :ok -> Map.merge(base, catalog_fields(find_catalog_model(model_id)))
-        _ -> base
+        :ok ->
+          LLMDB.models()
+          |> Enum.reduce(%{}, fn model, index ->
+            index
+            |> Map.put_new(model.id, model)
+            |> put_aliases(model)
+          end)
+
+        _ ->
+          %{}
       end
     rescue
       # Android flattens Hex apps onto the code path. llm_db then raises
       # `unknown application` from Application.app_dir/1 while loading its
       # snapshot. Discovery must still keep the remote id.
       ArgumentError ->
-        base
+        %{}
     end
   end
 
-  defp find_catalog_model(model_id) do
+  defp put_aliases(index, model) do
+    Enum.reduce(model.aliases || [], index, fn alias_id, index ->
+      if is_binary(alias_id) and alias_id != "", do: Map.put_new(index, alias_id, model), else: index
+    end)
+  end
+
+  defp find_catalog_model(index, model_id) when is_map(index) do
     {provider_hint, bare_id} = split_gateway_id(model_id)
 
-    with {:ok, provider} <- normalize_provider(provider_hint),
-         {:ok, model} <- LLMDB.model(provider, bare_id) do
-      model
-    else
-      _ -> find_model_by_id(bare_id) || find_model_by_id(model_id)
+    cond do
+      model = Map.get(index, model_id) -> model
+      model = hinted_model(index, provider_hint, bare_id) -> model
+      true -> Map.get(index, bare_id)
     end
   end
 
-  defp find_model_by_id(model_id) do
-    LLMDB.models()
-    |> Enum.find(fn model -> model.id == model_id or model_id in (model.aliases || []) end)
+  defp hinted_model(_index, nil, _bare_id), do: nil
+
+  defp hinted_model(index, provider_hint, bare_id) do
+    index
+    |> Map.values()
+    |> Enum.find(fn model ->
+      Atom.to_string(model.provider) == provider_hint and
+        (model.id == bare_id or bare_id in (model.aliases || []))
+    end)
   end
 
   defp catalog_fields(nil), do: %{}

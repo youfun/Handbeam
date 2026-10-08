@@ -919,6 +919,9 @@ msgstr "User Code"
 msgid "短横线命名，创建后不可修改"
 msgstr "Use kebab-case; cannot be changed after creation"
 
+msgid "短横线命名，创建后不可修改。留空则根据名称自动生成。"
+msgstr "Use kebab-case; cannot be changed after creation. Leave blank to generate one from the name."
+
 #: lib/sigil_web/live/available_models_live.ex:462
 #: lib/sigil_web/live/available_models_live.html.heex:803
 #, elixir-autogen, elixir-format

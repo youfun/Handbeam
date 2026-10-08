@@ -11,7 +11,7 @@ defmodule HandbeamWeb.AvailableModelsLiveTest do
     :ok
   end
 
-  test "llm_db autofills provider and model defaults in add provider form", %{conn: conn} do
+  test "llm_db autofills provider defaults from the provider id", %{conn: conn} do
     {:ok, view, _html} =
       live_isolated(conn, HandbeamWeb.AvailableModelsLive, session: %{"embedded" => "true"})
 
@@ -21,25 +21,23 @@ defmodule HandbeamWeb.AvailableModelsLiveTest do
 
     view
     |> form(~s|form[phx-submit="submit_add_provider"]|, %{
-      "add_provider" => %{"id" => "openai", "model_id" => "gpt-4o-mini"}
+      "add_provider" => %{"id" => "openai", "api_key" => "sk-test"}
     })
-    |> render_change()
+    |> render_submit()
 
     html = render(view)
 
-    assert html =~ ~s(value="OpenAI")
-    assert html =~ ~s(value="https://api.openai.com/v1")
+    assert html =~ "OpenAI"
+    assert html =~ "https://api.openai.com/v1"
     refute html =~ "env:OPENAI_API_KEY"
     refute html =~ "env:VAR"
     refute html =~ "环境变量"
     refute html =~ "Supports env:VAR"
-    assert html =~ ~s(value="GPT-4o mini")
-    assert html =~ ~s(value="16384")
-    assert html =~ ~s(value="0.15")
-    assert html =~ ~s(value="0.6")
+    refute html =~ "初始模型"
+    refute html =~ "命中 llm_db"
   end
 
-  test "submitting a provider stores llm_db-derived price metadata", %{conn: conn} do
+  test "adding a provider without a model stores an empty catalog", %{conn: conn} do
     {:ok, view, _html} =
       live_isolated(conn, HandbeamWeb.AvailableModelsLive, session: %{"embedded" => "true"})
 
@@ -47,16 +45,72 @@ defmodule HandbeamWeb.AvailableModelsLiveTest do
     |> element(~s|button[phx-click="open_add_provider"]|)
     |> render_click()
 
-    params = %{
+    render_submit(view, "submit_add_provider", %{
       "add_provider" => %{
-        "id" => "anthropic",
-        "name" => "Anthropic",
-        "api" => "anthropic-messages",
-        "base_url" => "https://api.anthropic.com",
-        "api_key" => "env:ANTHROPIC_API_KEY",
-        "provider_runtime" => "anthropic",
-        "model_id" => "claude-sonnet-4-20250514",
-        "model_name" => "Claude Sonnet 4",
+        "name" => "Moonshot",
+        "id" => "",
+        "api" => "openai-chat-completions",
+        "base_url" => "https://api.moonshot.cn/v1",
+        "api_key" => "sk-test"
+      }
+    })
+
+    {:ok, config} = ModelConfig.config_file_path() |> File.read!() |> Jason.decode()
+    provider = get_in(config, ["providers", "moonshotai_cn"])
+
+    assert provider["name"] == "Moonshot AI (China)"
+    assert provider["models"] == []
+    assert provider["baseUrl"] == "https://api.moonshot.cn/v1"
+  end
+
+  test "llm_db autofills model defaults from the model id", %{conn: conn} do
+    {:ok, view, _html} =
+      live_isolated(conn, HandbeamWeb.AvailableModelsLive, session: %{"embedded" => "true"})
+
+    view
+    |> element(~s|button[phx-click="select_provider"][phx-value-id="stepfun"]|)
+    |> render_click()
+
+    view
+    |> element(~s|button[phx-click="open_add_model"]|)
+    |> render_click()
+
+    view
+    |> form(~s|form[phx-submit="submit_add_model"]|, %{
+      "add_model" => %{"id" => "gpt-4o-mini"}
+    })
+    |> render_submit()
+
+    {:ok, config} = ModelConfig.config_file_path() |> File.read!() |> Jason.decode()
+
+    model =
+      config
+      |> get_in(["providers", "stepfun", "models"])
+      |> Enum.find(&(&1["id"] == "gpt-4o-mini"))
+
+    assert model["name"] == "GPT-4o mini"
+    assert model["maxTokens"] == 16_384
+    assert model["cost"]["input"] == 0.15
+    assert model["cost"]["output"] == 0.6
+  end
+
+  test "submitting a model stores the price entered on the model form", %{conn: conn} do
+    {:ok, view, _html} =
+      live_isolated(conn, HandbeamWeb.AvailableModelsLive, session: %{"embedded" => "true"})
+
+    view
+    |> element(~s|button[phx-click="select_provider"][phx-value-id="stepfun"]|)
+    |> render_click()
+
+    view
+    |> element(~s|button[phx-click="open_add_model"]|)
+    |> render_click()
+
+    render_submit(view, "submit_add_model", %{
+      "add_model" => %{
+        "id" => "custom-priced",
+        "name" => "Custom Priced",
+        "type" => "text",
         "context_window" => "200000",
         "max_tokens" => "64000",
         "price_input" => "3",
@@ -65,20 +119,14 @@ defmodule HandbeamWeb.AvailableModelsLiveTest do
         "price_cache_write" => "3.75",
         "price_reasoning" => ""
       }
-    }
+    })
 
-    render_submit(view, "submit_add_provider", params)
+    {:ok, config} = ModelConfig.config_file_path() |> File.read!() |> Jason.decode()
 
-    {:ok, config} =
-      ModelConfig.config_file_path()
-      |> File.read()
-      |> then(fn {:ok, json} -> Jason.decode(json) end)
-
-    provider = get_in(config, ["providers", "anthropic"])
-    model = get_in(provider, ["models", Access.at(0)])
-
-    assert provider["provider"] == "anthropic"
-    assert provider["api"] == "anthropic-messages"
+    model =
+      config
+      |> get_in(["providers", "stepfun", "models"])
+      |> Enum.find(&(&1["id"] == "custom-priced"))
 
     assert model["cost"] == %{
              "input" => 3.0,

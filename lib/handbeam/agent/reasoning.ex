@@ -7,14 +7,18 @@ defmodule Handbeam.Agent.Reasoning do
   request mapping.
   """
 
-  @levels ["off", "minimal", "low", "medium", "high", "xhigh"]
+  @levels ["off", "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
   @reasoning_levels ["minimal", "low", "medium", "high", "xhigh"]
+  @catalog_levels ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
   @default_map %{
+    "none" => "none",
     "minimal" => "low",
     "low" => "low",
     "medium" => "medium",
     "high" => "high",
-    "xhigh" => "high"
+    "xhigh" => "high",
+    "max" => "max",
+    "ultra" => "ultra"
   }
 
   @type level :: String.t()
@@ -53,7 +57,8 @@ defmodule Handbeam.Agent.Reasoning do
       family = family_levels(model_entry)
 
       levels =
-        @reasoning_levels
+        catalog_levels(model_entry)
+        |> Kernel.||(@reasoning_levels)
         |> Enum.reject(&(Map.get(map, &1, :supported) == nil))
         |> Enum.filter(&(family == [] or &1 in family))
 
@@ -276,6 +281,23 @@ defmodule Handbeam.Agent.Reasoning do
     cond do
       preferred in enabled -> preferred
       true -> List.first(enabled) || "off"
+    end
+  end
+
+  defp catalog_levels(model_entry) do
+    case map_get(model_entry, :reasoning_levels, "reasoningLevels") do
+      levels when is_list(levels) ->
+        levels
+        |> Enum.map(&normalize/1)
+        |> Enum.filter(&(&1 in @catalog_levels))
+        |> Enum.uniq()
+        |> case do
+          [] -> nil
+          kept -> kept
+        end
+
+      _ ->
+        nil
     end
   end
 
