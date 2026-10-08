@@ -1298,20 +1298,77 @@ button.workspace-file-row:hover,
 }
 
 .workspace-tree-chevron {
-  width: 10px;
-  flex: 0 0 10px;
-  text-align: center;
+  width: 12px;
+  flex: 0 0 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: var(--color-text-tertiary);
+}
+
+.workspace-tree-chevron svg {
+  display: block;
+  transition: transform 120ms var(--sig-motion-ease, ease);
+}
+
+.workspace-tree-chevron.is-open svg {
+  transform: rotate(90deg);
 }
 
 .workspace-tree-icon {
-  width: 13px;
-  flex: 0 0 13px;
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   color: var(--color-text-tertiary);
 }
 
-.workspace-tree-icon.file {
-  font-size: 10px;
+.workspace-tree-icon svg {
+  width: 14px;
+  height: 14px;
+  display: block;
+}
+
+.workspace-tree-icon[data-type="directory"] {
+  color: var(--sig-warning, #9a6a0c);
+}
+
+.workspace-tree-icon[data-type="database"] {
+  color: #2a7a72;
+}
+
+.workspace-tree-icon[data-type="image"] {
+  color: #a15a72;
+}
+
+.workspace-tree-icon[data-type="markdown"] {
+  color: #3e6ea5;
+}
+
+.workspace-tree-icon[data-type="elixir"] {
+  color: #6e4e9a;
+}
+
+.workspace-tree-icon[data-type="shell"] {
+  color: var(--sig-success, #1b8a5e);
+}
+
+.workspace-tree-icon[data-type="config"] {
+  color: #8a7044;
+}
+
+.workspace-tree-icon[data-type="code"] {
+  color: var(--color-text-secondary);
+}
+
+.workspace-tree-icon[data-type="archive"] {
+  color: #8a5a38;
+}
+
+.workspace-tree-icon[data-type="git"] {
+  color: #c45c26;
 }
 
 .workspace-tree-error {

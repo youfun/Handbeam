@@ -28,10 +28,27 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceComponents do
           aria-expanded={to_string(MapSet.member?(@expanded, entry.relative_path))}
           title={entry.relative_path}
         >
-          <span class="workspace-tree-chevron" aria-hidden="true">
-            {if MapSet.member?(@expanded, entry.relative_path), do: "⌄", else: "›"}
+          <span
+            class={[
+              "workspace-tree-chevron",
+              if(MapSet.member?(@expanded, entry.relative_path), do: "is-open", else: "")
+            ]}
+            aria-hidden="true"
+          >
+            <svg
+              viewBox="0 0 16 16"
+              width="10"
+              height="10"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <path d="M6 4.2 10 8 6 11.8" />
+            </svg>
           </span>
-          <span class="workspace-tree-icon" aria-hidden="true">▱</span>
+          <.tree_icon type={:directory} />
           <span class="truncate">{entry.name}</span>
         </button>
         <.workspace_tree
@@ -59,7 +76,7 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceComponents do
           title={entry.relative_path}
         >
           <span class="workspace-tree-chevron" aria-hidden="true"></span>
-          <span class="workspace-tree-icon file" aria-hidden="true">▧</span>
+          <.tree_icon type={icon_type(entry)} />
           <span class="truncate">{entry.name}</span>
         </button>
         <div
@@ -69,7 +86,7 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceComponents do
           title={gettext("Symlinks are not opened from the workspace tree")}
         >
           <span class="workspace-tree-chevron" aria-hidden="true"></span>
-          <span class="workspace-tree-icon" aria-hidden="true">↗</span>
+          <.tree_icon type={:symlink} />
           <span class="truncate">{entry.name}</span>
         </div>
       </li>
@@ -257,5 +274,209 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceComponents do
       </div>
     </div>
     """
+  end
+
+  attr :type, :atom, required: true
+
+  def tree_icon(assigns) do
+    ~H"""
+    <span class="workspace-tree-icon" data-type={@type} aria-hidden="true">
+      <%= case @type do %>
+        <% :directory -> %>
+          <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.4"
+            stroke-linejoin="round"
+            stroke-linecap="round"
+          >
+            <path d="M2.3 6.1V4.6h3l1.1 1.1h7.2v6.4H2.3z" />
+          </svg>
+        <% :database -> %>
+          <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.4"
+            stroke-linejoin="round"
+          >
+            <ellipse cx="8" cy="4" rx="4.2" ry="1.5" />
+            <path d="M3.8 4v7.5c0 .9 1.9 1.6 4.2 1.6s4.2-.7 4.2-1.6V4" />
+            <path d="M3.8 7.6c0 .9 1.9 1.6 4.2 1.6s4.2-.7 4.2-1.6" />
+          </svg>
+        <% :image -> %>
+          <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.4"
+            stroke-linejoin="round"
+            stroke-linecap="round"
+          >
+            <rect x="2.5" y="3.2" width="11" height="9.6" rx="1.2" />
+            <circle cx="5.6" cy="6.2" r=".9" />
+            <path d="m3.3 11.2 2.8-2.5 1.9 1.7 1.5-1.3 2.9 2.3" />
+          </svg>
+        <% :markdown -> %>
+          <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.4"
+            stroke-linejoin="round"
+            stroke-linecap="round"
+          >
+            <rect x="2.4" y="3.2" width="11.2" height="9.6" rx="1.1" />
+            <path d="M4.6 10.4V6.1l1.7 2.1L8 6.1v4.3M10 10.4V6.1l1.8 2.2" />
+          </svg>
+        <% :elixir -> %>
+          <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.4"
+            stroke-linejoin="round"
+            stroke-linecap="round"
+          >
+            <path d="M8 2.3c2.1 2.5 3.5 4.3 3.5 6.2A3.5 3.5 0 0 1 8 12a3.5 3.5 0 0 1-3.5-3.5c0-1.9 1.4-3.7 3.5-6.2z" />
+          </svg>
+        <% :shell -> %>
+          <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.4"
+            stroke-linejoin="round"
+            stroke-linecap="round"
+          >
+            <rect x="2.4" y="3.1" width="11.2" height="9.8" rx="1.2" />
+            <path d="m4.5 6.3 2.1 1.7-2.1 1.7M8.2 9.8h3.2" />
+          </svg>
+        <% :config -> %>
+          <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.4"
+            stroke-linecap="round"
+          >
+            <path d="M2.8 4.8h10.4M2.8 8h10.4M2.8 11.2h10.4" />
+            <circle cx="6" cy="4.8" r="1.15" fill="currentColor" stroke="none" />
+            <circle cx="10.2" cy="8" r="1.15" fill="currentColor" stroke="none" />
+            <circle cx="7.2" cy="11.2" r="1.15" fill="currentColor" stroke="none" />
+          </svg>
+        <% :code -> %>
+          <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.4"
+            stroke-linejoin="round"
+            stroke-linecap="round"
+          >
+            <path d="M6.1 3.6 3.2 8l2.9 4.4M9.9 3.6 12.8 8 9.9 12.4" />
+          </svg>
+        <% :archive -> %>
+          <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.4"
+            stroke-linejoin="round"
+            stroke-linecap="round"
+          >
+            <path d="M2.6 3.4h10.8v2.4H2.6z" />
+            <path d="M3.4 5.8v6c0 .5.4.8.9.8h7.4c.5 0 .9-.3.9-.8v-6" />
+            <path d="M6.4 8.6h3.2" />
+          </svg>
+        <% :git -> %>
+          <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.4"
+            stroke-linejoin="round"
+            stroke-linecap="round"
+          >
+            <circle cx="4.2" cy="4" r="1.3" />
+            <circle cx="11.6" cy="5" r="1.3" />
+            <circle cx="6.2" cy="12" r="1.3" />
+            <path d="M4.2 5.3v3.1c0 1.3.9 2.1 2 2.1M5.5 4.3h4.7" />
+          </svg>
+        <% :symlink -> %>
+          <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.4"
+            stroke-linejoin="round"
+            stroke-linecap="round"
+          >
+            <path d="M6.4 9.8 4.8 8.2a2.2 2.2 0 0 1 3.1-3.1l1.3 1.3" />
+            <path d="M9.6 6.2 11.2 7.8a2.2 2.2 0 0 1-3.1 3.1L6.8 9.6" />
+          </svg>
+        <% _ -> %>
+          <svg
+            viewBox="0 0 16 16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.4"
+            stroke-linejoin="round"
+            stroke-linecap="round"
+          >
+            <path d="M4.2 2.4h4.7L12.5 6v7.1c0 .5-.4.9-.9.9H5.1c-.5 0-.9-.4-.9-.9V2.4z" />
+            <path d="M8.8 2.5V6h3.6" />
+          </svg>
+      <% end %>
+    </span>
+    """
+  end
+
+  @doc false
+  def icon_type(%{kind: :directory}), do: :directory
+  def icon_type(%{kind: :symlink}), do: :symlink
+  def icon_type(%{kind: :file, name: name}), do: file_icon_type(name)
+  def icon_type(%{name: name}) when is_binary(name), do: file_icon_type(name)
+
+  @doc false
+  def file_icon_type(name) when is_binary(name) do
+    base = name |> Path.basename() |> String.downcase()
+    ext = base |> Path.extname() |> String.trim_leading(".")
+
+    cond do
+      base in ~w(dockerfile makefile license copying) ->
+        :config
+
+      String.starts_with?(base, ".git") ->
+        :git
+
+      ext in ~w(db sqlite sqlite3 db-shm db-wal) or String.contains?(base, ".db-") ->
+        :database
+
+      ext in ~w(png jpg jpeg gif webp svg ico icns bmp heic) ->
+        :image
+
+      ext in ~w(md markdown mdx) ->
+        :markdown
+
+      ext in ~w(ex exs heex eex erl hrl) ->
+        :elixir
+
+      ext in ~w(sh bash zsh fish) ->
+        :shell
+
+      ext in ~w(json jsonc yml yaml toml xml plist conf config ini env lock mobileprovision p12 pem crt cer) ->
+        :config
+
+      ext in ~w(js mjs cjs ts tsx jsx css scss py rb go rs swift kt java c h cpp hpp) ->
+        :code
+
+      ext in ~w(zip tar gz tgz bz2 xz 7z rar) ->
+        :archive
+
+      true ->
+        :file
+    end
   end
 end
