@@ -115,6 +115,33 @@ defmodule ExFff.IndexTest do
       assert "lib/app.ex" in Enum.map(result.paths, & &1.path)
     end
 
+    test "legacy unbounded frecency files still boost within a tier", %{tmp_dir: tmp_dir} do
+      frecency_dir = Path.join(tmp_dir, "legacy-frecency")
+      File.mkdir_p!(frecency_dir)
+
+      digest =
+        :crypto.hash(:sha256, Path.expand(tmp_dir)) |> Base.url_encode64(padding: false)
+
+      File.write!(
+        Path.join(frecency_dir, digest <> ".term"),
+        :erlang.term_to_binary([{985.0, "lib/app.ex"}])
+      )
+
+      name =
+        Module.concat(
+          ExFff.Index,
+          String.to_atom("Legacy_#{System.unique_integer([:positive])}")
+        )
+
+      {:ok, pid} =
+        Index.start_link(root_path: tmp_dir, name: name, frecency_dir: frecency_dir)
+
+      assert :ok = Index.await_index(name)
+      assert {:ok, result} = Index.search(name, "app", limit: 3)
+      assert hd(result.paths).path == "lib/app.ex"
+      GenServer.stop(pid)
+    end
+
     test "frecency survives an index restart", %{tmp_dir: tmp_dir} do
       frecency_dir = Path.join(tmp_dir, "frecency")
 

@@ -5,7 +5,9 @@ defmodule ExFff.Query do
   Supports a compact search syntax:
 
   - `"schema"` — fuzzy match terms (AND semantics)
-  - `"*.ex"` — include patterns (glob-style extension filter)
+  - `"*.ex"` — include patterns (suffix fast path for a single extension)
+  - `"*schedules*"` — basename glob (`*`, `?`, `**`); no `/` means match the file name only
+  - `"desktop/macos **/*Conversation*"` — a glob containing `/` matches the full relative path
   - `"!test/"` — exclude patterns (paths containing substring)
   - `"user controller"` — multi-term AND search
   """
@@ -13,12 +15,16 @@ defmodule ExFff.Query do
   defstruct terms: [],
             include_patterns: [],
             exclude_patterns: [],
+            globs: [],
             limit: 20
+
+  @type glob :: %{regex: Regex.t(), basename?: boolean()}
 
   @type t :: %__MODULE__{
           terms: [String.t()],
           include_patterns: [String.t()],
           exclude_patterns: [String.t()],
+          globs: [glob()],
           limit: pos_integer()
         }
 
@@ -60,12 +66,12 @@ defmodule ExFff.Query do
         String.starts_with?(token, "!") ->
           %{acc | exclude_patterns: acc.exclude_patterns ++ [String.trim_leading(token, "!")]}
 
-        String.starts_with?(token, "*.") ->
+        extension_glob?(token) ->
           ext = String.trim_leading(token, "*")
           %{acc | include_patterns: acc.include_patterns ++ [ext]}
 
-        String.starts_with?(token, "*") ->
-          %{acc | include_patterns: acc.include_patterns ++ [String.trim_leading(token, "*")]}
+        glob_token?(token) ->
+          %{acc | globs: acc.globs ++ [compile_glob(token)]}
 
         true ->
           %{acc | terms: acc.terms ++ [token]}
@@ -73,4 +79,37 @@ defmodule ExFff.Query do
 
     classify(rest, acc)
   end
+
+  # `*.ext` only — no extra glob metacharacters — keeps the suffix fast path.
+  defp extension_glob?(token) do
+    case String.split(token, ".", parts: 2) do
+      ["*", ext] ->
+        ext != "" and not String.contains?(ext, ["*", "?", "/"])
+
+      _ ->
+        false
+    end
+  end
+
+  defp glob_token?(token) do
+    String.contains?(token, ["*", "?"])
+  end
+
+  defp compile_glob(token) do
+    source = "^" <> glob_source(token) <> "$"
+    %{regex: Regex.compile!(source, [:caseless]), basename?: not String.contains?(token, "/")}
+  end
+
+  defp glob_source(pattern) do
+    pattern
+    |> String.graphemes()
+    |> glob_source([])
+    |> IO.iodata_to_binary()
+  end
+
+  defp glob_source([], acc), do: Enum.reverse(acc)
+  defp glob_source(["*", "*" | rest], acc), do: glob_source(rest, [".*" | acc])
+  defp glob_source(["*" | rest], acc), do: glob_source(rest, ["[^/]*" | acc])
+  defp glob_source(["?" | rest], acc), do: glob_source(rest, ["[^/]" | acc])
+  defp glob_source([char | rest], acc), do: glob_source(rest, [Regex.escape(char) | acc])
 end

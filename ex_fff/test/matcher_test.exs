@@ -59,15 +59,24 @@ defmodule ExFff.MatcherTest do
     end
   end
 
-  describe "compute_frecency/1" do
-    test "applies decay and boost" do
-      result = Matcher.compute_frecency(100)
-      assert result == 100 * 0.9 + 100
+  describe "compute_frecency/2" do
+    test "adds a unit boost and caps unbounded growth" do
+      assert Matcher.compute_frecency(0) == 1.0
+      assert Matcher.compute_frecency(31) == 32.0
+      assert Matcher.compute_frecency(985) == 32.0
     end
 
-    test "handles zero initial score" do
-      result = Matcher.compute_frecency(0)
-      assert result == 100
+    test "decays with a 7-day half-life before boosting" do
+      half_life = 7 * 24 * 60 * 60
+      assert Matcher.compute_frecency(10, half_life) == 6.0
+    end
+
+    test "compresses legacy unbounded scores without reordering them" do
+      high = Matcher.normalize_stored_frecency(985)
+      low = Matcher.normalize_stored_frecency(100)
+      assert high > low
+      assert high <= 32.0
+      assert Matcher.normalize_stored_frecency(8) == 8.0
     end
   end
 
@@ -154,15 +163,47 @@ defmodule ExFff.MatcherTest do
       assert length(results) <= 2
     end
 
-    test "frecency boosts score", ctx do
+    test "frecency boosts score within the same tier", ctx do
       # Add frecency for lib/user.ex
       :ets.insert(ctx.frecency_tab, {{500, "lib/user.ex"}, true})
 
       query = ExFff.Query.parse("user")
       results = Matcher.match(query, ctx.files_tab, ctx.trigram_tab, ctx.frecency_tab)
 
-      # lib/user.ex should be top result due to frecency
+      # lib/user.ex should be top result due to frecency among filename matches
       assert hd(results).path == "lib/user.ex"
+    end
+
+    test "a stale frecency score decays below a recent touch", ctx do
+      now = System.system_time(:second)
+      eight_half_lives = 8 * 7 * 24 * 60 * 60
+
+      :ets.insert(ctx.frecency_tab, {{32.0, "lib/user_controller.ex"}, now - eight_half_lives})
+      :ets.insert(ctx.frecency_tab, {{1.0, "lib/user.ex"}, now})
+
+      query = ExFff.Query.parse("user")
+      results = Matcher.match(query, ctx.files_tab, ctx.trigram_tab, ctx.frecency_tab)
+
+      assert hd(results).path == "lib/user.ex"
+    end
+
+    test "high frecency cannot outrank a higher match tier", ctx do
+      :ets.insert(
+        ctx.files_tab,
+        {"lib/user_extra.ex", %{mtime: ~U[2024-01-06 00:00:00Z], size: 1}}
+      )
+
+      for trigram <- Matcher.tokenize("lib/user_extra.ex") do
+        :ets.insert(ctx.trigram_tab, {trigram, "lib/user_extra.ex"})
+      end
+
+      :ets.insert(ctx.frecency_tab, {{10_000.0, "lib/user_extra.ex"}, true})
+
+      query = ExFff.Query.parse("user.ex")
+      results = Matcher.match(query, ctx.files_tab, ctx.trigram_tab, ctx.frecency_tab)
+
+      assert hd(results).path == "lib/user.ex"
+      assert Enum.find_index(results, &(&1.path == "lib/user_extra.ex")) > 0
     end
 
     test "multi-term AND search", ctx do

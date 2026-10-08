@@ -28,7 +28,7 @@ defmodule ExFff do
 
   - trigrams (`:duplicate_bag`) — trigram → path mapping for fast candidate lookup
   - files (`:set`) — path → %{mtime, size} for file metadata
-  - frecency (`:ordered_set`) — `{score, path}` → true for recency-weighted ranking
+  - frecency (`:ordered_set`) — `{score, path}` → last-touched unix seconds (legacy `true`)
 
   `ExFff.Application` supervises one index per workspace root.
   """

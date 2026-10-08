@@ -5,7 +5,7 @@ defmodule ExFff.Index do
   Manages three ETS tables per index instance:
   - Trigrams — trigram → path (:duplicate_bag)
   - Files — path → %{mtime, size} (:set)
-  - Frecency — {score, path} → true (:ordered_set)
+  - Frecency — {score, path} → touched_at (:ordered_set; legacy value `true`)
 
   ## Public API
 
@@ -344,16 +344,20 @@ defmodule ExFff.Index do
     if is_binary(relative) and :ets.member(state.files_ref, relative) do
       objects = :ets.match_object(state.frecency_ref, {{:_, relative}, :_})
 
-      score =
+      now = System.system_time(:second)
+
+      {score, touched_at} =
         case objects do
-          [] -> 0.0
-          [{{s, _p}, _v} | _] -> s
+          [] -> {0.0, nil}
+          [{{s, _p}, meta} | _] -> {s * 1.0, frecency_timestamp(meta)}
         end
 
-      new_score = ExFff.Matcher.compute_frecency(score)
+      elapsed = if is_integer(touched_at), do: max(now - touched_at, 0), else: 0
+      base = ExFff.Matcher.normalize_stored_frecency(score)
+      new_score = ExFff.Matcher.compute_frecency(base, elapsed)
 
       :ets.match_delete(state.frecency_ref, {{:_, relative}, :_})
-      :ets.insert(state.frecency_ref, {{new_score, relative}, true})
+      :ets.insert(state.frecency_ref, {{new_score, relative}, now})
     end
 
     {:noreply, state |> schedule_frecency_persist() |> mark_used()}
@@ -802,15 +806,33 @@ defmodule ExFff.Index do
     Path.join(dir, digest <> ".term")
   end
 
+  defp frecency_timestamp(ts) when is_integer(ts), do: ts
+  defp frecency_timestamp(%{touched_at: ts}) when is_integer(ts), do: ts
+  defp frecency_timestamp(_meta), do: nil
+
   defp load_frecency(table, path) do
     with {:ok, binary} <- File.read(path),
          entries when is_list(entries) <- :erlang.binary_to_term(binary, [:safe]) do
       entries
       |> Enum.filter(fn
-        {score, rel} when is_number(score) and is_binary(rel) -> true
-        _ -> false
+        {score, rel, touched_at}
+        when is_number(score) and is_binary(rel) and is_integer(touched_at) ->
+          true
+
+        {score, rel} when is_number(score) and is_binary(rel) ->
+          true
+
+        _ ->
+          false
       end)
-      |> Enum.each(fn {score, rel} -> :ets.insert(table, {{score * 1.0, rel}, true}) end)
+      |> Enum.each(fn
+        {score, rel, touched_at} ->
+          :ets.insert(table, {{score * 1.0, rel}, touched_at})
+
+        {score, rel} ->
+          normalized = ExFff.Matcher.normalize_stored_frecency(score)
+          :ets.insert(table, {{normalized, rel}, System.system_time(:second)})
+      end)
     else
       _ -> :ok
     end
@@ -821,7 +843,12 @@ defmodule ExFff.Index do
   defp persist_frecency(nil, _path), do: :ok
 
   defp persist_frecency(table, path) do
-    entries = Enum.map(:ets.tab2list(table), fn {{score, rel}, true} -> {score, rel} end)
+    entries =
+      Enum.map(:ets.tab2list(table), fn
+        {{score, rel}, touched_at} when is_integer(touched_at) -> {score, rel, touched_at}
+        {{score, rel}, _meta} -> {score, rel}
+      end)
+
     tmp = path <> ".tmp"
 
     with :ok <- File.mkdir_p(Path.dirname(path)),

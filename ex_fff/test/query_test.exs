@@ -31,9 +31,29 @@ defmodule ExFff.QueryTest do
       assert result.include_patterns == [".exs"]
     end
 
-    test "parses glob pattern (*test)" do
+    test "parses a basename glob instead of a suffix filter" do
       result = Query.parse("*test")
-      assert result.include_patterns == ["test"]
+      assert result.include_patterns == []
+      assert result.terms == []
+      assert [%{basename?: true, regex: regex}] = result.globs
+      assert Regex.match?(regex, "user_test")
+      refute Regex.match?(regex, "user_test.exs")
+      refute Regex.match?(regex, "test/user.ex")
+    end
+
+    test "parses a contains-glob against the basename" do
+      result = Query.parse("*schedules*")
+      assert [%{basename?: true, regex: regex}] = result.globs
+      assert Regex.match?(regex, "20260718000000_create_schedules.exs")
+      refute Regex.match?(regex, "schedules/readme.md")
+    end
+
+    test "parses a path glob containing ** against the full path" do
+      result = Query.parse("desktop/macos **/*Conversation*")
+      assert result.terms == ["desktop/macos"]
+      assert [%{basename?: false, regex: regex}] = result.globs
+      assert Regex.match?(regex, "desktop/macos/ui/ConversationPanel.swift")
+      refute Regex.match?(regex, "desktop/macos/Other.swift")
     end
 
     test "parses exclusion pattern" do
