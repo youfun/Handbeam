@@ -111,7 +111,7 @@ fi
 echo ""
 echo "默认配置已烘焙进 release (rel/env.sh.eex)，无需设置环境变量："
 echo "  地址:      http://localhost:5008"
-echo "  数据库:    ~/.handbeam/sigil.db"
+echo "  数据库:    ~/.handbeam/handbeam.db"
 echo "  模型配置:  ~/.handbeam/models.json"
 echo "  运行日志:  ~/.handbeam/runtime/log/"
 echo "  崩溃转储:  ~/.handbeam/runtime/erl_crash.dump"

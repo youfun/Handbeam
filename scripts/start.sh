@@ -9,7 +9,7 @@ cd "$(dirname "$0")"
 export PHX_SERVER=true
 export PORT="${PORT:-5008}"
 export PHX_HOST="${PHX_HOST:-localhost}"
-export DATABASE_PATH="${DATABASE_PATH:-$HOME/.handbeam/sigil.db}"
+export DATABASE_PATH="${DATABASE_PATH:-$HOME/.handbeam/handbeam.db}"
 export SECRET_KEY_BASE="${SECRET_KEY_BASE:-$(openssl rand -base64 48 2>/dev/null || echo 'dev-fallback')}"
 
 mkdir -p "$HOME/.handbeam"

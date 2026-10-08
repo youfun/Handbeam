@@ -43,7 +43,7 @@ if (-not $env:PHX_HOST) { $env:PHX_HOST = "localhost" }
 
 $data = Join-Path $env:USERPROFILE ".handbeam"
 New-Item -ItemType Directory -Force -Path $data | Out-Null
-if (-not $env:DATABASE_PATH) { $env:DATABASE_PATH = Join-Path $data "sigil.db" }
+if (-not $env:DATABASE_PATH) { $env:DATABASE_PATH = Join-Path $data "handbeam.db" }
 Add-ExperimentalToolchain $data
 if (-not $env:SECRET_KEY_BASE) {
   $bytes = New-Object byte[] 48

@@ -90,7 +90,7 @@ fi
 
 echo ""
 echo "启动方式:"
-echo "  PHX_SERVER=true PORT=5008 DATABASE_PATH=\"$HOME/.handbeam/sigil.db\" SECRET_KEY_BASE=\"\$(openssl rand -base64 48)\" $BIN start"
+echo "  PHX_SERVER=true PORT=5008 DATABASE_PATH=\"$HOME/.handbeam/handbeam.db\" SECRET_KEY_BASE=\"\$(openssl rand -base64 48)\" $BIN start"
 echo ""
 echo "访问地址:"
 echo "  本机:   http://localhost:5008"

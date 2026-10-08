@@ -428,7 +428,7 @@ final class BackendController {
             .appendingPathComponent("Logs/Handbeam", isDirectory: true)
         return (
             handbeam.appendingPathComponent("runtime", isDirectory: true),
-            handbeam.appendingPathComponent("sigil.db"),
+            handbeam.appendingPathComponent("handbeam.db"),
             handbeam.appendingPathComponent("secret_key_base"),
             logs
         )

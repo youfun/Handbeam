@@ -18,7 +18,7 @@ COPY rel/handbeam/ ./
 ENV PHX_SERVER=true \
     PORT=4000 \
     HOME=/data \
-    DATABASE_PATH=/data/sigil.db \
+    DATABASE_PATH=/data/handbeam.db \
     LANG=C.UTF-8 \
     LC_ALL=C.UTF-8
 
