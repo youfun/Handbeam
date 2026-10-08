@@ -1,5 +1,15 @@
 # 更新日志 (CHANGELOG)
 
+## [0.2.5] - 模型目录拉取
+
+### 新增与改进
+- OpenAI 兼容和 Responses 供应商可以从 `GET /v1/models` 拉取模型，并用 llm_db 补名称、上下文和推理信息。
+- WebUI 与 Android 模型设置增加「拉取模型」。Android 模型列表改为紧凑行，不再一模型一张大卡片。
+
+### 版本
+- Handbeam 与 Handbeam Probe 升至 `0.2.5`。
+- 构建号升至 `9`。
+
 ## [0.2.2] - 打包发布
 
 ### 版本
