@@ -59,6 +59,9 @@ mix mob.write_mob_exs
 
 mkdir -p "$artifacts_dir"
 export HANDBEAM_IPA_DIR="$artifacts_dir"
+if [[ -n "${HANDREAM_ISH_LIBS:-}" ]]; then
+  bash script/link_ios_ish.sh
+fi
 mix run --no-start script/pack_sideload_ipa.exs
 
 ipa="$artifacts_dir/Handbeam-ios-sideload.ipa"

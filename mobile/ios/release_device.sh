@@ -282,6 +282,24 @@ for FW in $MOB_PLUGIN_IOS_FRAMEWORKS; do
     PLUGIN_FRAMEWORK_FLAGS="$PLUGIN_FRAMEWORK_FLAGS -Xlinker -framework -Xlinker $FW"
 done
 
+ISH_GUEST_FLAGS=""
+if [ -n "${HANDREAM_ISH_LIBS:-}" ]; then
+    echo "=== Linking iSH guest ==="
+    ISH_INCLUDE="${HANDREAM_ISH_INCLUDE:?HANDREAM_ISH_INCLUDE is required with HANDREAM_ISH_LIBS}"
+    [ -f "$ISH_INCLUDE/kernel/init.h" ] || { echo "missing $ISH_INCLUDE/kernel/init.h" >&2; exit 1; }
+    $CC $IFLAGS -DHANDREAM_IOS_GUEST -I "$ISH_INCLUDE" \
+        -c c_src/handbeam_ios_guest.c -o "$BUILD_DIR/handbeam_ios_guest.o"
+    ISH_GUEST_FLAGS="$BUILD_DIR/handbeam_ios_guest.o"
+    old_ifs=$IFS
+    IFS=,
+    for lib in $HANDREAM_ISH_LIBS; do
+        [ -f "$lib" ] || { echo "missing iSH archive: $lib" >&2; exit 1; }
+        ISH_GUEST_FLAGS="$ISH_GUEST_FLAGS $lib"
+    done
+    IFS=$old_ifs
+    ISH_GUEST_FLAGS="$ISH_GUEST_FLAGS -lsqlite3 -lresolv -Xlinker -framework -Xlinker SystemConfiguration"
+fi
+
 echo "=== Linking $APP_NAME (release, no EPMD) ==="
 xcrun -sdk iphoneos swiftc \
     -target arm64-apple-ios17.0 \
@@ -297,6 +315,7 @@ xcrun -sdk iphoneos swiftc \
     $PROJECT_OBJS \
     $LIBS \
     "$SQLITE_STATIC_LIB" \
+    $ISH_GUEST_FLAGS \
     -lz -lc++ -lpthread \
     -Xlinker -framework -Xlinker UIKit \
     -Xlinker -framework -Xlinker Foundation \

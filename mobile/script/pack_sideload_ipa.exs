@@ -97,7 +97,15 @@ compile_static_nif() {
   PLUGIN_OBJS="$PLUGIN_OBJS $BUILD_DIR/$name.o"
 }
 compile_static_nif handbeam_storage c_src/handbeam_storage.c
-compile_static_nif handbeam_ios c_src/handbeam_ios.c
+if [ -n "${HANDREAM_ISH_LIBS:-}" ]; then
+  echo "  static NIF: handbeam_ios (guest)"
+  $CC $IFLAGS -DSTATIC_ERLANG_NIF -DSTATIC_ERLANG_NIF_LIBNAME=handbeam_ios \
+    -DHANDREAM_IOS_GUEST -I "${HANDREAM_ISH_INCLUDE:?}" \
+    -c c_src/handbeam_ios.c -o "$BUILD_DIR/handbeam_ios.o"
+  PLUGIN_OBJS="$PLUGIN_OBJS $BUILD_DIR/handbeam_ios.o"
+else
+  compile_static_nif handbeam_ios c_src/handbeam_ios.c
+fi
 BCRYPT_SRC="deps/bcrypt_elixir/c_src"
 echo "  static NIF: bcrypt_nif ($BCRYPT_SRC)"
 $CC $IFLAGS -DSTATIC_ERLANG_NIF -DSTATIC_ERLANG_NIF_LIBNAME=bcrypt_nif \
