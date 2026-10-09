@@ -32,7 +32,7 @@ defmodule Handbeam.Runtime.MacNotifyTest do
     assert MacNotify.apply({:update_running, %{running_count: 1, waiting_count: 0}}) == :ok
   end
 
-  test "the shell visibility push selects system delivery, and only system actions cross the bridge" do
+  test "shell visibility and completion actions cross the notify bridge" do
     {:ok, listen} =
       :gen_tcp.listen(0, [:binary, packet: :line, active: false, ip: {127, 0, 0, 1}])
 
@@ -41,6 +41,10 @@ defmodule Handbeam.Runtime.MacNotifyTest do
     on_exit(fn ->
       :gen_tcp.close(listen)
     end)
+
+    if pid = Process.whereis(Bridge) do
+      GenServer.stop(pid)
+    end
 
     start_supervised!({Bridge, port: port, token: "secret"})
     {:ok, client} = :gen_tcp.accept(listen, 2_000)
@@ -57,7 +61,8 @@ defmodule Handbeam.Runtime.MacNotifyTest do
     assert wait_until(fn -> MacNotify.app_visible?() == false end)
 
     assert MacNotify.apply({:in_app_ended, @task, :completed}) == :ok
-    assert {:error, :timeout} = :gen_tcp.recv(client, 0, 150)
+    assert {:ok, in_app} = :gen_tcp.recv(client, 0, 1_000)
+    assert Handbeam.JSON.decode!(in_app)["op"] == "show_ended"
 
     assert MacNotify.apply({:update_running, %{running_count: 0, waiting_count: 1}}) == :ok
     assert {:ok, running} = :gen_tcp.recv(client, 0, 2_000)

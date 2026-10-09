@@ -6,14 +6,17 @@ defmodule HandbeamProbe.NativeConversationRow do
 
       NativeConversationRow.nodes(conversation,
         selected?: conversation["id"] == selected_id,
-        running?: MapSet.member?(assigns.running_conversation_ids, conversation["id"]),
+        activity: Map.get(assigns.conversation_activity, conversation["id"], :idle),
+        bean_frame: assigns.bean_frame,
         menu_open?: assigns.conversation_menu_id == conversation["id"],
         rename: assigns.rename_conversation
       )
 
   The rename field is shown only when `opts[:rename]` is a map whose id
   equals this conversation. Selection is a thin mark and title color.
-  A running row shows a short `●` mark. The menu lists pin, rename, and archive.
+  Every row shows the pixel bean: a still stem while idle, a walking bean
+  while running, and a standing bean while waiting. The menu lists pin,
+  rename, and archive.
   """
 
   use Gettext, backend: HandbeamProbe.Gettext
@@ -24,23 +27,35 @@ defmodule HandbeamProbe.NativeConversationRow do
   @doc """
   Mob nodes for `conversation`.
 
-  `opts` accepts `:selected?`, `:running?`, `:menu_open?`, and `:rename`
-  (`nil` or `%{id, title, error}`).
+  `opts` accepts `:selected?`, `:activity` (`:idle`, `:running`, or
+  `:waiting`), `:bean_frame`, `:menu_open?`, and `:rename`
+  (`nil` or `%{id, title, error}`). `:running?` still means `:running`.
   """
   @spec nodes(map(), keyword()) :: [map()]
   def nodes(conversation, opts \\ []) when is_map(conversation) and is_list(opts) do
     id = conversation["id"]
     selected? = Keyword.get(opts, :selected?, false)
-    running? = Keyword.get(opts, :running?, false)
     menu_open? = Keyword.get(opts, :menu_open?, false)
+    activity = activity(opts)
 
     [
       node(:column, [fill_width: true, background: color(:surface)], [
         row(
           [
-            selected_mark(selected?),
-            running_mark(running?),
-            title_node(id, conversation_title(conversation), selected?),
+            row(
+              [
+                selected_mark(selected?),
+                HandbeamProbe.ConversationBean.canvas(id, activity,
+                  frame: Keyword.get(opts, :bean_frame, 0)
+                ),
+                title_node(id, conversation_title(conversation), selected?)
+              ],
+              id: "conversation-open-#{id}",
+              on_tap: {self(), {:conversation, id}},
+              weight: 1,
+              fill_width: true,
+              background: color(:surface)
+            ),
             menu_button(id)
           ],
           background: color(:surface),
@@ -66,21 +81,19 @@ defmodule HandbeamProbe.NativeConversationRow do
     text("▍", text_size: 13, text_color: color(:ink), padding_right: 4)
   end
 
-  defp running_mark(false), do: nil
+  defp activity(opts) do
+    case Keyword.get(opts, :activity) do
+      status when status in [:idle, :running, :waiting] ->
+        status
 
-  defp running_mark(true) do
-    text("●",
-      id: "conversation-running",
-      text_size: 11,
-      text_color: color(:added),
-      padding_right: 4
-    )
+      _ ->
+        if Keyword.get(opts, :running?, false), do: :running, else: :idle
+    end
   end
 
   defp title_node(id, title, selected?) do
     text(title,
       id: "conversation-title-#{id}",
-      on_tap: {self(), {:conversation, id}},
       text_size: 13,
       text_color: if(selected?, do: color(:ink), else: color(:muted)),
       max_lines: 1,

@@ -19,7 +19,6 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
     private var actionsInstalled = false
     private var measuredPanelWidth: CGFloat = 0
     private var panelSyncToken = 0
-    private let toolbarTitleLabel = NSTextField(labelWithString: "Handbeam")
     private var origin = AppOrigin(hosts: DesktopConfig.loopbackHosts, port: DesktopConfig.defaultPort)
     private var loadedURL: URL?
     private var lastState: BackendController.State = .idle
@@ -178,7 +177,6 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
           document.head.appendChild(style);
         }
         """)
-        toolbarTitleLabel.stringValue = webView.title ?? "Handbeam"
         updateNavigationButtons()
         syncWorkspacePanelState()
         hideOverlay()
@@ -240,19 +238,18 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
     }
 
     private func installToolbar() {
-        let toolbar = NSToolbar(identifier: "HandbeamToolbar")
+        let toolbar = NSToolbar(identifier: "HandbeamToolbar.v2")
         toolbar.delegate = self
         toolbar.displayMode = .iconOnly
-        toolbar.centeredItemIdentifier = .handbeamTitle
         window?.toolbar = toolbar
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.navigation, .reload, .flexibleSpace, .handbeamTitle, .primaryActions]
+        [.navigation, .reload, .flexibleSpace, .primaryActions]
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [.navigation, .reload, .flexibleSpace, .handbeamTitle, .flexibleSpace, .primaryActions]
+        [.navigation, .reload, .flexibleSpace, .primaryActions]
     }
 
     func toolbar(
@@ -278,22 +275,6 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
             item.view = button
             item.label = "重新載入"
-            return item
-        case .handbeamTitle:
-            let icon = NSImageView(image: NSImage(named: NSImage.applicationIconName) ?? NSImage())
-            icon.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                icon.widthAnchor.constraint(equalToConstant: 20),
-                icon.heightAnchor.constraint(equalToConstant: 20),
-            ])
-            toolbarTitleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
-            toolbarTitleLabel.lineBreakMode = .byTruncatingTail
-            let stack = NSStackView(views: [icon, toolbarTitleLabel])
-            stack.orientation = .horizontal
-            stack.spacing = 7
-            let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-            item.view = stack
-            item.label = "Handbeam"
             return item
         case .primaryActions:
             let newButton = NSButton()
@@ -534,7 +515,6 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
 private extension NSToolbarItem.Identifier {
     static let navigation = NSToolbarItem.Identifier("HandbeamNavigation")
     static let reload = NSToolbarItem.Identifier("HandbeamReload")
-    static let handbeamTitle = NSToolbarItem.Identifier("HandbeamTitle")
     static let primaryActions = NSToolbarItem.Identifier("HandbeamPrimaryActions")
 }
 

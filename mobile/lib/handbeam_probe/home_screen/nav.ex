@@ -59,37 +59,40 @@ defmodule HandbeamProbe.HomeScreen.Nav do
     socket = socket |> assign(:page, page) |> Notice.clear()
     workspace = socket.assigns.workspace
 
-    cond do
-      is_nil(workspace) ->
-        socket
+    socket =
+      cond do
+        is_nil(workspace) ->
+          socket
 
-      page == :history ->
-        reload_history(socket)
+        page == :history ->
+          reload_history(socket)
 
-      page == :mcp ->
-        MCPSettings.load(socket)
+        page == :mcp ->
+          MCPSettings.load(socket)
 
-      page == :git ->
-        GitSettings.load(socket)
+        page == :git ->
+          GitSettings.load(socket)
 
-      page == :app ->
-        AppSettings.load(socket)
+        page == :app ->
+          AppSettings.load(socket)
 
-      Settings.settings_page?(page) ->
-        Settings.load_models(socket)
+        Settings.settings_page?(page) ->
+          Settings.load_models(socket)
 
-      page == :workspace ->
-        assign(socket, :workspaces, NativeWorkspaces.load(workspace))
+        page == :workspace ->
+          assign(socket, :workspaces, NativeWorkspaces.load(workspace))
 
-      page == :files and free_chat?(socket) ->
-        assign(socket, page: :chat)
+        page == :files and free_chat?(socket) ->
+          assign(socket, page: :chat)
 
-      page == :files ->
-        NativeWorkspaceTree.ensure(socket)
+        page == :files ->
+          NativeWorkspaceTree.ensure(socket)
 
-      true ->
-        socket
-    end
+        true ->
+          socket
+      end
+
+    sync_bean_clock(socket)
   end
 
   def handle({:tap, {:toggle_conversation_menu, id}}, socket) do
@@ -275,30 +278,75 @@ defmodule HandbeamProbe.HomeScreen.Nav do
   defp reload_history(socket) do
     assign(socket,
       history: HandbeamProbe.NativeHistory.load(),
-      running_conversation_ids: running_conversation_ids()
+      conversation_activity: conversation_activity()
     )
+    |> sync_bean_clock()
   end
 
-  defp running_conversation_ids do
+  @doc false
+  def advance_bean(socket) do
+    socket = assign(socket, :bean_timer, nil)
+
+    if bean_animating?(socket) do
+      socket
+      |> assign(:bean_frame, socket.assigns.bean_frame + 1)
+      |> sync_bean_clock()
+    else
+      socket
+    end
+  end
+
+  defp conversation_activity do
     Handbeam.Runtime.TaskTracker.snapshot().tasks
-    |> Enum.flat_map(fn
-      %{status: status, conversation_id: id} when is_binary(id) ->
-        if running_or_waiting?(status), do: [id], else: []
-
-      _ ->
-        []
+    |> Enum.reduce(%{}, fn task, acc ->
+      case activity_entry(task) do
+        {id, status} -> Map.put(acc, id, status)
+        nil -> acc
+      end
     end)
-    |> MapSet.new()
   end
 
-  defp running_or_waiting?(status) when status in [:running, :waiting, :waiting_confirmation],
-    do: true
-
-  defp running_or_waiting?(status) when is_binary(status) do
-    status in ["running", "waiting", "waiting_confirmation"]
+  defp activity_entry(%{status: status, conversation_id: id}) when is_binary(id) do
+    case activity_status(status) do
+      nil -> nil
+      activity -> {id, activity}
+    end
   end
 
-  defp running_or_waiting?(_status), do: false
+  defp activity_entry(_task), do: nil
+
+  defp activity_status(status) when status in [:running, "running"], do: :running
+
+  defp activity_status(status)
+       when status in [:waiting, :waiting_confirmation, "waiting", "waiting_confirmation"],
+       do: :waiting
+
+  defp activity_status(_status), do: nil
+
+  defp sync_bean_clock(socket) do
+    cond do
+      not bean_animating?(socket) ->
+        cancel_bean_clock(socket)
+
+      socket.assigns.bean_timer ->
+        socket
+
+      true ->
+        assign(socket, :bean_timer, Process.send_after(self(), :conversation_bean_frame, 125))
+    end
+  end
+
+  defp cancel_bean_clock(socket) do
+    if is_reference(socket.assigns.bean_timer),
+      do: Process.cancel_timer(socket.assigns.bean_timer)
+
+    assign(socket, :bean_timer, nil)
+  end
+
+  defp bean_animating?(socket) do
+    socket.assigns.page == :history and
+      Enum.any?(socket.assigns.conversation_activity, &match?({_id, :running}, &1))
+  end
 
   defp open_workspace_conversation(socket, conversation) do
     case WorkspaceStore.get(conversation["workspace_id"]) do
@@ -370,6 +418,7 @@ defmodule HandbeamProbe.HomeScreen.Nav do
     )
     |> bump_workspace_open()
     |> Settings.load_models()
+    |> sync_bean_clock()
   end
 
   @doc "Switch to `workspace`, showing `conversation` (or an empty chat)."
@@ -417,6 +466,7 @@ defmodule HandbeamProbe.HomeScreen.Nav do
           draft: NativeWorkspaces.get_draft(drafts, selected.workspace, conversation)
         )
     end
+    |> sync_bean_clock()
   end
 
   @doc "Show a workspace-independent chat without switching the current workspace."
@@ -454,6 +504,7 @@ defmodule HandbeamProbe.HomeScreen.Nav do
     )
     |> bump_workspace_open()
     |> Settings.load_models()
+    |> sync_bean_clock()
   end
 
   @doc "Leave the current conversation for an empty chat without touching the composer."
@@ -464,7 +515,9 @@ defmodule HandbeamProbe.HomeScreen.Nav do
     unsubscribe(a.chat)
     if a.workspace && not free_chat?(socket), do: NativeWorkspaces.persist(a.workspace, nil)
 
-    assign(socket, [chat: nil, drafts: drafts, draft: ""] ++ State.chat_reset())
+    socket
+    |> assign([chat: nil, drafts: drafts, draft: ""] ++ State.chat_reset())
+    |> sync_bean_clock()
   end
 
   @doc "Create the conversation for a first send when none is open."

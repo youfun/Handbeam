@@ -143,10 +143,7 @@ defmodule Handbeam.Runtime.TaskTracker do
       viewing?: viewing?(state, event_conversation_id(event))
     }
 
-    Enum.each(Notify.actions(snapshot, event, context), fn action ->
-      maybe_broadcast_in_app(action)
-      NotifyAdapter.apply(action)
-    end)
+    Enum.each(Notify.actions(snapshot, event, context), &deliver/1)
   end
 
   defp broadcast_snapshot(state) do
@@ -155,11 +152,18 @@ defmodule Handbeam.Runtime.TaskTracker do
     snapshot
   end
 
-  defp maybe_broadcast_in_app({:in_app_ended, task, reason}) do
-    Phoenix.PubSub.broadcast(Handbeam.PubSub, @topic, {:in_app_ended, task, reason})
+  defp deliver({:in_app_ended, task, reason}) do
+    if NotifyAdapter.prefers_system_notification?() do
+      NotifyAdapter.apply({:system_ended, task, reason})
+    else
+      Phoenix.PubSub.broadcast(Handbeam.PubSub, @topic, {:in_app_ended, task, reason})
+      NotifyAdapter.apply({:in_app_ended, task, reason})
+    end
   end
 
-  defp maybe_broadcast_in_app(_action), do: :ok
+  defp deliver(action) do
+    NotifyAdapter.apply(action)
+  end
 
   defp event_conversation_id({:started, task}), do: task.conversation_id
   defp event_conversation_id({:waiting, task}), do: task.conversation_id

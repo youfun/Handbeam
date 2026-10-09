@@ -118,8 +118,10 @@ defmodule ExFff.Index do
 
   Options:
   - `:limit` — max results to return
-  - `:await` — if true, waits for initial index build (default: false)
-  - `:timeout` — call timeout in ms (default 5000)
+  - `:await` — `true` waits for the initial index build; a non-negative integer
+    waits at most that many ms, then returns the partial results with
+    `status: :indexing` (default: false)
+  - `:timeout` — call timeout in ms (default 5000); keep it above an integer `:await`
 
   Returns the currently indexed results immediately by default. The result's
   `:status` is `:indexing` until the background scan completes.
@@ -257,8 +259,9 @@ defmodule ExFff.Index do
       state.status == :failed ->
         {:reply, {:error, "Indexing failed for #{state.root_path}"}, state}
 
-      state.status == :indexing and Keyword.get(opts, :await, false) ->
+      state.status == :indexing and await?(opts) ->
         pending = {from, query_string, opts, state.generation}
+        schedule_await_timeout(from, Keyword.get(opts, :await))
         {:noreply, %{state | pending_searches: [pending | state.pending_searches]}}
 
       true ->
@@ -405,6 +408,17 @@ defmodule ExFff.Index do
   end
 
   def handle_info({:idle_timeout, _token}, state), do: {:noreply, state}
+
+  def handle_info({:await_timeout, from}, state) do
+    case Enum.split_with(state.pending_searches, &match?({^from, _, _, _}, &1)) do
+      {[{^from, query_string, opts, _generation}], rest} ->
+        GenServer.reply(from, do_search(query_string, opts, state))
+        {:noreply, mark_used(%{state | pending_searches: rest})}
+
+      _ ->
+        {:noreply, state}
+    end
+  end
 
   def handle_info(
         {:index_batch, generation, files_entries, trig_entries},
@@ -572,6 +586,20 @@ defmodule ExFff.Index do
     :ets.delete_all_objects(state.files_ref)
     :ets.delete_all_objects(state.trigram_ref)
   end
+
+  defp await?(opts) do
+    case Keyword.get(opts, :await, false) do
+      true -> true
+      ms when is_integer(ms) and ms >= 0 -> true
+      _ -> false
+    end
+  end
+
+  defp schedule_await_timeout(from, ms) when is_integer(ms) do
+    Process.send_after(self(), {:await_timeout, from}, ms)
+  end
+
+  defp schedule_await_timeout(_from, _await), do: :ok
 
   defp reply_pending(pending, generation, reply) do
     for {from, _kind, _opts, pending_generation} <- pending,

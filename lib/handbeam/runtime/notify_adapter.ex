@@ -31,4 +31,16 @@ defmodule Handbeam.Runtime.NotifyAdapter do
 
   @spec apply(Notify.action()) :: :ok
   def apply(action), do: adapter().apply(action)
+
+  @doc """
+  The macOS shell posts a system banner instead of the embedded page toast.
+  Browser and Android adapters leave this false.
+  """
+  @spec prefers_system_notification?() :: boolean()
+  def prefers_system_notification? do
+    adapter = adapter()
+
+    function_exported?(adapter, :prefers_system_notification?, 0) and
+      adapter.prefers_system_notification?()
+  end
 end

@@ -325,6 +325,24 @@ defmodule HandbeamWeb.SettingsLiveTest do
       assert html =~ ~s(href="/w/default/c/conv_123")
     end
 
+    test "theme choice is saved and painted on the document", %{conn: conn} do
+      {:ok, view, html} = live(conn, "/settings?tab=ui")
+
+      assert html =~ ~s(id="ui-theme-light")
+      assert html =~ ~s(data-theme)
+
+      view |> element("#ui-theme-dark") |> render_click()
+
+      assert Handbeam.Settings.UI.theme() == "dark"
+      assert render(view) =~ ~s(id="ui-theme-dark")
+      assert_push_event(view, "set-theme", %{theme: "dark"})
+
+      view |> element("#ui-theme-system") |> render_click()
+
+      assert Handbeam.Settings.UI.theme() == "system"
+      assert_push_event(view, "set-theme", %{theme: "system"})
+    end
+
     test "select_tab preserves workspace_id and conversation_id in the URL", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/settings?workspace_id=default&conversation_id=conv_123")
 

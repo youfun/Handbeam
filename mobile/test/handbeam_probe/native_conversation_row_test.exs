@@ -6,7 +6,7 @@ defmodule HandbeamProbe.NativeConversationRowTest do
 
   @conversation %{"id" => "conv-1", "title" => "Ship the row", "pinned_at" => nil}
 
-  test "row shows the title, a running mark only while running, and menu actions only while open" do
+  test "row shows the title, a pixel bean, and menu actions only while open" do
     idle = nodes(@conversation, selected?: false, running?: false, menu_open?: false)
     running = nodes(@conversation, selected?: false, running?: true, menu_open?: false)
     menu = nodes(@conversation, selected?: false, running?: false, menu_open?: true)
@@ -19,11 +19,14 @@ defmodule HandbeamProbe.NativeConversationRowTest do
       )
 
     assert text?(idle, "Ship the row")
-    refute running_mark?(idle)
+    assert bean?(idle, "conv-1")
     refute menu_action?(idle)
+    refute text?(idle, "●")
 
-    assert running_mark?(running)
-    assert Enum.any?(flat(running), &(&1.props[:text] == "●" and &1.props[:text_size] == 11))
+    assert bean?(running, "conv-1")
+    assert eyes?(running)
+    refute eyes?(idle)
+    refute text?(running, "●")
 
     assert text?(menu, gettext("Pin"))
     assert text?(menu, gettext("Rename"))
@@ -79,9 +82,18 @@ defmodule HandbeamProbe.NativeConversationRowTest do
 
   defp text?(nodes, text), do: Enum.any?(flat(nodes), &(&1.props[:text] == text))
 
-  defp running_mark?(nodes) do
+  defp bean?(nodes, id) do
     Enum.any?(flat(nodes), fn node ->
-      node.props[:text] == "●" and node.props[:text_size] == 11
+      node.type == :canvas and node.props[:id] == "conversation-bean-#{id}"
+    end)
+  end
+
+  defp eyes?(nodes) do
+    Enum.any?(flat(nodes), fn node ->
+      node.type == :canvas and
+        Enum.any?(node.props[:draw] || [], fn op ->
+          op[:op] == :rect and op[:color] == "#263b25" and op[:y] in [13, 14]
+        end)
     end)
   end
 

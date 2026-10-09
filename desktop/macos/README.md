@@ -38,13 +38,13 @@ Contents/Resources/handbeam-web/    bin/handbeam, erts-*, start.sh
 
 The server binds `127.0.0.1` only. Phoenix `check_origin: true` compares the page host with `PHX_HOST`, not the scheme or port. A server this app starts gets `PHX_HOST=127.0.0.1` and the web view loads `http://127.0.0.1:<port>/`. An attached `./start.sh` defaults to `PHX_HOST=localhost`, so the page is `http://localhost:<port>/` (or whatever `PHX_HOST` is on that process). A non-loopback host is ignored.
 
-`./start.sh` uses `~/.handbeam/sigil.db`. The release `bin/handbeam` script, if launched with an empty environment, would use `~/.handbeam/handbeam.db` via `rel/env.sh.eex`. This app sets `DATABASE_PATH` to `sigil.db` so it shares data with `./start.sh`. `SECRET_KEY_BASE` is reused from the environment when set, otherwise stored at `~/.handbeam/secret_key_base` (mode 0600) so cookies survive restarts. The app disables BEAM distribution because it owns the foreground child process directly and does not need an additional network listener.
+The app and `./start.sh` both use `~/.handbeam/handbeam.db`, the same default as the release `bin/handbeam` via `rel/env.sh.eex`. `SECRET_KEY_BASE` is reused from the environment when set, otherwise stored at `~/.handbeam/secret_key_base` (mode 0600) so cookies survive restarts. The app disables BEAM distribution because it owns the foreground child process directly and does not need an additional network listener.
 
 Links that leave the Handbeam origin open in the system browser. The shell does not navigate its main frame to arbitrary URLs. There is no App Sandbox: the bundled server must bind localhost and read the workspace. Turning the sandbox on would need extra file and network entitlements and would still not cover every folder the tools touch.
 
 Phase 1 quits when the window closes. `MenuBarController` is a stub for a later `NSStatusItem` menu (pinned/recent threads, keep-awake, Open Handbeam). That phase should keep the backend alive until Quit.
 
-A backend this app spawns gets a loopback notification bridge. When the window is in the background, minimized, or fully occluded, a finished reply is posted with `UNUserNotificationCenter` as `com.youfun.handbeam`. Clicking it opens that conversation. The in-app toast is unchanged while the window is frontmost, and an attached server is not given the bridge. The first run asks for notification permission; a denial is left denied.
+A backend this app spawns gets a loopback notification bridge. A finished reply is posted with `UNUserNotificationCenter` as `com.youfun.handbeam`, including while the window is frontmost, unless that conversation is the one on screen. Clicking it opens the conversation. Browser toasts and the Android notifier are unchanged. An attached server is not given the bridge. Launch asks for notification permission; a denial is left denied.
 
 ## Build
 

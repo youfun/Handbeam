@@ -197,5 +197,51 @@ defmodule Handbeam.Tool.Builtin.FileSearchTest do
       assert output =~ "indexing"
       assert output =~ "user"
     end
+
+    test "waits for a cold index instead of reporting zero files", %{tmp_dir: tmp_dir} do
+      {:ok, index} = ExFff.Index.ensure_started(tmp_dir)
+      task_ref = make_ref()
+
+      state =
+        :sys.replace_state(index, fn state ->
+          :ets.delete_all_objects(state.files_ref)
+          :ets.delete_all_objects(state.trigram_ref)
+
+          %{
+            state
+            | status: :indexing,
+              indexed_count: 0,
+              task: %Task{ref: task_ref, pid: self(), owner: self(), mfa: {__MODULE__, :scan, 0}}
+          }
+        end)
+
+      search =
+        Task.async(fn ->
+          FileSearch.execute(%{"query" => "*user*"}, %{working_directory: tmp_dir})
+        end)
+
+      await_pending_search(index)
+
+      path = "lib/user.ex"
+      trigrams = path |> ExFff.Matcher.tokenize() |> Enum.map(&{&1, path})
+
+      send(
+        index,
+        {:index_batch, state.generation, [{path, %{mtime: {{2026, 1, 1}, {0, 0, 0}}, size: 6}}],
+         trigrams}
+      )
+
+      send(index, {task_ref, {:ok, state.generation, 1}})
+
+      assert {:ok, output} = Task.await(search)
+      assert output =~ "lib/user.ex"
+      refute output =~ "No files found"
+    end
+  end
+
+  defp await_pending_search(index) do
+    if :sys.get_state(index).pending_searches == [] do
+      await_pending_search(index)
+    end
   end
 end

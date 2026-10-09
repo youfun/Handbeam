@@ -352,12 +352,12 @@
                   </div>
                 </div>
                 <div class="settings-field-control">
+                  <div id="theme-bridge" phx-hook="ThemeBridge" hidden></div>
                   <div class="settings-seg" role="group" aria-label={gettext("Theme")}>
                     <button
                       id="ui-theme-light"
                       type="button"
-                      phx-click="set_theme"
-                      phx-value-theme="light"
+                      phx-click={theme_click("light")}
                       class={[
                         "settings-chip",
                         @theme == "light" && "active"
@@ -368,8 +368,7 @@
                     <button
                       id="ui-theme-dark"
                       type="button"
-                      phx-click="set_theme"
-                      phx-value-theme="dark"
+                      phx-click={theme_click("dark")}
                       class={[
                         "settings-chip",
                         @theme == "dark" && "active"
@@ -380,8 +379,7 @@
                     <button
                       id="ui-theme-system"
                       type="button"
-                      phx-click="set_theme"
-                      phx-value-theme="system"
+                      phx-click={theme_click("system")}
                       class={[
                         "settings-chip",
                         @theme == "system" && "active"

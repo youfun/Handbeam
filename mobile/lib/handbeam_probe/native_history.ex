@@ -33,7 +33,9 @@ defmodule HandbeamProbe.NativeHistory do
     ctx = %{
       selected_id: Map.get(opts, :selected_id),
       collapsed: Map.get(opts, :collapsed, MapSet.new()),
+      activities: Map.get(opts, :activities, %{}),
       running_ids: Map.get(opts, :running_ids, MapSet.new()),
+      bean_frame: Map.get(opts, :bean_frame, 0),
       menu_id: Map.get(opts, :menu_id),
       rename: Map.get(opts, :rename)
     }
@@ -120,11 +122,22 @@ defmodule HandbeamProbe.NativeHistory do
     Enum.flat_map(conversations, fn conversation ->
       conversation_nodes(conversation,
         selected?: conversation["id"] == ctx.selected_id,
-        running?: MapSet.member?(ctx.running_ids, conversation["id"]),
+        activity: activity(conversation["id"], ctx),
+        bean_frame: ctx.bean_frame,
         menu_open?: ctx.menu_id != nil and conversation["id"] == ctx.menu_id,
         rename: ctx.rename
       )
     end)
+  end
+
+  defp activity(id, ctx) do
+    case Map.get(ctx.activities, id) do
+      status when status in [:running, :waiting] ->
+        status
+
+      _ ->
+        if MapSet.member?(ctx.running_ids, id), do: :running, else: :idle
+    end
   end
 
   defp conversation_nodes(conversation, opts) do

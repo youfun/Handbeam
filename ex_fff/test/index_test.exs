@@ -94,6 +94,18 @@ defmodule ExFff.IndexTest do
       assert result.indexed_count >= 1
       assert Enum.any?(result.paths, &(&1.path == path))
     end
+
+    test "a bounded await returns partial results when the scan outlasts it", %{
+      pid: pid,
+      name: name
+    } do
+      :sys.replace_state(pid, &%{&1 | status: :indexing})
+
+      assert {:ok, result} = Index.search(name, "app", await: 50, timeout: 1_000)
+      assert result.status == :indexing
+      assert Enum.any?(result.paths, &(&1.path == "lib/app.ex"))
+      assert :sys.get_state(pid).pending_searches == []
+    end
   end
 
   describe "touch/2" do

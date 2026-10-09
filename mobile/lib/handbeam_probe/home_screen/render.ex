@@ -156,7 +156,8 @@ defmodule HandbeamProbe.HomeScreen.Render do
       HandbeamProbe.NativeHistory.render(a.history, %{
         selected_id: selected_id,
         collapsed: Map.get(a, :collapsed_history_groups, MapSet.new()),
-        running_ids: Map.get(a, :running_conversation_ids, MapSet.new()),
+        activities: Map.get(a, :conversation_activity, %{}),
+        bean_frame: Map.get(a, :bean_frame, 0),
         menu_id: Map.get(a, :conversation_menu_id),
         rename: Map.get(a, :rename_conversation)
       })

@@ -43,7 +43,9 @@ defmodule HandbeamProbe.HomeScreen.State do
     collapsed_history_groups: MapSet.new(),
     conversation_menu_id: nil,
     rename_conversation: nil,
-    running_conversation_ids: MapSet.new(),
+    conversation_activity: %{},
+    bean_frame: 0,
+    bean_timer: nil,
     free_draft: false,
     notice: nil,
 

@@ -58,6 +58,33 @@
   --sig-diff-remove-text:   #F0A0A0;
   --sig-diff-remove-bg:     rgba(240, 160, 160, 0.12);
   --sig-diff-eq-text:       var(--sig-text-tertiary);
+
+  --color-primary: var(--sig-accent);
+  --color-primary-hover: var(--sig-accent-hover);
+  --color-user-message: var(--sig-accent);
+  --color-user-message-hover: var(--sig-accent-hover);
+  --color-background: var(--sig-bg-page);
+  --color-surface: var(--sig-bg-surface);
+  --color-surface-hover: var(--sig-bg-surface-hover);
+  --color-surface-active: var(--sig-bg-surface-active);
+  --color-border: var(--sig-border-default);
+  --color-border-light: var(--sig-border-subtle);
+  --color-border-hover: var(--sig-border-emphasis);
+  --color-text-primary: var(--sig-text-primary);
+  --color-text-secondary: var(--sig-text-secondary);
+  --color-text-tertiary: var(--sig-text-tertiary);
+  --color-success: var(--sig-success);
+  --color-success-bg: var(--sig-success-bg);
+  --color-warning: var(--sig-warning);
+  --color-warning-bg: var(--sig-warning-bg);
+  --color-error: var(--sig-error);
+  --color-error-bg: var(--sig-error-bg);
+  --color-diff-add: var(--sig-diff-add-text);
+  --color-diff-add-bg: var(--sig-diff-add-bg);
+  --color-diff-rem: var(--sig-diff-remove-text);
+  --color-diff-rem-bg: var(--sig-diff-remove-bg);
+  --color-bg-main: var(--sig-bg-page);
+  --color-bg-surface: var(--sig-bg-surface);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -116,5 +143,32 @@
     --sig-diff-remove-text:   #F0A0A0;
     --sig-diff-remove-bg:     rgba(240, 160, 160, 0.12);
     --sig-diff-eq-text:       var(--sig-text-tertiary);
+
+    --color-primary: var(--sig-accent);
+    --color-primary-hover: var(--sig-accent-hover);
+    --color-user-message: var(--sig-accent);
+    --color-user-message-hover: var(--sig-accent-hover);
+    --color-background: var(--sig-bg-page);
+    --color-surface: var(--sig-bg-surface);
+    --color-surface-hover: var(--sig-bg-surface-hover);
+    --color-surface-active: var(--sig-bg-surface-active);
+    --color-border: var(--sig-border-default);
+    --color-border-light: var(--sig-border-subtle);
+    --color-border-hover: var(--sig-border-emphasis);
+    --color-text-primary: var(--sig-text-primary);
+    --color-text-secondary: var(--sig-text-secondary);
+    --color-text-tertiary: var(--sig-text-tertiary);
+    --color-success: var(--sig-success);
+    --color-success-bg: var(--sig-success-bg);
+    --color-warning: var(--sig-warning);
+    --color-warning-bg: var(--sig-warning-bg);
+    --color-error: var(--sig-error);
+    --color-error-bg: var(--sig-error-bg);
+    --color-diff-add: var(--sig-diff-add-text);
+    --color-diff-add-bg: var(--sig-diff-add-bg);
+    --color-diff-rem: var(--sig-diff-remove-text);
+    --color-diff-rem-bg: var(--sig-diff-remove-bg);
+    --color-bg-main: var(--sig-bg-page);
+    --color-bg-surface: var(--sig-bg-surface);
   }
 }

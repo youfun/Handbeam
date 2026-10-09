@@ -98,6 +98,39 @@ defmodule Handbeam.Runtime.TaskTrackerTest do
     refute_received {:notify_action, {:in_app_ended, _, _}}
   end
 
+  defmodule SystemAdapter do
+    @behaviour NotifyAdapter
+
+    def app_visible?, do: true
+    def prefers_system_notification?, do: true
+
+    def apply(action) do
+      case Process.whereis(:runtime_notify_capture) do
+        pid when is_pid(pid) -> send(pid, {:notify_action, action})
+        _ -> :ok
+      end
+    end
+  end
+
+  test "macOS delivery replaces the page toast with a system notification" do
+    sid = "task-mac-#{System.unique_integer([:positive])}"
+    Application.put_env(:handbeam, :runtime_notify_adapter, SystemAdapter)
+    Application.put_env(:handbeam, :runtime_notify_visible, true)
+    Phoenix.PubSub.subscribe(Handbeam.PubSub, "runtime:tasks")
+
+    {:ok, _} = Session.start_or_get(session_id: sid, model: "fake")
+    {:ok, queue} = Handbeam.Agent.CandidateQueue.start_link(session_id: sid, owner: self())
+    :ok = Session.attach_run(sid, self(), queue, run_id: "run-mac")
+    Session.broadcast_event(sid, :run_start, %{model: "fake"})
+    assert_receive {:notify_action, {:update_running, %{running_count: 1}}}
+
+    Session.broadcast_event(sid, :run_end, %{status: "completed", turns: 1})
+    assert_receive {:notify_action, {:system_ended, task, :completed}}
+    assert task.conversation_id == sid
+    refute_received {:in_app_ended, _, _}
+    refute_received {:notify_action, {:in_app_ended, _, _}}
+  end
+
   test "tool events do not update sidebar state or broadcast animation activity" do
     sid = "task-sequence-#{System.unique_integer([:positive])}"
     {:ok, _} = Session.start_or_get(session_id: sid, model: "fake")

@@ -350,6 +350,8 @@ defmodule HandbeamProbe.HomeScreen do
     if Settings.settings_page?(page), do: Settings.handle(msg, socket), else: socket
   end
 
+  defp dispatch(:conversation_bean_frame, socket), do: Nav.advance_bean(socket)
+
   defp dispatch(_message, socket), do: socket
 
   # A tracked reply is routed only when `PendingRequests.take/3` accepts it:

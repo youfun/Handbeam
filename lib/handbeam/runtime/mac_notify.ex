@@ -3,9 +3,9 @@ defmodule Handbeam.Runtime.MacNotify do
   macOS shell adapter for run-lifecycle notifications.
 
   Installed only when the GUI app spawned this BEAM and passed a loopback
-  bridge. Web UI flashes and the Android adapter are unchanged. The shell
-  owns UserNotifications; this process only reports visibility and the
-  already-localized completion text.
+  bridge. A finished reply becomes a system banner unless the user is
+  looking at that conversation. Browser flashes and the Android adapter
+  are unchanged. The shell owns UserNotifications.
   """
 
   @behaviour Handbeam.Runtime.NotifyAdapter
@@ -34,7 +34,12 @@ defmodule Handbeam.Runtime.MacNotify do
     :ok
   end
 
-  def apply({:in_app_ended, _task, _reason}), do: :ok
+  def apply({:in_app_ended, task, reason}) do
+    apply({:system_ended, task, reason})
+  end
+
+  @doc false
+  def prefers_system_notification?, do: true
 
   @doc false
   def children do

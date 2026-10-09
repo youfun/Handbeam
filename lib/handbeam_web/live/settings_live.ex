@@ -357,6 +357,11 @@ defmodule HandbeamWeb.SettingsLive do
 
   # ── Helpers ──
 
+  defp theme_click(theme) do
+    JS.set_attribute({"data-theme", theme}, to: "html")
+    |> JS.push("set_theme", value: %{theme: theme})
+  end
+
   defp tab_from_params(%{"tab" => tab_str}) do
     cond do
       tab_str in ["sns", "tools", "security"] ->

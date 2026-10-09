@@ -56,6 +56,12 @@ function applyTheme(theme) {
   try { localStorage.setItem("handbeam-theme", theme); } catch (_) {}
 }
 
+const ThemeBridge = {
+  mounted() {
+    this.handleEvent("set-theme", ({theme}) => applyTheme(theme));
+  }
+};
+
 const MobHook = {
   mounted() {
     this.handleEvent("set-theme", ({theme}) => applyTheme(theme));
@@ -68,7 +74,7 @@ const MobHook = {
 }
 
 let csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content");
-let Hooks = { StreamingMarkdown, ChatScroll, ConversationNav, ComposerPasteUpload, WorkspacePanel, CopyText, ConversationContextMenu, ConversationActivity, ConversationSidebar, LocalWebGPUProbe, GhosttyTerminal, MobHook };
+let Hooks = { StreamingMarkdown, ChatScroll, ConversationNav, ComposerPasteUpload, WorkspacePanel, CopyText, ConversationContextMenu, ConversationActivity, ConversationSidebar, LocalWebGPUProbe, GhosttyTerminal, ThemeBridge, MobHook };
 
 try {
   let liveSocket = new LiveSocket("/live", Socket, {

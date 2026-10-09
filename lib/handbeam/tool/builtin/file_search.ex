@@ -18,6 +18,8 @@ defmodule Handbeam.Tool.Builtin.FileSearch do
 
   @behaviour Handbeam.Agent.Tool
 
+  @cold_index_wait_ms 3_000
+
   @impl true
   def name, do: "file_search"
 
@@ -63,14 +65,13 @@ defmodule Handbeam.Tool.Builtin.FileSearch do
     with {:ok, root} <- resolve_root(working_directory),
          {:ok, path} <- resolve_path_filter(root, input["path"]),
          {:ok, index} <- Handbeam.Search.ensure_started(root),
-         {:ok, result} <-
-           Handbeam.Search.search(index, query,
-             limit: limit,
-             path: path,
-             exclude: List.wrap(input["exclude"] || []),
-             cursor: input["cursor"],
-             await: false
-           ) do
+         search_opts = [
+           limit: limit,
+           path: path,
+           exclude: List.wrap(input["exclude"] || []),
+           cursor: input["cursor"]
+         ],
+         {:ok, result} <- search_with_cold_index_wait(index, query, search_opts) do
       paths =
         Enum.filter(result.paths, fn %{path: path} ->
           Handbeam.Security.PathValidator.allowed_result?(root, path)
@@ -85,6 +86,18 @@ defmodule Handbeam.Tool.Builtin.FileSearch do
   end
 
   # ── Helpers ──
+
+  # An empty answer from a half-built index reads as "no such file" to the model,
+  # so wait (bounded, server-side) for the first scan before reporting zero.
+  defp search_with_cold_index_wait(index, query, opts) do
+    case Handbeam.Search.search(index, query, [await: false] ++ opts) do
+      {:ok, %{paths: [], status: :indexing}} ->
+        Handbeam.Search.search(index, query, [await: @cold_index_wait_ms] ++ opts)
+
+      other ->
+        other
+    end
+  end
 
   defp resolve_root(working_directory) when is_binary(working_directory) do
     cond do
@@ -153,6 +166,10 @@ defmodule Handbeam.Tool.Builtin.FileSearch do
   end
 
   defp partial_header(_result), do: ""
+
+  defp empty_hint(_query, %{status: :indexing}) do
+    "The workspace index is still being built, so this empty result is not conclusive. Retry file_search shortly, or use grep."
+  end
 
   defp empty_hint(query, result) do
     [indexed_hint(result), glob_hint(query), search_hint()]

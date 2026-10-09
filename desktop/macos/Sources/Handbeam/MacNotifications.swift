@@ -13,6 +13,7 @@ final class MacNotifications: NSObject, UNUserNotificationCenterDelegate {
 
     func install() {
         UNUserNotificationCenter.current().delegate = self
+        requestAuthorizationIfNeeded()
     }
 
     func setOpenHandler(_ handler: @escaping (String, String) -> Void) {
