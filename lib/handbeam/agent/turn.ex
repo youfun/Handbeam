@@ -93,6 +93,7 @@ defmodule Handbeam.Agent.Turn do
           tool_calls,
           &(Handbeam.Utils.SafeMap.get_first_truthy(&1, :id, "id") == call_id)
         )
+
       decision = Map.get(decision_by_id, call_id, %{})
       fold_hitl_decision(acc, call_id, call, decision)
     end)
@@ -703,7 +704,7 @@ defmodule Handbeam.Agent.Turn do
 
     state =
       state
-      |> maybe_compact()
+      |> maybe_compact(opts)
       |> inject_candidate_messages(opts, :steer)
       |> mw_run(:before_completion)
 
@@ -748,8 +749,8 @@ defmodule Handbeam.Agent.Turn do
   # Apply Compactor before each provider call so a long-running conversation
   # cannot indefinitely grow the message history and stall the provider with
   # oversized payloads.
-  defp maybe_compact(%State{} = state) do
-    case Compactor.maybe_compact(state) do
+  defp maybe_compact(%State{} = state, opts) do
+    case Compactor.maybe_compact(state, compaction_call_opts(state, opts)) do
       {:compacted, compacted} ->
         Logger.info(
           "[Turn] context compacted before=#{length(state.messages)} " <>
@@ -873,23 +874,32 @@ defmodule Handbeam.Agent.Turn do
   end
 
   defp completion_tool_defs(state, opts, provider_config) do
-    authorized_tools = Executor.authorized_tools(state.config)
-
-    tool_defs =
-      opts
-      |> Keyword.get(:session_id)
-      |> session_tool_defs()
-      |> Handbeam.MCP.Access.filter(state.config.context)
-      |> Enum.filter(&(&1.name in authorized_tools))
-      |> Enum.map(
-        &Handbeam.Tool.Builtin.Task.contextualize_def(&1, state.config, authorized_tools)
-      )
-
+    tool_defs = active_tool_defs(state, opts)
     max_turns = state.config.max_turns
     final_turn? = is_integer(max_turns) and state.turn + 1 >= max_turns
     provider_config = maybe_require_final_answer(provider_config, final_turn?)
     tool_defs = if final_turn?, do: [], else: tool_defs
     {provider_config, tool_defs}
+  end
+
+  defp active_tool_defs(state, opts) do
+    authorized_tools = Executor.authorized_tools(state.config)
+
+    opts
+    |> Keyword.get(:session_id)
+    |> session_tool_defs()
+    |> Handbeam.MCP.Access.filter(state.config.context)
+    |> Enum.filter(&(&1.name in authorized_tools))
+    |> Enum.map(&Handbeam.Tool.Builtin.Task.contextualize_def(&1, state.config, authorized_tools))
+  end
+
+  defp compaction_call_opts(state, opts) do
+    provider_config =
+      state
+      |> build_provider_config()
+      |> Map.delete(:provider_state)
+
+    [tool_defs: active_tool_defs(state, opts), provider_config: provider_config]
   end
 
   defp session_tool_defs(nil), do: Handbeam.Tool.Registry.tool_defs()
@@ -1070,7 +1080,7 @@ defmodule Handbeam.Agent.Turn do
 
   defp retry_prompt_too_long(state, opts, error_msg) do
     Logger.info("[Turn] Prompt too long — forcing compaction and retrying")
-    compacted_state = Compactor.force_compact(state)
+    compacted_state = Compactor.force_compact(state, compaction_call_opts(state, opts))
 
     if compacted_state.messages == state.messages do
       state = %{state | status: :error, error: error_msg}

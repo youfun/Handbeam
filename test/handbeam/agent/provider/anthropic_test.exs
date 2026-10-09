@@ -190,6 +190,30 @@ defmodule Handbeam.Agent.Provider.AnthropicTest do
       refute Map.has_key?(hd(decoded["tools"]), "cache_control")
       assert List.last(decoded["tools"])["cache_control"] == %{"type" => "ephemeral"}
     end
+
+    test "compaction fork marks the parent prefix, not the summary suffix" do
+      config =
+        config_that_captures_request()
+        |> Map.put(:cache, true)
+        |> Map.put(:cache_fork, true)
+        |> Map.put(:cache_fork_suffix, 1)
+
+      Anthropic.complete(
+        [Message.user("Hi"), Message.assistant("OK"), Message.user("summarize now")],
+        [],
+        config
+      )
+
+      assert_received {:request_body, body}
+      decoded = Jason.decode!(body)
+      [parent, _assistant, suffix] = decoded["messages"]
+
+      assert parent["content"] |> List.last() |> Map.get("cache_control") == %{
+               "type" => "ephemeral"
+             }
+
+      assert suffix["content"] == "summarize now"
+    end
   end
 
   # ── stream/4 ──

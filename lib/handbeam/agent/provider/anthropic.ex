@@ -298,7 +298,7 @@ defmodule Handbeam.Agent.Provider.Anthropic do
       messages
       |> Handbeam.Tool.Images.bound_history()
       |> Enum.map(&format_message/1)
-      |> maybe_add_cache_to_last_user_message(cache?)
+      |> maybe_add_cache_to_last_user_message(cache?, config)
 
     body = %{
       "model" => config.model,
@@ -501,8 +501,22 @@ defmodule Handbeam.Agent.Provider.Anthropic do
     init ++ [Map.put(last, "cache_control", %{"type" => "ephemeral"})]
   end
 
-  # Adds cache_control to the last real user message's last content block
-  defp maybe_add_cache_to_last_user_message(messages, false), do: messages
+  # Adds cache_control to the last real user message's last content block.
+  # A compaction fork keeps that marker on the parent prefix and leaves the
+  # appended summary instruction unmarked.
+  defp maybe_add_cache_to_last_user_message(messages, false, _config), do: messages
+
+  defp maybe_add_cache_to_last_user_message(messages, true, config) do
+    suffix = if Map.get(config, :cache_fork), do: Map.get(config, :cache_fork_suffix, 1), else: 0
+
+    if is_integer(suffix) and suffix > 0 and suffix < length(messages) do
+      {parent, tail} = Enum.split(messages, length(messages) - suffix)
+      maybe_add_cache_to_last_user_message(parent, true) ++ tail
+    else
+      maybe_add_cache_to_last_user_message(messages, true)
+    end
+  end
+
   defp maybe_add_cache_to_last_user_message([], _cache?), do: []
 
   defp maybe_add_cache_to_last_user_message(messages, true) do

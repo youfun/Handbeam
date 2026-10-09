@@ -66,31 +66,30 @@ defmodule Handbeam.Agent.Compactor do
   Returns `{:compacted, state}` or `{:unchanged, state}`.
   """
   @spec force_compact(State.t()) :: State.t()
-  def force_compact(%State{} = state) do
-    compact_messages_in_state(state, state.messages)
+  def force_compact(%State{} = state, opts \\ []) do
+    compact_messages_in_state(state, state.messages, opts)
   end
 
-  @spec maybe_compact(State.t()) :: {:compacted | :unchanged, State.t()}
-  def maybe_compact(%State{config: config, messages: messages} = state) do
-    reserve_tokens = (config.compaction && config.compaction.reserve_tokens) || 16_384
-    max_tokens = config.max_tokens || 200_000
+  @spec maybe_compact(State.t(), keyword()) :: {:compacted | :unchanged, State.t()}
+  def maybe_compact(%State{config: config, messages: messages} = state, opts \\ []) do
+    reserve_tokens = compaction_limit(:reserve_tokens, config, 16_384)
+    max_tokens = compaction_limit(:max_tokens, config, 200_000)
 
     if estimate_messages_tokens(messages) <= max_tokens - reserve_tokens do
       {:unchanged, state}
     else
-      {:compacted, compact_messages_in_state(state, messages)}
+      {:compacted, compact_messages_in_state(state, messages, opts)}
     end
   end
 
-  defp compact_messages_in_state(%State{} = state, messages) do
-    keep_recent_tokens =
-      (state.config.compaction && state.config.compaction.keep_recent_tokens) || 20_000
+  defp compact_messages_in_state(%State{} = state, messages, opts) do
+    keep_recent_tokens = compaction_limit(:keep_recent_tokens, state.config, 20_000)
 
     case prepare_summary_compaction(messages, keep_recent_tokens) do
       {:ok, prepared} ->
         fire_on_compaction(prepared.messages_to_summarize, state)
 
-        case summarize_compaction(prepared, state) do
+        case summarize_compaction(prepared, state, messages, opts) do
           {:ok, summary_text} ->
             compacted = [prepared.first, build_summary_message(summary_text) | prepared.recent]
             %{state | messages: compacted}
@@ -139,18 +138,28 @@ defmodule Handbeam.Agent.Compactor do
 
   defp prepare_summary_compaction(_, _keep_recent_tokens), do: :noop
 
-  defp summarize_compaction(prepared, %State{} = state) do
+  defp summarize_compaction(_prepared, %State{} = state, messages, opts) do
     provider = state.config.provider
+    tool_defs = Keyword.get(opts, :tool_defs, [])
+    {request_messages, suffix_count} = append_compaction_suffix(messages)
 
     config =
-      state.config.provider_config
+      opts
+      |> Keyword.get(:provider_config, state.config.provider_config)
       |> Map.delete(:provider_state)
       |> Map.delete("provider_state")
-      |> Map.put(:system_prompt, @summary_system_prompt)
+      |> Map.put(:system_prompt, state.config.system_prompt)
+      |> Map.put(:cache_fork, true)
+      |> Map.put(:cache_fork_suffix, suffix_count)
 
-    prompt = build_summary_prompt(prepared.messages_to_summarize, prepared.previous_summary)
+    Logger.warning(
+      "[Compactor] summary_request system_prompt=parent tools=#{length(tool_defs)} " <>
+        "messages=#{length(request_messages)} serialized=false"
+    )
 
-    with {:ok, response} <- provider.complete([Message.user(prompt)], [], config),
+    with {:ok, response} <- provider.complete(request_messages, tool_defs, config),
+         :ok <- log_summary_usage(response),
+         :ok <- reject_tool_calls(response),
          {:ok, summary_text} <- extract_summary_text(response) do
       {:ok, summary_text}
     else
@@ -159,23 +168,87 @@ defmodule Handbeam.Agent.Compactor do
     end
   end
 
-  defp build_summary_prompt(messages_to_summarize, previous_summary) do
-    previous_summary_section =
-      case previous_summary do
-        nil ->
-          ""
+  defp append_compaction_suffix(messages) do
+    instruction = Message.user(compaction_instruction())
 
-        %Message{} = message ->
-          "<previous-summary>\n#{summary_body(message)}\n</previous-summary>\n\n"
-      end
+    case List.last(messages) do
+      %Message{role: :assistant} ->
+        {messages ++ [instruction], 1}
 
+      _ ->
+        {messages ++ [Message.assistant("Continuing."), instruction], 2}
+    end
+  end
+
+  defp compaction_instruction do
     """
-    #{previous_summary_section}<conversation>
-    #{serialize_messages(messages_to_summarize)}
-    </conversation>
+    #{@summary_system_prompt}
+    Do not call tools. Reply with the handoff summary only.
 
     #{@summary_prompt}
     """
+  end
+
+  defp reject_tool_calls(%{messages: messages}) when is_list(messages) do
+    if Enum.any?(messages, &tool_call_message?/1),
+      do: {:error, :summary_tool_call},
+      else: :ok
+  end
+
+  defp reject_tool_calls(_response), do: :ok
+
+  defp tool_call_message?(%Message{content: blocks}) when is_list(blocks) do
+    Enum.any?(blocks, fn
+      %{type: type} when type in ["tool_use", "server_tool_use"] -> true
+      _ -> false
+    end)
+  end
+
+  defp tool_call_message?(_message), do: false
+
+  defp compaction_limit(:max_tokens, config, default) do
+    env_positive("HANDBEAM_COMPACTION_MAX_TOKENS") || config.max_tokens || default
+  end
+
+  defp compaction_limit(:reserve_tokens, config, default) do
+    env_positive("HANDBEAM_COMPACTION_RESERVE_TOKENS") ||
+      (config.compaction && config.compaction.reserve_tokens) || default
+  end
+
+  defp compaction_limit(:keep_recent_tokens, config, default) do
+    env_positive("HANDBEAM_COMPACTION_KEEP_RECENT_TOKENS") ||
+      (config.compaction && config.compaction.keep_recent_tokens) || default
+  end
+
+  defp env_positive(name) do
+    case System.get_env(name) do
+      value when is_binary(value) and value != "" ->
+        case Integer.parse(value) do
+          {number, ""} when number > 0 -> number
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp log_summary_usage(%{usage: usage}) when is_map(usage) do
+    Logger.warning(
+      "[Compactor] summary_usage input=#{usage_num(usage, :input_tokens)} " <>
+        "total_input=#{usage_num(usage, :total_input_tokens)} " <>
+        "cache_read=#{usage_num(usage, :cache_read_input_tokens)} " <>
+        "cache_write=#{usage_num(usage, :cache_creation_input_tokens)} " <>
+        "output=#{usage_num(usage, :output_tokens)}"
+    )
+
+    :ok
+  end
+
+  defp log_summary_usage(_response), do: :ok
+
+  defp usage_num(usage, key) do
+    Map.get(usage, key) || Map.get(usage, Atom.to_string(key)) || 0
   end
 
   defp extract_summary_text(%{messages: messages}) when is_list(messages) do
@@ -213,12 +286,6 @@ defmodule Handbeam.Agent.Compactor do
   end
 
   defp summary_message?(_message), do: false
-
-  defp summary_body(%Message{content: content}) when is_binary(content) do
-    content
-    |> String.replace_prefix(@summary_prefix, "")
-    |> String.trim()
-  end
 
   @spec compact_messages([Message.t()], keyword()) :: [Message.t()]
   def compact_messages(messages, opts \\ []) do
@@ -351,46 +418,6 @@ defmodule Handbeam.Agent.Compactor do
   end
 
   defp estimate_message_tokens(_), do: 1
-
-  defp serialize_messages(messages) do
-    messages
-    |> Enum.map(&serialize_message/1)
-    |> Enum.reject(&(&1 == ""))
-    |> Enum.join("\n\n")
-  end
-
-  defp serialize_message(%Message{role: role, content: content}) when is_binary(content) do
-    "[#{role_label(role)}]\n#{content}"
-  end
-
-  defp serialize_message(%Message{role: role, content: blocks}) when is_list(blocks) do
-    blocks
-    |> Enum.map(&serialize_block(role, &1))
-    |> Enum.reject(&(&1 == ""))
-    |> Enum.join("\n")
-  end
-
-  defp serialize_block(role, %{type: "text", text: text}) when is_binary(text) do
-    "[#{role_label(role)}]\n#{text}"
-  end
-
-  defp serialize_block(:assistant, %{type: type, name: name, input: input})
-       when type in ["tool_use", "server_tool_use"] do
-    "[Assistant tool call] #{name}(#{inspect(input)})"
-  end
-
-  defp serialize_block(_role, %{type: type, content: content})
-       when type in ["tool_result", "server_tool_result"] do
-    "[Tool result]\n#{content}"
-  end
-
-  defp serialize_block(role, block) do
-    "[#{role_label(role)} block #{Map.get(block, :type, "unknown")}]\n#{inspect(block)}"
-  end
-
-  defp role_label(:user), do: "User"
-  defp role_label(:assistant), do: "Assistant"
-  defp role_label(other), do: to_string(other)
 
   defp fire_on_compaction(_middle, %State{config: %{on_compaction: nil}}), do: :ok
 

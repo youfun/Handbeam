@@ -24,6 +24,18 @@ defmodule Handbeam.Agent.CompactorTest do
              response_metadata: %{id: "summary-msg-001", model: "probe-model"}
            }}
 
+        :tool_call ->
+          {:ok,
+           %{
+             stop_reason: :tool_use,
+             messages: [
+               Message.assistant_blocks([
+                 %{type: "tool_use", id: "t", name: "read", input: %{}}
+               ])
+             ],
+             usage: %{input_tokens: 5, output_tokens: 1}
+           }}
+
         {:error, reason} ->
           {:error, reason}
       end
@@ -159,14 +171,49 @@ defmodule Handbeam.Agent.CompactorTest do
 
       {:compacted, compacted} = Compactor.maybe_compact(state)
 
-      assert_received {:summary_request, [%Message{role: :user, content: prompt}], [], _config}
-      assert prompt =~ "<conversation>"
-      assert prompt =~ "## Goal"
+      assert_received {:summary_request, request_messages, [], config}
+      parent = Enum.take(request_messages, length(messages))
+      assert Enum.map(parent, & &1.content) == Enum.map(messages, & &1.content)
+      assert config.system_prompt == state.config.system_prompt
+      assert List.last(request_messages).role == :user
+      assert List.last(request_messages).content =~ "## Goal"
+
+      refute Enum.any?(request_messages, fn
+               %Message{content: content} when is_binary(content) ->
+                 String.contains?(content, "<conversation>")
+
+               _ ->
+                 false
+             end)
 
       assert hd(compacted.messages).content == "original request"
       assert Enum.at(compacted.messages, 1).role == :user
       assert summary_message?(Enum.at(compacted.messages, 1))
       assert Enum.at(compacted.messages, 1).content =~ "Alpha goal"
+    end
+
+    test "keeps the parent tool definitions and ignores a summary that calls tools" do
+      messages = [
+        Message.user("original request"),
+        Message.assistant(String.duplicate("a", 900)),
+        Message.user("latest")
+      ]
+
+      tool_defs = [%{name: "read", description: "Read", input_schema: %{}}]
+
+      state =
+        build_state(messages,
+          max_tokens: 250,
+          compaction: [reserve_tokens: 25, keep_recent_tokens: 20],
+          provider_config: %{summary_response: :tool_call, test_pid: self()}
+        )
+
+      {:compacted, compacted} = Compactor.maybe_compact(state, tool_defs: tool_defs)
+
+      assert_received {:summary_request, request_messages, ^tool_defs, config}
+      assert config.system_prompt == state.config.system_prompt
+      assert hd(request_messages).content == "original request"
+      refute Enum.any?(compacted.messages, &summary_message?/1)
     end
 
     test "preserves recent messages intact based on the keep_recent_tokens budget" do
