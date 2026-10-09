@@ -14,6 +14,7 @@ function conversationHash(id) {
 
 // Runtime owns running/waiting/idle; the 7.6-second sequence is purely visual.
 const cycleDuration = 7.6;
+const appearanceDuration = 0.8;
 export const ConversationActivity = {
   mounted() {
     this.bodies = new Map();
@@ -38,15 +39,25 @@ export const ConversationActivity = {
     for (const el of this.el.querySelectorAll("[data-run-id]")) {
       const id = el.dataset.runId;
       const hash = conversationHash(id);
-      const body = next.get(id) || this.bodies.get(id) || { elapsed: 0 };
+      const body = next.get(id) || this.bodies.get(id) || { elapsed: 0, growth: 0 };
       const sprite = el.querySelector(".conversation-run-sprite");
       if (!sprite) continue;
       // Keep phase across LiveView patches and approval; reset after completion.
-      if (body.state === "idle") body.elapsed = 0;
+      if (body.state === "idle") {
+        body.elapsed = 0;
+        body.growth = 0;
+      }
       body.state = el.dataset.runState;
-      if (!next.has(id)) body.sprites = [];
+      if (body.state === "idle") body.growth = 0;
+      if (body.state === "running" && this.motion.matches) body.growth = 1;
+      if (!next.has(id)) {
+        body.sprites = [];
+        body.indicators = [];
+      }
       body.sprites.push(sprite);
+      body.indicators.push(el);
       el.style.setProperty("--run-color", conversationColors[hash % conversationColors.length]);
+      this.paintAppearance(body);
       this.paint(body);
       next.set(id, body);
     }
@@ -66,8 +77,28 @@ export const ConversationActivity = {
     this.frame = requestAnimationFrame(now => this.tick(now));
   },
 
+  paintAppearance(body) {
+    const growing = body.state === "running" && body.growth < 1 && !this.motion.matches;
+    const p = body.growth * body.growth * (3 - 2 * body.growth);
+    for (const el of body.indicators) {
+      const flag = growing ? "true" : "false";
+      if (el.dataset.runGrowing !== flag) el.dataset.runGrowing = flag;
+      if (!growing) continue;
+      const values = {
+        "--run-stem-rise": `${-7 * p}px`,
+        "--run-reveal-top": `${59.615 * (1 - p)}%`,
+        "--run-reveal-bottom": `${40.385 * (1 - p)}%`,
+        "--run-reveal-opacity": `${p}`,
+        "--run-limbs-opacity": `${Math.max(0, (p - .65) / .35)}`,
+      };
+      for (const [name, value] of Object.entries(values)) {
+        if (el.style.getPropertyValue(name) !== value) el.style.setProperty(name, value);
+      }
+    }
+  },
+
   paint(body) {
-    const moving = body.state === "running" && !this.motion.matches;
+    const moving = body.state === "running" && body.growth >= 1 && !this.motion.matches;
     const time = moving ? body.elapsed % cycleDuration : 0;
     const stage = time < 2 ? 0 : time < 5.6 ? 1 : 2;
     const local = stage === 0 ? time : stage === 1 ? time - 2 : time - 5.6;
@@ -106,7 +137,14 @@ export const ConversationActivity = {
     this.last = now;
     for (const body of this.bodies.values()) {
       if (body.state !== "running") continue;
-      body.elapsed = (body.elapsed + dt) % cycleDuration;
+      let remaining = dt;
+      if (body.growth < 1) {
+        const consumed = Math.min(remaining, appearanceDuration * (1 - body.growth));
+        body.growth = Math.min(1, body.growth + consumed / appearanceDuration);
+        remaining -= consumed;
+      }
+      body.elapsed = (body.elapsed + remaining) % cycleDuration;
+      this.paintAppearance(body);
       this.paint(body);
     }
     this.frame = null;

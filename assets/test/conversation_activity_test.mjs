@@ -53,6 +53,38 @@ function paint(time) {
 assert.equal(hook.bodies.size, 2);
 assert.equal(callbacks.size, 1, "all running conversations share one animation clock");
 assert.equal(pinned.style.getPropertyValue("--run-color"), regular.style.getPropertyValue("--run-color"));
+function advance(seconds) {
+  const end = clock + seconds * 1000;
+  while (clock < end - .001) {
+    clock = Math.min(end, clock + 50);
+    const callback = callbacks.get(hook.frame);
+    assert.ok(callback, "the shared clock remains scheduled");
+    callbacks.delete(hook.frame);
+    callback(clock);
+  }
+}
+const growing = () => pinned.dataset.runGrowing;
+assert.equal(growing(), "true", "a running bean first appears from the idle stem");
+assert.equal(body.elapsed, 0);
+assert.equal(value("step-b"), "0px", "feet do not step during appearance");
+assert.equal(pinned.style.getPropertyValue("--run-reveal-opacity"), "0");
+advance(.4);
+assert.equal(body.elapsed, 0, "appearance does not consume any of the original cycle");
+assert.equal(pinned.style.getPropertyValue("--run-stem-rise"), "-3.5px");
+assert.equal(pinned.style.getPropertyValue("--run-limbs-opacity"), "0",
+  "the body appears before the limbs");
+const growthBeforePatch = body.growth;
+hook.updated();
+assert.equal(body.growth, growthBeforePatch, "patches do not restart appearance");
+assert.deepEqual(pinned.style.values, regular.style.values);
+advance(.3);
+assert.ok(Number(pinned.style.getPropertyValue("--run-limbs-opacity")) > 0);
+assert.equal(value("step-b"), "0px", "limbs appear without changing their pose");
+advance(.15);
+assert.equal(growing(), "false", "appearance controls detach once the bean is complete");
+assert.equal(body.growth, 1);
+assert.ok(Math.abs(body.elapsed - .05) < .00001);
+
 assert.equal(paint(0), "walk");
 assert.equal(paint(1.99), "walk");
 assert.equal(paint(2.8), "look");
@@ -112,10 +144,33 @@ assert.equal(pinned.style.getPropertyValue("--run-color"), conversationColor,
 assert.equal(regular.style.getPropertyValue("--run-color"), conversationColor);
 for (const el of [pinned, regular]) el.dataset.runState = "running";
 hook.updated();
-assert.equal(body.elapsed, 0, "a new run starts with walking");
+assert.equal(body.elapsed, 0, "a new run starts with the appearance transition");
+assert.equal(growing(), "true");
+assert.equal(body.growth, 0);
 assert.equal(pinned.style.getPropertyValue("--run-color"), conversationColor,
   "starting again preserves the idle stem's color");
+advance(.4);
+const pausedGrowth = body.growth;
+for (const el of [pinned, regular]) el.dataset.runState = "waiting_confirmation";
+hook.updated();
+assert.equal(callbacks.size, 0);
+assert.equal(growing(), "false", "approval displays its marker immediately");
+for (const el of [pinned, regular]) el.dataset.runState = "running";
+hook.updated();
+assert.equal(body.growth, pausedGrowth, "approval resumes the unfinished appearance");
+advance(.45);
+assert.equal(growing(), "false");
+for (const el of [pinned, regular]) el.dataset.runState = "idle";
+hook.updated();
+assert.equal(callbacks.size, 0);
+assert.equal(growing(), "false", "ending immediately restores the static stem");
+motion.matches = true;
+for (const el of [pinned, regular]) el.dataset.runState = "running";
+hook.updated();
+assert.equal(body.growth, 1, "reduced motion skips appearance");
+assert.equal(growing(), "false");
+assert.equal(callbacks.size, 0);
 hook.destroyed();
 assert.equal(callbacks.size, 0);
 assert.equal(listeners.size, 0);
-console.log("conversation activity: walk/look sequence, lifecycle, colors and clock checks passed");
+console.log("conversation activity: appearance, unchanged walk/look cycle, lifecycle, colors and clock checks passed");

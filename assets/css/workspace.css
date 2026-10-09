@@ -2394,6 +2394,28 @@ button.workspace-file-row:hover,
   .conversation-run-sprite g, .conversation-run-sprite path { transform: none; }
 }
 
+/* Startup only: reveal the unchanged sprite before its original cycle starts. */
+.conversation-run-indicator { position: relative; }
+[data-run-state="running"][data-run-growing="true"] .conversation-idle-stem {
+  display: block;
+  position: absolute;
+  inset: 0;
+  transform: translateY(var(--run-stem-rise, 0px));
+  pointer-events: none;
+}
+[data-run-state="running"][data-run-growing="true"] .conversation-run-sprite {
+  clip-path: inset(var(--run-reveal-top, 59.615%) 0 var(--run-reveal-bottom, 40.385%) 0);
+  opacity: var(--run-reveal-opacity, 0);
+}
+[data-run-state="running"][data-run-growing="true"] .run-leaf,
+[data-run-state="running"][data-run-growing="true"] .run-shadow { opacity: 0; }
+[data-run-state="running"][data-run-growing="true"] .run-leg-left,
+[data-run-state="running"][data-run-growing="true"] .run-leg-right,
+[data-run-state="running"][data-run-growing="true"] .run-arm-left,
+[data-run-state="running"][data-run-growing="true"] .run-arm-right {
+  opacity: var(--run-limbs-opacity, 0);
+}
+
 /* ── Conversation dot (archived rows) ── */
 .conversation-dot {
   display: inline-block;
