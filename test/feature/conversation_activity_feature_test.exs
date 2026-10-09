@@ -56,7 +56,6 @@ defmodule HandbeamWeb.Feature.ConversationActivityTest do
     end
 
     :ok = Session.subscribe(id)
-    :ok = Phoenix.PubSub.subscribe(Handbeam.PubSub, "runtime:activity")
     page = visit(conn, "/w/#{ws["id"]}/c/#{other["id"]}")
 
     assert {:ok, _} =
@@ -91,7 +90,7 @@ defmodule HandbeamWeb.Feature.ConversationActivityTest do
     page = click_button(page, "Allow once")
     assert_receive {:resumed_provider, resumed}, 5_000
     page = assert_has(page, selector <> "[data-run-state='running']", timeout: 2_000)
-    assert_receive {:runtime_activity, ^id, :tool_end}, 2_000
+    assert_receive {:agent_event, %{kind: :tool_end}}, 2_000
     assert File.read!(Path.join(workspace, "result.txt")) == "verified"
 
     page = visit(page, "/w/#{ws["id"]}/c/#{other["id"]}")

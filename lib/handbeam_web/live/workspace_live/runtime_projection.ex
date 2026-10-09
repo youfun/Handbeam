@@ -783,7 +783,6 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
   def subscribe_to_runtime_tasks(socket) do
     if connected?(socket) do
       Handbeam.Runtime.TaskTracker.subscribe()
-      Phoenix.PubSub.subscribe(Handbeam.PubSub, "runtime:activity")
       Handbeam.Runtime.TaskTracker.viewing(self(), socket.assigns.current_conversation_id)
       assign(socket, :runtime_tasks, Handbeam.Runtime.TaskTracker.snapshot())
     else

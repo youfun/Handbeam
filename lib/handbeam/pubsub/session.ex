@@ -221,7 +221,6 @@ defmodule Handbeam.PubSub.Session do
       next_turn_messages: load_messages(Map.get(loaded, "next_turn_messages", [])),
       extension_state: Map.get(loaded, "extension_state", %{}),
       last_throttle: 0,
-      last_activity: nil,
       store_opts: store_opts(opts),
       recorder_opts: recorder_opts(opts)
     }
@@ -649,7 +648,6 @@ defmodule Handbeam.PubSub.Session do
     log_broadcast_event(state.session_id, event)
     Phoenix.PubSub.broadcast(Handbeam.PubSub, topic, {:agent_event, event})
     maybe_broadcast_run_lifecycle(state.session_id, event)
-    maybe_broadcast_tool_lifecycle(state, kind, payload)
 
     new_events = Enum.take([event | state.events], @max_snapshot_events)
 
@@ -659,8 +657,6 @@ defmodule Handbeam.PubSub.Session do
         events: new_events,
         control_events: append_control(state.control_events, event)
     }
-
-    new_state = broadcast_activity(new_state, kind)
 
     maybe_record_event(new_state, event)
     maybe_save_throttled(new_state, force?: Keyword.get(opts, :force_save?, true))
@@ -812,27 +808,6 @@ defmodule Handbeam.PubSub.Session do
 
   defp safe_seal_queue(_queue_pid), do: :ok
 
-  # Sidebar activity carries no transcript or tool input, and is bounded per session.
-  defp broadcast_activity(state, kind)
-       when kind in [:message_delta, :thinking_delta, :tool_start, :tool_end] do
-    now = System.monotonic_time(:millisecond)
-    last_activity = Map.get(state, :last_activity)
-
-    if is_nil(last_activity) or now - last_activity >= 250 do
-      Phoenix.PubSub.broadcast(
-        Handbeam.PubSub,
-        "runtime:activity",
-        {:runtime_activity, state.session_id, kind}
-      )
-
-      Map.put(state, :last_activity, now)
-    else
-      state
-    end
-  end
-
-  defp broadcast_activity(state, _kind), do: state
-
   defp maybe_broadcast_run_lifecycle(session_id, %{kind: kind, payload: payload})
        when kind in [
               :run_start,
@@ -849,24 +824,6 @@ defmodule Handbeam.PubSub.Session do
   end
 
   defp maybe_broadcast_run_lifecycle(_session_id, _event), do: :ok
-
-  # Reliable, compact events for sidebar modes; never forward tool inputs/results.
-  defp maybe_broadcast_tool_lifecycle(state, kind, payload)
-       when kind in [:tool_start, :tool_end] do
-    tool = %{
-      run_id: payload_run_id(payload) || state.meta.run_id,
-      tool_use_id: Handbeam.Utils.SafeMap.get_first_truthy(payload, :tool_use_id, "tool_use_id"),
-      tool: Handbeam.Utils.SafeMap.get_first_truthy(payload, :tool, "tool")
-    }
-
-    Phoenix.PubSub.broadcast(
-      Handbeam.PubSub,
-      "runtime:runs",
-      {:tool_lifecycle, state.session_id, kind, tool}
-    )
-  end
-
-  defp maybe_broadcast_tool_lifecycle(_state, _kind, _payload), do: :ok
 
   defp via_tuple(session_id), do: {:via, Registry, {Handbeam.SessionRegistry, session_id}}
 end

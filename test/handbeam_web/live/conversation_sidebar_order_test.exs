@@ -54,14 +54,14 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSidebarOrderTest do
     assert ids == ["new", "old"]
   end
 
-  test "tool modes appear for background and pinned conversations" do
+  test "background and pinned indicators use only runtime status" do
     conv = conversation("background", "2026-01-01T00:00:00Z")
 
     pinned =
       conversation("pinned-background", "2026-01-01T00:00:00Z")
       |> Map.put("pinned_at", "2026-01-01T00:00:00Z")
 
-    for mode <- [:run, :look, :edit] do
+    for status <- [:running, :waiting_confirmation, :idle] do
       html =
         Phoenix.LiveViewTest.render_component(
           &HandbeamWeb.WorkspaceLive.SidebarComponents.projects_sidebar/1,
@@ -77,7 +77,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSidebarOrderTest do
             tasks:
               Enum.map(
                 ["background", "pinned-background"],
-                &%{conversation_id: &1, status: :running, mode: mode}
+                &%{conversation_id: &1, status: status}
               )
           }
         )
@@ -89,8 +89,11 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSidebarOrderTest do
         )
 
       assert length(nodes) == 2
-      assert Floki.attribute(nodes, "data-run-mode") == [to_string(mode), to_string(mode)]
-      assert Floki.attribute(nodes, "data-run-state") == ["running", "running"]
+      assert Floki.attribute(nodes, "data-run-mode") == []
+      assert Floki.attribute(nodes, "data-run-state") == [to_string(status), to_string(status)]
+      assert Floki.find(nodes, ".run-tap-hand") == []
+      assert length(Floki.find(nodes, ".run-arm-left")) == 2
+      assert length(Floki.find(nodes, ".run-arm-right")) == 2
     end
   end
 

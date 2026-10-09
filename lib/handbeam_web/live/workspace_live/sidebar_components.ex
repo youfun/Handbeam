@@ -152,9 +152,7 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
     assigns =
       assign(
         assigns,
-        run_states: Map.new(assigns.runtime_tasks.tasks, &{&1.conversation_id, &1.status}),
-        run_modes:
-          Map.new(assigns.runtime_tasks.tasks, &{&1.conversation_id, Map.get(&1, :mode, :run)})
+        run_states: Map.new(assigns.runtime_tasks.tasks, &{&1.conversation_id, &1.status})
       )
 
     ~H"""
@@ -285,7 +283,6 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
                 <.run_indicator
                   id={conv.id}
                   state={Map.get(@run_states, conv.id)}
-                  mode={Map.get(@run_modes, conv.id, :run)}
                 />
                 <span class="truncate flex-1">{conv.title}</span>
               </button>
@@ -411,7 +408,6 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
                 <.run_indicator
                   id={conv.id}
                   state={Map.get(@run_states, conv.id)}
-                  mode={Map.get(@run_modes, conv.id, :run)}
                 />
                 <span class="truncate flex-1">{conv.title}</span>
               </button>
@@ -578,7 +574,6 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
                 <.run_indicator
                   id={conv.id}
                   state={Map.get(@run_states, conv.id)}
-                  mode={Map.get(@run_modes, conv.id, :run)}
                 />
                 <span class="truncate flex-1">{conv.title}</span>
               </button>
@@ -836,7 +831,6 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
 
   attr :id, :string, required: true
   attr :state, :atom, default: nil
-  attr :mode, :atom, default: :run
 
   defp run_indicator(assigns) do
     ~H"""
@@ -844,16 +838,11 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
       class="conversation-run-indicator"
       data-run-id={@id}
       data-run-state={@state || :idle}
-      data-run-mode={@mode}
       role={@state && "img"}
       aria-label={
         case @state do
           :running ->
-            case @mode do
-              :look -> gettext("阅读 / 搜索中")
-              :edit -> gettext("修改文件中")
-              _ -> gettext("运行中")
-            end
+            gettext("运行中")
 
           :waiting_confirmation ->
             gettext("等待确认")
@@ -886,10 +875,6 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
               <g class="run-arm-right">
                 <path d="M19 16h1v4h-1z" />
                 <path class="run-fill" d="M19 19h2v2h-2z" />
-              </g>
-              <g class="run-working-arm">
-                <path d="M19 16h2v1h-1v2h-1z" />
-                <path class="run-fill" d="M20 17h2v2h-2z" />
               </g>
             </g>
             <g class="run-leaf">

@@ -98,86 +98,41 @@ defmodule Handbeam.Runtime.TaskTrackerTest do
     refute_received {:notify_action, {:in_app_ended, _, _}}
   end
 
-  test "tool modes track parallel calls and publish only visual changes" do
-    sid = "task-modes-#{System.unique_integer([:positive])}"
+  test "tool events do not update sidebar state or broadcast animation activity" do
+    sid = "task-sequence-#{System.unique_integer([:positive])}"
     {:ok, _} = Session.start_or_get(session_id: sid, model: "fake")
     {:ok, queue} = Handbeam.Agent.CandidateQueue.start_link(session_id: sid, owner: self())
-    :ok = Session.attach_run(sid, self(), queue, run_id: "run-modes")
+    :ok = Session.attach_run(sid, self(), queue, run_id: "run-sequence")
+    Session.subscribe(sid)
+    Phoenix.PubSub.subscribe(Handbeam.PubSub, "runtime:runs")
+    Phoenix.PubSub.subscribe(Handbeam.PubSub, "runtime:activity")
     TaskTracker.subscribe()
     Session.broadcast_event(sid, :run_start, %{})
-    assert_receive {:runtime_tasks, %{tasks: [%{mode: :run}]}}
+    assert_receive {:runtime_tasks, %{tasks: [%{status: :running} = task]}}
+    refute Map.has_key?(task, :mode)
+    refute Map.has_key?(task, :tools)
     flush_notify()
 
-    Session.broadcast_event(sid, :tool_start, %{tool: "read", tool_use_id: "read-1"})
-    assert_receive {:runtime_tasks, %{tasks: [%{mode: :look}]}}
-    Session.broadcast_event(sid, :tool_start, %{tool: "grep", tool_use_id: "read-2"})
-    Session.snapshot(sid)
-    assert [%{mode: :look} = task] = TaskTracker.snapshot().tasks
-    refute Map.has_key?(task, :tools)
+    for tool <- ["read", "grep", "edit", "write", "bash"] do
+      Session.broadcast_event(sid, :tool_start, %{tool: tool, tool_use_id: tool})
+      Session.broadcast_event(sid, :tool_end, %{tool: tool, tool_use_id: tool})
+      Session.snapshot(sid)
+      assert_receive {:agent_event, %{kind: :tool_start, payload: %{tool: ^tool}}}
+      assert_receive {:agent_event, %{kind: :tool_end, payload: %{tool: ^tool}}}
+    end
+
+    assert TaskTracker.snapshot().tasks == [task]
     refute_receive {:runtime_tasks, _}, 30
-
-    Session.broadcast_event(sid, :tool_start, %{tool: "write", tool_use_id: "write-1"})
-    assert_receive {:runtime_tasks, %{tasks: [%{mode: :edit}]}}
-    Session.broadcast_event(sid, :tool_end, %{tool_use_id: "read-1"})
-    Session.snapshot(sid)
-    assert [%{mode: :edit}] = TaskTracker.snapshot().tasks
-    refute_receive {:runtime_tasks, _}, 30
-    Session.broadcast_event(sid, :tool_end, %{tool_use_id: "write-1"})
-    assert_receive {:runtime_tasks, %{tasks: [%{mode: :look}]}}
-    Session.broadcast_event(sid, :tool_start, %{tool: "bash", tool_use_id: "bash-1"})
-    assert_receive {:runtime_tasks, %{tasks: [%{mode: :run}]}}
-    Session.broadcast_event(sid, :tool_end, %{tool_use_id: "bash-1"})
-    assert_receive {:runtime_tasks, %{tasks: [%{mode: :look}]}}
-    Session.broadcast_event(sid, :tool_end, %{tool_use_id: "read-2"})
-    assert_receive {:runtime_tasks, %{tasks: [%{mode: :run}]}}
-    refute_receive {:notify_action, _}, 30
-
-    Session.broadcast_event(sid, :run_end, %{status: "completed"})
-    assert_receive {:runtime_tasks, %{tasks: []}}
-    Handbeam.SessionSupervisor.stop_session(sid)
-  end
-
-  test "tool lifecycle is compact, run-scoped, and survives approval without stale modes" do
-    sid = "task-scope-#{System.unique_integer([:positive])}"
-    {:ok, _} = Session.start_or_get(session_id: sid, model: "fake")
-    {:ok, queue} = Handbeam.Agent.CandidateQueue.start_link(session_id: sid, owner: self())
-    :ok = Session.attach_run(sid, self(), queue, run_id: "run-current")
-    Phoenix.PubSub.subscribe(Handbeam.PubSub, "runtime:runs")
-    TaskTracker.subscribe()
-    Session.broadcast_event(sid, :run_start, %{})
-    assert_receive {:runtime_tasks, _}
-
-    Session.broadcast_event(sid, :tool_start, %{
-      tool: "edit",
-      tool_use_id: "edit-1",
-      input: %{content: "private input"}
-    })
-
-    assert_receive {:tool_lifecycle, ^sid, :tool_start, payload}
-    assert payload == %{run_id: "run-current", tool: "edit", tool_use_id: "edit-1"}
-    assert_receive {:runtime_tasks, %{tasks: [%{mode: :edit}]}}
-
-    send(
-      TaskTracker,
-      {:tool_lifecycle, sid, :tool_end, %{run_id: "old-run", tool_use_id: "edit-1"}}
-    )
-
-    assert [%{mode: :edit}] = TaskTracker.snapshot().tasks
-    refute_receive {:runtime_tasks, _}, 30
+    refute_received {:tool_lifecycle, _, _, _}
+    refute_received {:runtime_activity, _, _}
+    refute_received {:notify_action, _}
 
     Session.broadcast_event(sid, :tool_approval_requested, %{})
     assert_receive {:runtime_tasks, %{tasks: [%{status: :waiting_confirmation}]}}
-    Session.broadcast_event(sid, :tool_end, %{tool_use_id: "edit-1"})
-    Session.snapshot(sid)
-    assert [%{status: :waiting_confirmation, mode: :run}] = TaskTracker.snapshot().tasks
-    refute_receive {:runtime_tasks, _}, 30
     Session.broadcast_event(sid, :run_resumed, %{})
-    assert_receive {:runtime_tasks, %{tasks: [%{status: :running, mode: :run}]}}
+    assert_receive {:runtime_tasks, %{tasks: [%{status: :running}]}}
     Session.broadcast_event(sid, :run_end, %{status: "cancelled"})
     assert_receive {:runtime_tasks, %{tasks: []}}
-    Session.broadcast_event(sid, :tool_start, %{tool: "read", tool_use_id: "late"})
-    Session.snapshot(sid)
-    assert TaskTracker.snapshot().tasks == []
     Handbeam.SessionSupervisor.stop_session(sid)
   end
 
