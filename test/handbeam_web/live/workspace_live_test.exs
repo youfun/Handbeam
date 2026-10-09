@@ -3968,7 +3968,6 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       {:ok, _restored, html} = live(conn, "/")
       assert html =~ "sid:#{conv["id"]}"
       assert html =~ "stay in free chat"
-
     end
 
     test "mount renders the active workspace panel", %{conn: conn} do
@@ -4610,12 +4609,17 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       |> render_click()
 
       expanded = render(view)
-      assert expanded =~ "Hide Work"
+      refute expanded =~ "Hide Work"
+      assert expanded =~ "tool-work-line-tool-tu_a"
+      assert expanded =~ "indent-2"
+      assert expanded =~ "Read"
       assert expanded =~ "x.ex"
+      assert expanded =~ "indent-1"
       refute expanded =~ "tool-work-collapsed"
+      refute expanded =~ "tool-status-line"
 
       view
-      |> element("#tool-work-hide-tool-tu_a")
+      |> element("#tool-work-summary-tool-tu_a")
       |> render_click()
 
       collapsed = render(view)

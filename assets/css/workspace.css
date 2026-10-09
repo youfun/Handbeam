@@ -3009,21 +3009,112 @@ button.workspace-file-row:hover,
   display: none;
 }
 
-#ai-messages .tool-event.tool-work-collapsed .file-change-card {
-  display: block;
+#ai-messages .tool-event.tool-work-collapsed .file-change-card,
+#ai-messages .tool-event.tool-work-collapsed .tool-work-line {
+  display: none;
+}
+
+#timeline-stream > div:has(> .tool-event.tool-work-follow) {
+  margin-top: 0;
+}
+
+#ai-messages .tool-event.tool-work-open,
+#ai-messages .tool-event.tool-work-collapsed.tool-work-lead {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
 }
 
 .tool-work-summary {
-  display: block;
-  width: 100%;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  width: auto;
+  max-width: 100%;
   text-align: left;
   border: none;
   background: transparent;
   color: var(--sig-text-tertiary);
   font-size: 13px;
-  line-height: 1.5;
-  padding: 2px 0;
+  line-height: 22px;
+  padding: 0;
   cursor: pointer;
+}
+
+.tool-work-chevron {
+  color: var(--sig-text-quaternary, var(--sig-text-tertiary));
+}
+
+.tool-work-line {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+  min-height: 22px;
+  font-size: 13px;
+  line-height: 22px;
+  color: var(--sig-text-secondary);
+}
+
+.tool-work-line.indent-1,
+#ai-messages .tool-event.tool-work-open .file-change-card.tool-work-file.indent-1 {
+  padding-left: 12px;
+}
+
+.tool-work-line.indent-2,
+#ai-messages .tool-event.tool-work-open .file-change-card.tool-work-file.indent-2 {
+  padding-left: 28px;
+}
+
+.tool-work-verb {
+  flex: 0 0 auto;
+}
+
+.tool-work-target {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--sig-text-tertiary);
+}
+
+#ai-messages .tool-event.tool-work-open .file-change-card.tool-work-file {
+  margin-top: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  overflow: visible;
+}
+
+#ai-messages .tool-event.tool-work-open .file-change-card.tool-work-file .file-change-card-head {
+  min-height: 22px;
+  padding: 0;
+  gap: 6px;
+}
+
+#ai-messages .tool-event.tool-work-open .file-change-card.tool-work-file .file-change-card-toggle {
+  flex: 0 1 auto;
+  width: auto;
+  font-size: 13px;
+  line-height: 22px;
+}
+
+#ai-messages .tool-event.tool-work-open .file-change-card.tool-work-file .file-change-label {
+  font-weight: 400;
+  color: var(--sig-text-secondary);
+}
+
+#ai-messages .tool-event.tool-work-open .file-change-card.tool-work-file .file-change-path {
+  flex: 0 1 auto;
+  font-family: inherit;
+}
+
+#ai-messages .tool-event.tool-work-open .file-change-card.tool-work-file .file-change-copy {
+  display: none;
+}
+
+#ai-messages .tool-event.tool-work-open .file-change-card.tool-work-file .file-change-diff {
+  margin-left: 0;
 }
 
 .tool-work-summary:hover {

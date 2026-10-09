@@ -412,6 +412,54 @@ defmodule HandbeamWeb.WorkspaceHelperTest do
       assert first["work_group_complete"]
       refute first["work_collapsed"]
     end
+
+    test "nests reads and searches one step past edits and commands" do
+      entries = [
+        %{
+          "id" => "t1",
+          "content_type" => "tool",
+          "tool_name" => "read",
+          "tool_status" => "done",
+          "input" => %{"file_path" => "lib/app.ex", "offset" => 1, "limit" => 40}
+        },
+        %{
+          "id" => "t2",
+          "content_type" => "tool",
+          "tool_name" => "grep",
+          "tool_status" => "done",
+          "input" => %{"path" => "lib", "pattern" => "def run"}
+        },
+        %{
+          "id" => "t3",
+          "content_type" => "tool",
+          "tool_name" => "edit",
+          "tool_status" => "done",
+          "input" => %{"file_path" => "lib/app.ex"}
+        },
+        %{
+          "id" => "t4",
+          "content_type" => "tool",
+          "tool_name" => "bash",
+          "tool_status" => "done",
+          "input" => %{"command" => "mix test"}
+        }
+      ]
+
+      [read, grep, edit, bash] = WorkspaceHelper.apply_tool_work_collapse(entries)
+
+      assert read["work_indent"] == 2
+      assert read["work_verb"] == "Read"
+      assert read["work_target"] == "lib/app.ex L1-40"
+      assert grep["work_indent"] == 2
+      assert grep["work_verb"] == "Grep"
+      assert grep["work_target"] == "lib \"def run\""
+      assert edit["work_indent"] == 1
+      assert edit["work_verb"] == "Edited"
+      assert edit["work_target"] == "lib/app.ex"
+      assert bash["work_indent"] == 1
+      assert bash["work_verb"] == "$"
+      assert bash["work_target"] == "mix test"
+    end
   end
 
   # ── format_duration/1 ──

@@ -517,29 +517,36 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
                 ]}
               >
                 <button
-                  :if={entry["work_group_first"] && entry["work_collapsed"]}
+                  :if={entry["work_group_first"] && entry["work_group_complete"]}
                   type="button"
                   id={"tool-work-summary-#{entry["work_group_id"]}"}
                   class="tool-work-summary"
                   phx-click="toggle_tool_work"
                   phx-value-group={entry["work_group_id"]}
+                  aria-expanded={to_string(entry["work_collapsed"] != true)}
                 >
-                  {entry["work_summary"]}
+                  <span>{entry["work_summary"]}</span>
+                  <span class="tool-work-chevron" aria-hidden="true">
+                    {if(entry["work_collapsed"], do: "›", else: "⌄")}
+                  </span>
                 </button>
-                <div class="tool-work-body">
-                  <button
-                    :if={
-                      entry["work_group_first"] && entry["work_group_complete"] &&
-                        !entry["work_collapsed"]
-                    }
-                    type="button"
-                    id={"tool-work-hide-#{entry["work_group_id"]}"}
-                    class="tool-work-hide"
-                    phx-click="toggle_tool_work"
-                    phx-value-group={entry["work_group_id"]}
+                <div
+                  :if={
+                    entry["work_group_complete"] && !entry["work_collapsed"] &&
+                      !FileChangeCard.change_entry?(entry)
+                  }
+                  id={"tool-work-line-#{entry["id"]}"}
+                  class={"tool-work-line indent-#{entry["work_indent"] || 1}"}
+                >
+                  <span class="tool-work-verb">{entry["work_verb"]}</span>
+                  <span
+                    :if={(entry["work_target"] || "") != ""}
+                    class="tool-work-target"
                   >
-                    {gettext("Hide Work")}
-                  </button>
+                    {entry["work_target"]}
+                  </span>
+                </div>
+                <div :if={!entry["work_group_complete"]} class="tool-work-body">
                   <div class="flex items-center gap-2">
                     <span class="tool-name text-xs">{tool_entry_name(entry)}</span>
                     <span
@@ -649,6 +656,11 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
                   entry={entry}
                   open?={entry["file_change_open"] == true}
                   id={"chat-file-change-#{entry["id"]}"}
+                  class={
+                    if(entry["work_group_complete"] && !entry["work_collapsed"],
+                      do: "tool-work-file indent-#{entry["work_indent"] || 1}"
+                    )
+                  }
                   confirm_change_id={@revert_confirm_change_id}
                   message={@revert_message}
                   workspace_root={@workspace_root}

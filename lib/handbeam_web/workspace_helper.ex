@@ -305,6 +305,38 @@ defmodule HandbeamWeb.WorkspaceHelper do
   def tool_work_summary(_), do: ""
 
   @doc """
+  One expanded activity line: verb plus the argument a person would scan.
+
+  Reads and searches sit one step further right than edits and commands when
+  a group contains both, matching the nested "Explored" list.
+  """
+  def tool_work_line(entry) when is_map(entry) do
+    name = normalized_tool_name(tool_name(entry))
+    input = TranscriptEntry.input(entry)
+
+    %{
+      verb: work_verb(name),
+      target: work_target(name, input, entry)
+    }
+  end
+
+  def tool_work_line(_), do: %{verb: "tool", target: ""}
+
+  @doc """
+  `:explore` for reads and searches, `:edit` for writes, `:command` for shell.
+  """
+  def tool_work_role(name) do
+    normalized = normalized_tool_name(name)
+
+    cond do
+      edit_tool?(normalized) -> :edit
+      command_tool?(normalized) -> :command
+      tool_work_kind(normalized) in [:search, :file] -> :explore
+      true -> :other
+    end
+  end
+
+  @doc """
   Annotates consecutive tool streaks with collapse metadata.
 
   Completed groups are collapsed unless `expanded_ids` contains the group id
@@ -359,15 +391,24 @@ defmodule HandbeamWeb.WorkspaceHelper do
     completed? = Enum.all?(tools, &tool_terminal?/1)
     collapsed? = completed? and group_id != "" and not MapSet.member?(expanded_ids, group_id)
     summary = tool_work_summary(tools)
+    roles = Enum.map(tools, &tool_work_role(tool_name(&1)))
+    nested_explore? = :explore in roles and Enum.any?(roles, &(&1 != :explore))
 
     Enum.map(chunk, fn {entry, idx} ->
+      role = tool_work_role(tool_name(entry))
+      line = tool_work_line(entry)
+      indent = if nested_explore? and role == :explore, do: 2, else: 1
+
       {idx,
        entry
        |> Map.put("work_group_id", group_id)
        |> Map.put("work_group_first", entry_id(entry) == group_id)
        |> Map.put("work_group_complete", completed?)
        |> Map.put("work_collapsed", collapsed?)
-       |> Map.put("work_summary", summary)}
+       |> Map.put("work_summary", summary)
+       |> Map.put("work_indent", indent)
+       |> Map.put("work_verb", line.verb)
+       |> Map.put("work_target", line.target)}
     end)
   end
 
@@ -382,6 +423,137 @@ defmodule HandbeamWeb.WorkspaceHelper do
 
     status in [nil, "", :done, :error, "done", "error"]
   end
+
+  defp normalized_tool_name(name) do
+    name
+    |> to_string()
+    |> String.downcase()
+    |> String.replace_prefix("ext__", "")
+  end
+
+  defp edit_tool?(name) do
+    name in ~w(write edit apply_patch) or String.contains?(name, "write") or
+      String.contains?(name, "edit")
+  end
+
+  defp command_tool?(name) do
+    name in @command_tools or String.contains?(name, "bash") or String.contains?(name, "shell")
+  end
+
+  defp work_verb(name) do
+    cond do
+      name in ~w(grep rg ripgrep) or String.contains?(name, "grep") ->
+        gettext("Grep")
+
+      name in ~w(file_search glob glob_file_search) ->
+        gettext("Searched files")
+
+      name in ~w(code_search semantic_search codebase_search) ->
+        gettext("Searched")
+
+      name in ~w(list_dir) or String.starts_with?(name, "list") ->
+        gettext("List")
+
+      name in ~w(read read_file) or String.contains?(name, "read") ->
+        gettext("Read")
+
+      edit_tool?(name) and String.contains?(name, "write") ->
+        gettext("Created")
+
+      edit_tool?(name) ->
+        gettext("Edited")
+
+      command_tool?(name) ->
+        "$"
+
+      true ->
+        name
+    end
+  end
+
+  defp work_target(name, input, entry) do
+    summary = TranscriptEntry.input_summary(entry) || ""
+
+    cond do
+      name in ~w(grep rg ripgrep) or String.contains?(name, "grep") ->
+        grep_target(input, summary)
+
+      command_tool?(name) ->
+        input_string(input, "command") || summary
+
+      edit_tool?(name) or name in ~w(read read_file) or String.contains?(name, "read") or
+          String.starts_with?(name, "list") ->
+        file_target(input, summary)
+
+      true ->
+        input_string(input, "query") || input_string(input, "pattern") || summary
+    end
+  end
+
+  defp grep_target(input, summary) do
+    path = input_string(input, "path") || input_string(input, "file_path")
+    pattern = input_string(input, "pattern") || input_string(input, "query")
+
+    cond do
+      is_binary(path) and is_binary(pattern) -> path <> " \"" <> pattern <> "\""
+      is_binary(pattern) -> pattern
+      is_binary(path) -> path
+      true -> summary
+    end
+  end
+
+  defp file_target(input, summary) do
+    path = input_string(input, "file_path") || input_string(input, "path")
+
+    if is_binary(path) and path != "" do
+      path <> line_span(input)
+    else
+      summary
+    end
+  end
+
+  defp line_span(input) do
+    offset = input_int(input, "offset")
+    limit = input_int(input, "limit")
+
+    cond do
+      is_integer(offset) and offset > 0 and is_integer(limit) and limit > 0 ->
+        " L#{offset}-#{offset + limit - 1}"
+
+      is_integer(offset) and offset > 0 ->
+        " L#{offset}"
+
+      true ->
+        ""
+    end
+  end
+
+  defp input_string(input, key) when is_map(input) do
+    case Map.get(input, key) || Map.get(input, atom_key(key)) do
+      value when is_binary(value) and value != "" -> value
+      _ -> nil
+    end
+  end
+
+  defp input_string(_, _), do: nil
+
+  defp input_int(input, key) when is_map(input) do
+    case Map.get(input, key) || Map.get(input, atom_key(key)) do
+      value when is_integer(value) -> value
+      _ -> nil
+    end
+  end
+
+  defp input_int(_, _), do: nil
+
+  defp atom_key("command"), do: :command
+  defp atom_key("file_path"), do: :file_path
+  defp atom_key("path"), do: :path
+  defp atom_key("pattern"), do: :pattern
+  defp atom_key("query"), do: :query
+  defp atom_key("offset"), do: :offset
+  defp atom_key("limit"), do: :limit
+  defp atom_key(_), do: nil
 
   defp tool_name(entry) when is_map(entry) do
     TranscriptEntry.tool_name(entry) || "tool"
