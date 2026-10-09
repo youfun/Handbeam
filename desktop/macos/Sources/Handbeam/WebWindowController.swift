@@ -11,13 +11,14 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
     private let backButton = NSButton()
     private let forwardButton = NSButton()
     private let panelButton = NSButton()
-    private let workspaceTabs = NSSegmentedControl(
-        labels: ["Changes", "Files", "Terminal"],
-        trackingMode: .selectOne,
-        target: nil,
-        action: nil
-    )
-    private let workspaceControls = NSStackView()
+    private let workspaceSwitcher = WorkspacePanelSwitcher()
+    private let actionsContainer = WorkspaceActionsBar()
+    private let iconStack = NSStackView()
+    private var actionsGapConstraint: NSLayoutConstraint?
+    private var switcherWidthConstraint: NSLayoutConstraint?
+    private var actionsInstalled = false
+    private var measuredPanelWidth: CGFloat = 0
+    private var panelSyncToken = 0
     private let toolbarTitleLabel = NSTextField(labelWithString: "Handbeam")
     private var origin = AppOrigin(hosts: DesktopConfig.loopbackHosts, port: DesktopConfig.defaultPort)
     private var loadedURL: URL?
@@ -203,15 +204,16 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
 
     @objc private func toggleWorkspacePanel() {
         clickWebControl("[data-workspace-panel-toggle]")
-        workspaceControls.isHidden.toggle()
-        updatePanelButton(collapsed: workspaceControls.isHidden)
+        workspaceSwitcher.isHidden.toggle()
+        updatePanelButton(collapsed: workspaceSwitcher.isHidden)
+        layoutWorkspaceActions()
         syncWorkspacePanelState(after: 0.15)
     }
 
     @objc private func selectWorkspacePanelView() {
         let views = ["changes", "files", "terminal"]
-        guard views.indices.contains(workspaceTabs.selectedSegment) else { return }
-        let view = views[workspaceTabs.selectedSegment]
+        guard views.indices.contains(workspaceSwitcher.selectedSegment) else { return }
+        let view = views[workspaceSwitcher.selectedSegment]
         clickWebControl(
             "button[phx-click='select_right_panel_view'][phx-value-view='\(view)']"
         )
@@ -304,27 +306,21 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
             )
             let settingsButton = NSButton()
             configureToolbarButton(settingsButton, symbol: "gearshape", action: #selector(openSettings), help: "設定")
-
-            workspaceTabs.target = self
-            workspaceTabs.action = #selector(selectWorkspacePanelView)
-            workspaceTabs.selectedSegment = 1
-            workspaceTabs.controlSize = .small
-            workspaceControls.setViews([workspaceTabs], in: .leading)
-            workspaceControls.orientation = .horizontal
-
-            let separator = NSBox()
-            separator.boxType = .separator
-            separator.translatesAutoresizingMaskIntoConstraints = false
-            separator.heightAnchor.constraint(equalToConstant: 18).isActive = true
-
-            let stack = NSStackView(
-                views: [newButton, panelButton, settingsButton, separator, workspaceControls]
-            )
-            stack.orientation = .horizontal
-            stack.spacing = 5
+            for button in [newButton, panelButton, settingsButton] {
+                pinCompactToolbarButton(button)
+            }
+            iconStack.orientation = .horizontal
+            iconStack.alignment = .centerY
+            iconStack.spacing = 2
+            iconStack.setViews([newButton, panelButton, settingsButton], in: .trailing)
+            workspaceSwitcher.onSelect = { [weak self] in
+                self?.selectWorkspacePanelView()
+            }
+            installActionsContainer()
             let item = NSToolbarItem(itemIdentifier: itemIdentifier)
-            item.view = stack
+            item.view = actionsContainer
             item.label = "動作"
+            layoutWorkspaceActions()
             return item
         default:
             return nil
@@ -345,6 +341,61 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
         button.setAccessibilityLabel(help)
     }
 
+    private func pinCompactToolbarButton(_ button: NSButton) {
+        guard button.constraints.isEmpty else { return }
+        let config = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+        if let image = button.image?.withSymbolConfiguration(config) {
+            button.image = image
+        }
+        button.translatesAutoresizingMaskIntoConstraints = false
+        button.imageScaling = .scaleProportionallyDown
+        NSLayoutConstraint.activate([
+            button.widthAnchor.constraint(equalToConstant: 26),
+            button.heightAnchor.constraint(equalToConstant: 22),
+        ])
+    }
+
+    private func installActionsContainer() {
+        guard !actionsInstalled else { return }
+        actionsInstalled = true
+        workspaceSwitcher.translatesAutoresizingMaskIntoConstraints = false
+        iconStack.translatesAutoresizingMaskIntoConstraints = false
+        actionsContainer.addSubview(workspaceSwitcher)
+        actionsContainer.addSubview(iconStack)
+        let gap = iconStack.leadingAnchor.constraint(
+            greaterThanOrEqualTo: workspaceSwitcher.trailingAnchor,
+            constant: 12
+        )
+        actionsGapConstraint = gap
+        let switcherWidth = workspaceSwitcher.widthAnchor.constraint(
+            equalToConstant: workspaceSwitcher.intrinsicContentSize.width
+        )
+        switcherWidthConstraint = switcherWidth
+        actionsContainer.translatesAutoresizingMaskIntoConstraints = false
+        actionsContainer.setContentHuggingPriority(.required, for: .horizontal)
+        actionsContainer.setContentCompressionResistancePriority(.required, for: .horizontal)
+        NSLayoutConstraint.activate([
+            workspaceSwitcher.leadingAnchor.constraint(equalTo: actionsContainer.leadingAnchor),
+            workspaceSwitcher.centerYAnchor.constraint(equalTo: actionsContainer.centerYAnchor),
+            workspaceSwitcher.heightAnchor.constraint(equalToConstant: 22),
+            iconStack.trailingAnchor.constraint(equalTo: actionsContainer.trailingAnchor),
+            iconStack.centerYAnchor.constraint(equalTo: actionsContainer.centerYAnchor),
+            gap,
+            switcherWidth,
+        ])
+    }
+
+    private func layoutWorkspaceActions() {
+        guard actionsInstalled else { return }
+        let collapsed = workspaceSwitcher.isHidden
+        let tabWidth = collapsed ? 0 : workspaceSwitcher.intrinsicContentSize.width
+        switcherWidthConstraint?.constant = tabWidth
+        actionsGapConstraint?.constant = collapsed ? 0 : 12
+        let needed = iconStack.fittingSize.width + tabWidth + (collapsed ? 0 : 12)
+        let width = measuredPanelWidth > needed ? measuredPanelWidth : needed
+        actionsContainer.measuredSize = NSSize(width: max(width, 1), height: 22)
+    }
+
     private func clickWebControl(_ selector: String) {
         let encoded = try? JSONSerialization.data(withJSONObject: selector, options: .fragmentsAllowed)
         guard let encoded, let literal = String(data: encoded, encoding: .utf8) else { return }
@@ -362,39 +413,53 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
         """)
     }
 
+    @objc private func contentFrameDidChange() {
+        syncWorkspacePanelState(after: 0.08)
+    }
+
     private func syncWorkspacePanelState(after delay: TimeInterval = 0) {
+        panelSyncToken += 1
+        let token = panelSyncToken
         DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self else { return }
+            guard let self, self.panelSyncToken == token else { return }
             let script = """
             (() => {
               const panel = document.querySelector('#workspace-panel');
               const toggle = document.querySelector('[data-workspace-panel-toggle]');
               if (!panel || !toggle) return null;
+              const rect = panel.getBoundingClientRect();
               return {
                 collapsed: toggle.getAttribute('aria-pressed') === 'false',
                 view: document.querySelector('.workspace-panel-tab.active')?.getAttribute('phx-value-view') || '',
-                terminal: Boolean(document.querySelector("button[phx-value-view='terminal']"))
+                terminal: Boolean(document.querySelector("button[phx-value-view='terminal']")),
+                width: rect.width
               };
             })()
             """
             self.webView.evaluateJavaScript(script) { [weak self] result, _ in
-                guard let self, let state = result as? [String: Any] else {
-                    self?.panelButton.isEnabled = false
-                    self?.workspaceControls.isHidden = true
+                guard let self, self.panelSyncToken == token else { return }
+                guard let state = result as? [String: Any] else {
+                    self.panelButton.isEnabled = false
+                    self.workspaceSwitcher.isHidden = true
+                    self.measuredPanelWidth = 0
+                    self.layoutWorkspaceActions()
                     return
                 }
                 let collapsed = state["collapsed"] as? Bool ?? false
                 self.panelButton.isEnabled = true
-                self.workspaceControls.isHidden = collapsed
+                self.workspaceSwitcher.isHidden = collapsed
                 self.updatePanelButton(collapsed: collapsed)
-                self.workspaceTabs.setEnabled(
+                self.workspaceSwitcher.setEnabled(
                     state["terminal"] as? Bool ?? false,
                     forSegment: 2
                 )
                 let views = ["changes", "files", "terminal"]
-                self.workspaceTabs.selectedSegment = views.firstIndex(
+                self.workspaceSwitcher.selectedSegment = views.firstIndex(
                     of: state["view"] as? String ?? ""
                 ) ?? -1
+                let width = (state["width"] as? NSNumber).map { CGFloat(truncating: $0) } ?? 0
+                self.measuredPanelWidth = collapsed ? 0 : width
+                self.layoutWorkspaceActions()
             }
         }
     }
@@ -430,6 +495,13 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
         overlay.addSubview(retryButton)
         content.addSubview(webView)
         content.addSubview(overlay)
+        webView.postsFrameChangedNotifications = true
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(contentFrameDidChange),
+            name: NSView.frameDidChangeNotification,
+            object: webView
+        )
         NSLayoutConstraint.activate([
             webView.leadingAnchor.constraint(equalTo: content.leadingAnchor),
             webView.trailingAnchor.constraint(equalTo: content.trailingAnchor),
@@ -464,4 +536,109 @@ private extension NSToolbarItem.Identifier {
     static let reload = NSToolbarItem.Identifier("HandbeamReload")
     static let handbeamTitle = NSToolbarItem.Identifier("HandbeamTitle")
     static let primaryActions = NSToolbarItem.Identifier("HandbeamPrimaryActions")
+}
+
+private final class WorkspaceActionsBar: NSView {
+    var measuredSize = NSSize(width: 1, height: 22) {
+        didSet {
+            if oldValue != measuredSize { invalidateIntrinsicContentSize() }
+        }
+    }
+
+    override var intrinsicContentSize: NSSize { measuredSize }
+}
+
+private final class WorkspacePanelSwitcher: NSView {
+    var onSelect: (() -> Void)?
+    var selectedSegment = 1 {
+        didSet {
+            if oldValue != selectedSegment { needsDisplay = true }
+        }
+    }
+
+    private let labels = ["Changes", "Files", "Terminal"]
+    private var enabledSegments = [true, true, true]
+    private let labelFont = NSFont.systemFont(ofSize: 12, weight: .medium)
+
+    override var isFlipped: Bool { true }
+
+    override var intrinsicContentSize: NSSize {
+        NSSize(width: segmentWidth * CGFloat(labels.count), height: 22)
+    }
+
+    func setEnabled(_ enabled: Bool, forSegment index: Int) {
+        guard enabledSegments.indices.contains(index), enabledSegments[index] != enabled else { return }
+        enabledSegments[index] = enabled
+        needsDisplay = true
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        let trackRect = bounds.insetBy(dx: 0.5, dy: 0.5)
+        let track = NSBezierPath(roundedRect: trackRect, xRadius: 6, yRadius: 6)
+        NSColor.quaternaryLabelColor.withAlphaComponent(0.45).setFill()
+        track.fill()
+        NSColor.separatorColor.setStroke()
+        track.lineWidth = 1
+        track.stroke()
+
+        if labels.indices.contains(selectedSegment), enabledSegments[selectedSegment] {
+            let pill = NSBezierPath(
+                roundedRect: segmentRect(selectedSegment).insetBy(dx: 2, dy: 2),
+                xRadius: 4,
+                yRadius: 4
+            )
+            NSColor.selectedContentBackgroundColor.withAlphaComponent(0.18).setFill()
+            pill.fill()
+        }
+
+        for (index, label) in labels.enumerated() {
+            let font = index == selectedSegment
+                ? NSFont.systemFont(ofSize: 12, weight: .semibold)
+                : labelFont
+            let color: NSColor = if !enabledSegments[index] {
+                .disabledControlTextColor
+            } else if index == selectedSegment {
+                .labelColor
+            } else {
+                .secondaryLabelColor
+            }
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: font,
+                .foregroundColor: color,
+            ]
+            let size = (label as NSString).size(withAttributes: attributes)
+            let rect = segmentRect(index)
+            let textRect = NSRect(
+                x: rect.midX - size.width / 2,
+                y: rect.midY - size.height / 2,
+                width: size.width,
+                height: size.height
+            )
+            (label as NSString).draw(in: textRect, withAttributes: attributes)
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        let index = Int(convert(event.locationInWindow, from: nil).x / segmentWidth)
+        guard labels.indices.contains(index), enabledSegments[index] else { return }
+        selectedSegment = index
+        onSelect?()
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+
+    override func accessibilityRole() -> NSAccessibility.Role? { .tabGroup }
+
+    override func accessibilityLabel() -> String? { "工作區面板" }
+
+    private var segmentWidth: CGFloat {
+        let longest = labels.map { ($0 as NSString).size(withAttributes: [.font: labelFont]).width }.max() ?? 48
+        return ceil(max(longest + 28, 68))
+    }
+
+    private func segmentRect(_ index: Int) -> NSRect {
+        NSRect(x: segmentWidth * CGFloat(index), y: 0, width: segmentWidth, height: bounds.height)
+    }
 }
