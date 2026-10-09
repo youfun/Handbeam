@@ -7,6 +7,10 @@ defmodule Handbeam.ConversationTranscriptStore.Journal do
   replays both forms in order. The last unterminated malformed line is ignored
   as a crash remnant; malformed records anywhere else fail the read.
 
+  A new append whose id is already in the journal returns `{:error, :duplicate_id}`
+  and leaves the existing entry in place. Replay of an append already on disk
+  still replaces that id, so older logs stay readable.
+
   `replace/2` is the compaction operation: it atomically writes the current
   entries as plain JSONL. Callers may invoke it manually; replacing a
   conversation timeline also compacts it. The in-memory cache is LRU bounded.
@@ -103,7 +107,12 @@ defmodule Handbeam.ConversationTranscriptStore.Journal do
   def handle_call({:append, path, entry}, _from, state) do
     with {:ok, journal, state} <- fetch_locked(state, path) do
       entry = Map.put_new(entry, "sequence", journal.next_sequence)
-      mutate(path, %{"op" => "append", "entry" => entry}, journal, state, {:ok, entry})
+
+      if duplicate_append?(journal, entry) do
+        {:reply, {:error, :duplicate_id}, state}
+      else
+        mutate(path, %{"op" => "append", "entry" => entry}, journal, state, {:ok, entry})
+      end
     else
       {:error, reason, state} -> {:reply, {:error, reason}, state}
     end
@@ -385,6 +394,11 @@ defmodule Handbeam.ConversationTranscriptStore.Journal do
 
   defp validate_txid(%{"$handbeam_journal" => @version}, _), do: {:error, :invalid_txid}
   defp validate_txid(_ordinary_entry, _), do: :ok
+
+  defp duplicate_append?(journal, %{"id" => id}) when is_binary(id),
+    do: Map.has_key?(journal.by_id, id)
+
+  defp duplicate_append?(_journal, _entry), do: false
 
   defp apply_record(journal, %{
          "$handbeam_journal" => @version,

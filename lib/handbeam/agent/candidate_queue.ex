@@ -39,7 +39,7 @@ defmodule Handbeam.Agent.CandidateQueue do
     do: GenServer.call(server, {:delete_message, message_id})
 
   defp unique_id(prefix) do
-    "#{prefix}-#{System.unique_integer([:positive, :monotonic])}"
+    "#{prefix}-#{Ecto.UUID.generate()}"
   end
 
   @impl true
@@ -92,13 +92,19 @@ defmodule Handbeam.Agent.CandidateQueue do
       end
 
     case result do
-      {:ok, _entry} ->
+      {:ok, entry} ->
+        item = put_persisted_id(item, entry)
         {:reply, :ok, %{state | deliver_as => :queue.in(item, queue), size: state.size + 1}}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
     end
   end
+
+  defp put_persisted_id(item, %{"id" => id}) when is_binary(id),
+    do: %{item | message: %{item.message | id: id}}
+
+  defp put_persisted_id(item, _entry), do: item
 
   def handle_call({:drain, deliver_as}, _from, state) do
     queue = Map.fetch!(state, deliver_as)

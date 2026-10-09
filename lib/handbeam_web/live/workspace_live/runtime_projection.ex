@@ -187,7 +187,7 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
   def safe_status("halted"), do: :halted
   def safe_status(_), do: :idle
 
-  def unique_id(prefix), do: "#{prefix}-#{System.unique_integer([:positive, :monotonic])}"
+  def unique_id(prefix), do: "#{prefix}-#{Ecto.UUID.generate()}"
 
   def assistant_final?(entry, running, current_id) do
     cond do

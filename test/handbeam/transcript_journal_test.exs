@@ -165,4 +165,31 @@ defmodule Handbeam.TranscriptJournalTest do
     assert {:ok, [%{"content" => content}]} = Journal.load(path)
     assert content == "base" <> String.duplicate("a", 256)
   end
+
+  test "a new append refuses an existing id and leaves the original entry", %{path: path} do
+    assert {:ok, %{"id" => "msg-user-13", "content" => "original"}} =
+             Journal.append(path, %{"id" => "msg-user-13", "content" => "original"})
+
+    assert {:error, :duplicate_id} =
+             Journal.append(path, %{"id" => "msg-user-13", "content" => "replacement"})
+
+    assert {:ok, [%{"id" => "msg-user-13", "content" => "original"}]} = Journal.load(path)
+  end
+
+  test "an append already stored for an existing id still replays", %{path: path} do
+    records = [
+      %{"id" => "msg-user-13", "content" => "original", "sequence" => 1},
+      %{
+        "$handbeam_journal" => 1,
+        "op" => "append",
+        "txid" => 1,
+        "entry" => %{"id" => "msg-user-13", "content" => "already-written", "sequence" => 2}
+      }
+    ]
+
+    File.write!(path, Enum.map_join(records, "\n", &Jason.encode!/1) <> "\n")
+
+    assert {:ok, [%{"id" => "msg-user-13", "content" => "already-written", "sequence" => 2}]} =
+             Journal.load(path)
+  end
 end

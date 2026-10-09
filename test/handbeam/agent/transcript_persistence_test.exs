@@ -555,6 +555,42 @@ defmodule Handbeam.Agent.TranscriptPersistenceTest do
            "expected assistant status to be 'completed', got: #{inspect(assistant["status"])}"
   end
 
+  test "append_inbound mints a new id when the transcript id is already used" do
+    {:ok, conversation} = Handbeam.ConversationStore.create("default", timeline: [])
+    conversation_id = conversation["id"]
+
+    assert {:ok, %{"id" => "msg-user-13", "content" => "original"}} =
+             TranscriptPersistence.append_inbound(conversation_id, "original",
+               transcript_id: "msg-user-13",
+               message_id: "msg-user-13",
+               inbound_id: "msg-user-13",
+               source: :live_view,
+               deliver_as: :new_run
+             )
+
+    assert {:ok, persisted} =
+             TranscriptPersistence.append_inbound(
+               conversation_id,
+               %Handbeam.Agent.Message{
+                 role: :user,
+                 content: "macos 中间可以可以去掉？",
+                 id: "msg-user-13"
+               },
+               transcript_id: "msg-user-13",
+               message_id: "msg-user-13",
+               inbound_id: "msg-user-13",
+               source: :live_view,
+               deliver_as: :new_run
+             )
+
+    assert persisted["id"] != "msg-user-13"
+    assert persisted["content"] == "macos 中间可以可以去掉？"
+    assert persisted["inbound_id"] == persisted["id"]
+
+    messages = Handbeam.ConversationStore.load_messages(conversation_id)
+    assert Enum.map(messages, & &1["content"]) == ["original", "macos 中间可以可以去掉？"]
+  end
+
   test "append_inbound records delivery and interrupts_work from deliver_as" do
     {:ok, conversation} = Handbeam.ConversationStore.create("default", timeline: [])
     conversation_id = conversation["id"]

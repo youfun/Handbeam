@@ -99,11 +99,13 @@ defmodule Handbeam.Agent.Runner do
       status: :idle
     }
 
-    with :ok <- attach_delegation(run_opts, conversation_id),
-         :ok <- accept_inbound(conversation_id, content, run_opts) do
-      owner = Keyword.get(run_opts, :delegation_owner)
+    with :ok <- attach_delegation(state.opts, conversation_id),
+         {:ok, content, opts} <- accept_inbound(conversation_id, content, state.opts) do
+      owner = Keyword.get(opts, :delegation_owner)
       monitor = if is_pid(owner), do: Process.monitor(owner)
-      {:ok, %{state | delegation_monitor: monitor}, {:continue, :start_task}}
+
+      {:ok, %{state | content: content, opts: opts, delegation_monitor: monitor},
+       {:continue, :start_task}}
     else
       {:error, reason} ->
         {:stop, {:inbound_persist_failed, reason}}
@@ -129,14 +131,44 @@ defmodule Handbeam.Agent.Runner do
              content,
              inbound_opts
            ) do
-        {:ok, _} -> :ok
-        :ok -> :ok
-        {:error, reason} -> {:error, reason}
+        {:ok, entry} ->
+          {content, opts} = align_inbound(content, opts, entry)
+          {:ok, content, opts}
+
+        :ok ->
+          {:ok, content, opts}
+
+        {:error, reason} ->
+          {:error, reason}
       end
     else
-      :ok
+      {:ok, content, opts}
     end
   end
+
+  defp align_inbound(content, opts, %{"id" => id}) when is_binary(id) do
+    previous = opts[:transcript_id] || opts[:message_id]
+
+    cond do
+      previous == id ->
+        {content, opts}
+
+      is_nil(previous) ->
+        {content, Keyword.merge(opts, message_id: id, transcript_id: id)}
+
+      true ->
+        content =
+          case content do
+            %Handbeam.Agent.Message{} = message -> %{message | id: id}
+            other -> other
+          end
+
+        opts = Keyword.merge(opts, message_id: id, transcript_id: id, inbound_id: id)
+        {content, opts}
+    end
+  end
+
+  defp align_inbound(content, opts, _entry), do: {content, opts}
 
   @impl true
   def handle_continue(:start_task, state) do

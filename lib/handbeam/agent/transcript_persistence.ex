@@ -15,10 +15,16 @@ defmodule Handbeam.Agent.TranscriptPersistence do
           {:ok, map()} | {:error, term()}
   def append_inbound(conversation_id, content, opts)
       when is_binary(conversation_id) and is_list(opts) do
+    append_inbound(conversation_id, content, opts, 3)
+  end
+
+  defp append_inbound(conversation_id, content, opts, attempts) do
+    transcript_id = Keyword.get(opts, :transcript_id) || unique_id("msg-user")
+
     entry =
       base_entry(conversation_id, opts)
       |> Map.merge(%{
-        "id" => Keyword.get(opts, :transcript_id) || unique_id("msg-user"),
+        "id" => transcript_id,
         "content_type" => "user_msg",
         "message_type" => "user",
         "role" => "user",
@@ -26,7 +32,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
         "content" => message_text(content),
         "attachments" => persistable_attachments(content, opts),
         "raw_content" => persistable_raw_content(content, opts),
-        "inbound_id" => Keyword.get(opts, :inbound_id) || Keyword.get(opts, :transcript_id),
+        "inbound_id" => Keyword.get(opts, :inbound_id) || transcript_id,
         "origin" => inbound_origin(opts),
         "consumption" =>
           if(inbound_delivery(opts) in ["steer", "follow_up"] or opts[:origin],
@@ -36,7 +42,21 @@ defmodule Handbeam.Agent.TranscriptPersistence do
       })
       |> put_inbound_delivery(opts)
 
-    Handbeam.ConversationTranscriptStore.append(conversation_id, entry, opts)
+    case Handbeam.ConversationTranscriptStore.append(conversation_id, entry, opts) do
+      {:error, :duplicate_id} when attempts > 1 ->
+        id = unique_id("msg-user")
+
+        opts =
+          opts
+          |> Keyword.put(:transcript_id, id)
+          |> Keyword.put(:message_id, id)
+          |> Keyword.put(:inbound_id, id)
+
+        append_inbound(conversation_id, replace_message_id(content, id), opts, attempts - 1)
+
+      other ->
+        other
+    end
   end
 
   @spec handle_event(String.t(), {atom(), map()}, keyword()) :: :ok | {:error, term()}
@@ -978,4 +998,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
   defp unique_id(prefix) do
     "#{prefix}-#{Ecto.UUID.generate()}"
   end
+
+  defp replace_message_id(%Handbeam.Agent.Message{} = message, id), do: %{message | id: id}
+  defp replace_message_id(content, _id), do: content
 end
