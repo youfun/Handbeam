@@ -111,7 +111,7 @@ jobs:
         run: mix test --include e2e test/feature
 
   web:
-    name: Web (${{ matrix.target }})
+    name: ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.timeout }}
     strategy:
@@ -120,12 +120,15 @@ jobs:
         include:
           - os: ubuntu-24.04
             target: linux-x86_64
+            label: Web (linux-x86_64)
             timeout: 40
           - os: windows-2025
             target: windows-amd64
+            label: Web (windows-amd64)
             timeout: 75
           - os: macos-15
             target: macos-arm64
+            label: macOS GUI (arm64)
             timeout: 50
 
     steps:
