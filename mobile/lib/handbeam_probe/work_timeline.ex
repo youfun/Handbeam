@@ -12,7 +12,8 @@ defmodule HandbeamProbe.WorkTimeline do
 
   @projection_keys ~w(work_segment_id work_segment_first work_segment_open work_hidden
     work_boundary_summary work_group_id work_group_first work_group_complete work_collapsed
-    work_summary work_failed work_cancelled work_edit work_added work_removed tool_output_open)
+    work_summary work_failed work_cancelled work_edit work_added work_removed work_indent
+    work_verb work_target tool_output_open)
 
   def project(entries, groups \\ %{}, segments \\ %{}, outputs \\ %{}) do
     entries
@@ -102,7 +103,13 @@ defmodule HandbeamProbe.WorkTimeline do
     failed = Enum.count(tools, &(status(&1) in ["error", "failed"]))
     cancelled = Enum.count(tools, &(status(&1) == "cancelled"))
 
+    roles = Enum.map(tools, &WorkspaceHelper.tool_work_role(name(&1)))
+    nested_explore? = :explore in roles and Enum.any?(roles, &(&1 != :explore))
+
     Enum.map(tools, fn entry ->
+      role = WorkspaceHelper.tool_work_role(name(entry))
+      line = WorkspaceHelper.tool_work_line(entry)
+
       entry
       |> Map.put("work_group_id", id)
       |> Map.put("work_group_first", entry["id"] == id)
@@ -111,7 +118,10 @@ defmodule HandbeamProbe.WorkTimeline do
       |> Map.put("work_summary", summary)
       |> Map.put("work_failed", failed)
       |> Map.put("work_cancelled", cancelled)
-      |> Map.put("work_edit", name(entry) in ["edit", "write", "apply_patch"])
+      |> Map.put("work_edit", role == :edit)
+      |> Map.put("work_indent", if(nested_explore? and role == :explore, do: 2, else: 1))
+      |> Map.put("work_verb", line.verb)
+      |> Map.put("work_target", line.target)
       |> Map.put("work_added", diff_count(entry, "add"))
       |> Map.put("work_removed", diff_count(entry, "remove"))
       |> Map.put("tool_output_open", Map.get(outputs, entry["id"], false))

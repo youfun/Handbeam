@@ -148,4 +148,18 @@ defmodule HandbeamProbe.WorkTimelineTest do
     assert edit["work_added"] == 2
     assert edit["work_removed"] == 1
   end
+
+  test "expanded lines carry a verb and nest only inside a mixed group" do
+    [read, grep] =
+      WorkTimeline.project([
+        tool("r", "read", "done", %{"file_path" => "lib/a.ex", "offset" => 1, "limit" => 20}),
+        tool("g", "grep", "done", %{"path" => "lib", "pattern" => "def run"})
+      ])
+
+    assert read["work_indent"] == 1
+    assert read["work_verb"] == "Read"
+    assert read["work_target"] == "lib/a.ex L1-20"
+    assert grep["work_verb"] == "Grep"
+    assert grep["work_target"] == "lib \"def run\""
+  end
 end

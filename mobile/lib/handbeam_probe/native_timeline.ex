@@ -121,21 +121,19 @@ defmodule HandbeamProbe.NativeTimeline do
   end
 
   defp boundary(%{"work_segment_first" => true} = entry) do
-    node(:column, [fill_width: true, padding_top: 8, padding_bottom: 8], [
-      row([
-        node(:box, weight: 1, height: 1, background: color(:separator)),
-        button(
-          if(entry["work_segment_open"],
-            do: gettext("Hide Work") <> " ⌄",
-            else: gettext("Show Work") <> " ›"
-          ),
-          {:toggle_work_segment, entry["work_segment_id"]},
-          background: color(:surface),
-          text_color: color(:hint),
-          text_size: 12
+    node(:column, [fill_width: true, padding_top: 4, padding_bottom: 2], [
+      button(
+        if(entry["work_segment_open"],
+          do: gettext("Hide Work") <> " ⌄",
+          else: gettext("Show Work") <> " ›"
         ),
-        node(:box, weight: 1, height: 1, background: color(:separator))
-      ]),
+        {:toggle_work_segment, entry["work_segment_id"]},
+        background: color(:surface),
+        text_color: color(:hint),
+        text_size: 13,
+        padding: 0,
+        corner_radius: 0
+      ),
       if(entry["work_hidden"] && entry["work_boundary_summary"],
         do: summary(entry["work_boundary_summary"], false)
       )
@@ -147,9 +145,9 @@ defmodule HandbeamProbe.NativeTimeline do
   defp entry(%{"content_type" => "tool"} = entry, chat) do
     entry = Map.put(entry, "workspace_path", chat_workspace_path(chat))
 
-    node(:column, [fill_width: true, padding_bottom: 6], [
+    node(:column, [fill_width: true], [
       if(entry["work_group_first"], do: summary(entry, true)),
-      if(!entry["work_collapsed"], do: tool_output(entry)),
+      if(!entry["work_collapsed"] && !entry["work_edit"], do: tool_line(entry)),
       if(!entry["work_collapsed"], do: delivery_actions(entry, chat))
     ])
   end
@@ -216,7 +214,7 @@ defmodule HandbeamProbe.NativeTimeline do
 
   defp summary(entry, interactive?) when is_map(entry) do
     label = entry["work_summary"]
-    props = [fill_width: true, padding_top: 8, padding_bottom: 8, align: "baseline"]
+    props = [fill_width: true, padding_top: 2, padding_bottom: 2, align: "baseline"]
 
     props =
       if interactive?,
@@ -230,29 +228,33 @@ defmodule HandbeamProbe.NativeTimeline do
 
     row(
       [
-        text(label, text_size: 12, text_color: color(:muted), weight: 1),
-        if(entry["work_edit"],
-          do: text("+#{entry["work_added"]}", text_size: 12, text_color: color(:added))
+        text(label, text_size: 13, text_color: color(:muted)),
+        if(entry["work_edit"] && entry["work_added"] > 0,
+          do: text("+#{entry["work_added"]}", text_size: 13, text_color: color(:added))
         ),
-        if(entry["work_edit"],
-          do: text(" −#{entry["work_removed"]}", text_size: 12, text_color: color(:danger))
+        if(entry["work_edit"] && entry["work_removed"] > 0,
+          do: text("−#{entry["work_removed"]}", text_size: 13, text_color: color(:danger))
         ),
         if(entry["work_failed"] > 0,
           do:
             text(gettext("%{count} failed", count: entry["work_failed"]),
-              text_size: 12,
+              text_size: 13,
               text_color: color(:danger)
             )
         ),
         if(entry["work_cancelled"] > 0,
           do:
             text(gettext("%{count} cancelled", count: entry["work_cancelled"]),
-              text_size: 12,
+              text_size: 13,
               text_color: color(:muted)
             )
         ),
         if(interactive?,
-          do: text(if(entry["work_collapsed"], do: " ›", else: " ⌄"), text_size: 12)
+          do:
+            text(if(entry["work_collapsed"], do: "›", else: "⌄"),
+              text_size: 13,
+              text_color: color(:hint)
+            )
         )
       ],
       props
@@ -263,19 +265,22 @@ defmodule HandbeamProbe.NativeTimeline do
     text(label, text_size: 12, text_color: color(:muted))
   end
 
-  defp tool_output(entry) do
+  defp tool_line(entry) do
     output = WorkTimeline.output(entry)
+    padding = if entry["work_indent"] == 2, do: 28, else: 12
 
-    node(:column, [fill_width: true, padding_left: 8], [
+    node(:column, [fill_width: true, padding_left: padding], [
       button(
-        "#{WorkTimeline.name(entry)} · #{WorkTimeline.input_label(entry)} · #{WorkTimeline.status(entry)}",
+        activity_line(entry),
         {:toggle_tool_output, entry["id"]},
         fill_width: true,
         max_lines: 1,
         ellipsize: "end",
-        text_size: 12,
+        text_size: 13,
+        text_color: color(:muted),
         background: color(:surface),
-        padding: 6
+        padding: 0,
+        corner_radius: 0
       ),
       if(entry["tool_output_open"],
         do:
@@ -287,6 +292,12 @@ defmodule HandbeamProbe.NativeTimeline do
           ])
       )
     ])
+  end
+
+  defp activity_line(entry) do
+    verb = entry["work_verb"] || WorkTimeline.name(entry)
+    target = entry["work_target"] || ""
+    if target == "", do: verb, else: verb <> " " <> target
   end
 
   defp tool_actions(%{"content_type" => "tool"} = entry, chat) do

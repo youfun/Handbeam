@@ -123,6 +123,51 @@ defmodule HandbeamProbe.NativeTimelineTest do
     assert encoded =~ "out/report.pdf"
   end
 
+  test "expanded reads and commands are lines under the summary, edits stay on the summary" do
+    chat = %{
+      entries: [
+        %{
+          "id" => "r",
+          "content_type" => "tool",
+          "tool_name" => "read",
+          "tool_status" => "done",
+          "input" => %{"file_path" => "lib/a.ex"}
+        },
+        %{
+          "id" => "b",
+          "content_type" => "tool",
+          "tool_name" => "bash",
+          "tool_status" => "done",
+          "input" => %{"command" => "mix test"}
+        },
+        %{
+          "id" => "e",
+          "content_type" => "tool",
+          "tool_name" => "edit",
+          "tool_status" => "done",
+          "input" => %{"file_path" => "lib/a.ex"},
+          "diff_lines" => [%{"type" => "add"}]
+        }
+      ],
+      stream: "",
+      running: false
+    }
+
+    tree = render(chat, MapSet.new(["r", "b", "e"]))
+    lines = line_columns(tree)
+
+    assert Enum.any?(lines, fn column ->
+             column.props.padding_left == 12 and line_text(column) =~ "Read lib/a.ex"
+           end)
+
+    assert Enum.any?(lines, fn column ->
+             column.props.padding_left == 12 and line_text(column) =~ "$ mix test"
+           end)
+
+    refute Enum.any?(lines, &(line_text(&1) =~ " · done"))
+    assert inspect(tree) =~ "+1"
+  end
+
   test "multiple sent images stay adjacent and cap at four" do
     workspace = tmp_ws()
     conv_id = Ecto.UUID.generate()
@@ -312,6 +357,22 @@ defmodule HandbeamProbe.NativeTimelineTest do
     dir = Path.join(System.tmp_dir!(), "tl_ws_#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     dir
+  end
+
+  defp line_columns(nodes) when is_list(nodes), do: Enum.flat_map(nodes, &line_columns/1)
+
+  defp line_columns(%{type: :column, props: %{padding_left: left}} = node) when is_integer(left) do
+    [node | line_columns(node.children)]
+  end
+
+  defp line_columns(%{children: children}) when is_list(children), do: line_columns(children)
+  defp line_columns(_), do: []
+
+  defp line_text(%{children: children}) do
+    Enum.map_join(children, " ", fn
+      %{props: %{text: text}} when is_binary(text) -> text
+      _ -> ""
+    end)
   end
 
   defp match_image_nodes(node), do: collect_images(node, []) |> Enum.reverse()
