@@ -3870,6 +3870,107 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert has_element?(view, "#sheet-free-toggle[aria-expanded='false']")
     end
 
+    test "reopening / restores the last conversation and collapsed groups", %{conn: conn} do
+      {:ok, workspace} = Handbeam.WorkspaceStore.ensure_default!()
+      ws_id = workspace["id"]
+
+      {:ok, older} =
+        Handbeam.ConversationStore.create(ws_id,
+          id: "conv-restore-older",
+          title: "Older stay",
+          timeline: [
+            %{
+              "id" => "msg-older",
+              "content_type" => "user_msg",
+              "role" => "user",
+              "content" => "stay on the older chat"
+            }
+          ]
+        )
+
+      {:ok, newer} =
+        Handbeam.ConversationStore.create(ws_id,
+          id: "conv-restore-newer",
+          title: "Newer chat",
+          timeline: [
+            %{
+              "id" => "msg-newer",
+              "content_type" => "user_msg",
+              "role" => "user",
+              "content" => "this is the newer chat"
+            }
+          ]
+        )
+
+      {:ok, _} =
+        Handbeam.ConversationStore.update_meta(older["id"],
+          touch: false,
+          updated_at: "2000-01-01T00:00:00Z"
+        )
+
+      {:ok, _} =
+        Handbeam.ConversationStore.update_meta(newer["id"],
+          touch: false,
+          updated_at: "2099-01-01T00:00:00Z"
+        )
+
+      {:ok, view, html} = live(conn, "/")
+      assert html =~ "sid:#{newer["id"]}"
+
+      view
+      |> element(
+        ".conversation-item[phx-click='select_conversation'][phx-value-id='#{older["id"]}']"
+      )
+      |> render_click()
+
+      view |> element("#free-workspace-toggle") |> render_click()
+
+      {:ok, restored, html} = live(conn, "/")
+      assert html =~ "sid:#{older["id"]}"
+      assert html =~ "stay on the older chat"
+      refute html =~ "sid:#{newer["id"]}"
+      assert has_element?(restored, "#free-workspace-toggle[aria-expanded='false']")
+      refute has_element?(restored, "#free-conversations")
+
+      assert Handbeam.Settings.UI.save_last_location(%{
+               scope: :workspace,
+               workspace_id: ws_id,
+               conversation_id: "missing-conversation"
+             }) == :ok
+
+      {:ok, _fallback, html} = live(conn, "/")
+      refute html =~ "sid:missing-conversation"
+    end
+
+    test "reopening / restores a free conversation", %{conn: conn} do
+      {:ok, conv} =
+        Handbeam.ConversationStore.create_free(
+          id: "conv-restore-free",
+          title: "Free stay",
+          timeline: [
+            %{
+              "id" => "msg-free",
+              "content_type" => "user_msg",
+              "role" => "user",
+              "content" => "stay in free chat"
+            }
+          ]
+        )
+
+      {:ok, view, _html} = live(conn, "/")
+
+      view
+      |> element(
+        ".conversation-item[phx-click='select_free_conversation'][phx-value-id='#{conv["id"]}']"
+      )
+      |> render_click()
+
+      {:ok, _restored, html} = live(conn, "/")
+      assert html =~ "sid:#{conv["id"]}"
+      assert html =~ "stay in free chat"
+
+    end
+
     test "mount renders the active workspace panel", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/")
 

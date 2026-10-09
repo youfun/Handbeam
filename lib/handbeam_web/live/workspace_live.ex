@@ -34,6 +34,7 @@ defmodule HandbeamWeb.WorkspaceLive do
   alias HandbeamWeb.WorkspaceLive.WorkspaceComponents
   alias HandbeamWeb.WorkspaceLive.Schedules
   alias HandbeamWeb.WorkspaceLive.WorkspaceNavigation
+  alias HandbeamWeb.WorkspaceLive.SessionMemory
 
   import SidebarComponents, only: [mobile_header: 1, projects_sidebar: 1]
   import ChatComponents, only: [chat_panel: 1]
@@ -43,7 +44,7 @@ defmodule HandbeamWeb.WorkspaceLive do
   alias Handbeam.WorkspaceFiles
 
   @impl true
-  def mount(_params, _session, socket) do
+  def mount(params, _session, socket) do
     # Ensure default workspace exists
     {:ok, default_ws} = Handbeam.WorkspaceStore.ensure_default!()
 
@@ -53,15 +54,12 @@ defmodule HandbeamWeb.WorkspaceLive do
     conversations_by_ws = build_initial_conversations(workspaces, default_ws)
     log_workspace_boot(default_ws, workspaces, conversations_by_ws)
 
-    current_ws_id = default_ws["id"]
-    current_conv_id = initial_conversation_id(conversations_by_ws, current_ws_id)
+    boot = boot_location(params, workspaces, default_ws, conversations_by_ws)
 
-    workspace_root = default_ws["path"]
     Handbeam.Workspace.ensure_root!()
-    prewarm_search(workspace_root)
-    workspace_label = default_ws["name"]
+    if is_binary(boot.workspace_root), do: prewarm_search(boot.workspace_root)
 
-    models = ModelSelection.boot(workspace_root)
+    models = ModelSelection.boot(boot.model_root)
     available_models = models.available_models
     selected_model = models.selected_model
     selected_reasoning_level = models.selected_reasoning_level
@@ -73,12 +71,12 @@ defmodule HandbeamWeb.WorkspaceLive do
     socket =
       socket
       |> assign(:page_title, "Handbeam — Workspace")
-      |> assign(:chat_scope, :workspace)
+      |> assign(:chat_scope, boot.chat_scope)
       |> assign(:workspaces, workspaces)
-      |> assign(:current_workspace_id, current_ws_id)
-      |> assign(:current_conversation_id, current_conv_id)
-      |> assign(:workspace_root, workspace_root)
-      |> assign(:workspace_label, workspace_label)
+      |> assign(:current_workspace_id, boot.workspace_id)
+      |> assign(:current_conversation_id, boot.conversation_id)
+      |> assign(:workspace_root, boot.workspace_root)
+      |> assign(:workspace_label, boot.workspace_label)
       |> assign(:conversations_by_workspace, conversations_by_ws)
       |> assign(:selected_model, selected_model)
       |> assign(:available_models, available_models)
@@ -140,7 +138,7 @@ defmodule HandbeamWeb.WorkspaceLive do
       |> assign(:tools_active, %{})
       |> assign(:expanded_tool_groups, MapSet.new())
       |> assign(:show_archive, false)
-      |> assign(:collapsed_workspace_ids, MapSet.new())
+      |> assign(:collapsed_workspace_ids, SessionMemory.collapsed_groups())
       |> assign(:remove_workspace, nil)
       |> assign(:rename_workspace, nil)
       |> assign(:conversation_menu_id, nil)
@@ -171,10 +169,70 @@ defmodule HandbeamWeb.WorkspaceLive do
       |> assign(:show_settings_panel, false)
       |> assign(:mobile_right_panel_open, false)
       |> assign(:right_panel_collapsed, false)
-      |> ModelSelection.load_effective_settings()
-      |> ModelSelection.apply_effective()
+      |> finish_boot_models()
+      |> maybe_remember_boot(params)
 
     {:ok, socket}
+  end
+
+  defp boot_location(params, workspaces, default_ws, conversations_by_ws) do
+    if is_binary(params["conversation_id"]) do
+      default_boot(default_ws, conversations_by_ws)
+    else
+      case SessionMemory.restore(workspaces) do
+        %{scope: :free, conversation_id: id} ->
+          %{
+            chat_scope: :free,
+            workspace_id: nil,
+            conversation_id: id,
+            workspace_root: nil,
+            workspace_label: "Chats",
+            model_root: default_ws["path"]
+          }
+
+        %{scope: :workspace, workspace_id: workspace_id, conversation_id: id} ->
+          ws = Enum.find(workspaces, &(&1["id"] == workspace_id)) || default_ws
+
+          %{
+            chat_scope: :workspace,
+            workspace_id: ws["id"],
+            conversation_id: id,
+            workspace_root: ws["path"],
+            workspace_label: ws["name"],
+            model_root: ws["path"]
+          }
+
+        _ ->
+          default_boot(default_ws, conversations_by_ws)
+      end
+    end
+  end
+
+  defp default_boot(default_ws, conversations_by_ws) do
+    %{
+      chat_scope: :workspace,
+      workspace_id: default_ws["id"],
+      conversation_id: initial_conversation_id(conversations_by_ws, default_ws["id"]),
+      workspace_root: default_ws["path"],
+      workspace_label: default_ws["name"],
+      model_root: default_ws["path"]
+    }
+  end
+
+  defp finish_boot_models(socket) do
+    if socket.assigns.chat_scope == :free do
+      socket
+      |> assign(:right_panel_collapsed, true)
+      |> ModelSelection.reload_free_models()
+    else
+      socket
+      |> ModelSelection.load_effective_settings()
+      |> ModelSelection.apply_effective()
+    end
+  end
+
+  defp maybe_remember_boot(socket, params) do
+    if is_binary(params["conversation_id"]), do: socket, else: SessionMemory.remember(socket)
   end
 
   @impl true

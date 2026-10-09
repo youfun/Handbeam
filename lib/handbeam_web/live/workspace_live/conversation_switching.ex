@@ -7,6 +7,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
   require Logger
 
   alias HandbeamWeb.WorkspaceLive.ConversationState
+  alias HandbeamWeb.WorkspaceLive.SessionMemory
 
   @free_key :free
 
@@ -25,6 +26,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
     |> assign(:pending_messages, %{})
     |> assign(:history_before, nil)
     |> assign(:history_has_more?, false)
+    |> SessionMemory.remember()
   end
 
   def select_workspace(socket, ws_id) do
@@ -353,6 +355,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
     |> assign(:pending_messages, %{})
     |> assign(:history_before, nil)
     |> assign(:history_has_more?, false)
+    |> SessionMemory.remember()
   end
 
   def new_conversation(socket, workspace_id, opts \\ []) do

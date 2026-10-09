@@ -10,6 +10,7 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
   alias HandbeamWeb.WorkspaceLive.RuntimeProjection
   alias HandbeamWeb.WorkspaceLive.Skills
   alias Handbeam.WorkspaceFiles
+  alias HandbeamWeb.WorkspaceLive.SessionMemory
 
   def after_switch(socket) do
     socket
@@ -296,9 +297,17 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
   end
 
   def load_workspace_tree(socket, relative_dir) do
-    case WorkspaceFiles.list(ConversationState.current_workspace_path(socket), relative_dir,
-           show_hidden: true
-         ) do
+    path = ConversationState.current_workspace_path(socket)
+
+    if is_binary(path) do
+      load_workspace_tree(socket, path, relative_dir)
+    else
+      socket
+    end
+  end
+
+  defp load_workspace_tree(socket, path, relative_dir) do
+    case WorkspaceFiles.list(path, relative_dir, show_hidden: true) do
       {:ok, %{entries: entries}} ->
         socket
         |> update(:workspace_tree, &Map.put(&1, relative_dir, entries))
@@ -347,21 +356,25 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
   def toggle_workspace_group(socket, id) do
     id = to_string(id)
 
-    update(socket, :collapsed_workspace_ids, fn collapsed ->
+    socket
+    |> update(:collapsed_workspace_ids, fn collapsed ->
       collapsed = collapsed || MapSet.new()
 
       if MapSet.member?(collapsed, id),
         do: MapSet.delete(collapsed, id),
         else: MapSet.put(collapsed, id)
     end)
+    |> SessionMemory.persist_collapsed()
   end
 
   def expand_workspace_group(socket, id) do
     id = to_string(id)
 
-    update(socket, :collapsed_workspace_ids, fn collapsed ->
+    socket
+    |> update(:collapsed_workspace_ids, fn collapsed ->
       MapSet.delete(collapsed || MapSet.new(), id)
     end)
+    |> SessionMemory.persist_collapsed()
   end
 
   def close_mobile_sheets(socket) do
