@@ -438,6 +438,7 @@ defmodule Handbeam.Agent.Provider.OpenAICompatibleTest do
         assert usage.input_tokens == 10
         assert usage.total_input_tokens == 10
         assert usage.cache_read_input_tokens == 8
+        assert usage.cache_creation_input_tokens == 0
       end
     end
 

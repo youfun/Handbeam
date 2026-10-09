@@ -52,21 +52,56 @@ defmodule Handbeam.Agent.Provider do
   @doc """
   Normalizes Responses and Chat Completions usage without counting cache reads twice.
 
+  OpenAI `input_tokens` / `prompt_tokens` already include cache reads and cache
+  writes, so `total_input_tokens` stays equal to that inclusive count.
+  GPT-5.6 and later report new cache writes as `cache_write_tokens` inside
+  `input_tokens_details` or `prompt_tokens_details`. That count is kept as
+  `cache_creation_input_tokens`. A missing write field stays 0; an explicit 0
+  is not replaced by another key.
+
   ## Examples
 
       iex> Handbeam.Agent.Provider.openai_usage(%{"prompt_tokens" => 100, "prompt_tokens_details" => %{"cached_tokens" => 80}})
-      %{input_tokens: 100, total_input_tokens: 100, output_tokens: 0, cache_read_input_tokens: 80}
+      %{input_tokens: 100, total_input_tokens: 100, output_tokens: 0, cache_read_input_tokens: 80, cache_creation_input_tokens: 0}
+
+      iex> Handbeam.Agent.Provider.openai_usage(%{"input_tokens" => 2600, "input_tokens_details" => %{"cached_tokens" => 2000, "cache_write_tokens" => 400}})
+      %{input_tokens: 2600, total_input_tokens: 2600, output_tokens: 0, cache_read_input_tokens: 2000, cache_creation_input_tokens: 400}
   """
-  def openai_usage(usage) do
+  def openai_usage(usage) when is_map(usage) do
     input = usage["input_tokens"] || usage["prompt_tokens"] || 0
-    details = usage["input_tokens_details"] || usage["prompt_tokens_details"] || %{}
+
+    details =
+      case usage["input_tokens_details"] || usage["prompt_tokens_details"] do
+        map when is_map(map) -> map
+        _ -> %{}
+      end
 
     %{
       input_tokens: input,
       total_input_tokens: input,
       output_tokens: usage["output_tokens"] || usage["completion_tokens"] || 0,
-      cache_read_input_tokens: details["cached_tokens"] || usage["prompt_cache_hit_tokens"] || 0
+      cache_read_input_tokens: details["cached_tokens"] || usage["prompt_cache_hit_tokens"] || 0,
+      cache_creation_input_tokens: cache_write_tokens(details, usage)
     }
+  end
+
+  defp cache_write_tokens(details, usage) do
+    cond do
+      is_number(details["cache_write_tokens"]) ->
+        details["cache_write_tokens"]
+
+      is_number(details["cache_creation_input_tokens"]) ->
+        details["cache_creation_input_tokens"]
+
+      is_number(usage["cache_write_tokens"]) ->
+        usage["cache_write_tokens"]
+
+      is_number(usage["cache_creation_input_tokens"]) ->
+        usage["cache_creation_input_tokens"]
+
+      true ->
+        0
+    end
   end
 
   @doc """

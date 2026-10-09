@@ -125,6 +125,7 @@ defmodule Handbeam.Agent.Provider.CodexTest do
              total_input_tokens: 31,
              output_tokens: 7,
              cache_read_input_tokens: 11,
+             cache_creation_input_tokens: 0,
              reasoning_tokens: 3
            }
 

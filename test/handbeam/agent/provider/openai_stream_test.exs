@@ -262,8 +262,24 @@ defmodule Handbeam.Agent.Provider.OpenAIStreamTest do
         assert result.input_tokens == 100
         assert result.total_input_tokens == 100
         assert result.cache_read_input_tokens == 80
+        assert result.cache_creation_input_tokens == 0
         assert result.output_tokens == 17
       end
+    end
+
+    test "keeps prompt cache writes from the final usage chunk" do
+      usage = %{
+        "prompt_tokens" => 2600,
+        "completion_tokens" => 10,
+        "prompt_tokens_details" => %{"cached_tokens" => 2000, "cache_write_tokens" => 400}
+      }
+
+      acc = OpenAIStream.process_event(new_acc(), %{"choices" => [], "usage" => usage})
+      assert {:ok, %{usage: result}} = OpenAIStream.build_response(acc)
+      assert result.input_tokens == 2600
+      assert result.total_input_tokens == 2600
+      assert result.cache_read_input_tokens == 2000
+      assert result.cache_creation_input_tokens == 400
     end
 
     test "captures usage from final chunk" do
