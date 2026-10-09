@@ -152,8 +152,9 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
     assigns =
       assign(
         assigns,
-        :run_states,
-        Map.new(assigns.runtime_tasks.tasks, &{&1.conversation_id, &1.status})
+        run_states: Map.new(assigns.runtime_tasks.tasks, &{&1.conversation_id, &1.status}),
+        run_modes:
+          Map.new(assigns.runtime_tasks.tasks, &{&1.conversation_id, Map.get(&1, :mode, :run)})
       )
 
     ~H"""
@@ -281,7 +282,11 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
                     "conversation-item-active"
                 ]}
               >
-                <.run_indicator id={conv.id} state={Map.get(@run_states, conv.id)} />
+                <.run_indicator
+                  id={conv.id}
+                  state={Map.get(@run_states, conv.id)}
+                  mode={Map.get(@run_modes, conv.id, :run)}
+                />
                 <span class="truncate flex-1">{conv.title}</span>
               </button>
               <.conversation_menu conv={conv} conversation_menu_id={@conversation_menu_id} />
@@ -403,7 +408,11 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
                   )
                 ]}
               >
-                <.run_indicator id={conv.id} state={Map.get(@run_states, conv.id)} />
+                <.run_indicator
+                  id={conv.id}
+                  state={Map.get(@run_states, conv.id)}
+                  mode={Map.get(@run_modes, conv.id, :run)}
+                />
                 <span class="truncate flex-1">{conv.title}</span>
               </button>
               <.conversation_menu conv={conv} conversation_menu_id={@conversation_menu_id} />
@@ -566,7 +575,11 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
                   )
                 ]}
               >
-                <.run_indicator id={conv.id} state={Map.get(@run_states, conv.id)} />
+                <.run_indicator
+                  id={conv.id}
+                  state={Map.get(@run_states, conv.id)}
+                  mode={Map.get(@run_modes, conv.id, :run)}
+                />
                 <span class="truncate flex-1">{conv.title}</span>
               </button>
               <.conversation_menu conv={conv} conversation_menu_id={@conversation_menu_id} />
@@ -823,6 +836,7 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
 
   attr :id, :string, required: true
   attr :state, :atom, default: nil
+  attr :mode, :atom, default: :run
 
   defp run_indicator(assigns) do
     ~H"""
@@ -830,12 +844,22 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
       class="conversation-run-indicator"
       data-run-id={@id}
       data-run-state={@state || :idle}
+      data-run-mode={@mode}
       role={@state && "img"}
       aria-label={
         case @state do
-          :running -> gettext("运行中")
-          :waiting_confirmation -> gettext("等待确认")
-          _ -> nil
+          :running ->
+            case @mode do
+              :look -> gettext("阅读 / 搜索中")
+              :edit -> gettext("修改文件中")
+              _ -> gettext("运行中")
+            end
+
+          :waiting_confirmation ->
+            gettext("等待确认")
+
+          _ ->
+            nil
         end
       }
     >
@@ -852,26 +876,34 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
           <g class="run-outline">
             <path class="run-leg-left" d="M8 21h2v3H7v-1h1z" />
             <path class="run-leg-right" d="M15 21h2v2h1v1h-3z" />
-            <g class="run-arm-left">
-              <path d="M4 16h1v4H4z" />
-              <path class="run-fill" d="M3 19h2v2H3z" />
-            </g>
-            <g class="run-arm-right">
-              <path d="M19 16h1v4h-1z" />
-              <path class="run-fill" d="M19 19h2v2h-2z" />
-            </g>
           </g>
-          <g class="run-leaf">
-            <path class="run-outline" d="M11 5h1v3h-1zM11 3h1v3h-1zM12 2h4v1h1v1h-1v1h-4V4h-1V3h1z" />
-            <path class="run-fill" d="M12 3h4v1h-4z" />
-            <path class="run-highlight" d="M13 2h2v1h-2z" />
+          <g class="run-upper">
+            <g class="run-outline">
+              <g class="run-arm-left">
+                <path d="M4 16h1v4H4z" />
+                <path class="run-fill" d="M3 19h2v2H3z" />
+              </g>
+              <g class="run-arm-right">
+                <path d="M19 16h1v4h-1z" />
+                <path class="run-fill" d="M19 19h2v2h-2z" />
+              </g>
+              <g class="run-working-arm">
+                <path d="M19 16h2v1h-1v2h-1z" />
+                <path class="run-fill" d="M20 17h2v2h-2z" />
+              </g>
+            </g>
+            <g class="run-leaf">
+              <path class="run-outline" d="M11 5h1v3h-1zM11 3h1v3h-1zM12 2h4v1h1v1h-1v1h-4V4h-1V3h1z" />
+              <path class="run-fill" d="M12 3h4v1h-4z" />
+              <path class="run-highlight" d="M13 2h2v1h-2z" />
+            </g>
+            <path class="run-outline" d="M9 8h6v1h2v1h1v1h1v10h-1v1h-1v1H7v-1H6v-1H5V11h1v-1h1V9h2z" />
+            <path class="run-fill" d="M9 9h6v1h2v1h1v10h-1v1H7v-1H6V11h1v-1h2z" />
+            <path class="run-highlight" d="M9 9h6v1h-1v1h-2v1H8v1H7v-2h1v-1h1z" />
+            <path class="run-shade" d="M17 17h1v4h-1v1H7v-1h8v-1h1v-1h1z" />
+            <path class="run-eyes" fill="#263b25" d="M8 14h2v2H8zM14 14h2v2h-2z" />
+            <path fill="#db9968" d="M7 17h1v1H7zM16 17h1v1h-1z" />
           </g>
-          <path class="run-outline" d="M9 8h6v1h2v1h1v1h1v10h-1v1h-1v1H7v-1H6v-1H5V11h1v-1h1V9h2z" />
-          <path class="run-fill" d="M9 9h6v1h2v1h1v10h-1v1H7v-1H6V11h1v-1h2z" />
-          <path class="run-highlight" d="M9 9h6v1h-1v1h-2v1H8v1H7v-2h1v-1h1z" />
-          <path class="run-shade" d="M17 17h1v4h-1v1H7v-1h8v-1h1v-1h1z" />
-          <path fill="#263b25" d="M8 14h2v2H8zM14 14h2v2h-2z" />
-          <path fill="#db9968" d="M7 17h1v1H7zM16 17h1v1h-1z" />
         </g>
       </svg>
     </span>

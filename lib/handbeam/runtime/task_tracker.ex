@@ -83,7 +83,65 @@ defmodule Handbeam.Runtime.TaskTracker do
     end
   end
 
+  def handle_info({:tool_lifecycle, conversation_id, kind, payload}, state)
+      when kind in [:tool_start, :tool_end] do
+    case Map.get(state.tasks, conversation_id) do
+      %{run_id: run_id} = task when run_id == payload.run_id ->
+        id = payload.tool_use_id
+
+        if is_binary(id) do
+          tools =
+            if kind == :tool_start,
+              do: Map.put(task.tools, id, tool_mode(payload.tool)),
+              else: Map.delete(task.tools, id)
+
+          mode = activity_mode(Map.values(tools))
+          state = put_in(state, [:tasks, conversation_id], %{task | tools: tools, mode: mode})
+
+          if mode != task.mode and task.status == :running do
+            broadcast_snapshot(state)
+          end
+
+          {:noreply, state}
+        else
+          {:noreply, state}
+        end
+
+      _ ->
+        {:noreply, state}
+    end
+  end
+
   def handle_info(_message, state), do: {:noreply, state}
+
+  defp tool_mode(name) when name in ["edit", "write"], do: :edit
+
+  defp tool_mode(name)
+       when name in [
+              "read",
+              "grep",
+              "file_search",
+              "code_search",
+              "web_fetch",
+              "read_thread",
+              "find_thread",
+              "get_thread_status",
+              "mem_recall",
+              "ext__beam__docs",
+              "ext__beam__source"
+            ],
+       do: :look
+
+  defp tool_mode(_name), do: :run
+
+  # An editing tool takes priority; mixed read/other calls keep the normal walk.
+  defp activity_mode(modes) do
+    cond do
+      :edit in modes -> :edit
+      modes != [] and Enum.all?(modes, &(&1 == :look)) -> :look
+      true -> :run
+    end
+  end
 
   defp handle_lifecycle({:run_lifecycle, conversation_id, :run_start, payload}, state) do
     task = %{
@@ -91,7 +149,9 @@ defmodule Handbeam.Runtime.TaskTracker do
       run_id: resolve_run_id(payload, conversation_id, conversation_id),
       workspace_id: workspace_id(conversation_id),
       title: conversation_title(conversation_id),
-      status: :running
+      status: :running,
+      tools: %{},
+      mode: :run
     }
 
     state = put_in(state, [:tasks, conversation_id], task)
@@ -136,8 +196,7 @@ defmodule Handbeam.Runtime.TaskTracker do
   defp handle_lifecycle(_message, state), do: {:noreply, state}
 
   defp dispatch(state, event) do
-    snapshot = notify_snapshot(state)
-    Phoenix.PubSub.broadcast(Handbeam.PubSub, @topic, {:runtime_tasks, snapshot})
+    snapshot = broadcast_snapshot(state)
 
     context = %{
       app_visible?: NotifyAdapter.app_visible?(),
@@ -148,6 +207,12 @@ defmodule Handbeam.Runtime.TaskTracker do
       maybe_broadcast_in_app(action)
       NotifyAdapter.apply(action)
     end)
+  end
+
+  defp broadcast_snapshot(state) do
+    snapshot = notify_snapshot(state)
+    Phoenix.PubSub.broadcast(Handbeam.PubSub, @topic, {:runtime_tasks, snapshot})
+    snapshot
   end
 
   defp maybe_broadcast_in_app({:in_app_ended, task, reason}) do
@@ -167,6 +232,7 @@ defmodule Handbeam.Runtime.TaskTracker do
   defp notify_snapshot(state) do
     state.tasks
     |> Map.values()
+    |> Enum.map(&Map.delete(&1, :tools))
     |> Enum.sort_by(& &1.conversation_id)
     |> Notify.snapshot()
   end

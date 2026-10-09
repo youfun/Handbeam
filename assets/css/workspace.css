@@ -2379,6 +2379,23 @@ button.workspace-file-row:hover,
 .conversation-run-sprite .run-leg-right,
 .conversation-run-sprite .run-arm-left { transform: translateY(calc(-1px - var(--run-step))); }
 .conversation-run-sprite .run-leaf { transform: translateX(var(--run-sway)); }
+.conversation-run-sprite .run-upper {
+  transform: translate(var(--run-upper-x, 0px), var(--run-upper-y, 0px));
+}
+.conversation-run-sprite .run-eyes { transform: translateX(var(--run-eyes-x, 0px)); }
+.conversation-run-sprite .run-working-arm { display: none; }
+[data-run-mode="look"] .run-leg-left,
+[data-run-mode="look"] .run-leg-right,
+[data-run-mode="look"] .run-arm-left,
+[data-run-mode="look"] .run-arm-right,
+[data-run-mode="edit"] .run-leg-left,
+[data-run-mode="edit"] .run-leg-right,
+[data-run-mode="edit"] .run-arm-left { transform: none; }
+[data-run-mode="edit"] .run-arm-right { display: none; }
+[data-run-mode="edit"] .run-working-arm {
+  display: block;
+  transform: translate(var(--run-tap-x, 0px), var(--run-tap-y, 0px));
+}
 
 @media (prefers-reduced-motion: reduce) {
   .conversation-run-sprite g, .conversation-run-sprite path { transform: none; }

@@ -1,6 +1,8 @@
 defmodule HandbeamWeb.WorkspaceLive.ConversationSidebarOrderTest do
   use ExUnit.Case, async: true
 
+  require Phoenix.LiveViewTest
+
   alias HandbeamWeb.WorkspaceLive.ConversationState
   alias HandbeamWeb.WorkspaceLive.ConversationSwitching
 
@@ -50,6 +52,46 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSidebarOrderTest do
       |> Enum.map(& &1.id)
 
     assert ids == ["new", "old"]
+  end
+
+  test "tool modes appear for background and pinned conversations" do
+    conv = conversation("background", "2026-01-01T00:00:00Z")
+
+    pinned =
+      conversation("pinned-background", "2026-01-01T00:00:00Z")
+      |> Map.put("pinned_at", "2026-01-01T00:00:00Z")
+
+    for mode <- [:run, :look, :edit] do
+      html =
+        Phoenix.LiveViewTest.render_component(
+          &HandbeamWeb.WorkspaceLive.SidebarComponents.projects_sidebar/1,
+          chat_scope: :workspace,
+          collapsed_workspace_ids: MapSet.new(),
+          conversation_menu_id: nil,
+          conversations_by_workspace: %{"ws" => [conv, pinned]},
+          current_conversation_id: "another-conversation",
+          current_workspace_id: "ws",
+          show_archive: false,
+          workspaces: [%{"id" => "ws", "name" => "Workspace"}],
+          runtime_tasks: %{
+            tasks:
+              Enum.map(
+                ["background", "pinned-background"],
+                &%{conversation_id: &1, status: :running, mode: mode}
+              )
+          }
+        )
+
+      nodes =
+        Floki.find(
+          Floki.parse_document!(html),
+          "[data-run-id='background'], [data-run-id='pinned-background']"
+        )
+
+      assert length(nodes) == 2
+      assert Floki.attribute(nodes, "data-run-mode") == [to_string(mode), to_string(mode)]
+      assert Floki.attribute(nodes, "data-run-state") == ["running", "running"]
+    end
   end
 
   defp conversation(id, updated_at) do

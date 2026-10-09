@@ -649,6 +649,7 @@ defmodule Handbeam.PubSub.Session do
     log_broadcast_event(state.session_id, event)
     Phoenix.PubSub.broadcast(Handbeam.PubSub, topic, {:agent_event, event})
     maybe_broadcast_run_lifecycle(state.session_id, event)
+    maybe_broadcast_tool_lifecycle(state, kind, payload)
 
     new_events = Enum.take([event | state.events], @max_snapshot_events)
 
@@ -848,6 +849,24 @@ defmodule Handbeam.PubSub.Session do
   end
 
   defp maybe_broadcast_run_lifecycle(_session_id, _event), do: :ok
+
+  # Reliable, compact events for sidebar modes; never forward tool inputs/results.
+  defp maybe_broadcast_tool_lifecycle(state, kind, payload)
+       when kind in [:tool_start, :tool_end] do
+    tool = %{
+      run_id: payload_run_id(payload) || state.meta.run_id,
+      tool_use_id: Handbeam.Utils.SafeMap.get_first_truthy(payload, :tool_use_id, "tool_use_id"),
+      tool: Handbeam.Utils.SafeMap.get_first_truthy(payload, :tool, "tool")
+    }
+
+    Phoenix.PubSub.broadcast(
+      Handbeam.PubSub,
+      "runtime:runs",
+      {:tool_lifecycle, state.session_id, kind, tool}
+    )
+  end
+
+  defp maybe_broadcast_tool_lifecycle(_state, _kind, _payload), do: :ok
 
   defp via_tuple(session_id), do: {:via, Registry, {Handbeam.SessionRegistry, session_id}}
 end

@@ -49,6 +49,9 @@ export const ConversationActivity = {
         boost: 0,
       };
       body.state = el.dataset.runState;
+      const mode = el.dataset.runMode || "run";
+      if (body.mode !== mode) body.modeTime = 0;
+      body.mode = mode;
       const sprite = el.querySelector(".conversation-run-sprite");
       if (!sprite) continue;
       if (!next.has(id)) body.sprites = [];
@@ -77,10 +80,37 @@ export const ConversationActivity = {
   paint(body) {
     const moving = body.state === "running" && !this.motion.matches;
     const frame = moving ? Math.floor(body.phase / (Math.PI * 2) * 8) % 8 : 0;
+    let upperX = 0, upperY = 0, eyes = 0, tapX = 0, tapY = 0, sway = 0;
+    const walking = moving && body.mode === "run";
+    if (moving && body.mode === "look") {
+      const t = (body.modeTime % 3.6) / 3.6;
+      eyes = t < .12 ? 0 : t < .20 ? -1 : t < .44 ? -2 : t < .56 ? 0 : t < .64 ? 1 : t < .88 ? 2 : 0;
+      upperX = t >= .20 && t < .44 ? -1 : t >= .64 && t < .88 ? 1 : 0;
+      sway = t >= .24 && t < .44 ? -1 : t >= .68 && t < .88 ? 1 : 0;
+    } else if (body.mode === "edit") {
+      eyes = 1;
+      if (moving) {
+        const t = (body.modeTime % 1.6) / 1.6;
+        const raised = (t >= .10 && t < .22) || (t >= .32 && t < .44);
+        const tapping = (t >= .22 && t < .28) || (t >= .44 && t < .50);
+        tapY = raised ? -4 : (t >= .22 && t < .32) || (t >= .44 && t < .56) ? 1 : 0;
+        tapX = tapY === 1 ? 1 : 0;
+        upperY = tapping ? 1 : 0;
+        sway = tapping ? 1 : 0;
+      }
+    }
     for (const sprite of body.sprites) {
-      sprite.style.setProperty("--run-hop", moving && frame % 4 >= 2 ? "-1px" : "0px");
-      sprite.style.setProperty("--run-step", frame < 4 ? "0px" : "-1px");
-      sprite.style.setProperty("--run-sway", moving && frame % 4 >= 2 ? "1px" : "0px");
+      const values = {
+        "--run-hop": walking && frame % 4 >= 2 ? -1 : 0,
+        "--run-step": walking && frame >= 4 ? -1 : 0,
+        "--run-sway": walking && frame % 4 >= 2 ? 1 : sway,
+        "--run-upper-x": upperX, "--run-upper-y": upperY,
+        "--run-eyes-x": eyes, "--run-tap-x": tapX, "--run-tap-y": tapY,
+      };
+      for (const [name, value] of Object.entries(values)) {
+        const cssValue = `${value}px`;
+        if (sprite.style.getPropertyValue(name) !== cssValue) sprite.style.setProperty(name, cssValue);
+      }
     }
   },
 
@@ -89,6 +119,7 @@ export const ConversationActivity = {
     this.last = now;
     for (const body of this.bodies.values()) {
       if (body.state !== "running") continue;
+      body.modeTime += dt;
       body.boost *= Math.exp(-dt / 0.7);
       const pull = 0.8 + 0.5 * Math.sin(body.phase) ** 2;
       body.phase = (body.phase + dt * Math.PI * 2 / body.period * pull * (1 + body.boost)) % (Math.PI * 2);
