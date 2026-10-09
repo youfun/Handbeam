@@ -77,7 +77,9 @@ defmodule Handbeam.Tool.Registry do
   @doc """
   Tool definitions declared to the provider.
 
-  Nested-only tools stay registered and executable, but are omitted here.
+  Nested-only and deferred tools stay registered. Nested-only tools are
+  executable only through `Executor.execute_nested/4`. Deferred tools are
+  omitted until a conversation loads them.
   """
   @spec tool_defs() :: [map()]
   def tool_defs do
@@ -88,6 +90,17 @@ defmodule Handbeam.Tool.Registry do
   @spec tool_fns() :: %{String.t() => map()}
   def tool_fns do
     GenServer.call(__MODULE__, :tool_fns)
+  end
+
+  @doc """
+  Deferred tools with the fields needed for search and later declaration.
+
+  Each map has `name`, `description`, `input_schema`, `server`, and
+  `server_description`. These tools are absent from `tool_defs/0`.
+  """
+  @spec deferred_catalog() :: [map()]
+  def deferred_catalog do
+    GenServer.call(__MODULE__, :deferred_catalog)
   end
 
   @doc "Remove a tool by name."
@@ -117,8 +130,8 @@ defmodule Handbeam.Tool.Registry do
   @doc """
   Session tool definitions declared to the provider.
 
-  Nested-only tools are omitted even when the session active set names them.
-  `nil` means every declared tool, not every registered tool.
+  Nested-only and deferred tools are omitted even when the session active set
+  names them. `nil` means every declared tool, not every registered tool.
   """
   @spec tool_defs_for_session(String.t()) :: [map()]
   def tool_defs_for_session(session_id) when is_binary(session_id) do
@@ -128,14 +141,14 @@ defmodule Handbeam.Tool.Registry do
   @doc """
   Prompt text for tools the provider is allowed to see.
 
-  Nested-only tools are omitted. An empty active set yields an empty string.
+  Nested-only and deferred tools are omitted. An empty active set yields an empty string.
   """
   @spec prompt_snippets() :: String.t()
   def prompt_snippets do
     GenServer.call(__MODULE__, :prompt_snippets)
   end
 
-  @doc "Session-scoped prompt snippets. Nested-only tools are omitted."
+  @doc "Session-scoped prompt snippets. Nested-only and deferred tools are omitted."
   @spec prompt_snippets_for_session(String.t()) :: String.t()
   def prompt_snippets_for_session(session_id) when is_binary(session_id) do
     GenServer.call(__MODULE__, {:prompt_snippets_for_session, session_id})
@@ -172,6 +185,7 @@ defmodule Handbeam.Tool.Registry do
       Handbeam.Tool.Builtin.Advisor,
       Handbeam.Tool.Builtin.Task,
       Handbeam.Tool.Builtin.TaskStatus,
+      Handbeam.Tool.Builtin.ToolSearch,
       Handbeam.Tool.Builtin.WebFetch,
       Handbeam.Tool.Builtin.Write,
       Handbeam.Tool.Builtin.FindThread,
@@ -407,6 +421,17 @@ defmodule Handbeam.Tool.Registry do
     {:reply, state.tools, state}
   end
 
+  def handle_call(:deferred_catalog, _from, state) do
+    catalog =
+      state.tools
+      |> Map.values()
+      |> Enum.filter(& &1.deferred?)
+      |> Enum.sort_by(& &1.name)
+      |> Enum.map(&catalog_entry/1)
+
+    {:reply, catalog, state}
+  end
+
   def handle_call({:unregister, name}, _from, state) do
     {:reply, :ok, %{state | tools: Map.delete(state.tools, name)}}
   end
@@ -461,6 +486,7 @@ defmodule Handbeam.Tool.Registry do
       timeout_ms: if(function_exported?(mod, :timeout_ms, 0), do: mod.timeout_ms(), else: nil),
       hint: tool_hint(mod),
       nested_only?: nested_only?(mod, meta),
+      deferred?: deferred?(mod),
       meta: meta
     }
   end
@@ -484,6 +510,7 @@ defmodule Handbeam.Tool.Registry do
       timeout_ms: Keyword.get(opts, :timeout_ms),
       hint: tool_hint(Keyword.get(opts, :hint)),
       nested_only?: nested_only?(nil, meta) or Keyword.get(opts, :nested_only?, false),
+      deferred?: Keyword.get(opts, :deferred?, false) or deferred_exposure?(meta),
       meta: meta
     }
   end
@@ -501,15 +528,32 @@ defmodule Handbeam.Tool.Registry do
 
   defp tool_hint(_hint), do: nil
 
+  defp deferred?(mod) when is_atom(mod) do
+    function_exported?(mod, :deferred?, 0) and mod.deferred?()
+  end
+
+  defp deferred_exposure?(meta) do
+    meta[:exposure] in ["deferred", "nested"] or meta["exposure"] in ["deferred", "nested"]
+  end
+
   defp nested_only?(mod, meta) do
     module_flag =
       is_atom(mod) and function_exported?(mod, :nested_only?, 0) and mod.nested_only?()
 
-    module_flag or truthy?(meta[:nested_only]) or truthy?(meta["nested_only"]) or
-      meta[:exposure] == "nested" or meta["exposure"] == "nested"
+    module_flag or truthy?(meta[:nested_only]) or truthy?(meta["nested_only"])
   end
 
   defp truthy?(value), do: value in [true, "true"]
+
+  defp catalog_entry(entry) do
+    %{
+      name: entry.name,
+      description: entry.description,
+      input_schema: entry.input_schema,
+      server: entry.meta[:server] || entry.meta["server"],
+      server_description: entry.meta[:server_description] || entry.meta["server_description"]
+    }
+  end
 
   defp declared_defs(tools, active_names) do
     tools
@@ -533,7 +577,8 @@ defmodule Handbeam.Tool.Registry do
     tools
     |> Map.values()
     |> Enum.filter(fn entry ->
-      not entry.nested_only? and (is_nil(name_set) or MapSet.member?(name_set, entry.name))
+      not entry.nested_only? and not entry.deferred? and
+        (is_nil(name_set) or MapSet.member?(name_set, entry.name))
     end)
     |> Enum.sort_by(& &1.name)
   end

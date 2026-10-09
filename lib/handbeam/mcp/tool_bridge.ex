@@ -39,13 +39,14 @@ defmodule Handbeam.MCP.ToolBridge do
                 tool.description,
                 tool.input_schema,
                 executor,
-                nested_only?: config.exposure != "direct",
+                deferred?: config.exposure != "direct",
                 meta: %{
                   source: :mcp,
                   server: server_name,
                   remote_name: tool.name,
                   scope: scope,
                   exposure: config.exposure,
+                  server_description: config.description,
                   fingerprint: Handbeam.MCP.Access.fingerprint(config),
                   runtime_pid: runtime_pid
                 }

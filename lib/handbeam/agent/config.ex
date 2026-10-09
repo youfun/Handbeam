@@ -258,6 +258,7 @@ defmodule Handbeam.Agent.Config do
     |> maybe_inject_skills(opts)
     |> maybe_append_task_instructions(opts)
     |> maybe_inject_inline_previews(opts)
+    |> append_prompt_section(Handbeam.Tool.Deferred.prompt_section(opts))
     |> append_prompt_section(Handbeam.Agent.HostEnvironment.describe())
   end
 

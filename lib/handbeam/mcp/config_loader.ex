@@ -278,10 +278,10 @@ defmodule Handbeam.MCP.ConfigLoader do
     end
   end
 
-  @exposures ["nested", "direct"]
+  @exposures ["direct", "deferred", "nested"]
 
   defp validate_exposure(raw_cfg, name, source) do
-    case Map.get(raw_cfg, "exposure", "nested") do
+    case Map.get(raw_cfg, "exposure", "deferred") do
       exposure when exposure in @exposures ->
         []
 
@@ -289,13 +289,16 @@ defmodule Handbeam.MCP.ConfigLoader do
         [
           diagnostic(
             :error,
-            "Invalid exposure for server \"#{name}\": expected \"nested\" or \"direct\"",
+            "Invalid exposure for server \"#{name}\": expected \"direct\" or \"deferred\"",
             source,
             name
           )
         ]
     end
   end
+
+  defp normalize_exposure("direct"), do: "direct"
+  defp normalize_exposure(_exposure), do: "deferred"
 
   defp validate_command(raw_cfg, name, source) do
     cmd = raw_cfg["command"]
@@ -321,7 +324,8 @@ defmodule Handbeam.MCP.ConfigLoader do
       "type",
       "url",
       "headers",
-      "exposure"
+      "exposure",
+      "description"
     ]
 
     %ServerConfig{
@@ -338,7 +342,8 @@ defmodule Handbeam.MCP.ConfigLoader do
       headers: headers,
       runtime_headers: resolve_placeholders(headers),
       source: source,
-      exposure: Map.get(raw_cfg, "exposure", "nested"),
+      exposure: normalize_exposure(Map.get(raw_cfg, "exposure", "deferred")),
+      description: server_description(raw_cfg["description"]),
       raw: Map.drop(raw_cfg, known)
     }
   end
@@ -346,6 +351,15 @@ defmodule Handbeam.MCP.ConfigLoader do
   # ---------------------------------------------------------------------------
   # Env Resolution
   # ---------------------------------------------------------------------------
+
+  defp server_description(text) when is_binary(text) do
+    case String.trim(text) do
+      "" -> nil
+      trimmed -> trimmed
+    end
+  end
+
+  defp server_description(_text), do: nil
 
   defp resolve_placeholders(map) when is_map(map) do
     Map.new(map, fn {k, v} ->

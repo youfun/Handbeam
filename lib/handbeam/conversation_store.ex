@@ -685,6 +685,32 @@ defmodule Handbeam.ConversationStore do
     end
   end
 
+  @usage_meta_keys ~w(token_usage run_usage usage_legacy run_usage_replace)
+
+  @doc """
+  Append tool names a conversation has loaded, keeping the existing order.
+
+  This does not change `updated_at` or the conversation index.
+  """
+  @spec append_loaded_tools(String.t(), [String.t()]) ::
+          {:ok, [String.t()]} | {:error, :not_found | term()}
+  def append_loaded_tools(id, names) when is_binary(id) and is_list(names) do
+    incoming = Enum.filter(names, &is_binary/1)
+
+    with {:ok, meta} <-
+           transact_meta(id, fn existing ->
+             current =
+               case existing["loaded_tools"] do
+                 tools when is_list(tools) -> Enum.filter(tools, &is_binary/1)
+                 _ -> []
+               end
+
+             Map.put(existing, "loaded_tools", current ++ Enum.reject(incoming, &(&1 in current)))
+           end) do
+      {:ok, meta["loaded_tools"]}
+    end
+  end
+
   @doc """
   Update meta fields for a conversation without touching messages or files.
 
@@ -696,8 +722,6 @@ defmodule Handbeam.ConversationStore do
   (the default) or when `updated_at` is passed explicitly with `touch: false`.
   Opening a conversation must use `touch: false` so viewing does not reorder it.
   """
-  @usage_meta_keys ~w(token_usage run_usage usage_legacy run_usage_replace)
-
   @spec update_meta(String.t(), keyword()) :: {:ok, map()} | {:error, :not_found | term()}
   def update_meta(id, updates) when is_binary(id) and is_list(updates) do
     ensure_conversation_dir(id)
@@ -1349,7 +1373,8 @@ defmodule Handbeam.ConversationStore do
       "selected_model" => conversation["selected_model"],
       "selected_reasoning_level" => conversation["selected_reasoning_level"],
       "collaboration" => conversation["collaboration"],
-      "last_run_result" => conversation["last_run_result"]
+      "last_run_result" => conversation["last_run_result"],
+      "loaded_tools" => conversation["loaded_tools"]
     }
   end
 

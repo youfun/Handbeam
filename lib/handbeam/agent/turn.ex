@@ -882,12 +882,43 @@ defmodule Handbeam.Agent.Turn do
 
   defp active_tool_defs(state, opts) do
     authorized_tools = Executor.authorized_tools(state.config)
+    context = state.config.context || %{}
 
-    opts
-    |> Keyword.get(:session_id)
-    |> session_tool_defs()
-    |> Handbeam.MCP.Access.filter(state.config.context)
-    |> Enum.filter(&(&1.name in authorized_tools))
+    eager =
+      opts
+      |> Keyword.get(:session_id)
+      |> session_tool_defs()
+      |> Handbeam.MCP.Access.filter(context)
+      |> Enum.filter(&(&1.name in authorized_tools))
+      |> omit_idle_tool_search(context, authorized_tools)
+      |> Enum.map(
+        &Handbeam.Tool.Builtin.Task.contextualize_def(&1, state.config, authorized_tools)
+      )
+
+    eager ++ loaded_tool_defs(state, context, authorized_tools, eager)
+  end
+
+  defp omit_idle_tool_search(defs, context, authorized_tools) do
+    if Enum.any?(defs, &(&1.name == "tool_search")) and
+         not Handbeam.Tool.Deferred.any?(context, authorized_tools) do
+      Enum.reject(defs, &(&1.name == "tool_search"))
+    else
+      defs
+    end
+  end
+
+  defp loaded_tool_defs(state, context, authorized_tools, eager) do
+    conversation_id = context[:conversation_id]
+    eager_names = MapSet.new(eager, & &1.name)
+    catalog = Map.new(Handbeam.Tool.Registry.deferred_catalog(), &{&1.name, &1})
+
+    conversation_id
+    |> Handbeam.Tool.Deferred.loaded_names()
+    |> Enum.filter(&(Map.has_key?(catalog, &1) and &1 in authorized_tools))
+    |> Enum.map(&Map.fetch!(catalog, &1))
+    |> Handbeam.MCP.Access.filter(context)
+    |> Enum.reject(&MapSet.member?(eager_names, &1.name))
+    |> Enum.map(&Map.take(&1, [:name, :description, :input_schema]))
     |> Enum.map(&Handbeam.Tool.Builtin.Task.contextualize_def(&1, state.config, authorized_tools))
   end
 

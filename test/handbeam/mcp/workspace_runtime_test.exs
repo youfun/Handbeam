@@ -101,7 +101,7 @@ defmodule Handbeam.MCP.WorkspaceRuntimeTest do
     %{root: root, opts: [user_config_path: Path.join(root, "mcp.json")]}
   end
 
-  test "default MCP exposure is nested-only and direct still declares tools", %{opts: opts} do
+  test "default MCP exposure is deferred and direct still declares tools", %{opts: opts} do
     File.write!(
       opts[:user_config_path],
       Jason.encode!(%{
@@ -127,7 +127,9 @@ defmodule Handbeam.MCP.WorkspaceRuntimeTest do
 
     hidden = Enum.find(entries, &(&1.meta.server == "docs"))
     shown = Enum.find(entries, &(&1.meta.server == "shown"))
-    assert hidden.nested_only?
+    assert hidden.deferred?
+    refute hidden.nested_only?
+    refute shown.deferred?
     refute shown.nested_only?
 
     defs = Handbeam.Tool.Registry.tool_defs()

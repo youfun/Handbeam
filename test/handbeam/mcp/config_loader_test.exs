@@ -350,20 +350,24 @@ defmodule Handbeam.MCP.ConfigLoaderTest do
       System.delete_env("HANDBEAM_HTTP_TOKEN")
     end
 
-    test "defaults exposure to nested and accepts direct" do
+    test "defaults exposure to deferred, accepts direct, and keeps nested as deferred" do
       project = Path.join(@tmp_base, "exposure_ok")
 
       write_json(project, ".mcp.json", %{
         "mcpServers" => %{
-          "hidden" => %{"command" => "echo"},
-          "shown" => %{"command" => "printf", "exposure" => "direct"}
+          "hidden" => %{"command" => "echo", "description" => "Search the docs"},
+          "shown" => %{"command" => "printf", "exposure" => "direct"},
+          "legacy" => %{"command" => "true", "exposure" => "nested"}
         }
       })
 
       {:ok, config} = ConfigLoader.load(user_config_path: nil, project: project)
-      assert config.servers["hidden"].exposure == "nested"
+      assert config.servers["hidden"].exposure == "deferred"
+      assert config.servers["hidden"].description == "Search the docs"
       assert config.servers["shown"].exposure == "direct"
+      assert config.servers["legacy"].exposure == "deferred"
       refute Map.has_key?(config.servers["hidden"].raw, "exposure")
+      refute Map.has_key?(config.servers["hidden"].raw, "description")
     end
 
     test "invalid exposure fails config load" do

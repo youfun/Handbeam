@@ -207,23 +207,15 @@ defmodule Handbeam.Agent.Tool.Executor do
         {:ok, %{nested_only?: true}} when not nested_caller? ->
           unknown_tool(name, id, input)
 
-        {:ok, entry} ->
-          try do
-            outcome =
-              if Handbeam.Threads.Collaboration.tool_allowed?(name, context) do
-                entry.executor.(input || %{}, Map.put(context, :tool_call_id, id))
-              else
-                {:error, "Delegated thread is read-only; tool execution denied"}
-              end
-
-            normalize_outcome(outcome, tool_fns, name)
-            |> Handbeam.Tool.Images.import_result(context)
-          rescue
-            e ->
-              msg = "Tool #{name} crashed: #{Exception.message(e)}"
-              Logger.warning(fn -> msg <> "\n" <> Exception.format(:error, e, __STACKTRACE__) end)
-              Result.error(failure_content(msg, tool_fns, name))
+        {:ok, %{deferred?: true} = entry} when not nested_caller? ->
+          if loaded_deferred?(name, context) do
+            invoke_tool(entry, name, id, input, context, tool_fns)
+          else
+            unknown_tool(name, id, input)
           end
+
+        {:ok, entry} ->
+          invoke_tool(entry, name, id, input, context, tool_fns)
 
         :error ->
           unknown_tool(name, id, input)
@@ -573,6 +565,34 @@ defmodule Handbeam.Agent.Tool.Executor do
           (is_nil(parent) or
              Handbeam.Agent.Delegation.Policy.authorized_child?(parent, config.run_id)))
     )
+  end
+
+  defp loaded_deferred?(name, context) do
+    Handbeam.Tool.Deferred.loaded?(name, context[:conversation_id])
+  end
+
+  defp invoke_tool(entry, name, id, input, context, tool_fns) do
+    try do
+      outcome =
+        if Handbeam.Threads.Collaboration.tool_allowed?(name, context) do
+          entry.executor.(input || %{}, Map.put(context, :tool_call_id, id))
+        else
+          {:error, "Delegated thread is read-only; tool execution denied"}
+        end
+
+      outcome
+      |> normalize_outcome(tool_fns, name)
+      |> Handbeam.Tool.Images.import_result(context)
+    rescue
+      exception ->
+        msg = "Tool #{name} crashed: #{Exception.message(exception)}"
+
+        Logger.warning(fn ->
+          msg <> "\n" <> Exception.format(:error, exception, __STACKTRACE__)
+        end)
+
+        Result.error(failure_content(msg, tool_fns, name))
+    end
   end
 
   defp unknown_tool(name, id, input) do
