@@ -626,6 +626,7 @@ defmodule ExFff.Index do
 
     page = matches |> Enum.drop(offset) |> Enum.take(limit + 1)
     results = Enum.take(page, limit)
+    partial_match = partial_match(matches)
 
     next_cursor =
       if length(page) > length(results), do: encode_offset(offset + length(results)), else: nil
@@ -639,9 +640,17 @@ defmodule ExFff.Index do
        duration_ms: duration_ms,
        status: state.status,
        indexed_count: state.indexed_count,
-       cursor: next_cursor
+       cursor: next_cursor,
+       partial_match: partial_match
      }}
   end
+
+  defp partial_match([%{partial?: true, matched_terms: matched, term_count: total} | _])
+       when is_integer(matched) and is_integer(total) do
+    %{matched: matched, total: total}
+  end
+
+  defp partial_match(_matches), do: nil
 
   defp encode_offset(offset), do: Base.url_encode64(Integer.to_string(offset), padding: false)
 

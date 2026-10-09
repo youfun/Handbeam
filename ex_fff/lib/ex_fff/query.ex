@@ -18,7 +18,12 @@ defmodule ExFff.Query do
             globs: [],
             limit: 20
 
-  @type glob :: %{regex: Regex.t(), basename?: boolean()}
+  @type glob :: %{
+          required(:regex) => Regex.t(),
+          required(:basename?) => boolean(),
+          optional(:pattern) => String.t(),
+          optional(:path_fallback?) => boolean()
+        }
 
   @type t :: %__MODULE__{
           terms: [String.t()],
@@ -97,7 +102,12 @@ defmodule ExFff.Query do
 
   defp compile_glob(token) do
     source = "^" <> glob_source(token) <> "$"
-    %{regex: Regex.compile!(source, [:caseless]), basename?: not String.contains?(token, "/")}
+
+    %{
+      pattern: token,
+      regex: Regex.compile!(source, [:caseless]),
+      basename?: not String.contains?(token, "/")
+    }
   end
 
   defp glob_source(pattern) do

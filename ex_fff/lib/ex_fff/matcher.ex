@@ -15,6 +15,8 @@ defmodule ExFff.Matcher do
   @git_boost 0.05
   @similarity_floor 0.5
   @tier_gap 10.0
+  # Larger than any within-tier score, so more matched terms always outrank fewer.
+  @partial_gap 100.0
   # Reference used only to compress pre-decay persisted scores into the cap.
   @legacy_frecency_span 1000.0
 
@@ -94,8 +96,11 @@ defmodule ExFff.Matcher do
   @doc """
   Match query against the index tables and return scored results.
 
-  Returns a list of `%{path: String.t(), score: float()}` sorted by
-  descending score.
+  Returns a list of maps sorted by descending score. Each map has `path`,
+  `score`, and usually `tier` (`:exact`, `:filename`, `:path`, or `:fuzzy`).
+  A basename glob that matches nothing is retried against the full relative
+  path, with `*` allowed to cross `/`. When two or more terms have an empty
+  AND, results are the OR ranked by how many terms matched.
 
   Arguments:
   - `query` — `%ExFff.Query{}`
@@ -103,9 +108,7 @@ defmodule ExFff.Matcher do
   - `trigram_tab` — ETS table id for Trigrams
   - `frecency_tab` — ETS table id for Frecency
   """
-  @spec match(ExFff.Query.t(), :ets.tid(), :ets.tid(), :ets.tid()) :: [
-          %{path: String.t(), score: float()}
-        ]
+  @spec match(ExFff.Query.t(), :ets.tid(), :ets.tid(), :ets.tid()) :: [map()]
   def match(query, files_tab, trigram_tab, frecency_tab) do
     do_match(query, files_tab, trigram_tab, frecency_tab, nil)
   end
@@ -118,26 +121,57 @@ defmodule ExFff.Matcher do
 
   defp do_match(query, files_tab, trigram_tab, frecency_tab, git_tab) do
     now = System.system_time(:second)
+    and_hits = rank(query, files_tab, trigram_tab, frecency_tab, git_tab, now, :and)
 
+    {query, and_hits} =
+      if and_hits == [] and basename_globs?(query) do
+        widened = widen_basename_globs(query)
+        {widened, rank(widened, files_tab, trigram_tab, frecency_tab, git_tab, now, :and)}
+      else
+        {query, and_hits}
+      end
+
+    cond do
+      and_hits != [] ->
+        and_hits
+
+      length(query.terms) >= 2 ->
+        rank(query, files_tab, trigram_tab, frecency_tab, git_tab, now, :or)
+
+      true ->
+        []
+    end
+  end
+
+  defp rank(query, files_tab, trigram_tab, frecency_tab, git_tab, now, mode) do
     prepared =
       query
-      |> find_candidates(files_tab, trigram_tab)
+      |> find_candidates(files_tab, trigram_tab, mode)
       |> Enum.map(&%{path: &1})
       |> apply_filters(query)
-      |> Enum.map(&prepare_candidate(&1, query, frecency_tab, git_tab, now))
-      |> Enum.reject(&below_similarity_floor?(&1, query))
+      |> Enum.map(&prepare_candidate(&1, query, frecency_tab, git_tab, now, mode))
+      |> Enum.reject(&reject_candidate?(&1, query, mode))
 
     max_freq = prepared |> Enum.map(& &1.freq) |> Enum.max(fn -> 0.0 end)
 
     prepared
-    |> Enum.map(&finalize_score(&1, max_freq))
-    |> Enum.sort_by(& &1.score, :desc)
+    |> Enum.map(&finalize_score(&1, max_freq, mode))
+    |> sort_results(mode)
     |> Enum.take(query.limit)
   end
 
+  defp sort_results(results, :or), do: Enum.sort_by(results, &{&1.matched_terms, &1.score}, :desc)
+  defp sort_results(results, :and), do: Enum.sort_by(results, & &1.score, :desc)
+
   # ── Candidate Discovery ──
 
-  defp find_candidates(%ExFff.Query{terms: [], globs: globs}, files_tab, trigram_tab)
+  defp find_candidates(%ExFff.Query{terms: terms}, _files_tab, trigram_tab, :or) do
+    terms
+    |> Enum.map(&term_path_set(&1, trigram_tab))
+    |> Enum.reduce(MapSet.new(), &MapSet.union/2)
+  end
+
+  defp find_candidates(%ExFff.Query{terms: [], globs: globs}, files_tab, trigram_tab, :and)
        when globs != [] do
     case all_indexed_paths(files_tab) do
       [] -> all_trigram_paths(trigram_tab)
@@ -145,20 +179,22 @@ defmodule ExFff.Matcher do
     end
   end
 
-  defp find_candidates(%ExFff.Query{terms: []}, _files_tab, trigram_tab) do
+  defp find_candidates(%ExFff.Query{terms: []}, _files_tab, trigram_tab, :and) do
     # No search terms — extension filters still scan the trigram inventory.
     all_trigram_paths(trigram_tab)
   end
 
-  defp find_candidates(%ExFff.Query{terms: terms}, _files_tab, trigram_tab) do
+  defp find_candidates(%ExFff.Query{terms: terms}, _files_tab, trigram_tab, :and) do
     terms
-    |> Enum.map(fn term ->
-      set = path_set_for_term(term, trigram_tab)
-      # Also add direct substring match candidates
-      direct = direct_substring_matches(term, trigram_tab)
-      MapSet.union(set, direct)
-    end)
+    |> Enum.map(&term_path_set(&1, trigram_tab))
     |> reduce_intersection()
+  end
+
+  defp term_path_set(term, trigram_tab) do
+    MapSet.union(
+      path_set_for_term(term, trigram_tab),
+      direct_substring_matches(term, trigram_tab)
+    )
   end
 
   defp path_set_for_term(term, trigram_tab) do
@@ -226,37 +262,123 @@ defmodule ExFff.Matcher do
   #     within = sim * (1 + 0.2 * norm_frec) + git_boost
   #     norm_frec = log(1 + freq) / log(1 + max_freq)
 
-  defp prepare_candidate(%{path: path}, query, frecency_tab, git_tab, now) do
-    {tier, sim} = classify_match(path, query.terms)
+  defp prepare_candidate(%{path: path}, query, frecency_tab, git_tab, now, mode) do
+    hits = Enum.map(query.terms, &term_hit(path, &1))
+    counted = if mode == :or, do: Enum.filter(hits, & &1.matched?), else: hits
+    {tier, sim} = classify_hits(counted, query, mode)
 
     %{
       path: path,
       tier: tier,
       sim: sim,
       freq: effective_frecency(path, frecency_tab, now),
-      git_status: fetch_git_status(path, git_tab)
+      git_status: fetch_git_status(path, git_tab),
+      matched_terms: length(counted),
+      term_count: length(query.terms)
     }
   end
 
-  defp below_similarity_floor?(_candidate, %{terms: []}), do: false
-
-  defp below_similarity_floor?(%{sim: sim}, _query), do: sim < @similarity_floor
-
-  defp finalize_score(candidate, max_freq) do
-    norm = if max_freq > 0, do: :math.log(1 + candidate.freq) / :math.log(1 + max_freq), else: 0.0
-    within = candidate.sim * (1 + @frecency_weight * norm) + git_boost(candidate.git_status)
-    score = tier_rank(candidate.tier) * @tier_gap + within
-    %{path: candidate.path, score: score, git_status: candidate.git_status}
+  defp term_hit(path, term) do
+    {tier, sim} = term_match(path, term)
+    # A keyword counts only when the path actually contains it. Jaro can clear
+    # the similarity floor without sharing the term, which would hide the
+    # partial-match header behind a fake 3/3.
+    %{tier: tier, sim: sim, matched?: tier in [:exact, :filename, :path]}
   end
 
-  defp classify_match(_path, []), do: {:fuzzy, 1.0}
+  defp classify_hits([], query, _mode), do: empty_term_class(query)
 
-  defp classify_match(path, terms) do
-    matches = Enum.map(terms, &term_match(path, &1))
-    tier = matches |> Enum.map(&elem(&1, 0)) |> Enum.min_by(&tier_rank/1)
-    sim = matches |> Enum.map(&elem(&1, 1)) |> average()
+  # AND keeps the worst term, so one fuzzy token cannot borrow an exact hit.
+  defp classify_hits(hits, _query, :and) do
+    tier = hits |> Enum.map(& &1.tier) |> Enum.min_by(&tier_rank/1)
+    sim = hits |> Enum.map(& &1.sim) |> average()
     {tier, sim}
   end
+
+  # OR ranks and labels by the best matched term.
+  defp classify_hits(hits, _query, :or) do
+    tier = hits |> Enum.map(& &1.tier) |> Enum.max_by(&tier_rank/1)
+    sim = hits |> Enum.map(& &1.sim) |> average()
+    {tier, sim}
+  end
+
+  defp empty_term_class(%{globs: []}), do: {nil, 1.0}
+
+  defp empty_term_class(%{globs: globs}) do
+    path? =
+      Enum.any?(globs, fn glob ->
+        Map.get(glob, :path_fallback?) == true or Map.get(glob, :basename?) == false
+      end)
+
+    if path?, do: {:path, 1.0}, else: {:filename, 1.0}
+  end
+
+  defp reject_candidate?(_candidate, %{terms: []}, _mode), do: false
+  defp reject_candidate?(%{matched_terms: 0}, _query, :or), do: true
+  defp reject_candidate?(%{sim: sim}, _query, _mode), do: sim < @similarity_floor
+
+  defp finalize_score(candidate, max_freq, mode) do
+    norm = if max_freq > 0, do: :math.log(1 + candidate.freq) / :math.log(1 + max_freq), else: 0.0
+    within = candidate.sim * (1 + @frecency_weight * norm) + git_boost(candidate.git_status)
+    partial = if mode == :or, do: candidate.matched_terms * @partial_gap, else: 0.0
+    score = partial + tier_rank(candidate.tier) * @tier_gap + within
+
+    result = %{
+      path: candidate.path,
+      score: score,
+      match_score: within,
+      git_status: candidate.git_status
+    }
+
+    result = if candidate.tier, do: Map.put(result, :tier, candidate.tier), else: result
+
+    if mode == :or do
+      Map.merge(result, %{
+        matched_terms: candidate.matched_terms,
+        term_count: candidate.term_count,
+        partial?: true
+      })
+    else
+      result
+    end
+  end
+
+  defp basename_globs?(%{globs: globs}) do
+    Enum.any?(globs, fn glob ->
+      Map.get(glob, :basename?) == true and is_binary(Map.get(glob, :pattern))
+    end)
+  end
+
+  defp widen_basename_globs(%{globs: globs} = query) do
+    %{query | globs: Enum.map(globs, &widen_glob/1)}
+  end
+
+  defp widen_glob(%{basename?: true, pattern: pattern} = glob) when is_binary(pattern) do
+    source = "^" <> cross_slash_source(pattern) <> "$"
+
+    Map.merge(glob, %{
+      regex: Regex.compile!(source, [:caseless]),
+      basename?: false,
+      path_fallback?: true
+    })
+  end
+
+  defp widen_glob(glob), do: glob
+
+  defp cross_slash_source(pattern) do
+    pattern
+    |> String.graphemes()
+    |> cross_slash_source([])
+    |> IO.iodata_to_binary()
+  end
+
+  defp cross_slash_source([], acc), do: Enum.reverse(acc)
+  defp cross_slash_source(["*", "*" | rest], acc), do: cross_slash_source(rest, [".*" | acc])
+  defp cross_slash_source(["*" | rest], acc), do: cross_slash_source(rest, [".*" | acc])
+  defp cross_slash_source(["?" | rest], acc), do: cross_slash_source(rest, ["[^/]" | acc])
+
+  defp cross_slash_source([char | rest], acc),
+    do: cross_slash_source(rest, [Regex.escape(char) | acc])
 
   defp term_match(path, term) do
     needle = safe_downcase(term)
@@ -284,6 +406,7 @@ defmodule ExFff.Matcher do
   defp tier_rank(:filename), do: 2
   defp tier_rank(:path), do: 1
   defp tier_rank(:fuzzy), do: 0
+  defp tier_rank(nil), do: 0
 
   defp average([]), do: 0.0
   defp average(scores), do: Enum.sum(scores) / length(scores)

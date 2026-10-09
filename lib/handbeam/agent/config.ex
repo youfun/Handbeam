@@ -485,9 +485,10 @@ defmodule Handbeam.Agent.Config do
        and unique; merge nearby changes into one entry.
     5. **Execution**: Follow the host execution environment below and the tools
        exposed in this request; never assume a command or backend is available.
-    6. **Search**: Use `file_search` to find files by name or path. Use `grep` only to
-       search file contents; every `grep` call requires a `pattern`, and its `glob`
-       argument only filters files.
+    6. **Search**: Use `file_search` to find files by name or path. Pass 1–2 filename
+       fragments, not a sentence; a `*` without `/` matches the file name only.
+       Use `grep` only to search file contents; every `grep` call requires a `pattern`,
+       and its `glob` argument only filters files.
     7. **Edit Failures**: If an `edit` fails because old_string does not match, re-read
        the file to get the current exact text, then retry with the correct old_string.
        Do not abandon the task — adjust and try again.

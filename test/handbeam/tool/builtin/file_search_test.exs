@@ -44,8 +44,12 @@ defmodule Handbeam.Tool.Builtin.FileSearchTest do
       assert FileSearch.name() == "file_search"
     end
 
-    test "description names fuzzy search" do
-      assert FileSearch.description() =~ "fuzzy file search"
+    test "description tells the model how to query" do
+      description = FileSearch.description()
+      assert description =~ "1–2 filename fragments"
+      assert description =~ "file name only"
+      assert description =~ "grep"
+      refute description =~ "typo-tolerant"
     end
 
     test "input_schema requires query" do
@@ -78,6 +82,7 @@ defmodule Handbeam.Tool.Builtin.FileSearchTest do
 
       assert output =~ "Found"
       assert output =~ "user"
+      assert output =~ "[filename]"
       assert output =~ "ms"
     end
 
@@ -160,6 +165,26 @@ defmodule Handbeam.Tool.Builtin.FileSearchTest do
         FileSearch.execute(%{"query" => "zzz_nonexistent_xyz"}, %{working_directory: tmp_dir})
 
       assert output =~ "No files found"
+      assert output =~ "Indexed"
+      assert output =~ "use grep"
+    end
+
+    test "says a zero-hit star query was a filename glob", %{tmp_dir: tmp_dir} do
+      {:ok, output} =
+        FileSearch.execute(%{"query" => "sidebar*.heex"}, %{working_directory: tmp_dir})
+
+      assert output =~ "No files found"
+      assert output =~ "这是文件名 glob，不是路径 glob"
+      assert output =~ "Indexed"
+    end
+
+    test "labels a partial multi-term match", %{tmp_dir: tmp_dir} do
+      {:ok, output} =
+        FileSearch.execute(%{"query" => "user missingterm"}, %{working_directory: tmp_dir})
+
+      assert output =~ "partial match: 1/2 terms"
+      assert output =~ "lib/user.ex"
+      refute output =~ "partial match: 2/2"
     end
 
     test "marks partial results while the background index is still building", %{tmp_dir: tmp_dir} do

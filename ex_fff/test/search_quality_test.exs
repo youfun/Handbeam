@@ -23,6 +23,9 @@ defmodule ExFff.SearchQualityTest do
       "desktop/macos/ui/ConversationPanel.swift",
       "desktop/macos/Other.swift",
       "desktop/linux/ConversationPanel.swift",
+      "desktop/macos/Sources/WebView.swift",
+      "desktop/macos/Sources/ConversationWebView.swift",
+      "lib/handbeam_web/components/sidebar_components.ex",
       "assets/images/icon_20.png"
     ]
 
@@ -117,6 +120,41 @@ defmodule ExFff.SearchQualityTest do
     assert "lib/conversation_store.ex" in paths
     refute Enum.any?(paths, &(not String.ends_with?(&1, ".ex")))
     refute "priv/repo/migrations/20260718000000_create_schedules.exs" in paths
+  end
+
+  test "a basename glob retries the full path, but a wrong extension stays empty", %{name: name} do
+    assert {:ok, hit} = Index.search(name, "desktop*webview*", limit: 20)
+    paths = Enum.map(hit.paths, & &1.path)
+
+    assert "desktop/macos/Sources/WebView.swift" in paths
+    assert Enum.all?(hit.paths, &(&1.tier == :path))
+    assert hit.partial_match == nil
+
+    assert {:ok, missed} = Index.search(name, "sidebar*.heex", limit: 20)
+    assert missed.paths == []
+  end
+
+  test "an empty multi-term AND falls back to OR coverage", %{name: name} do
+    assert {:ok, result} = Index.search(name, "conversation webview schedules", limit: 20)
+
+    assert result.partial_match == %{matched: 2, total: 3}
+    assert hd(result.paths).path == "desktop/macos/Sources/ConversationWebView.swift"
+    assert hd(result.paths).matched_terms == 2
+
+    paths = Enum.map(result.paths, & &1.path)
+    assert "priv/repo/migrations/20260718000000_create_schedules.exs" in paths
+
+    assert Enum.find_index(
+             paths,
+             &(&1 == "priv/repo/migrations/20260718000000_create_schedules.exs")
+           ) >
+             0
+  end
+
+  test "a successful AND does not report a partial match", %{name: name} do
+    assert {:ok, result} = Index.search(name, "conversation store", limit: 20)
+    assert result.partial_match == nil
+    assert hd(result.paths).tier == :filename
   end
 
   defp search_paths(name, query) do
