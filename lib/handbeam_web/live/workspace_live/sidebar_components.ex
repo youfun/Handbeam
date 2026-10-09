@@ -853,6 +853,23 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
       }
     >
       <svg
+        class="conversation-idle-stem"
+        viewBox="0 0 24 26"
+        width="20"
+        height="22"
+        shape-rendering="crispEdges"
+        aria-hidden="true"
+      >
+        <g transform="translate(0 7)">
+          <path
+            class="idle-stem-outline"
+            d="M11 5h1v3h-1zM11 3h1v3h-1zM12 2h4v1h1v1h-1v1h-4V4h-1V3h1z"
+          />
+          <path class="idle-stem-fill" d="M12 3h4v1h-4z" />
+          <path class="idle-stem-highlight" d="M13 2h2v1h-2z" />
+        </g>
+      </svg>
+      <svg
         class="conversation-run-sprite"
         viewBox="0 0 24 26"
         width="20"

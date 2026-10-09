@@ -2347,6 +2347,21 @@ button.workspace-file-row:hover,
   color: var(--color-text-secondary);
 }
 
+/* The idle stem is independent of the running sprite and never animates. */
+.conversation-idle-stem {
+  display: none;
+  width: 20px;
+  height: 22px;
+}
+[data-run-state="idle"] .conversation-idle-stem { display: block; }
+.conversation-idle-stem .idle-stem-fill { fill: var(--run-color, #7eb8c9); }
+.conversation-idle-stem .idle-stem-outline {
+  fill: color-mix(in srgb, var(--run-color, #7eb8c9) 45%, #263b25);
+}
+.conversation-idle-stem .idle-stem-highlight {
+  fill: color-mix(in srgb, var(--run-color, #7eb8c9) 65%, #f1efb5);
+}
+
 .conversation-run-sprite {
   display: none;
   width: 20px;

@@ -94,6 +94,18 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSidebarOrderTest do
       assert Floki.find(nodes, ".run-tap-hand") == []
       assert length(Floki.find(nodes, ".run-arm-left")) == 2
       assert length(Floki.find(nodes, ".run-arm-right")) == 2
+
+      stems = Floki.find(nodes, ".conversation-idle-stem")
+      assert length(stems) == 2
+      assert Floki.attribute(stems, "viewbox") == ["0 0 24 26", "0 0 24 26"]
+      assert length(Floki.find(stems, ".idle-stem-fill")) == 2
+      assert Floki.find(stems, ".run-leaf, .run-character, .run-leg-left, .run-leg-right") == []
+
+      for node <- nodes do
+        stem_paths = Floki.find([node], ".conversation-idle-stem path")
+        leaf_paths = Floki.find([node], ".conversation-run-sprite .run-leaf path")
+        assert Floki.attribute(stem_paths, "d") == Floki.attribute(leaf_paths, "d")
+      end
     end
   end
 

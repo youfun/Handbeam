@@ -103,12 +103,18 @@ hook.onVisibility();
 assert.equal(body.elapsed, 3.2, "background time does not advance the animation");
 assert.equal(callbacks.size, 1);
 
+const conversationColor = pinned.style.getPropertyValue("--run-color");
 for (const el of [pinned, regular]) el.dataset.runState = "idle";
 hook.updated();
-assert.equal(callbacks.size, 0);
+assert.equal(callbacks.size, 0, "idle stems do not keep an animation clock running");
+assert.equal(pinned.style.getPropertyValue("--run-color"), conversationColor,
+  "the idle stem inherits the same conversation color as the running bean");
+assert.equal(regular.style.getPropertyValue("--run-color"), conversationColor);
 for (const el of [pinned, regular]) el.dataset.runState = "running";
 hook.updated();
 assert.equal(body.elapsed, 0, "a new run starts with walking");
+assert.equal(pinned.style.getPropertyValue("--run-color"), conversationColor,
+  "starting again preserves the idle stem's color");
 hook.destroyed();
 assert.equal(callbacks.size, 0);
 assert.equal(listeners.size, 0);
