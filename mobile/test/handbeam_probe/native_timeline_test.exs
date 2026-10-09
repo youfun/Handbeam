@@ -134,6 +134,12 @@ defmodule HandbeamProbe.NativeTimelineTest do
           "input" => %{"file_path" => "lib/a.ex"}
         },
         %{
+          "id" => "gap",
+          "role" => "assistant",
+          "content" => "next",
+          "content_type" => "assistant_msg"
+        },
+        %{
           "id" => "b",
           "content_type" => "tool",
           "tool_name" => "bash",
@@ -155,6 +161,7 @@ defmodule HandbeamProbe.NativeTimelineTest do
 
     tree = render(chat, MapSet.new(["r", "b", "e"]))
     lines = line_columns(tree)
+    encoded = inspect(tree, limit: :infinity)
 
     assert Enum.any?(lines, fn column ->
              column.props.padding_left == 12 and line_text(column) =~ "Read lib/a.ex"
@@ -165,7 +172,133 @@ defmodule HandbeamProbe.NativeTimelineTest do
            end)
 
     refute Enum.any?(lines, &(line_text(&1) =~ " · done"))
-    assert inspect(tree) =~ "+1"
+    assert encoded =~ "+1"
+    assert encoded =~ "toggle_file_diff"
+    refute encoded =~ gettext("Show Work")
+    refute encoded =~ gettext("Hide Work")
+  end
+
+  test "a mixed group indents reads and keeps edits on a diff line" do
+    chat = %{
+      entries: [
+        %{
+          "id" => "r",
+          "content_type" => "tool",
+          "tool_name" => "read",
+          "tool_status" => "done",
+          "input" => %{"file_path" => "lib/a.ex"}
+        },
+        %{
+          "id" => "e",
+          "content_type" => "tool",
+          "tool_name" => "edit",
+          "tool_status" => "done",
+          "input" => %{"file_path" => "lib/a.ex"},
+          "diff_lines" => [%{"type" => "add"}, %{"type" => "del"}]
+        },
+        %{
+          "id" => "b",
+          "content_type" => "tool",
+          "tool_name" => "bash",
+          "tool_status" => "done",
+          "input" => %{"command" => "mix test"}
+        }
+      ],
+      stream: "",
+      running: false
+    }
+
+    tree = render(chat, MapSet.new(["r"]))
+    lines = line_columns(tree)
+
+    assert Enum.any?(lines, fn column ->
+             column.props.padding_left == 28 and line_text(column) =~ "Read lib/a.ex"
+           end)
+
+    assert Enum.any?(lines, fn column ->
+             column.props.padding_left == 12 and line_text(column) =~ "$ mix test"
+           end)
+
+    encoded = inspect(tree, limit: :infinity)
+    assert encoded =~ "+1"
+    assert encoded =~ "−1"
+    assert encoded =~ "toggle_file_diff"
+    assert encoded =~ gettext("Copy relative path")
+  end
+
+  test "an open edit diff shows prefixed lines, a copy path button, and truncation" do
+    lines =
+      for i <- 1..81 do
+        %{"type" => if(rem(i, 2) == 0, do: "del", else: "ins"), "text" => "L#{i}"}
+      end
+
+    chat = %{
+      workspace_path: "/tmp/ws",
+      entries: [
+        %{
+          "id" => "e",
+          "content_type" => "tool",
+          "tool_name" => "edit",
+          "tool_status" => "done",
+          "file_path" => "/tmp/ws/lib/a.ex",
+          "input" => %{"file_path" => "/tmp/ws/lib/a.ex"},
+          "diff_lines" => lines,
+          "file_diff_open" => true
+        }
+      ],
+      stream: "",
+      running: false
+    }
+
+    tree = render(chat, MapSet.new(["e"]))
+    encoded = inspect(tree, limit: :infinity)
+    diff_texts = text_nodes(tree) |> Enum.filter(&(&1.props.text_size == 12))
+
+    assert encoded =~ "Edited /tmp/ws/lib/a.ex"
+    assert encoded =~ "+41"
+    assert encoded =~ "−40"
+    assert encoded =~ "toggle_file_diff"
+    assert encoded =~ "copy_relative_path"
+    assert encoded =~ "lib/a.ex"
+    assert encoded =~ gettext("Copy relative path")
+    refute encoded =~ "tool-output-e"
+    assert length(diff_texts) == 81
+    assert hd(diff_texts).props.text == "+L1"
+    assert hd(diff_texts).props.text_color == argb(HandbeamProbe.NativeUI.color(:added))
+    assert Enum.at(diff_texts, 1).props.text == "−L2"
+    assert Enum.at(diff_texts, 1).props.text_color == argb(HandbeamProbe.NativeUI.color(:danger))
+
+    assert List.last(diff_texts).props.text ==
+             ngettext("1 line not shown", "%{count} lines not shown", 1)
+
+    refute encoded =~ "L81"
+  end
+
+  test "assistant text renders without a show work boundary" do
+    chat = %{
+      entries: [
+        %{
+          "id" => "plan",
+          "role" => "assistant",
+          "content" => "I will read the file",
+          "phase" => "commentary",
+          "work_hidden" => true
+        },
+        %{
+          "id" => "answer",
+          "role" => "user",
+          "content" => "continue"
+        }
+      ],
+      stream: "",
+      running: false
+    }
+
+    encoded = inspect(render(chat, MapSet.new()), limit: :infinity)
+    assert encoded =~ "I will read the file"
+    assert encoded =~ "continue"
+    refute encoded =~ gettext("Show Work")
+    refute encoded =~ gettext("Hide Work")
   end
 
   test "multiple sent images stay adjacent and cap at four" do
@@ -348,7 +481,9 @@ defmodule HandbeamProbe.NativeTimelineTest do
   end
 
   defp place_png(workspace, conv_id, att_id) do
-    dest = Path.join(Handbeam.Uploads.ensure_conversation_dir!(workspace, conv_id), "#{att_id}.png")
+    dest =
+      Path.join(Handbeam.Uploads.ensure_conversation_dir!(workspace, conv_id), "#{att_id}.png")
+
     File.write!(dest, @tiny_png)
     {dest, Path.join([".handbeam", "uploads", conv_id, "#{att_id}.png"])}
   end
@@ -361,12 +496,20 @@ defmodule HandbeamProbe.NativeTimelineTest do
 
   defp line_columns(nodes) when is_list(nodes), do: Enum.flat_map(nodes, &line_columns/1)
 
-  defp line_columns(%{type: :column, props: %{padding_left: left}} = node) when is_integer(left) do
+  defp line_columns(%{type: :column, props: %{padding_left: left}} = node)
+       when is_integer(left) do
     [node | line_columns(node.children)]
   end
 
   defp line_columns(%{children: children}) when is_list(children), do: line_columns(children)
   defp line_columns(_), do: []
+
+  defp argb("#" <> hex), do: String.to_integer("FF" <> hex, 16)
+
+  defp text_nodes(nodes) when is_list(nodes), do: Enum.flat_map(nodes, &text_nodes/1)
+  defp text_nodes(%{type: :text} = node), do: [node | text_nodes(node.children)]
+  defp text_nodes(%{children: children}) when is_list(children), do: text_nodes(children)
+  defp text_nodes(_), do: []
 
   defp line_text(%{children: children}) do
     Enum.map_join(children, " ", fn

@@ -121,7 +121,14 @@ defmodule HandbeamProbe.HomeScreen.Render do
               if(Map.get(a.chat, :history_has_more?, false),
                 do: button(gettext("Load older messages"), :load_older_history, fill_width: true)
               )
-            ] ++ NativeTimeline.render(a.chat, a.work_groups, a.work_segments, a.tool_outputs),
+            ] ++
+              NativeTimeline.render(
+                a.chat,
+                a.work_groups,
+                a.work_segments,
+                a.tool_outputs,
+                Map.get(a, :file_diffs, %{})
+              ),
             id: "chat-timeline-#{a.chat.conversation["id"]}",
             chat_navigation: true,
             stick_to_bottom: true
@@ -139,13 +146,20 @@ defmodule HandbeamProbe.HomeScreen.Render do
       )
 
   defp content(%{page: :history} = a) do
+    selected_id =
+      case a.chat do
+        %{conversation: %{"id" => id}} -> id
+        _ -> nil
+      end
+
     scroll(
-      [row([text(gettext("Conversations"), weight: 1), icon("add", :new_chat)])] ++
-        HandbeamProbe.NativeHistory.render(
-          a.history,
-          a.inactive_history_open,
-          a.chat && a.chat.conversation["id"]
-        )
+      HandbeamProbe.NativeHistory.render(a.history, %{
+        selected_id: selected_id,
+        collapsed: Map.get(a, :collapsed_history_groups, MapSet.new()),
+        running_ids: Map.get(a, :running_conversation_ids, MapSet.new()),
+        menu_id: Map.get(a, :conversation_menu_id),
+        rename: Map.get(a, :rename_conversation)
+      })
     )
   end
 

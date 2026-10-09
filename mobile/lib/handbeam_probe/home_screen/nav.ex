@@ -64,7 +64,7 @@ defmodule HandbeamProbe.HomeScreen.Nav do
         socket
 
       page == :history ->
-        assign(socket, :history, HandbeamProbe.NativeHistory.load())
+        reload_history(socket)
 
       page == :mcp ->
         MCPSettings.load(socket)
@@ -92,6 +92,112 @@ defmodule HandbeamProbe.HomeScreen.Nav do
     end
   end
 
+  def handle({:tap, {:toggle_conversation_menu, id}}, socket) do
+    menu_id = if socket.assigns.conversation_menu_id == id, do: nil, else: id
+    assign(socket, :conversation_menu_id, menu_id)
+  end
+
+  def handle({:tap, {:toggle_pin_conversation, id}}, socket) when is_binary(id) do
+    socket = assign(socket, :conversation_menu_id, nil)
+
+    case ConversationStore.get(id) do
+      {:ok, conversation} ->
+        result =
+          if ConversationStore.pinned_conversation?(conversation),
+            do: ConversationStore.unpin(id),
+            else: ConversationStore.pin(id)
+
+        case result do
+          {:ok, _} -> reload_history(socket)
+          _ -> Notice.put_error(socket, gettext("Conversation not found"))
+        end
+
+      _ ->
+        Notice.put_error(socket, gettext("Conversation not found"))
+    end
+  end
+
+  def handle({:tap, {:rename_conversation, id}}, socket) when is_binary(id) do
+    case ConversationStore.get(id) do
+      {:ok, conversation} ->
+        socket
+        |> assign(:conversation_menu_id, nil)
+        |> assign(:rename_conversation, %{
+          id: id,
+          title: conversation["title"] || "",
+          error: nil
+        })
+
+      _ ->
+        assign(socket, :conversation_menu_id, nil)
+    end
+  end
+
+  def handle({:tap, {:archive_conversation, id}}, socket) when is_binary(id) do
+    socket = assign(socket, conversation_menu_id: nil, rename_conversation: nil)
+
+    case ConversationStore.archive(id) do
+      {:ok, _} -> reload_history(socket)
+      _ -> Notice.put_error(socket, gettext("Conversation not found"))
+    end
+  end
+
+  def handle({:tap, {:confirm_rename_conversation, title}}, socket) when is_binary(title) do
+    confirm_rename(socket, title)
+  end
+
+  def handle({:tap, {:submit_rename, id, title}}, socket)
+      when is_binary(id) and is_binary(title) do
+    socket =
+      case socket.assigns.rename_conversation do
+        %{id: ^id} -> socket
+        _ -> assign(socket, :rename_conversation, %{id: id, title: title, error: nil})
+      end
+
+    confirm_rename(socket, title)
+  end
+
+  def handle({:tap, :cancel_rename_conversation}, socket) do
+    assign(socket, :rename_conversation, nil)
+  end
+
+  def handle({:change, {:rename_conversation_title, id}, title}, socket) when is_binary(id) do
+    title = if is_binary(title), do: title, else: ""
+
+    rename =
+      case socket.assigns.rename_conversation do
+        %{id: ^id} = pending -> %{pending | title: title, error: nil}
+        _ -> %{id: id, title: title, error: nil}
+      end
+
+    assign(socket, :rename_conversation, rename)
+  end
+
+  def handle({:tap, {:toggle_history_group, id}}, socket) do
+    groups = socket.assigns.collapsed_history_groups
+
+    groups =
+      if MapSet.member?(groups, id), do: MapSet.delete(groups, id), else: MapSet.put(groups, id)
+
+    assign(socket, :collapsed_history_groups, groups)
+  end
+
+  def handle({:tap, {:new_workspace_conversation, workspace_id}}, socket)
+      when is_binary(workspace_id) do
+    case ConversationStore.create(workspace_id, title: gettext("New conversation")) do
+      {:ok, conversation} ->
+        socket
+        |> reload_history()
+        |> open_workspace_conversation(conversation)
+
+      _ ->
+        Notice.put_error(
+          socket,
+          gettext("Could not create the conversation. Check available storage.")
+        )
+    end
+  end
+
   def handle({:tap, {:workspace, id}}, socket) do
     case WorkspaceStore.get(id) do
       {:ok, workspace} ->
@@ -115,6 +221,84 @@ defmodule HandbeamProbe.HomeScreen.Nav do
   end
 
   # ── transitions ──
+
+  defp confirm_rename(socket, title) do
+    case socket.assigns.rename_conversation do
+      %{id: id} = rename when is_binary(id) ->
+        case ConversationStore.rename(id, title) do
+          {:ok, meta} ->
+            socket
+            |> assign(:rename_conversation, nil)
+            |> assign(:conversation_menu_id, nil)
+            |> patch_open_title(id, meta["title"])
+            |> reload_history()
+
+          {:error, :empty} ->
+            assign(socket, :rename_conversation, %{
+              rename
+              | title: title,
+                error: gettext("Name cannot be empty")
+            })
+
+          {:error, :too_long} ->
+            assign(socket, :rename_conversation, %{
+              rename
+              | title: title,
+                error: gettext("Name cannot exceed 80 characters")
+            })
+
+          {:error, _} ->
+            assign(socket, :rename_conversation, %{
+              rename
+              | title: title,
+                error: gettext("Could not rename the conversation")
+            })
+        end
+
+      _ ->
+        socket
+    end
+  end
+
+  defp patch_open_title(socket, id, title) when is_binary(title) do
+    case socket.assigns.chat do
+      %{conversation: %{"id" => ^id} = conversation} = chat ->
+        assign(socket, :chat, %{chat | conversation: %{conversation | "title" => title}})
+
+      _ ->
+        socket
+    end
+  end
+
+  defp patch_open_title(socket, _id, _title), do: socket
+
+  defp reload_history(socket) do
+    assign(socket,
+      history: HandbeamProbe.NativeHistory.load(),
+      running_conversation_ids: running_conversation_ids()
+    )
+  end
+
+  defp running_conversation_ids do
+    Handbeam.Runtime.TaskTracker.snapshot().tasks
+    |> Enum.flat_map(fn
+      %{status: status, conversation_id: id} when is_binary(id) ->
+        if running_or_waiting?(status), do: [id], else: []
+
+      _ ->
+        []
+    end)
+    |> MapSet.new()
+  end
+
+  defp running_or_waiting?(status) when status in [:running, :waiting, :waiting_confirmation],
+    do: true
+
+  defp running_or_waiting?(status) when is_binary(status) do
+    status in ["running", "waiting", "waiting_confirmation"]
+  end
+
+  defp running_or_waiting?(_status), do: false
 
   defp open_workspace_conversation(socket, conversation) do
     case WorkspaceStore.get(conversation["workspace_id"]) do

@@ -22,7 +22,7 @@ defmodule HandbeamProbe.HomeScreen.Chat do
     NativeWorkspaces
   }
 
-  @toggles [:toggle_tool_work, :toggle_work_segment, :toggle_tool_output]
+  @toggles [:toggle_tool_work, :toggle_work_segment, :toggle_tool_output, :toggle_file_diff]
 
   # ── dispatch ──
 
@@ -89,6 +89,10 @@ defmodule HandbeamProbe.HomeScreen.Chat do
     )
   end
 
+  def handle({:tap, {:copy_relative_path, path}}, socket) when is_binary(path) do
+    HandbeamProbe.ModelSettings.Subscriptions.copy(socket, path)
+  end
+
   def handle({:tap, {action, id}}, socket) when action in @toggles do
     a = socket.assigns
     entries = NativeTimeline.project(a.chat, a.work_groups, a.work_segments, a.tool_outputs)
@@ -105,6 +109,9 @@ defmodule HandbeamProbe.HomeScreen.Chat do
 
         :toggle_tool_output ->
           {:tool_outputs, not Map.get(a.tool_outputs, id, false)}
+
+        :toggle_file_diff ->
+          {:file_diffs, not Map.get(a.file_diffs, id, false)}
       end
 
     assign(socket, key, Map.put(Map.fetch!(a, key), id, value))

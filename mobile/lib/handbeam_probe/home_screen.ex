@@ -49,7 +49,12 @@ defmodule HandbeamProbe.HomeScreen do
 
   alias Handbeam.WorkspaceStore
 
-  @toggles [:toggle_tool_work, :toggle_work_segment, :toggle_tool_output]
+  @toggles [
+    :toggle_tool_work,
+    :toggle_work_segment,
+    :toggle_tool_output,
+    :toggle_file_diff
+  ]
   @chat_taps [
     :send,
     :stop,
@@ -168,6 +173,8 @@ defmodule HandbeamProbe.HomeScreen do
   defp dispatch({:tap, {toggle, _}} = msg, socket) when toggle in @toggles,
     do: Chat.handle(msg, socket)
 
+  defp dispatch({:tap, {:copy_relative_path, _}} = msg, socket), do: Chat.handle(msg, socket)
+
   defp dispatch({:tap, {:cancel_pending, _}} = msg, socket), do: Chat.handle(msg, socket)
   defp dispatch({:tap, {:resend_pending, _}} = msg, socket), do: Chat.handle(msg, socket)
 
@@ -188,6 +195,24 @@ defmodule HandbeamProbe.HomeScreen do
   defp dispatch({:tap, {:conversation, _}} = msg, socket), do: Nav.handle(msg, socket)
   defp dispatch({:tap, {:page, _}} = msg, socket), do: Nav.handle(msg, socket)
   defp dispatch({:tap, {:workspace, _}} = msg, socket), do: Nav.handle(msg, socket)
+  defp dispatch({:tap, {:toggle_conversation_menu, _}} = msg, socket), do: Nav.handle(msg, socket)
+  defp dispatch({:tap, {:toggle_pin_conversation, _}} = msg, socket), do: Nav.handle(msg, socket)
+  defp dispatch({:tap, {:rename_conversation, _}} = msg, socket), do: Nav.handle(msg, socket)
+  defp dispatch({:tap, {:archive_conversation, _}} = msg, socket), do: Nav.handle(msg, socket)
+  defp dispatch({:tap, {:toggle_history_group, _}} = msg, socket), do: Nav.handle(msg, socket)
+
+  defp dispatch({:tap, {:new_workspace_conversation, _}} = msg, socket),
+    do: Nav.handle(msg, socket)
+
+  defp dispatch({:tap, {:confirm_rename_conversation, _}} = msg, socket),
+    do: Nav.handle(msg, socket)
+
+  defp dispatch({:tap, {:submit_rename, _, _}} = msg, socket), do: Nav.handle(msg, socket)
+  defp dispatch({:tap, :cancel_rename_conversation} = msg, socket), do: Nav.handle(msg, socket)
+
+  defp dispatch({:change, {:rename_conversation_title, _}, _} = msg, socket),
+    do: Nav.handle(msg, socket)
+
   defp dispatch({:notification, _} = msg, socket), do: Nav.handle(msg, socket)
 
   # share intake

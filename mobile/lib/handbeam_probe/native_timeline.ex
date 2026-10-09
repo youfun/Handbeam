@@ -93,12 +93,12 @@ defmodule HandbeamProbe.NativeTimeline do
     render(chat, groups, %{}, %{})
   end
 
-  def render(chat, groups, segments, outputs) do
+  def render(chat, groups, segments, outputs, diffs \\ %{}) do
     project(chat, groups, segments, outputs)
+    |> Enum.map(&put_file_diff(&1, diffs))
     |> Enum.flat_map(fn entry ->
       [
-        boundary(entry),
-        if(!entry["work_hidden"], do: entry(entry, chat)),
+        entry(entry, chat),
         tool_actions(entry, chat)
       ]
     end)
@@ -120,36 +120,28 @@ defmodule HandbeamProbe.NativeTimeline do
     |> Enum.reject(&is_nil/1)
   end
 
-  defp boundary(%{"work_segment_first" => true} = entry) do
-    node(:column, [fill_width: true, padding_top: 4, padding_bottom: 2], [
-      button(
-        if(entry["work_segment_open"],
-          do: gettext("Hide Work") <> " ⌄",
-          else: gettext("Show Work") <> " ›"
-        ),
-        {:toggle_work_segment, entry["work_segment_id"]},
-        background: color(:surface),
-        text_color: color(:hint),
-        text_size: 13,
-        padding: 0,
-        corner_radius: 0
-      ),
-      if(entry["work_hidden"] && entry["work_boundary_summary"],
-        do: summary(entry["work_boundary_summary"], false)
-      )
-    ])
-  end
+  defp put_file_diff(entry, diffs) do
+    open? =
+      case Map.fetch(diffs, entry["id"]) do
+        {:ok, value} -> value == true
+        :error -> entry["file_diff_open"] == true
+      end
 
-  defp boundary(_), do: nil
+    Map.put(entry, "file_diff_open", open?)
+  end
 
   defp entry(%{"content_type" => "tool"} = entry, chat) do
     entry = Map.put(entry, "workspace_path", chat_workspace_path(chat))
+    open? = entry["work_collapsed"] != true
 
-    node(:column, [fill_width: true], [
-      if(entry["work_group_first"], do: summary(entry, true)),
-      if(!entry["work_collapsed"] && !entry["work_edit"], do: tool_line(entry)),
-      if(!entry["work_collapsed"], do: delivery_actions(entry, chat))
-    ])
+    children = [
+      if(entry["work_group_first"], do: summary(entry)),
+      if(open? and entry["work_edit"] == true, do: edit_line(entry)),
+      if(open? and entry["work_edit"] != true, do: tool_line(entry)),
+      if(open?, do: delivery_actions(entry, chat))
+    ]
+
+    if Enum.any?(children, & &1), do: node(:column, [fill_width: true], children)
   end
 
   defp entry(entry, chat) do
@@ -212,75 +204,52 @@ defmodule HandbeamProbe.NativeTimeline do
     end
   end
 
-  defp summary(entry, interactive?) when is_map(entry) do
-    label = entry["work_summary"]
-    props = [fill_width: true, padding_top: 2, padding_bottom: 2, align: "baseline"]
-
-    props =
-      if interactive?,
-        do:
-          props ++
-            [
-              on_tap: {self(), {:toggle_tool_work, entry["work_group_id"]}},
-              id: inspect({:toggle_tool_work, entry["work_group_id"]})
-            ],
-        else: props
-
+  defp summary(entry) when is_map(entry) do
+    # Hug the summary. A full-width row would park the chevron on the far edge.
     row(
       [
-        text(label, text_size: 13, text_color: color(:muted)),
-        if(entry["work_edit"] && entry["work_added"] > 0,
-          do: text("+#{entry["work_added"]}", text_size: 13, text_color: color(:added))
+        text(entry["work_summary"] || "", text_size: 13, text_color: color(:muted)),
+        text(if(entry["work_collapsed"], do: "›", else: "⌄"),
+          text_size: 13,
+          text_color: color(:hint)
         ),
-        if(entry["work_edit"] && entry["work_removed"] > 0,
-          do: text("−#{entry["work_removed"]}", text_size: 13, text_color: color(:danger))
+        outcome(
+          entry["work_failed"],
+          gettext("%{count} failed", count: entry["work_failed"]),
+          :danger
         ),
-        if(entry["work_failed"] > 0,
-          do:
-            text(gettext("%{count} failed", count: entry["work_failed"]),
-              text_size: 13,
-              text_color: color(:danger)
-            )
-        ),
-        if(entry["work_cancelled"] > 0,
-          do:
-            text(gettext("%{count} cancelled", count: entry["work_cancelled"]),
-              text_size: 13,
-              text_color: color(:muted)
-            )
-        ),
-        if(interactive?,
-          do:
-            text(if(entry["work_collapsed"], do: "›", else: "⌄"),
-              text_size: 13,
-              text_color: color(:hint)
-            )
+        outcome(
+          entry["work_cancelled"],
+          gettext("%{count} cancelled", count: entry["work_cancelled"]),
+          :muted
         )
       ],
-      props
+      fill_width: false,
+      padding_top: 2,
+      padding_bottom: 2,
+      align: "baseline",
+      on_tap: {self(), {:toggle_tool_work, entry["work_group_id"]}},
+      id: inspect({:toggle_tool_work, entry["work_group_id"]})
     )
   end
 
-  defp summary(label, _interactive?) when is_binary(label) do
-    text(label, text_size: 12, text_color: color(:muted))
+  defp outcome(count, label, tone) when is_integer(count) and count > 0 do
+    text(label, text_size: 13, text_color: color(tone))
   end
+
+  defp outcome(_, _, _), do: nil
 
   defp tool_line(entry) do
     output = WorkTimeline.output(entry)
-    padding = if entry["work_indent"] == 2, do: 28, else: 12
 
-    node(:column, [fill_width: true, padding_left: padding], [
-      button(
-        activity_line(entry),
-        {:toggle_tool_output, entry["id"]},
-        fill_width: true,
+    node(:column, [fill_width: true, padding_left: indent_padding(entry)], [
+      text(activity_line(entry),
+        on_tap: {self(), {:toggle_tool_output, entry["id"]}},
+        id: inspect({:toggle_tool_output, entry["id"]}),
         max_lines: 1,
         ellipsize: "end",
         text_size: 13,
-        text_color: color(:muted),
-        background: color(:surface),
-        padding: 0,
-        corner_radius: 0
+        text_color: color(:muted)
       ),
       if(entry["tool_output_open"],
         do:
@@ -292,6 +261,123 @@ defmodule HandbeamProbe.NativeTimeline do
           ])
       )
     ])
+  end
+
+  @max_diff_lines 80
+
+  defp edit_line(entry) do
+    path = relative_file_path(entry)
+
+    node(:column, [fill_width: true, padding_left: indent_padding(entry)], [
+      row(
+        [
+          row(
+            [
+              text(activity_line(entry),
+                text_size: 13,
+                text_color: color(:muted),
+                max_lines: 1,
+                ellipsize: "end"
+              ),
+              count_text(entry["work_added"], "+", :added),
+              count_text(entry["work_removed"], "−", :danger)
+            ],
+            fill_width: false,
+            align: "baseline",
+            on_tap: {self(), {:toggle_file_diff, entry["id"]}},
+            id: inspect({:toggle_file_diff, entry["id"]})
+          ),
+          if(path != "", do: copy_path_button(path))
+        ],
+        fill_width: false,
+        align: "baseline"
+      ),
+      if(entry["file_diff_open"] == true, do: diff_view(entry))
+    ])
+  end
+
+  defp copy_path_button(path) do
+    button(gettext("Copy relative path"), {:copy_relative_path, path},
+      text_size: 11,
+      padding: 4,
+      corner_radius: 4
+    )
+  end
+
+  defp count_text(count, prefix, tone) when is_integer(count) and count > 0 do
+    text(prefix <> Integer.to_string(count), text_size: 13, text_color: color(tone))
+  end
+
+  defp count_text(_, _, _), do: nil
+
+  defp diff_view(entry) do
+    {shown, hidden} = Enum.split(diff_lines(entry), @max_diff_lines)
+
+    note =
+      if hidden != [],
+        do:
+          text(
+            ngettext("1 line not shown", "%{count} lines not shown", length(hidden)),
+            text_size: 12,
+            text_color: color(:hint)
+          )
+
+    node(:column, [fill_width: true], Enum.map(shown, &diff_line/1) ++ [note])
+  end
+
+  defp diff_line(line) do
+    {prefix, tone} = diff_style(line["type"])
+    text(prefix <> line["text"], text_size: 12, text_color: color(tone))
+  end
+
+  defp diff_style(type) when type in ["add", "added", "ins", "+"], do: {"+", :added}
+
+  defp diff_style(type) when type in ["remove", "removed", "delete", "del", "-"],
+    do: {"−", :danger}
+
+  defp diff_style(_), do: {" ", :muted}
+
+  defp diff_lines(entry) do
+    case entry["diff_lines"] do
+      lines when is_list(lines) ->
+        lines
+        |> Payload.string_keys()
+        |> Enum.map(fn line ->
+          %{
+            "type" => to_string(line["type"] || "eq"),
+            "text" => to_string(line["text"] || "")
+          }
+        end)
+
+      _ ->
+        []
+    end
+  end
+
+  defp indent_padding(%{"work_indent" => 2}), do: 28
+  defp indent_padding(_), do: 12
+
+  defp relative_file_path(entry) do
+    raw =
+      case entry["file_path"] do
+        path when is_binary(path) and path != "" -> path
+        _ -> input_file_path(entry)
+      end
+
+    case raw do
+      path when is_binary(path) and path != "" ->
+        HandbeamWeb.FileChangeCard.relative_display_path(path, entry["workspace_path"])
+
+      _ ->
+        ""
+    end
+  end
+
+  defp input_file_path(entry) do
+    entry
+    |> Handbeam.TranscriptEntry.input()
+    |> Payload.string_keys()
+    |> Map.get("file_path")
   end
 
   defp activity_line(entry) do

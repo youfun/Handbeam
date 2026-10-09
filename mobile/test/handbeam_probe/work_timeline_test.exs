@@ -1,7 +1,7 @@
 defmodule HandbeamProbe.WorkTimelineTest do
   use ExUnit.Case, async: true
-  use Gettext, backend: HandbeamProbe.Gettext
   alias HandbeamProbe.WorkTimeline
+  alias HandbeamWeb.WorkspaceHelper
 
   defp tool(id, name, status \\ "done", input \\ %{}) do
     %{
@@ -17,7 +17,17 @@ defmodule HandbeamProbe.WorkTimelineTest do
     %{"id" => id, "content_type" => "assistant_msg", "phase" => phase, "content" => id}
   end
 
-  test "normal completion hides commentary and tools but not final response" do
+  defp refute_segment_fields(entries) do
+    Enum.each(entries, fn entry ->
+      refute Map.has_key?(entry, "work_hidden")
+      refute Map.has_key?(entry, "work_boundary_summary")
+      refute Map.has_key?(entry, "work_segment_id")
+      refute Map.has_key?(entry, "work_segment_first")
+      refute Map.has_key?(entry, "work_segment_open")
+    end)
+  end
+
+  test "commentary and the final answer stay visible around one collapsed tool group" do
     entries = [
       assistant("plan", "commentary"),
       tool("read", "read"),
@@ -25,69 +35,74 @@ defmodule HandbeamProbe.WorkTimelineTest do
     ]
 
     [plan, read, answer] = WorkTimeline.project(entries)
-    assert plan["work_segment_first"]
-    assert plan["work_hidden"]
-    assert read["work_hidden"]
-    refute answer["work_hidden"]
-    refute plan["work_boundary_summary"]
+    refute Map.has_key?(plan, "work_group_id")
+    assert read["work_group_id"] == "read"
+    assert read["work_group_first"]
+    assert read["work_group_complete"]
+    assert read["work_collapsed"]
+    assert read["work_summary"] == WorkspaceHelper.tool_work_summary([Enum.at(entries, 1)])
+    refute Map.has_key?(answer, "work_group_id")
+    refute_segment_fields([plan, read, answer])
     assert WorkTimeline.project(entries) == WorkTimeline.project(WorkTimeline.project(entries))
   end
 
-  test "incoming message during tool execution retains prior activity and isolates later tools" do
+  test "user messages split tool groups and late results stay on the same entry" do
     user = %{"id" => "u", "content_type" => "user_msg", "interrupts_work" => true}
     entries = [tool("before", "bash", "running"), user, tool("after", "bash", "running")]
-    [before, _, after_tool] = WorkTimeline.project(entries)
-    assert before["work_hidden"]
-    assert before["work_boundary_summary"]["work_summary"] == "Ran 1 command"
-    refute after_tool["work_hidden"]
-    refute before["work_segment_id"] == after_tool["work_segment_id"]
+    [before, user_entry, after_tool] = WorkTimeline.project(entries)
+    assert before["work_group_id"] == "before"
+    assert after_tool["work_group_id"] == "after"
+    refute before["work_collapsed"]
+    refute after_tool["work_collapsed"]
+    refute Map.has_key?(user_entry, "work_group_id")
+    refute_segment_fields([before, user_entry, after_tool])
 
     late = List.update_at(entries, 0, &Map.put(&1, "tool_status", "error"))
     [before, _, after_tool] = WorkTimeline.project(late)
-    assert before["work_boundary_summary"]["work_failed"] == 1
+    assert before["work_failed"] == 1
     assert before["id"] == "before"
+    assert before["work_group_complete"]
+    assert before["work_collapsed"]
     assert after_tool["id"] == "after"
+    assert after_tool["work_group_id"] == "after"
   end
 
-  test "delivery steer interrupts work; follow_up does not; missing delivery falls back" do
-    steer = %{"id" => "u", "content_type" => "user_msg", "delivery" => "steer"}
+  test "steer, follow_up, and interrupt users all split groups the same way" do
+    users = [
+      %{"id" => "u", "content_type" => "user_msg", "delivery" => "steer"},
+      %{"id" => "u2", "content_type" => "user_msg", "delivery" => "follow_up"},
+      %{"id" => "u3", "content_type" => "user_msg", "interrupts_work" => true}
+    ]
 
-    [before, _, after_tool] =
-      WorkTimeline.project([
-        tool("before", "bash", "running"),
-        steer,
-        tool("after", "bash", "running")
-      ])
+    Enum.each(users, fn user ->
+      [before, middle, after_tool] =
+        WorkTimeline.project([
+          tool("before", "bash", "running"),
+          user,
+          tool("after", "bash", "running")
+        ])
 
-    assert before["work_boundary_summary"]
-    refute before["work_segment_id"] == after_tool["work_segment_id"]
-
-    follow = %{"id" => "u2", "content_type" => "user_msg", "delivery" => "follow_up"}
-
-    [before_follow | _] =
-      WorkTimeline.project([tool("b", "bash", "running"), follow, tool("a", "bash", "running")])
-
-    refute before_follow["work_boundary_summary"]
-
-    fallback = %{"id" => "u3", "content_type" => "user_msg", "interrupts_work" => true}
-
-    [before_fb | _] =
-      WorkTimeline.project([
-        tool("b2", "bash", "running"),
-        fallback,
-        tool("a2", "bash", "running")
-      ])
-
-    assert before_fb["work_boundary_summary"]
+      assert before["work_group_id"] == "before"
+      assert after_tool["work_group_id"] == "after"
+      refute before["work_collapsed"]
+      refute after_tool["work_collapsed"]
+      refute Map.has_key?(middle, "work_group_id")
+      refute_segment_fields([before, middle, after_tool])
+    end)
   end
 
-  test "missing final answer alone does not synthesize an interruption summary" do
+  test "a lone completed tool collapses and the segments argument is ignored" do
     [entry] = WorkTimeline.project([tool("t", "bash")], %{}, %{"t" => false})
-    assert entry["work_hidden"]
-    refute entry["work_boundary_summary"]
+    assert entry["work_group_complete"]
+    assert entry["work_collapsed"]
+    refute Map.has_key?(entry, "work_hidden")
+    refute Map.has_key?(entry, "work_boundary_summary")
+
+    [forced_open] = WorkTimeline.project([tool("t", "bash")], %{}, %{"t" => true})
+    assert forced_open["work_collapsed"]
   end
 
-  test "activity groups cannot cross commentary or edits; guidance is separate" do
+  test "consecutive tools stay one group across explore and edit until a non-tool" do
     entries = [
       tool("r", "read", "done", %{"file_path" => "lib/a.ex"}),
       tool("g", "read", "done", %{"file_path" => "sigil/AGENTS.md"}),
@@ -99,33 +114,46 @@ defmodule HandbeamProbe.WorkTimelineTest do
     ]
 
     result = WorkTimeline.project(entries)
+    streak = Enum.take(entries, 5)
+    summary = WorkspaceHelper.tool_work_summary(streak)
 
-    details =
-      Enum.join(
-        [
-          ngettext("%{count} file", "%{count} files", 1),
-          ngettext("%{count} guidance file", "%{count} guidance files", 1),
-          ngettext("%{count} search", "%{count} searches", 1)
-        ],
-        ", "
-      )
-
-    assert hd(result)["work_summary"] == gettext("Explored %{details}", details: details)
-    assert Enum.at(result, 3)["work_summary"] == gettext("Edited %{path}", path: "file")
-    assert Enum.at(result, 4)["work_group_id"] == "r2"
+    assert Enum.map(Enum.take(result, 5), & &1["work_group_id"]) == ["r", "r", "r", "r", "r"]
+    assert Enum.map(Enum.take(result, 5), & &1["work_summary"]) == List.duplicate(summary, 5)
+    assert summary == "Explored 4 files, 1 search"
+    assert Enum.at(result, 0)["work_group_first"]
+    refute Enum.at(result, 4)["work_group_first"]
+    assert Enum.at(result, 0)["work_indent"] == 2
+    assert Enum.at(result, 2)["work_indent"] == 2
+    assert Enum.at(result, 3)["work_indent"] == 1
+    assert Enum.at(result, 3)["work_edit"]
+    refute Map.has_key?(Enum.at(result, 5), "work_group_id")
+    refute Map.has_key?(Enum.at(result, 5), "work_hidden")
     assert Enum.at(result, 6)["work_group_id"] == "r3"
+    assert Enum.at(result, 6)["work_indent"] == 1
+    refute Enum.at(result, 6)["work_edit"]
   end
 
-  test "manual segment, group and output choices survive running tool updates independently" do
-    entries = [tool("t", "bash", "running")]
-    [entry] = WorkTimeline.project(entries, %{"t" => false}, %{"t" => false}, %{"t" => true})
-    assert entry["work_hidden"]
-    assert entry["work_collapsed"]
-    assert entry["tool_output_open"]
-    [entry] = WorkTimeline.project(entries, %{"t" => false}, %{"t" => true}, %{"t" => true})
-    refute entry["work_hidden"]
-    assert entry["work_collapsed"]
-    assert entry["tool_output_open"]
+  test "group open preferences and output choices ignore the segments map" do
+    running = [tool("t", "bash", "running")]
+
+    [closed] = WorkTimeline.project(running, %{"t" => false}, %{"t" => true}, %{"t" => true})
+    assert closed["work_collapsed"]
+    refute closed["work_group_complete"]
+    assert closed["tool_output_open"]
+    refute Map.has_key?(closed, "work_hidden")
+    refute Map.has_key?(closed, "work_segment_open")
+
+    [still_closed] =
+      WorkTimeline.project(running, %{"t" => false}, %{"t" => false}, %{"t" => true})
+
+    assert still_closed["work_collapsed"]
+    assert still_closed["tool_output_open"]
+
+    done = [tool("t", "bash")]
+    [open] = WorkTimeline.project(done, %{"t" => true}, %{"t" => false}, %{})
+    refute open["work_collapsed"]
+    assert open["work_group_complete"]
+    refute open["tool_output_open"]
   end
 
   test "failure and cancellation counts are distinct and edits count diff lines" do
@@ -137,6 +165,7 @@ defmodule HandbeamProbe.WorkTimelineTest do
       ])
 
     assert first["work_summary"] == "Ran 3 commands"
+    assert first["work_group_id"] == "a"
     assert first["work_failed"] == 1
     assert first["work_cancelled"] == 1
 
@@ -145,6 +174,7 @@ defmodule HandbeamProbe.WorkTimelineTest do
       |> Map.put("diff_lines", [%{type: :ins}, %{"type" => "ins"}, %{"type" => "del"}])
 
     [edit] = WorkTimeline.project([edit])
+    assert edit["work_edit"]
     assert edit["work_added"] == 2
     assert edit["work_removed"] == 1
   end
@@ -161,5 +191,21 @@ defmodule HandbeamProbe.WorkTimelineTest do
     assert read["work_target"] == "lib/a.ex L1-20"
     assert grep["work_verb"] == "Grep"
     assert grep["work_target"] == "lib \"def run\""
+
+    [nested_read, edit, bash] =
+      WorkTimeline.project([
+        tool("r2", "read", "done", %{"file_path" => "lib/a.ex"}),
+        tool("e", "edit", "done", %{"file_path" => "lib/a.ex"}),
+        tool("b", "bash", "done", %{"command" => "mix test"})
+      ])
+
+    assert nested_read["work_indent"] == 2
+    assert nested_read["work_verb"] == "Read"
+    assert edit["work_indent"] == 1
+    assert edit["work_edit"]
+    assert edit["work_verb"] == "Edited"
+    assert bash["work_indent"] == 1
+    assert bash["work_verb"] == "$"
+    assert bash["work_target"] == "mix test"
   end
 end

@@ -963,42 +963,70 @@ defmodule HandbeamProbe.HomeScreenTest do
 
     Enum.each(tools, &Handbeam.ConversationTranscriptStore.append(c["id"], &1))
     view = info(view, {:tap, {:conversation, c["id"]}})
-    assert text(view) =~ gettext("Show Work")
     assert text(view) =~ "Final answer"
-    refute text(view) =~ "Between groups"
-    refute text(view) =~ "fixture failure"
-    view = info(view, {:tap, {:toggle_work_segment, "one"}})
     assert text(view) =~ "Between groups"
-    # Group "one" summary comes from sigil's WorkspaceHelper (HandbeamWeb.Gettext).
-    assert text(view) =~ WorkspaceHelper.tool_work_summary([%{"tool" => "bash"}])
+    refute text(view) =~ gettext("Show Work")
+    refute text(view) =~ "pwd"
+    refute text(view) =~ "fixture failure"
+    refute text(view) =~ "README.md"
 
     assert text(view) =~
-             gettext("Explored %{details}",
-               details: ngettext("%{count} file", "%{count} files", 1)
-             )
+             WorkspaceHelper.tool_work_summary([%{"tool" => "bash"}, %{"tool" => "browser"}])
 
-    refute text(view) =~ "pwd"
+    assert text(view) =~ WorkspaceHelper.tool_work_summary([%{"tool" => "read"}])
+
     view = info(view, {:tap, {:toggle_tool_work, "one"}})
     assert text(view) =~ "pwd"
-    refute text(view) =~ "fixture failure"
-    view = info(view, {:tap, {:toggle_tool_work, "two"}})
     refute text(view) =~ "fixture failure"
     view = info(view, {:tap, {:toggle_tool_output, "two"}})
     assert text(view) =~ "fixture failure"
     assert find(view, :scroll, id: "tool-output-two").props.max_height == 180
-    view = info(view, {:tap, {:toggle_work_segment, "one"}})
+    view = info(view, {:tap, {:toggle_tool_work, "one"}})
     refute text(view) =~ "fixture failure"
     assert text(view) =~ "Final answer"
-    view = info(view, {:tap, {:toggle_work_segment, "one"}})
+    assert text(view) =~ "Between groups"
+    view = info(view, {:tap, {:toggle_tool_work, "one"}})
     assert text(view) =~ "fixture failure"
     view = info(view, {:tap, :new_chat})
     assert assigns(view).work_groups == %{}
     assert assigns(view).work_segments == %{}
     assert assigns(view).tool_outputs == %{}
+    assert assigns(view).file_diffs == %{}
     view = info(view, {:tap, {:conversation, c["id"]}})
     refute text(view) =~ "fixture failure"
-    assert text(view) =~ gettext("Show Work")
+    refute text(view) =~ gettext("Show Work")
     refute text(view) =~ "README.md"
+  end
+
+  test "an edit line opens its diff and copies the relative path", %{view: view} do
+    on_exit(fn -> Application.delete_env(:handbeam_probe, :clipboard_put) end)
+    {:ok, c} = Handbeam.ConversationStore.create("default")
+
+    {:ok, _} =
+      Handbeam.ConversationTranscriptStore.append(c["id"], %{
+        "id" => "edit-1",
+        "content_type" => "tool",
+        "tool" => "edit",
+        "status" => "done",
+        "input" => %{"file_path" => "lib/a.ex"},
+        "diff_lines" => [%{"type" => "add", "text" => "hello-diff"}]
+      })
+
+    view = info(view, {:tap, {:conversation, c["id"]}})
+    view = info(view, {:tap, {:toggle_tool_work, "edit-1"}})
+    assert text(view) =~ "+1"
+    refute text(view) =~ "hello-diff"
+    view = info(view, {:tap, {:toggle_file_diff, "edit-1"}})
+    assert text(view) =~ "hello-diff"
+
+    parent = self()
+
+    Application.put_env(:handbeam_probe, :clipboard_put, fn text ->
+      send(parent, {:copied, text})
+    end)
+
+    info(view, {:tap, {:copy_relative_path, "lib/a.ex"}})
+    assert_receive {:copied, "lib/a.ex"}
   end
 
   test "assistant history uses markdown while user input stays literal", %{view: view} do
@@ -1329,11 +1357,9 @@ defmodule HandbeamProbe.HomeScreenTest do
     assert assigns(view).workspace["id"] == workspace_a["id"]
 
     view = info(view, {:tap, {:page, :history}})
-    listed = Enum.flat_map(assigns(view).history.recent, & &1.conversations)
+    listed = Enum.flat_map(assigns(view).history.workspaces, & &1.conversations)
     assert Enum.any?(listed, &(&1["id"] == conv_a["id"]))
     assert Enum.any?(listed, &(&1["id"] == conv_b["id"]))
-    view = info(view, {:tap, :toggle_inactive_history})
-    assert assigns(view).inactive_history_open
     view = info(view, {:tap, {:conversation, conv_b["id"]}})
     assert assigns(view).workspace["id"] == workspace_b["id"]
     assert assigns(view).workspace["path"] == Path.expand(path_b)

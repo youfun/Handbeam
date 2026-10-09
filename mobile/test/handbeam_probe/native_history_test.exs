@@ -6,66 +6,136 @@ defmodule HandbeamProbe.NativeHistoryTest do
   @now ~U[2026-09-10 12:00:00Z]
   @workspaces [%{"id" => "a", "name" => "Alpha"}, %{"id" => "b", "name" => "Beta"}]
 
-  test "72 hour boundary, group ordering and hidden/deleted workspaces" do
+  test "pinned, free, and workspace groups hide archived and unknown workspaces" do
     conversations = [
       conversation("a-new", "a", 0),
       conversation("b-new", "b", -60),
-      conversation("boundary", "a", -72 * 3600),
-      conversation("old-a", "a", -72 * 3600 - 1),
-      conversation("old-b", "b", -80 * 3600),
+      conversation("old-a", "a", -80 * 3600),
       conversation("deleted", "gone", 0),
-      Map.put(conversation("archived", "a", 0), "archived_at", "2026-09-10T12:00:00Z")
-    ]
-
-    history = NativeHistory.project(conversations, @workspaces, @now)
-    assert Enum.map(history.recent, & &1.workspace["id"]) == ["free", "a", "b"]
-    assert hd(history.recent).conversations == []
-    alpha = Enum.find(history.recent, &(&1.workspace["id"] == "a"))
-    assert Enum.map(alpha.conversations, & &1["id"]) == ["a-new", "boundary"]
-    assert Enum.map(history.inactive, & &1.workspace["id"]) == ["a", "b"]
-    assert history.inactive_count == 2
-
-    closed = NativeHistory.render(history, false, "a-new")
-    opened = NativeHistory.render(history, true, "a-new")
-    refute Enum.any?(closed, &(&1.props[:text] == "old-a"))
-    assert Enum.any?(opened, &(&1.props[:text] == "old-a"))
-    assert Enum.any?(opened, &(&1.props[:text] == "old-b"))
-  end
-
-  test "missing timestamp remains reachable in inactive history" do
-    history =
-      NativeHistory.project([%{"id" => "unknown", "workspace_id" => "a"}], @workspaces, @now)
-
-    assert Enum.map(history.recent, & &1.workspace["id"]) == ["free"]
-    assert hd(history.recent).conversations == []
-    assert history.inactive_count == 1
-  end
-
-  test "free chats are their own group, not a project" do
-    conversations = [
-      conversation("project", "a", 0),
+      Map.put(conversation("archived", "a", 0), "archived_at", "2026-09-10T12:00:00Z"),
       Map.merge(conversation("free-new", nil, -30), %{"scope" => "free"}),
-      Map.merge(conversation("free-old", nil, -80 * 3600), %{"scope" => "free"})
+      Map.merge(conversation("free-old", nil, -90 * 3600), %{"scope" => "free"}),
+      conversation("pinned-free", nil, -10)
+      |> Map.merge(%{"scope" => "free", "pinned_at" => "2026-09-10T11:00:00Z"}),
+      Map.put(conversation("pinned-a", "a", -5), "pinned_at", "2026-09-10T12:00:00Z"),
+      Map.put(conversation("pinned-archived", "b", 0), "pinned_at", "2026-09-10T12:30:00Z")
+      |> Map.put("archived_at", "2026-09-10T12:00:00Z")
     ]
 
     history = NativeHistory.project(conversations, @workspaces, @now)
-    free = Enum.find(history.recent, &(&1.workspace["id"] == "free"))
-    assert free.workspace["name"] == gettext("Chats")
-    assert free.workspace["free"]
-    assert Enum.map(free.conversations, & &1["id"]) == ["free-new"]
-    assert Enum.map(history.recent, & &1.workspace["id"]) == ["free", "a"]
-    refute Enum.any?(history.recent, &(&1.workspace["id"] == nil))
 
-    inactive_free = Enum.find(history.inactive, &(&1.workspace["id"] == "free"))
-    assert Enum.map(inactive_free.conversations, & &1["id"]) == ["free-old"]
+    assert Enum.map(history.pinned, & &1["id"]) == ["pinned-a", "pinned-free"]
+    assert Enum.map(history.free, & &1["id"]) == ["free-new", "free-old"]
+    assert Enum.map(history.workspaces, & &1.workspace["id"]) == ["a", "b"]
 
-    rendered = NativeHistory.render(history, false, nil)
+    alpha = Enum.find(history.workspaces, &(&1.workspace["id"] == "a"))
+    beta = Enum.find(history.workspaces, &(&1.workspace["id"] == "b"))
+    assert Enum.map(alpha.conversations, & &1["id"]) == ["a-new", "old-a"]
+    assert Enum.map(beta.conversations, & &1["id"]) == ["b-new"]
+    refute "pinned-a" in Enum.map(alpha.conversations, & &1["id"])
+    refute "pinned-free" in Enum.map(history.free, & &1["id"])
+  end
 
-    assert rendered
-           |> Enum.flat_map(& &1.children)
-           |> Enum.any?(&(&1.props[:id] == "new_free_chat"))
+  test "missing timestamp stays in its workspace and empty workspaces remain" do
+    history =
+      NativeHistory.project(
+        [%{"id" => "unknown", "workspace_id" => "b"}],
+        @workspaces,
+        @now
+      )
 
-    refute Enum.any?(rendered, &(&1.props[:text] == "free-old"))
+    assert history.pinned == []
+    assert history.free == []
+    assert Enum.map(history.workspaces, & &1.workspace["id"]) == ["a", "b"]
+    assert hd(history.workspaces).conversations == []
+    beta = Enum.find(history.workspaces, &(&1.workspace["id"] == "b"))
+    assert Enum.map(beta.conversations, & &1["id"]) == ["unknown"]
+  end
+
+  test "render shows pinned only when present, then free, then each workspace" do
+    history = sample_history()
+    rendered = NativeHistory.render(history, %{selected_id: "a-new"})
+
+    assert texts(rendered) |> Enum.filter(&(&1 in [gettext("已置顶"), gettext("对话")])) == [
+             gettext("已置顶"),
+             gettext("对话")
+           ]
+
+    assert "▣ Alpha" in texts(rendered)
+    assert "▣ Beta" in texts(rendered)
+    refute texts(rendered) |> Enum.any?(&String.contains?(&1, "Inactive over 72 hours"))
+    assert "2 ⌄" in texts(rendered)
+    assert "1 ⌄" in texts(rendered)
+
+    assert {:new_free_chat} in tags(rendered)
+    assert {:new_workspace_conversation, "a"} in tags(rendered)
+    assert {:new_workspace_conversation, "b"} in tags(rendered)
+    assert {:toggle_history_group, "pinned"} in tags(rendered)
+    assert {:toggle_history_group, "free"} in tags(rendered)
+    assert {:toggle_history_group, "a"} in tags(rendered)
+
+    assert "pinned-a" in texts(rendered)
+    assert "free-old" in texts(rendered)
+    assert "old-a" in texts(rendered)
+    refute "archived" in texts(rendered)
+
+    unless Code.ensure_loaded?(HandbeamProbe.NativeConversationRow) do
+      selected = find_text(rendered, "a-new")
+      other = find_text(rendered, "b-new")
+      assert selected.props.background != other.props.background
+      assert {:conversation, "a-new"} in tags(rendered)
+    end
+  end
+
+  test "collapsed groups keep headers and hide their conversations" do
+    history = sample_history()
+
+    rendered =
+      NativeHistory.render(history, %{
+        collapsed: MapSet.new(["pinned", "free", "a"]),
+        running_ids: MapSet.new(["b-new"]),
+        menu_id: "b-new"
+      })
+
+    assert gettext("已置顶") in texts(rendered)
+    assert gettext("对话") in texts(rendered)
+    assert "▣ Alpha" in texts(rendered)
+    assert "2 ›" in texts(rendered)
+    refute "pinned-a" in texts(rendered)
+    refute "free-new" in texts(rendered)
+    refute "old-a" in texts(rendered)
+    assert "b-new" in texts(rendered)
+    assert {:new_free_chat} in tags(rendered)
+  end
+
+  test "no pinned header when nothing is pinned, and missing opts default open" do
+    history = NativeHistory.project([], @workspaces, @now)
+    rendered = NativeHistory.render(history, %{})
+
+    refute gettext("已置顶") in texts(rendered)
+    assert gettext("对话") in texts(rendered)
+    assert "▣ Alpha" in texts(rendered)
+    assert "0 ⌄" in texts(rendered)
+    refute {:toggle_history_group, "pinned"} in tags(rendered)
+    assert {:new_workspace_conversation, "b"} in tags(rendered)
+  end
+
+  defp sample_history do
+    NativeHistory.project(
+      [
+        conversation("a-new", "a", 0),
+        conversation("old-a", "a", -80 * 3600),
+        conversation("b-new", "b", -60),
+        Map.merge(conversation("free-new", nil, -30), %{"scope" => "free"}),
+        Map.merge(conversation("free-old", nil, -90 * 3600), %{"scope" => "free"}),
+        Map.put(conversation("pinned-a", "a", -5), "pinned_at", "2026-09-10T12:00:00Z"),
+        conversation("pinned-free", nil, -10)
+        |> Map.merge(%{"scope" => "free", "pinned_at" => "2026-09-10T11:00:00Z"}),
+        Map.put(conversation("archived", "a", 0), "archived_at", "2026-09-10T12:00:00Z")
+      ],
+      @workspaces,
+      @now
+    )
   end
 
   defp conversation(id, workspace, offset) do
@@ -75,5 +145,39 @@ defmodule HandbeamProbe.NativeHistoryTest do
       "workspace_id" => workspace,
       "updated_at" => @now |> DateTime.add(offset) |> DateTime.to_iso8601()
     }
+  end
+
+  defp texts(nodes), do: collect(nodes, fn %{props: props} -> [props[:text]] end)
+
+  defp tags(nodes) do
+    collect(nodes, fn %{props: props} ->
+      case props[:on_tap] do
+        {_pid, tag} -> [tag]
+        _ -> []
+      end
+    end)
+  end
+
+  defp find_text(nodes, text) do
+    Enum.find_value(nodes, fn
+      %{props: %{text: ^text}} = node ->
+        node
+
+      %{children: children} ->
+        find_text(children, text)
+
+      _ ->
+        nil
+    end)
+  end
+
+  defp collect(nodes, fun) do
+    Enum.flat_map(nodes, fn
+      %{children: children} = node ->
+        Enum.reject(fun.(node), &is_nil/1) ++ collect(children, fun)
+
+      _ ->
+        []
+    end)
   end
 end

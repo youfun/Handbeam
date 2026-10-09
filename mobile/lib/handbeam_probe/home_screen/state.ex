@@ -38,8 +38,12 @@ defmodule HandbeamProbe.HomeScreen.State do
     workspace: nil,
     workspaces: nil,
     conversations: [],
-    history: %{recent: [], inactive: [], inactive_count: 0},
+    history: %{pinned: [], free: [], workspaces: []},
     inactive_history_open: false,
+    collapsed_history_groups: MapSet.new(),
+    conversation_menu_id: nil,
+    rename_conversation: nil,
+    running_conversation_ids: MapSet.new(),
     free_draft: false,
     notice: nil,
 
@@ -57,6 +61,7 @@ defmodule HandbeamProbe.HomeScreen.State do
     work_groups: %{},
     work_segments: %{},
     tool_outputs: %{},
+    file_diffs: %{},
     approval_open: true,
     approval_snapshots: %{},
     approval_export_inflight: nil,
@@ -125,6 +130,7 @@ defmodule HandbeamProbe.HomeScreen.State do
       work_groups: %{},
       work_segments: %{},
       tool_outputs: %{},
+      file_diffs: %{},
       approval_open: true
     ]
   end
