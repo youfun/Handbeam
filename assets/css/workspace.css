@@ -1961,15 +1961,6 @@ button.workspace-file-row:hover,
   background: var(--sig-border-default);
 }
 
-.workspace-title-row.is-active {
-  background: var(--sig-bg-surface-active);
-}
-
-.workspace-title-row.is-active .workspace-header,
-.workspace-title-row.is-active .workspace-header:hover {
-  background: transparent;
-}
-
 .workspace-row-actions {
   display: flex;
   align-items: center;
@@ -2013,11 +2004,6 @@ button.workspace-file-row:hover,
 .workspace-header:hover {
   color: var(--color-text-primary);
   background-color: var(--color-surface-hover);
-}
-
-.workspace-header-active {
-  color: var(--color-text-primary);
-  background-color: var(--sig-bg-surface-active);
 }
 
 .workspace-chevron {

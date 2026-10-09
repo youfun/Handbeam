@@ -448,13 +448,7 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
                   else: gettext("收起")
                 )
               }
-              class={[
-                "workspace-header min-w-0 text-left px-2 py-1.5 text-xs flex items-center gap-1.5 transition-colors",
-                if(@current_workspace_id == ws["id"],
-                  do: "workspace-header-active",
-                  else: "hover:bg-surface-hover"
-                )
-              ]}
+              class="workspace-header min-w-0 text-left px-2 py-1.5 text-xs flex items-center gap-1.5 transition-colors hover:bg-surface-hover"
             >
               <span class="workspace-icon" aria-hidden="true">
                 <svg
