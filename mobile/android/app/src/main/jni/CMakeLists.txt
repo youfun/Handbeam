@@ -177,6 +177,7 @@ if(NOT EXISTS "${ZIG_SQLITE_SO}")
 
     target_compile_definitions(sqlite3_nif PRIVATE
         SQLITE_THREADSAFE=1
+        SQLITE_ENABLE_FTS5
     )
 
     target_link_libraries(sqlite3_nif

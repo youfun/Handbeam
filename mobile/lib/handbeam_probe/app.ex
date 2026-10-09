@@ -40,6 +40,10 @@ defmodule HandbeamProbe.App do
     configure_sigil!()
     log_mix_toolchain()
     Mob.DNS.preresolve(@known_api_hosts)
+    # Clock reads schedule_runs during Application.start. On device
+    # Handbeam.Application skips Ecto.Migrator (no RELEASE_NAME), so the
+    # schema has to exist before :handbeam starts.
+    migrate!()
     {:ok, _} = Application.ensure_all_started(:handbeam)
     :ok = ensure_task_supervisor()
     :ok = HandbeamProbe.ShareIntake.Lock.ensure_started()
@@ -51,10 +55,6 @@ defmodule HandbeamProbe.App do
     HandbeamProbe.Platform.IOS.Registry.ensure_started()
     Handbeam.Runtime.configure_notify_adapter()
     Handbeam.Runtime.mark_interrupted_runs()
-
-    Ecto.Migrator.with_repo(Handbeam.Repo, fn repo ->
-      Ecto.Migrator.run(repo, Handbeam.Paths.migrations_dir(), :up, all: true)
-    end)
 
     unless Process.whereis(:mob_screen) do
       Mob.Screen.start_root(HandbeamProbe.HomeScreen)
@@ -68,6 +68,12 @@ defmodule HandbeamProbe.App do
     end
 
     :ok
+  end
+
+  defp migrate! do
+    Ecto.Migrator.with_repo(Handbeam.Repo, fn repo ->
+      Ecto.Migrator.run(repo, Handbeam.Paths.migrations_dir(), :up, all: true)
+    end)
   end
 
   def ensure_task_supervisor do

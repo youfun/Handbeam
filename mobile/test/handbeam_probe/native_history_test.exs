@@ -61,11 +61,14 @@ defmodule HandbeamProbe.NativeHistoryTest do
              gettext("对话")
            ]
 
-    assert "▣ Alpha" in texts(rendered)
-    assert "▣ Beta" in texts(rendered)
+    assert "Alpha" in texts(rendered)
+    assert "Beta" in texts(rendered)
+    assert icon_names(rendered, "history-folder-a") == ["canvas"]
+    assert icon_names(rendered, "history-chevron-a") == ["chevron_down"]
     refute texts(rendered) |> Enum.any?(&String.contains?(&1, "Inactive over 72 hours"))
-    assert "2 ⌄" in texts(rendered)
-    assert "1 ⌄" in texts(rendered)
+    assert "2" in texts(rendered)
+    assert "1" in texts(rendered)
+    refute texts(rendered) |> Enum.any?(&String.contains?(&1, "⌄"))
 
     assert {:new_free_chat} in tags(rendered)
     assert {:new_workspace_conversation, "a"} in tags(rendered)
@@ -99,8 +102,9 @@ defmodule HandbeamProbe.NativeHistoryTest do
 
     assert gettext("已置顶") in texts(rendered)
     assert gettext("对话") in texts(rendered)
-    assert "▣ Alpha" in texts(rendered)
-    assert "2 ›" in texts(rendered)
+    assert "Alpha" in texts(rendered)
+    assert icon_names(rendered, "history-chevron-a") == ["chevron_right"]
+    assert icon_names(rendered, "history-chevron-b") == ["chevron_down"]
     refute "pinned-a" in texts(rendered)
     refute "free-new" in texts(rendered)
     refute "old-a" in texts(rendered)
@@ -114,8 +118,9 @@ defmodule HandbeamProbe.NativeHistoryTest do
 
     refute gettext("已置顶") in texts(rendered)
     assert gettext("对话") in texts(rendered)
-    assert "▣ Alpha" in texts(rendered)
-    assert "0 ⌄" in texts(rendered)
+    assert "Alpha" in texts(rendered)
+    assert "0" in texts(rendered)
+    assert icon_names(rendered, "history-chevron-a") == ["chevron_down"]
     refute {:toggle_history_group, "pinned"} in tags(rendered)
     assert {:new_workspace_conversation, "b"} in tags(rendered)
   end
@@ -148,6 +153,13 @@ defmodule HandbeamProbe.NativeHistoryTest do
   end
 
   defp texts(nodes), do: collect(nodes, fn %{props: props} -> [props[:text]] end)
+
+  defp icon_names(nodes, id) do
+    collect(nodes, fn
+      %{props: %{id: ^id} = props} -> [props[:name] || "canvas"]
+      _ -> []
+    end)
+  end
 
   defp tags(nodes) do
     collect(nodes, fn %{props: props} ->

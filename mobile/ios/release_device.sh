@@ -71,10 +71,10 @@ if [ -d "_build/dev/lib/exqlite" ]; then
     BUILD_DIR_TMP=$(mktemp -d)
     $CC -I "$EXQLITE_SRC" -I "$OTP_ROOT/$ERTS_VSN/include" \
         -I "$OTP_ROOT/$ERTS_VSN/include/internal" \
-        -DSQLITE_THREADSAFE=1 -DSTATIC_ERLANG_NIF_LIBNAME=sqlite3_nif \
+        -DSQLITE_THREADSAFE=1 -DSQLITE_ENABLE_FTS5 -DSTATIC_ERLANG_NIF_LIBNAME=sqlite3_nif \
         -Wno-\#warnings \
         -c "$EXQLITE_SRC/sqlite3_nif.c" -o "$BUILD_DIR_TMP/sqlite3_nif.o"
-    $CC -I "$EXQLITE_SRC" -DSQLITE_THREADSAFE=1 -Wno-\#warnings \
+    $CC -I "$EXQLITE_SRC" -DSQLITE_THREADSAFE=1 -DSQLITE_ENABLE_FTS5 -Wno-\#warnings \
         -c "$EXQLITE_SRC/sqlite3.c" -o "$BUILD_DIR_TMP/sqlite3.o"
     $(xcrun -find ar) rcs "$EXQLITE_LIB_DIR/priv/sqlite3_nif.a" \
         "$BUILD_DIR_TMP/sqlite3_nif.o" "$BUILD_DIR_TMP/sqlite3.o"

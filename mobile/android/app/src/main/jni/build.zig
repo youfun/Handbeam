@@ -378,12 +378,14 @@ pub fn build(b: *std.Build) void {
     // Compile sqlite3_nif.c + sqlite3.c (the SQLite amalgamation) and link
     // them into libsqlite3_nif.so. NDK clang for the link as before; zig cc
     // for compile. -DSQLITE_THREADSAFE=1 matches CMake.
+    // FTS5 is required by the engrams_fts migration (trigram tokenizer).
     const sqlite_flags = &[_][]const u8{
         "-Os",
         "-ffunction-sections",
         "-fdata-sections",
         "-fPIC",
         "-DSQLITE_THREADSAFE=1",
+        "-DSQLITE_ENABLE_FTS5",
         b.fmt("--sysroot={s}", .{ndk_sysroot}),
         "-isystem",
         b.fmt("{s}/usr/include", .{ndk_sysroot}),

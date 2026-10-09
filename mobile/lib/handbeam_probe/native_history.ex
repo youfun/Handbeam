@@ -4,8 +4,7 @@ defmodule HandbeamProbe.NativeHistory do
   import HandbeamProbe.NativeUI
 
   alias Handbeam.ConversationStore
-
-  @folder_mark "▣"
+  alias Mob.Canvas
 
   def load(now \\ DateTime.utc_now()) do
     project(Handbeam.ConversationStore.list(), Handbeam.WorkspaceStore.list(), now)
@@ -57,10 +56,11 @@ defmodule HandbeamProbe.NativeHistory do
       Enum.flat_map(workspaces, fn %{workspace: workspace, conversations: conversations} ->
         group(
           workspace["id"],
-          "#{@folder_mark} #{workspace["name"] || workspace["id"]}",
+          workspace["name"] || workspace["id"],
           conversations,
           ctx,
-          icon("add", {:new_workspace_conversation, workspace["id"]})
+          icon("add", {:new_workspace_conversation, workspace["id"]}),
+          true
         )
       end)
 
@@ -82,18 +82,20 @@ defmodule HandbeamProbe.NativeHistory do
          Map.has_key?(workspaces, conversation["workspace_id"]))
   end
 
-  defp group(id, label, conversations, ctx, action) do
-    header(id, label, length(conversations), ctx.collapsed, action) ++
+  defp group(id, label, conversations, ctx, action, folder? \\ false) do
+    header(id, label, length(conversations), ctx.collapsed, action, folder?) ++
       if(MapSet.member?(ctx.collapsed, id), do: [], else: conversation_rows(conversations, ctx))
   end
 
-  defp header(id, label, count, collapsed, action) do
-    chevron = if(MapSet.member?(collapsed, id), do: "›", else: "⌄")
+  defp header(id, label, count, collapsed, action, folder?) do
+    toggle = {:toggle_history_group, id}
+    chevron = if(MapSet.member?(collapsed, id), do: "chevron_right", else: "chevron_down")
 
     [
       row(
         [
-          button(label, {:toggle_history_group, id},
+          if(folder?, do: folder_icon(id, toggle)),
+          button(label, toggle,
             id: "history-group-#{id}",
             fill_width: false,
             background: color(:surface),
@@ -103,18 +105,53 @@ defmodule HandbeamProbe.NativeHistory do
           ),
           node(:box, weight: 1, height: 1, background: color(:separator)),
           action,
-          button("#{count} #{chevron}", {:toggle_history_group, id},
+          button(to_string(count), toggle,
             id: "history-group-toggle-#{id}",
             fill_width: false,
             background: color(:surface),
             text_color: color(:muted),
             text_size: 12,
             padding: 4
+          ),
+          node(:icon,
+            name: chevron,
+            text: "",
+            text_size: 14,
+            padding: 0,
+            text_color: color(:muted),
+            on_tap: {self(), toggle},
+            id: "history-chevron-#{id}"
           )
-        ],
+        ]
+        |> Enum.reject(&is_nil/1),
         padding_top: 12,
         padding_bottom: 4
       )
+    ]
+  end
+
+  # Same stroke folder as the web sidebar SVG, drawn once for both hosts.
+  defp folder_icon(id, tag) do
+    node(:canvas,
+      id: "history-folder-#{id}",
+      width: 18,
+      height: 16,
+      padding_right: 4,
+      on_tap: {self(), tag},
+      draw: folder_stroke()
+    )
+  end
+
+  defp folder_stroke do
+    ink = color(:muted)
+
+    [
+      Canvas.rect(2, 2, 6, 1, color: ink, fill: true),
+      Canvas.rect(7, 2, 1, 3, color: ink, fill: true),
+      Canvas.rect(2, 4, 13, 1, color: ink, fill: true),
+      Canvas.rect(14, 4, 1, 9, color: ink, fill: true),
+      Canvas.rect(2, 12, 13, 1, color: ink, fill: true),
+      Canvas.rect(2, 2, 1, 11, color: ink, fill: true)
     ]
   end
 
