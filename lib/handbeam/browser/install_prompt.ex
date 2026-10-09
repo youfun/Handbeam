@@ -31,7 +31,7 @@ defmodule Handbeam.Browser.InstallPrompt do
   @doc "Build a card from a timeline tool entry, or nil."
   @spec from_entry(map() | nil) :: t() | nil
   def from_entry(entry) when is_map(entry) do
-    from_details(Handbeam.Utils.SafeMap.get_first_truthy(entry, "details", :details))
+    from_details(Handbeam.Utils.SafeMap.get_any(entry, "details", :details))
   end
 
   def from_entry(_), do: nil
@@ -42,11 +42,11 @@ defmodule Handbeam.Browser.InstallPrompt do
   end
 
   defp category(details) do
-    Handbeam.Utils.SafeMap.get_first_truthy(details, :failure_category, "failure_category")
+    Handbeam.Utils.SafeMap.get_any(details, :failure_category, "failure_category")
   end
 
   defp next_actions(details) do
-    Handbeam.Utils.SafeMap.get_first_truthy(details, :next_actions, "next_actions") || []
+    Handbeam.Utils.SafeMap.get_any(details, :next_actions, "next_actions") || []
   end
 
   defp action_id(%{id: id}), do: id

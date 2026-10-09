@@ -52,14 +52,12 @@ defmodule HandbeamWeb.ChangeHelper do
     do: if(Map.get(map, key), do: map, else: Map.put(map, key, value))
 
   @doc """
-  Reads a value from a map by string key, falling back to the atom form
-  of the key via `String.to_existing_atom/1`.
-  Returns `nil` for non-map inputs or non-binary keys.
+  Reads a value from a map by string key, then the existing atom of the same name.
+
+  A present `nil` stays `nil`. Returns `nil` for non-map inputs or non-binary keys.
   """
   def value(map, key) when is_map(map) and is_binary(key) do
-    Map.get(map, key) || Map.get(map, String.to_existing_atom(key))
-  rescue
-    ArgumentError -> Map.get(map, key)
+    Handbeam.Utils.SafeMap.get(map, key)
   end
 
   def value(_map, _key), do: nil
@@ -71,7 +69,7 @@ defmodule HandbeamWeb.ChangeHelper do
   and top-level `entry` fields, applying defaults for missing keys.
   """
   def change_from_entry(entry) do
-    details = Handbeam.Utils.SafeMap.get_first_truthy(entry, "details", :details) || %{}
+    details = Handbeam.Utils.SafeMap.get_any(entry, "details", :details) || %{}
     raw_change = value(entry, "change") || value(details, "change") || %{}
     ref = value(raw_change, "change_snapshot_ref") || value(details, "change_snapshot_ref")
 

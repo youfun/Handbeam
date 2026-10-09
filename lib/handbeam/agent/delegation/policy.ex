@@ -87,7 +87,7 @@ defmodule Handbeam.Agent.Delegation.Policy do
     native =
       Enum.filter(Map.get(config, :built_in_tools, []) || [], fn tool ->
         is_map(tool) and
-          Handbeam.Utils.SafeMap.get_first_truthy(tool, :type, "type") in [
+          Handbeam.Utils.SafeMap.get_any(tool, :type, "type") in [
             "web_search",
             "web_search_preview"
           ]

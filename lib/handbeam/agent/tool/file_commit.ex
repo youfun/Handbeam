@@ -124,6 +124,8 @@ defmodule Handbeam.Agent.Tool.FileCommit do
     end
   end
 
-  defp conversation(context), do: context[:conversation_id] || context["conversation_id"]
+  defp conversation(context),
+    do: Handbeam.Utils.SafeMap.get_any(context, [:conversation_id, "conversation_id"])
+
   defp new_id, do: "commit_" <> Integer.to_string(System.unique_integer([:positive]))
 end

@@ -71,7 +71,7 @@ defmodule Handbeam.Permissions.ToolPolicy do
 
   @spec decision(t(), map()) :: ApprovalMode.t()
   def decision(%__MODULE__{} = policy, call) when is_map(call) do
-    name = to_string(Handbeam.Utils.SafeMap.get_first_truthy(call, :name, "name") || "")
+    name = to_string(Handbeam.Utils.SafeMap.get_any(call, :name, "name") || "")
 
     cond do
       Map.get(policy.overrides, name) == :deny ->
@@ -139,8 +139,8 @@ defmodule Handbeam.Permissions.ToolPolicy do
   @schedule_prompt_actions MapSet.new(["create", "run_now"])
 
   defp schedule_decision(policy, call) do
-    input = Handbeam.Utils.SafeMap.get_first_truthy(call, :input, "input") || %{}
-    action = to_string(Handbeam.Utils.SafeMap.get_first_truthy(input, "action", :action) || "")
+    input = Handbeam.Utils.SafeMap.get_any(call, :input, "input") || %{}
+    action = to_string(Handbeam.Utils.SafeMap.get_any(input, "action", :action) || "")
 
     cond do
       action in ["list", "get", "history", "pause", "resume", "delete"] ->
@@ -166,9 +166,9 @@ defmodule Handbeam.Permissions.ToolPolicy do
   end
 
   defp computer_decision(policy, call) do
-    input = Handbeam.Utils.SafeMap.get_first_truthy(call, :input, "input") || %{}
+    input = Handbeam.Utils.SafeMap.get_any(call, :input, "input") || %{}
 
-    case Handbeam.Utils.SafeMap.get_first_truthy(input, "action", :action) do
+    case Handbeam.Utils.SafeMap.get_any(input, "action", :action) do
       action when action in ["list", "observe", "stop"] -> :auto
       _ when policy.default_mode == :deny -> :deny
       _ -> :prompt
@@ -231,7 +231,7 @@ defmodule Handbeam.Permissions.ToolPolicy do
   defp bash_browser_decision(_policy, _name, _call), do: nil
 
   defp unsandboxed_bash?("bash", call) do
-    input = Handbeam.Utils.SafeMap.get_first_truthy(call, :input, "input") || %{}
+    input = Handbeam.Utils.SafeMap.get_any(call, :input, "input") || %{}
     Map.get(input, "unsandboxed") == true or Map.get(input, :unsandboxed) == true
   end
 
@@ -240,8 +240,8 @@ defmodule Handbeam.Permissions.ToolPolicy do
   @doc false
   @spec sensitive_call?(t(), map()) :: boolean()
   def sensitive_call?(%__MODULE__{} = policy, call) when is_map(call) do
-    name = to_string(Handbeam.Utils.SafeMap.get_first_truthy(call, :name, "name") || "")
-    input = Handbeam.Utils.SafeMap.get_first_truthy(call, :input, "input") || %{}
+    name = to_string(Handbeam.Utils.SafeMap.get_any(call, :name, "name") || "")
+    input = Handbeam.Utils.SafeMap.get_any(call, :input, "input") || %{}
     root = policy.workspace_root
 
     case name do
@@ -319,15 +319,15 @@ defmodule Handbeam.Permissions.ToolPolicy do
   defp map_value(_input, _string_key, _atom_key), do: nil
 
   defp worktree_apply?("task_status", call) do
-    input = Handbeam.Utils.SafeMap.get_first_truthy(call, :input, "input") || %{}
-    Handbeam.Utils.SafeMap.get_first_truthy(input, "action", :action) == "apply"
+    input = Handbeam.Utils.SafeMap.get_any(call, :input, "input") || %{}
+    Handbeam.Utils.SafeMap.get_any(input, "action", :action) == "apply"
   end
 
   defp worktree_apply?(_name, _call), do: false
 
   defp bash_command(call) when is_map(call) do
-    input = Handbeam.Utils.SafeMap.get_first_truthy(call, :input, "input") || %{}
-    Handbeam.Utils.SafeMap.get_first_truthy(input, "command", :command) || ""
+    input = Handbeam.Utils.SafeMap.get_any(call, :input, "input") || %{}
+    Handbeam.Utils.SafeMap.get_any(input, "command", :command) || ""
   end
 
   defp agent_browser_command?(command) when is_binary(command) do
@@ -337,12 +337,12 @@ defmodule Handbeam.Permissions.ToolPolicy do
   defp agent_browser_command?(_), do: false
 
   defp classify_browser_call(call) when is_map(call) do
-    input = Handbeam.Utils.SafeMap.get_first_truthy(call, :input, "input") || %{}
+    input = Handbeam.Utils.SafeMap.get_any(call, :input, "input") || %{}
 
     if Handbeam.Tool.Builtin.Browser.backend() == :webview do
       BrowserPolicy.classify_native(input)
     else
-      args = Handbeam.Utils.SafeMap.get_first_truthy(input, "args", :args) || []
+      args = Handbeam.Utils.SafeMap.get_any(input, "args", :args) || []
       BrowserPolicy.classify(args)
     end
   end

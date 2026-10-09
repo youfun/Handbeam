@@ -379,7 +379,7 @@ defmodule Handbeam.Permissions.AutoReview do
   defp decision_items(_other, _requests), do: {:error, :unparseable}
 
   defp assign_single_id(item, [request]) do
-    if blank_id?(Handbeam.Utils.SafeMap.get_first_truthy(item, "tool_call_id", :tool_call_id)) do
+    if blank_id?(Handbeam.Utils.SafeMap.get_any(item, "tool_call_id", :tool_call_id)) do
       Map.put(item, "tool_call_id", request_id(request))
     else
       item
@@ -405,9 +405,9 @@ defmodule Handbeam.Permissions.AutoReview do
   end
 
   defp normalize_decision(item) when is_map(item) do
-    decision = Handbeam.Utils.SafeMap.get_first_truthy(item, "decision", :decision)
-    rationale = Handbeam.Utils.SafeMap.get_first_truthy(item, "rationale", :rationale) || ""
-    id = Handbeam.Utils.SafeMap.get_first_truthy(item, "tool_call_id", :tool_call_id)
+    decision = Handbeam.Utils.SafeMap.get_any(item, "decision", :decision)
+    rationale = Handbeam.Utils.SafeMap.get_any(item, "rationale", :rationale) || ""
+    id = Handbeam.Utils.SafeMap.get_any(item, "tool_call_id", :tool_call_id)
 
     cond do
       decision not in ["approve", "deny"] ->
@@ -448,7 +448,7 @@ defmodule Handbeam.Permissions.AutoReview do
   end
 
   defp request_id(request),
-    do: Handbeam.Utils.SafeMap.get_first_truthy(request, :tool_call_id, "tool_call_id")
+    do: Handbeam.Utils.SafeMap.get_any(request, :tool_call_id, "tool_call_id")
 
   defp decision_kind(%{decision: decision}) when decision in [:approve, :deny], do: decision
   defp decision_kind(%{"decision" => "approve"}), do: :approve
@@ -506,22 +506,22 @@ defmodule Handbeam.Permissions.AutoReview do
   defp visible_content(_other), do: ""
 
   defp visible_block(block) when is_map(block) do
-    type = Handbeam.Utils.SafeMap.get_first_truthy(block, :type, "type")
+    type = Handbeam.Utils.SafeMap.get_any(block, :type, "type")
 
     cond do
       hidden_type?(type) ->
         ""
 
       type == "text" ->
-        Handbeam.Utils.SafeMap.get_first_truthy(block, :text, "text") || ""
+        Handbeam.Utils.SafeMap.get_any(block, :text, "text") || ""
 
       type == "tool_use" ->
-        name = Handbeam.Utils.SafeMap.get_first_truthy(block, :name, "name")
+        name = Handbeam.Utils.SafeMap.get_any(block, :name, "name")
 
-        "tool_use #{name} #{encode_compact(Handbeam.Utils.SafeMap.get_first_truthy(block, :input, "input") || %{})}"
+        "tool_use #{name} #{encode_compact(Handbeam.Utils.SafeMap.get_any(block, :input, "input") || %{})}"
 
       type == "tool_result" ->
-        "tool_result #{truncate(to_string(Handbeam.Utils.SafeMap.get_first_truthy(block, :content, "content") || ""))}"
+        "tool_result #{truncate(to_string(Handbeam.Utils.SafeMap.get_any(block, :content, "content") || ""))}"
 
       true ->
         ""
@@ -539,19 +539,18 @@ defmodule Handbeam.Permissions.AutoReview do
 
   defp format_requests(requests) do
     Enum.map_join(requests, "\n", fn request ->
-      id = Handbeam.Utils.SafeMap.get_first_truthy(request, :tool_call_id, "tool_call_id")
-      name = Handbeam.Utils.SafeMap.get_first_truthy(request, :tool_name, "tool_name")
-      args = Handbeam.Utils.SafeMap.get_first_truthy(request, :arguments, "arguments") || %{}
+      id = Handbeam.Utils.SafeMap.get_any(request, :tool_call_id, "tool_call_id")
+      name = Handbeam.Utils.SafeMap.get_any(request, :tool_name, "tool_name")
+      args = Handbeam.Utils.SafeMap.get_any(request, :arguments, "arguments") || %{}
       "- tool_call_id=#{id} tool=#{name} arguments=#{encode_compact(args)}"
     end)
   end
 
   defp encode_compact(value) do
-    value
-    |> Handbeam.JSON.encode!()
-    |> truncate()
-  rescue
-    _ -> truncate(inspect(value))
+    case Handbeam.JSON.encode(value) do
+      {:ok, json} -> truncate(json)
+      {:error, _reason} -> truncate(inspect(value))
+    end
   end
 
   defp truncate(text) when is_binary(text) and byte_size(text) > 2000,
@@ -580,19 +579,15 @@ defmodule Handbeam.Permissions.AutoReview do
   end
 
   defp slice_object(text) do
-    case {String.split(text, "{", parts: 2), String.split(text, "}", parts: 2)} do
-      {[_prefix, _rest], _} ->
-        start = elem(:binary.match(text, "{"), 0)
-        finish = elem(:binary.matches(text, "}") |> List.last(), 0)
-        String.slice(text, start..finish)
-
-      _ ->
-        text
+    with {start, _} <- :binary.match(text, "{"),
+         matches when matches != [] <- :binary.matches(text, "}") do
+      {finish, _} = List.last(matches)
+      String.slice(text, start..finish)
+    else
+      _ -> text
     end
-  rescue
-    _ -> text
   end
 
-  defp call_id(call), do: Handbeam.Utils.SafeMap.get_first_truthy(call, :id, "id")
-  defp call_name(call), do: Handbeam.Utils.SafeMap.get_first_truthy(call, :name, "name")
+  defp call_id(call), do: Handbeam.Utils.SafeMap.get_any(call, :id, "id")
+  defp call_name(call), do: Handbeam.Utils.SafeMap.get_any(call, :name, "name")
 end

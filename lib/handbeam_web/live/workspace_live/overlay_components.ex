@@ -400,14 +400,14 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
                 <div class="bg-main border rounded-lg p-3">
                   <div class="flex items-center gap-2 mb-2">
                     <span class="font-mono font-bold text-xs text-accent">
-                      {request["tool_name"] || request[:tool_name]}
+                      {Handbeam.Utils.SafeMap.get_any(request, ["tool_name", :tool_name])}
                     </span>
                     <span class="text-xs text-tertiary font-mono truncate">
-                      {request["tool_call_id"] || request[:tool_call_id]}
+                      {Handbeam.Utils.SafeMap.get_any(request, ["tool_call_id", :tool_call_id])}
                     </span>
                   </div>
                   <div class="approval-arguments text-xs text-secondary font-mono rounded p-2">
-                    <pre>{format_arguments(request["arguments"] || request[:arguments] || %{})}</pre>
+                    <pre>{format_arguments(Handbeam.Utils.SafeMap.get_any(request, ["arguments", :arguments]) || %{})}</pre>
                     <div class="mt-2 whitespace-pre-wrap font-sans">{schedule_preview(request)}</div>
                   </div>
                 </div>
@@ -433,8 +433,11 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
                 <ul class="approval-patterns space-y-1 font-mono">
                   <%= for request <- approval_action_requests(@pending_approval) do %>
                     <li>
-                      {request[:suggested_pattern] || request["suggested_pattern"] ||
-                        request[:tool_name] || request["tool_name"]}
+                      {Handbeam.Utils.SafeMap.get_any(request, [
+                        :suggested_pattern,
+                        "suggested_pattern"
+                      ]) ||
+                        Handbeam.Utils.SafeMap.get_any(request, [:tool_name, "tool_name"])}
                     </li>
                   <% end %>
                 </ul>
@@ -594,13 +597,13 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
   end
 
   defp schedule_preview(request) do
-    name = request[:tool_name] || request["tool_name"]
-    args = request[:arguments] || request["arguments"] || %{}
-    action = to_string(args["action"] || args[:action] || "")
+    name = Handbeam.Utils.SafeMap.get_any(request, [:tool_name, "tool_name"])
+    args = Handbeam.Utils.SafeMap.get_any(request, [:arguments, "arguments"]) || %{}
+    action = to_string(Handbeam.Utils.SafeMap.get_any(args, ["action", :action]) || "")
 
     if name == "schedule" and action in ["create", "update", "run_now"] do
-      rule = args["rule"] || args[:rule]
-      zone = args["time_zone"] || args[:time_zone] || "UTC"
+      rule = Handbeam.Utils.SafeMap.get_any(args, ["rule", :rule])
+      zone = Handbeam.Utils.SafeMap.get_any(args, ["time_zone", :time_zone]) || "UTC"
 
       upcoming =
         if is_map(rule) and Handbeam.Schedule.Rule.valid_zone?(zone) do

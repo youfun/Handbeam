@@ -133,12 +133,12 @@ defmodule Handbeam.Attachments.History do
   end
 
   defp restore_attachment(att, workspace_path, conversation_id, entry) do
-    mime = Handbeam.Utils.SafeMap.get_first_truthy(att, "mime_type", :mime_type)
-    name = Handbeam.Utils.SafeMap.get_first_truthy(att, "filename", :filename) || "attachment"
-    relative = Handbeam.Utils.SafeMap.get_first_truthy(att, "relative_path", :relative_path)
+    mime = Handbeam.Utils.SafeMap.get_any(att, "mime_type", :mime_type)
+    name = Handbeam.Utils.SafeMap.get_any(att, "filename", :filename) || "attachment"
+    relative = Handbeam.Utils.SafeMap.get_any(att, "relative_path", :relative_path)
 
     cond do
-      not is_nil(Handbeam.Utils.SafeMap.get_first_truthy(att, "storage_path", :storage_path)) ->
+      not is_nil(Handbeam.Utils.SafeMap.get_any(att, "storage_path", :storage_path)) ->
         [%{type: "text", text: "Image attachment rejected: absolute storage path (#{name})"}]
 
       Attachments.image?(to_string(mime)) ->
@@ -191,7 +191,9 @@ defmodule Handbeam.Attachments.History do
 
   defp fallback_user(text, attachments) do
     names =
-      Enum.map_join(attachments, ", ", &(&1["filename"] || &1[:filename] || "attachment"))
+      Enum.map_join(attachments, ", ", fn attachment ->
+        Handbeam.Utils.SafeMap.get_any(attachment, ["filename", :filename]) || "attachment"
+      end)
 
     notice = "Attachments could not be restored: #{names}"
     body = [text, notice] |> Enum.filter(&(is_binary(&1) and &1 != "")) |> Enum.join("\n")

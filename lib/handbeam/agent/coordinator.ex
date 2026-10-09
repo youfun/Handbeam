@@ -113,8 +113,8 @@ defmodule Handbeam.Agent.Coordinator do
 
   defp replay_ack(receipt) when is_map(receipt) do
     %{
-      action: replay_action(Handbeam.Utils.SafeMap.get_first_truthy(receipt, "action", :action)),
-      run_id: Handbeam.Utils.SafeMap.get_first_truthy(receipt, "run_id", :run_id),
+      action: replay_action(Handbeam.Utils.SafeMap.get_any(receipt, "action", :action)),
+      run_id: Handbeam.Utils.SafeMap.get_any(receipt, "run_id", :run_id),
       run_pid: nil,
       replayed: true
     }
@@ -336,7 +336,7 @@ defmodule Handbeam.Agent.Coordinator do
           {:error, :stale_approval}
 
         Enum.any?(decisions, fn decision ->
-          id = Handbeam.Utils.SafeMap.get_first_truthy(decision, "tool_call_id", :tool_call_id)
+          id = Handbeam.Utils.SafeMap.get_any(decision, "tool_call_id", :tool_call_id)
           pending != [] and id not in pending
         end) ->
           {:error, :approval_mismatch}
@@ -350,7 +350,7 @@ defmodule Handbeam.Agent.Coordinator do
   defp pending_tool_ids(%{interrupt_data: %{action_requests: requests}}) when is_list(requests) do
     Enum.map(
       requests,
-      &Handbeam.Utils.SafeMap.get_first_truthy(&1, :tool_call_id, "tool_call_id")
+      &Handbeam.Utils.SafeMap.get_any(&1, :tool_call_id, "tool_call_id")
     )
   end
 

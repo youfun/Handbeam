@@ -84,7 +84,7 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
     tool =
       pending
       |> List.first()
-      |> then(&Handbeam.Utils.SafeMap.get_first_truthy(&1 || %{}, :name, "name"))
+      |> then(&Handbeam.Utils.SafeMap.get_any(&1 || %{}, :name, "name"))
       |> case do
         name when is_binary(name) and name != "" -> name
         _ -> "tool"
@@ -124,10 +124,10 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
       end
 
     Message.tool_result_block(
-      Handbeam.Utils.SafeMap.get_first_truthy(call, :id, "id"),
+      Handbeam.Utils.SafeMap.get_any(call, :id, "id"),
       reason,
       true,
-      %{permission: :denied, tool: Handbeam.Utils.SafeMap.get_first_truthy(call, :name, "name")}
+      %{permission: :denied, tool: Handbeam.Utils.SafeMap.get_any(call, :name, "name")}
     )
   end
 end

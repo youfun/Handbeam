@@ -77,12 +77,12 @@ defmodule Handbeam.Agent.Turn do
   # ── Resume helpers ──
 
   defp interrupt_id_list(interrupt_data, atom_key, string_key) do
-    Handbeam.Utils.SafeMap.get_first_truthy(interrupt_data, atom_key, string_key) || []
+    Handbeam.Utils.SafeMap.get_any(interrupt_data, atom_key, string_key) || []
   end
 
   defp decision_lookup(decisions) do
     Map.new(decisions, fn d ->
-      {d["tool_call_id"] || d[:tool_call_id], d}
+      {Handbeam.Utils.SafeMap.get_any(d, ["tool_call_id", :tool_call_id]), d}
     end)
   end
 
@@ -91,7 +91,7 @@ defmodule Handbeam.Agent.Turn do
       call =
         Enum.find(
           tool_calls,
-          &(Handbeam.Utils.SafeMap.get_first_truthy(&1, :id, "id") == call_id)
+          &(Handbeam.Utils.SafeMap.get_any(&1, :id, "id") == call_id)
         )
 
       decision = Map.get(decision_by_id, call_id, %{})
@@ -101,7 +101,7 @@ defmodule Handbeam.Agent.Turn do
 
   defp fold_hitl_decision({calls, blocks, overrides, denied}, call_id, call, decision) do
     action =
-      Handbeam.Utils.SafeMap.get_first_truthy(decision, "action", :action) || "deny"
+      Handbeam.Utils.SafeMap.get_any(decision, "action", :action) || "deny"
 
     if to_string(action) == "approve" do
       {calls, blocks, remember_session_grant(overrides, decision, call), denied}
@@ -121,8 +121,8 @@ defmodule Handbeam.Agent.Turn do
 
   defp deny_hitl_call(hitl) do
     tool_name =
-      (hitl.call && (hitl.call[:name] || hitl.call["name"])) || hitl.decision["tool_name"] ||
-        "unknown"
+      (hitl.call && Handbeam.Utils.SafeMap.get_any(hitl.call, [:name, "name"])) ||
+        Handbeam.Utils.SafeMap.get_any(hitl.decision, ["tool_name", :tool_name]) || "unknown"
 
     block = denied_result_block(hitl.call_id, tool_name, hitl.action)
     new_overrides = remember_deny_override(hitl.overrides, hitl.decision, tool_name)
@@ -132,7 +132,7 @@ defmodule Handbeam.Agent.Turn do
   end
 
   defp remember_deny_override(overrides, decision, tool_name) do
-    if Handbeam.Utils.SafeMap.get_first_truthy(decision, "remember", :remember) do
+    if Handbeam.Utils.SafeMap.get_any(decision, "remember", :remember) do
       Map.put(overrides, tool_name, :deny)
     else
       overrides
@@ -141,7 +141,7 @@ defmodule Handbeam.Agent.Turn do
 
   defp calls_not_denied(tool_calls, denied_ids) do
     Enum.reject(tool_calls, fn call ->
-      id = call[:id] || call["id"]
+      id = Handbeam.Utils.SafeMap.get_any(call, [:id, "id"])
       MapSet.member?(denied_ids, id)
     end)
   end
@@ -188,11 +188,11 @@ defmodule Handbeam.Agent.Turn do
 
   defp executable_approved_calls(approved_calls, denied_blocks) do
     Enum.split_with(approved_calls, fn call ->
-      id = Handbeam.Utils.SafeMap.get_first_truthy(call, :id, "id")
+      id = Handbeam.Utils.SafeMap.get_any(call, :id, "id")
 
       not Enum.any?(
         denied_blocks,
-        &(Handbeam.Utils.SafeMap.get_first_truthy(&1, :tool_use_id, "tool_use_id") == id)
+        &(Handbeam.Utils.SafeMap.get_any(&1, :tool_use_id, "tool_use_id") == id)
       )
     end)
   end
@@ -223,10 +223,10 @@ defmodule Handbeam.Agent.Turn do
   # A tool-name grant sits under the unsandboxed gate and would still skip every
   # later sandboxed prompt, including ones auto-review should see.
   defp remember_session_grant(overrides, decision, call) do
-    if decision["remember"] || decision[:remember] do
+    if Handbeam.Utils.SafeMap.get_any(decision, ["remember", :remember]) do
       pattern =
         (call && Handbeam.Permissions.Remember.pattern(call)) ||
-          decision["suggested_pattern"] || decision[:suggested_pattern]
+          Handbeam.Utils.SafeMap.get_any(decision, ["suggested_pattern", :suggested_pattern])
 
       if is_binary(pattern) and String.trim(pattern) != "" do
         Map.put(overrides, {:session_allow, pattern}, :auto)
@@ -285,8 +285,8 @@ defmodule Handbeam.Agent.Turn do
   end
 
   defp blocked_tool_result_block(call, block_source) do
-    call_id = call[:id] || call["id"]
-    name = Handbeam.Utils.SafeMap.get_first_truthy(call, :name, "name")
+    call_id = Handbeam.Utils.SafeMap.get_any(call, [:id, "id"])
+    name = Handbeam.Utils.SafeMap.get_any(call, :name, "name")
 
     {content, blocked_by} =
       case block_source do
@@ -318,32 +318,30 @@ defmodule Handbeam.Agent.Turn do
   defp emit_tool_end_events(tool_calls, ui_blocks, opts) do
     ui_block_by_id =
       Map.new(ui_blocks, fn block ->
-        {block[:tool_use_id] || block["tool_use_id"], block}
+        {Handbeam.Utils.SafeMap.get_any(block, [:tool_use_id, "tool_use_id"]), block}
       end)
 
     Enum.each(tool_calls, fn call ->
-      call_id = call[:id] || call["id"]
+      call_id = Handbeam.Utils.SafeMap.get_any(call, [:id, "id"])
       ui_block = Map.get(ui_block_by_id, call_id)
       details = (ui_block && ui_block[:details]) || %{}
 
-      file_path =
-        details[:file_path] || details["file_path"] || call[:input][:file_path] ||
-          call[:input]["file_path"]
+      file_path = tool_end_file_path(details, call)
 
       payload = %{
         tool_use_id: call_id,
-        tool: call[:name] || call["name"],
+        tool: Handbeam.Utils.SafeMap.get_any(call, [:name, "name"]),
         parent_tool_call_id: nil,
         duration_ms: 0,
         details: bounded_tool_details(details),
         file_path: file_path,
         images: Handbeam.Tool.Images.project(ui_block && ui_block[:images]),
-        output: bounded_tool_output(ui_block && (ui_block[:content] || ui_block["content"]))
+        output: bounded_tool_output(ui_block && block_content(ui_block))
       }
 
       payload =
         if ui_block && ui_block[:is_error] do
-          Map.put(payload, :error, bounded_tool_error(ui_block[:content] || ui_block["content"]))
+          Map.put(payload, :error, bounded_tool_error(block_content(ui_block)))
         else
           payload
         end
@@ -1674,12 +1672,12 @@ defmodule Handbeam.Agent.Turn do
 
     denied_by_id =
       Map.new(state.tool_guard_result_blocks || [], fn block ->
-        {block[:tool_use_id] || block["tool_use_id"], block}
+        {Handbeam.Utils.SafeMap.get_any(block, [:tool_use_id, "tool_use_id"]), block}
       end)
 
     blocks =
       Enum.map(tool_calls, fn call ->
-        id = call[:id] || call["id"]
+        id = Handbeam.Utils.SafeMap.get_any(call, [:id, "id"])
 
         Map.get(denied_by_id, id) ||
           Message.tool_result_block(
@@ -1688,7 +1686,7 @@ defmodule Handbeam.Agent.Turn do
             true,
             %{
               permission: :denied,
-              tool: call[:name] || call["name"],
+              tool: Handbeam.Utils.SafeMap.get_any(call, [:name, "name"]),
               reviewer: :auto_review
             }
           )
@@ -1918,9 +1916,14 @@ defmodule Handbeam.Agent.Turn do
   end
 
   defp tool_end_file_path(details, call) do
-    Handbeam.Utils.SafeMap.get_first_truthy(details, :file_path, "file_path") ||
-      get_in(call, [:input, :file_path]) ||
-      get_in(call, [:input, "file_path"])
+    input = Handbeam.Utils.SafeMap.get_any(call || %{}, [:input, "input"]) || %{}
+
+    Handbeam.Utils.SafeMap.get_any(details || %{}, [:file_path, "file_path"]) ||
+      Handbeam.Utils.SafeMap.get_any(input, [:file_path, "file_path"])
+  end
+
+  defp block_content(block) do
+    Handbeam.Utils.SafeMap.get_any(block, [:content, "content"])
   end
 
   defp execute_tool_calls_with_guard_results(
@@ -1935,8 +1938,19 @@ defmodule Handbeam.Agent.Turn do
          %State{tool_guard_result_blocks: denied_blocks} = state
        )
        when is_list(denied_blocks) do
-    denied_ids = MapSet.new(Enum.map(denied_blocks, &(&1[:tool_use_id] || &1["tool_use_id"])))
-    executable_calls = Enum.reject(tool_calls, &MapSet.member?(denied_ids, &1[:id]))
+    denied_ids =
+      MapSet.new(
+        Enum.map(
+          denied_blocks,
+          &Handbeam.Utils.SafeMap.get_any(&1, [:tool_use_id, "tool_use_id"])
+        )
+      )
+
+    executable_calls =
+      Enum.reject(
+        tool_calls,
+        &MapSet.member?(denied_ids, Handbeam.Utils.SafeMap.get_any(&1, [:id, "id"]))
+      )
 
     with {:ok, result_msg, ui_blocks} <-
            Executor.execute_all_with_details(executable_calls, state) do
@@ -1948,8 +1962,12 @@ defmodule Handbeam.Agent.Turn do
   end
 
   defp order_guarded_blocks(tool_calls, blocks) do
-    by_id = Map.new(blocks, fn block -> {block[:tool_use_id] || block["tool_use_id"], block} end)
-    Enum.map(tool_calls, &Map.fetch!(by_id, &1[:id]))
+    by_id =
+      Map.new(blocks, fn block ->
+        {Handbeam.Utils.SafeMap.get_any(block, [:tool_use_id, "tool_use_id"]), block}
+      end)
+
+    Enum.map(tool_calls, &Map.fetch!(by_id, Handbeam.Utils.SafeMap.get_any(&1, [:id, "id"])))
   end
 
   defp build_provider_config(%State{config: config, provider_state: provider_state}) do
@@ -2031,7 +2049,9 @@ defmodule Handbeam.Agent.Turn do
 
     if is_binary(conversation_id) and is_binary(call_id) do
       details = (ui_block && ui_block[:details]) || %{}
-      side_effect = details[:side_effect] || details["side_effect"] || :unknown
+
+      side_effect =
+        Handbeam.Utils.SafeMap.get_any(details, [:side_effect, "side_effect"]) || :unknown
 
       Handbeam.Agent.OperationReceipt.reserve(
         {:tool_effect, conversation_id},
@@ -2045,7 +2065,8 @@ defmodule Handbeam.Agent.Turn do
         %{
           "tool" => call[:name],
           "side_effect" => to_string(side_effect),
-          "operation_id" => details[:operation_id] || details["operation_id"]
+          "operation_id" =>
+            Handbeam.Utils.SafeMap.get_any(details, [:operation_id, "operation_id"])
         }
       )
     end

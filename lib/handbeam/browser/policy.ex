@@ -139,7 +139,7 @@ defmodule Handbeam.Browser.Policy do
   """
   @spec command_token(map()) :: String.t()
   def command_token(input) when is_map(input) do
-    args = Handbeam.Utils.SafeMap.get_first_truthy(input, "args", :args)
+    args = Handbeam.Utils.SafeMap.get_any(input, "args", :args)
 
     if Handbeam.Tool.Builtin.Browser.backend() == :webview do
       case native_field(input, "action") do

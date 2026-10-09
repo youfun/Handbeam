@@ -125,11 +125,7 @@ defmodule Handbeam.Tool.Extension.Beam.SupTree do
     pid = Process.whereis(mod)
 
     if pid && Process.alive?(pid) do
-      try do
-        Supervisor.which_children(mod)
-      rescue
-        _ -> []
-      end
+      Supervisor.which_children(mod)
     else
       []
     end

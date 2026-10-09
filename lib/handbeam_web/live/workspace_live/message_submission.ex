@@ -710,17 +710,18 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
   end
 
   defp cli_decision(%{request_kind: :ask_user, action_requests: [request | _]}, :approve) do
-    questions = request[:arguments][:questions] || request["arguments"]["questions"] || []
+    questions =
+      request
+      |> Handbeam.Utils.SafeMap.get_any([:arguments, "arguments"])
+      |> then(&Handbeam.Utils.SafeMap.get_any(&1 || %{}, [:questions, "questions"])) || []
 
     answers =
       Enum.map(questions, fn question ->
         %{
-          "index" => Handbeam.Utils.SafeMap.get_first_truthy(question, "index", :index),
-          "question" => Handbeam.Utils.SafeMap.get_first_truthy(question, "question", :question),
+          "index" => Handbeam.Utils.SafeMap.get_any(question, "index", :index),
+          "question" => Handbeam.Utils.SafeMap.get_any(question, "question", :question),
           "answer" =>
-            List.first(
-              Handbeam.Utils.SafeMap.get_first_truthy(question, "options", :options) || []
-            ) || ""
+            List.first(Handbeam.Utils.SafeMap.get_any(question, "options", :options) || []) || ""
         }
       end)
 

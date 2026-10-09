@@ -7,15 +7,15 @@ defmodule HandbeamWeb.WorkspaceLive.Approval do
   def action_requests(%{"action_requests" => requests}) when is_list(requests), do: requests
 
   def action_requests(pending) when is_map(pending),
-    do:
-      Handbeam.Utils.SafeMap.get_first_truthy(pending, :action_requests, "action_requests") || []
+    do: Handbeam.Utils.SafeMap.get_any(pending, :action_requests, "action_requests") || []
 
   def action_requests(_), do: []
 
   def format_arguments(args) when is_map(args) do
-    args |> Handbeam.JSON.encode!(pretty: true) |> String.slice(0, 2000)
-  rescue
-    _ -> inspect(args)
+    case Handbeam.JSON.encode(args, pretty: true) do
+      {:ok, json} -> String.slice(json, 0, 2000)
+      {:error, _reason} -> inspect(args)
+    end
   end
 
   def format_arguments(args), do: inspect(args)
@@ -35,8 +35,8 @@ defmodule HandbeamWeb.WorkspaceLive.Approval do
 
     Enum.each(action_requests(pending), fn request ->
       pattern =
-        Handbeam.Utils.SafeMap.get_first_truthy(request, :suggested_pattern, "suggested_pattern") ||
-          Handbeam.Utils.SafeMap.get_first_truthy(request, :tool_name, "tool_name")
+        Handbeam.Utils.SafeMap.get_any(request, :suggested_pattern, "suggested_pattern") ||
+          Handbeam.Utils.SafeMap.get_any(request, :tool_name, "tool_name")
 
       if is_binary(pattern) and String.trim(pattern) != "" do
         case Handbeam.WorkspaceSettings.append_tool_rule(workspace_root, list, pattern) do
@@ -57,8 +57,9 @@ defmodule HandbeamWeb.WorkspaceLive.Approval do
   defp decisions(pending, action, remember) do
     Enum.map(action_requests(pending), fn request ->
       %{
-        "tool_call_id" => request[:tool_call_id] || request["tool_call_id"],
-        "tool_name" => Handbeam.Utils.SafeMap.get_first_truthy(request, :tool_name, "tool_name"),
+        "tool_call_id" =>
+          Handbeam.Utils.SafeMap.get_any(request, [:tool_call_id, "tool_call_id"]),
+        "tool_name" => Handbeam.Utils.SafeMap.get_any(request, :tool_name, "tool_name"),
         "action" => Atom.to_string(action),
         "remember" => remember == :session
       }

@@ -278,13 +278,7 @@ defmodule Handbeam.Tool.Builtin.Schedule do
   end
 
   defp field(input, key) do
-    Map.get(input, key) || Map.get(input, safe_atom(key))
-  end
-
-  defp safe_atom(key) do
-    String.to_existing_atom(key)
-  rescue
-    ArgumentError -> key
+    Handbeam.Utils.SafeMap.get(input, key)
   end
 
   defp summary(entry) do

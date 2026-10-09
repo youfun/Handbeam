@@ -303,24 +303,27 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
     |> put_conversation_value("selected_reasoning_level", socket.assigns.selected_reasoning_level)
   end
 
-  def put_conversation_value(conversation, key, value) do
-    if Map.has_key?(conversation, key) do
-      Map.put(conversation, key, value)
-    else
-      try do
-        Map.put(conversation, String.to_existing_atom(key), value)
-      rescue
-        ArgumentError -> conversation
-      end
-    end
+  def put_conversation_value(conversation, key, value)
+      when is_map(conversation) and is_binary(key) do
+    Map.put(conversation, stored_key(conversation, key), value)
   end
 
   def conv_value(conversation, key, default) do
-    try do
-      Map.get(conversation, key, Map.get(conversation, String.to_existing_atom(key), default))
-    rescue
-      ArgumentError -> default
+    Handbeam.Utils.SafeMap.get(conversation, key, default)
+  end
+
+  defp stored_key(conversation, key) do
+    cond do
+      Map.has_key?(conversation, key) -> key
+      atom = existing_atom(key) -> if Map.has_key?(conversation, atom), do: atom, else: key
+      true -> key
     end
+  end
+
+  defp existing_atom(key) do
+    String.to_existing_atom(key)
+  rescue
+    ArgumentError -> nil
   end
 
   def conversation_id(conversation), do: conv_value(conversation, "id", nil)
@@ -388,8 +391,6 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
       {:error, _} ->
         empty_token_usage()
     end
-  rescue
-    _ -> empty_token_usage()
   end
 
   defp empty_token_usage do

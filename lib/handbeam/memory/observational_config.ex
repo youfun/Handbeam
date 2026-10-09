@@ -236,7 +236,7 @@ defmodule Handbeam.Memory.ObservationalConfig do
   end
 
   defp get_max_recent_context(obs) when is_map(obs) do
-    Handbeam.Utils.SafeMap.get_first_truthy(obs, :max_recent_context, "max_recent_context", 5)
+    Handbeam.Utils.SafeMap.get_any(obs, :max_recent_context, "max_recent_context", 5)
   end
 
   defp get_max_recent_context(_), do: 5

@@ -142,8 +142,8 @@ defmodule HandbeamWeb.WorkspaceLive.ViewComponents do
   end
 
   defp conversation_timestamp(conv) do
-    Handbeam.Utils.SafeMap.get_first_truthy(conv, :updated_at, "updated_at") ||
-      Handbeam.Utils.SafeMap.get_first_truthy(conv, :created_at, "created_at")
+    Handbeam.Utils.SafeMap.get_any(conv, :updated_at, "updated_at") ||
+      Handbeam.Utils.SafeMap.get_any(conv, :created_at, "created_at")
   end
 
   defp format_short_age(diff) when diff < 60, do: "now"

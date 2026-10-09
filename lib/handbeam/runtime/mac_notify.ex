@@ -13,6 +13,8 @@ defmodule Handbeam.Runtime.MacNotify do
   alias Handbeam.Settings.UI
   alias __MODULE__.Bridge
 
+  require Logger
+
   @impl true
   def app_visible? do
     case :ets.lookup(Bridge.table(), :visible) do
@@ -104,7 +106,9 @@ defmodule Handbeam.Runtime.MacNotify do
   defp locale do
     UI.locale() || default_locale()
   rescue
-    _ -> default_locale()
+    exception in [DBConnection.OwnershipError, DBConnection.ConnectionError] ->
+      Logger.warning("mac notify locale lookup failed: #{inspect(exception.__struct__)}")
+      default_locale()
   end
 
   defp default_locale do

@@ -415,7 +415,7 @@ defmodule Handbeam.Agent.Delegation do
       state,
       id,
       run_id,
-      &progress(&1, Handbeam.Utils.SafeMap.get_first_truthy(payload, :tool, "tool"))
+      &progress(&1, Handbeam.Utils.SafeMap.get_any(payload, :tool, "tool"))
     )
   end
 
@@ -793,11 +793,11 @@ defmodule Handbeam.Agent.Delegation do
   end
 
   defp child_prompt(%Profile{name: "advisor", source: :builtin}, input),
-    do: Handbeam.Utils.SafeMap.get_first_truthy(input, "prompt", :prompt)
+    do: Handbeam.Utils.SafeMap.get_any(input, "prompt", :prompt)
 
   defp child_prompt(_profile, input) do
-    task = Handbeam.Utils.SafeMap.get_first_truthy(input, "task", :task) || ""
-    criteria = Handbeam.Utils.SafeMap.get_first_truthy(input, "criteria", :criteria) || ""
+    task = Handbeam.Utils.SafeMap.get_any(input, "task", :task) || ""
+    criteria = Handbeam.Utils.SafeMap.get_any(input, "criteria", :criteria) || ""
     task <> "\n\nCompletion criteria:\n" <> criteria
   end
 

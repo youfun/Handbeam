@@ -88,7 +88,7 @@ defmodule Handbeam.Agent.Auth.XaiCredential do
 
   defp expired?(credential, opts) do
     now_ms = Keyword.get(opts, :now_ms, System.system_time(:millisecond))
-    expires = Handbeam.Utils.SafeMap.get_first_truthy(credential, "expires", :expires) || 0
+    expires = Handbeam.Utils.SafeMap.get_any(credential, "expires", :expires) || 0
     expires <= now_ms
   end
 

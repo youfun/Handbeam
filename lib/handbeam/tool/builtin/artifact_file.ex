@@ -78,7 +78,9 @@ defmodule Handbeam.Tool.Builtin.ArtifactFile do
 
   defp resolve_binding(_, _, _, _, _), do: {:error, :file_unavailable}
 
-  defp field(map, key), do: map[key] || map[Atom.to_string(key)]
+  defp field(map, key) when is_atom(key) do
+    Handbeam.Utils.SafeMap.get_any(map, [key, Atom.to_string(key)])
+  end
 
   # Same component rule as WorkspaceFiles.relative_names/1: only a literal
   # ".." path component is traversal; "foo..bar.txt" is a plain file name.
@@ -107,12 +109,11 @@ defmodule Handbeam.Tool.Builtin.ArtifactFile do
     finish(%{
       outcome:
         to_string(
-          Handbeam.Utils.SafeMap.get_first_truthy(result, :outcome, "outcome") ||
+          Handbeam.Utils.SafeMap.get_any(result, :outcome, "outcome") ||
             "outcome_unknown"
         ),
-      snapshot_id: Handbeam.Utils.SafeMap.get_first_truthy(result, :snapshot_id, "snapshot_id"),
-      relative_path:
-        Handbeam.Utils.SafeMap.get_first_truthy(result, :relative_path, "relative_path")
+      snapshot_id: Handbeam.Utils.SafeMap.get_any(result, :snapshot_id, "snapshot_id"),
+      relative_path: Handbeam.Utils.SafeMap.get_any(result, :relative_path, "relative_path")
     })
   end
 

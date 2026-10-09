@@ -180,7 +180,5 @@ defmodule Handbeam.Extension.HookRunner do
       {:module, ^module} -> function_exported?(module, :handle_event, 2)
       {:error, _} -> false
     end
-  rescue
-    _ -> false
   end
 end

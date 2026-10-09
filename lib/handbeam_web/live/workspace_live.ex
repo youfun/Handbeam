@@ -1488,7 +1488,7 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   defp schedule_tool_finished?(%{kind: kind, payload: payload})
        when kind in [:tool_end, "tool_end"] do
-    to_string(payload[:tool] || payload["tool"] || "") == "schedule"
+    to_string(Handbeam.Utils.SafeMap.get_any(payload, [:tool, "tool"]) || "") == "schedule"
   end
 
   defp schedule_tool_finished?(_event), do: false

@@ -500,10 +500,8 @@ defmodule Handbeam.Settings.ModelAISettings do
 
   defp nested_om_value(map, key) do
     case get_key(map, "observational_memory") do
-      %{} = om -> Map.get(om, key) || Map.get(om, String.to_existing_atom(key))
+      %{} = om -> Handbeam.Utils.SafeMap.get(om, key)
       _ -> nil
     end
-  rescue
-    ArgumentError -> nil
   end
 end

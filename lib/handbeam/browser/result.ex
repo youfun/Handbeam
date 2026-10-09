@@ -24,10 +24,10 @@ defmodule Handbeam.Browser.Result do
   @spec parse(map(), keyword()) :: t()
   def parse(raw, opts \\ []) when is_map(raw) do
     artifact_dir = Keyword.get(opts, :artifact_dir)
-    timed_out? = truthy?(Handbeam.Utils.SafeMap.get_first_truthy(raw, :timed_out, "timed_out"))
-    exit_code = Handbeam.Utils.SafeMap.get_first_truthy(raw, :exit_code, "exit_code") || 0
-    stdout = Handbeam.Utils.SafeMap.get_first_truthy(raw, :stdout, "stdout") || ""
-    stderr = Handbeam.Utils.SafeMap.get_first_truthy(raw, :stderr, "stderr") || ""
+    timed_out? = truthy?(Handbeam.Utils.SafeMap.get_any(raw, :timed_out, "timed_out"))
+    exit_code = Handbeam.Utils.SafeMap.get_any(raw, :exit_code, "exit_code") || 0
+    stdout = Handbeam.Utils.SafeMap.get_any(raw, :stdout, "stdout") || ""
+    stderr = Handbeam.Utils.SafeMap.get_any(raw, :stderr, "stderr") || ""
 
     cond do
       timed_out? ->
@@ -96,7 +96,7 @@ defmodule Handbeam.Browser.Result do
   end
 
   defp from_envelope(data, exit_code, artifact_dir) do
-    success? = truthy?(Handbeam.Utils.SafeMap.get_first_truthy(data, "success", :success))
+    success? = truthy?(Handbeam.Utils.SafeMap.get_any(data, "success", :success))
     error = envelope_error(data)
     inner = envelope_inner(data)
     artifacts = collect_artifacts(inner || %{}, artifact_dir)
@@ -131,14 +131,14 @@ defmodule Handbeam.Browser.Result do
   end
 
   defp envelope_inner(data) do
-    case Handbeam.Utils.SafeMap.get_first_truthy(data, "data", :data) do
+    case Handbeam.Utils.SafeMap.get_any(data, "data", :data) do
       inner when is_map(inner) -> stringify_keys(inner)
       _ -> nil
     end
   end
 
   defp envelope_error(data) do
-    case Handbeam.Utils.SafeMap.get_first_truthy(data, "error", :error) do
+    case Handbeam.Utils.SafeMap.get_any(data, "error", :error) do
       error when is_binary(error) and error != "" -> error
       _ -> nil
     end
@@ -245,7 +245,7 @@ defmodule Handbeam.Browser.Result do
   defp collect_artifacts(data, artifact_dir) do
     candidates =
       screenshot_candidates(data) ++
-        list_candidates(Handbeam.Utils.SafeMap.get_first_truthy(data, "artifacts", :artifacts))
+        list_candidates(Handbeam.Utils.SafeMap.get_any(data, "artifacts", :artifacts))
 
     candidates
     |> Enum.flat_map(&normalize_artifact(&1, artifact_dir))

@@ -113,7 +113,7 @@ defmodule Handbeam.Tool.Builtin.Browser do
 
   defp run_webview(action, input, session_mode, timeout_ms, context) do
     conversation_id =
-      Handbeam.Utils.SafeMap.get_first_truthy(context, :conversation_id, "conversation_id") ||
+      Handbeam.Utils.SafeMap.get_any(context, :conversation_id, "conversation_id") ||
         "anon"
 
     command = %{

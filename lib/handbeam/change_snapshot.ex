@@ -207,7 +207,7 @@ defmodule Handbeam.ChangeSnapshot do
   end
 
   defp conversation_id(context),
-    do: Handbeam.Utils.SafeMap.get_first_truthy(context, :conversation_id, "conversation_id")
+    do: Handbeam.Utils.SafeMap.get_any(context, :conversation_id, "conversation_id")
 
   defp safe_id?(id) when is_binary(id), do: Regex.match?(~r/\A[A-Za-z0-9_.:-]+\z/, id)
   defp safe_id?(_id), do: false

@@ -227,7 +227,7 @@ defmodule Handbeam.Agent.ExtensionBridge do
 
   defp declared_tool_modules(ext, compiled_modules) do
     Enum.reduce_while(ext.tools, {:ok, [], []}, fn tool_decl, {:ok, modules, diags} ->
-      tool_name = tool_decl["name"] || tool_decl[:name]
+      tool_name = Handbeam.Utils.SafeMap.get_any(tool_decl, ["name", :name])
       expected_name = "ext__#{ext.name}__#{tool_name}"
 
       case find_tool_module(expected_name, compiled_modules) do

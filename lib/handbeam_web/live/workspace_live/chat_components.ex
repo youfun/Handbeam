@@ -1015,16 +1015,20 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
                 </div>
                 <div :for={att <- @pending_attachments} class="composer-thumb">
                   <img
-                    src={att[:url] || att["url"]}
-                    alt={att[:filename] || att["filename"]}
+                    src={Handbeam.Utils.SafeMap.get_any(att, [:url, "url"])}
+                    alt={Handbeam.Utils.SafeMap.get_any(att, [:filename, "filename"])}
                   />
                   <button
                     type="button"
                     phx-click="remove_attachment"
-                    phx-value-id={att[:id] || att["id"]}
+                    phx-value-id={Handbeam.Utils.SafeMap.get_any(att, [:id, "id"])}
                     class="composer-thumb-remove"
                     aria-label={
-                      gettext("移除 %{name}", name: att[:filename] || att["filename"] || gettext("附件"))
+                      gettext("移除 %{name}",
+                        name:
+                          Handbeam.Utils.SafeMap.get_any(att, [:filename, "filename"]) ||
+                            gettext("附件")
+                      )
                     }
                   >
                     ×

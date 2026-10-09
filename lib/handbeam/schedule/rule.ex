@@ -158,14 +158,14 @@ defmodule Handbeam.Schedule.Rule do
   defp normalize(%{kind: kind} = rule), do: normalize(stringify(rule) |> Map.put("kind", kind))
 
   defp normalize(%{"kind" => kind} = rule) when kind in ["weekly", :weekly] do
-    with {:ok, days} <- weekdays(rule["weekdays"] || rule[:weekdays]),
-         {:ok, times} <- times(rule["times"] || rule[:times]) do
+    with {:ok, days} <- weekdays(Handbeam.Utils.SafeMap.get_any(rule, ["weekdays", :weekdays])),
+         {:ok, times} <- times(Handbeam.Utils.SafeMap.get_any(rule, ["times", :times])) do
       {:ok, %{kind: :weekly, weekdays: days, times: times}}
     end
   end
 
   defp normalize(%{"kind" => kind} = rule) when kind in ["interval", :interval] do
-    case integer(rule["every_minutes"] || rule[:every_minutes]) do
+    case integer(Handbeam.Utils.SafeMap.get_any(rule, ["every_minutes", :every_minutes])) do
       minutes when is_integer(minutes) and minutes >= @min_interval ->
         {:ok, %{kind: :interval, every_minutes: minutes}}
 

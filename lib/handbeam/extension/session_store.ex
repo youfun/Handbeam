@@ -36,11 +36,8 @@ defmodule Handbeam.Extension.SessionStore do
         end
 
       %{last_seq: _, events: _, meta: _} ->
-        # Snapshot returned without extension_state key (legacy format)
         default
     end
-  rescue
-    _ -> default
   end
 
   @doc "Read all state for an extension."
@@ -53,8 +50,6 @@ defmodule Handbeam.Extension.SessionStore do
       _ ->
         %{}
     end
-  rescue
-    _ -> %{}
   end
 
   @doc "Delete a key from extension state."

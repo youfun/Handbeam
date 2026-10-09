@@ -83,9 +83,9 @@ defmodule Handbeam.Tool.Builtin.OpenUrl do
     %{
       outcome:
         to_string(
-          Handbeam.Utils.SafeMap.get_first_truthy(map, :outcome, "outcome") || "outcome_unknown"
+          Handbeam.Utils.SafeMap.get_any(map, :outcome, "outcome") || "outcome_unknown"
         ),
-      url: Handbeam.Utils.SafeMap.get_first_truthy(map, :url, "url")
+      url: Handbeam.Utils.SafeMap.get_any(map, :url, "url")
     }
   end
 end

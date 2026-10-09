@@ -112,7 +112,9 @@ defmodule Handbeam.ExportSnapshot.Binding do
   defp normalize_action("share_file"), do: :share_file
   defp normalize_action(_), do: nil
 
-  defp field(map, key), do: map[key] || map[Atom.to_string(key)]
+  defp field(map, key) when is_atom(key) do
+    Handbeam.Utils.SafeMap.get_any(map, [key, Atom.to_string(key)])
+  end
 
   defp table! do
     case :ets.whereis(@table) do

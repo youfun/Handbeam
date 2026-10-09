@@ -481,7 +481,7 @@ defmodule Handbeam.Agent.Runner do
 
   defp interrupt_type(%{status: :awaiting_approval, interrupted_state: %{interrupt_data: data}})
        when is_map(data) do
-    Handbeam.Utils.SafeMap.get_first_truthy(data, :type, "type")
+    Handbeam.Utils.SafeMap.get_any(data, :type, "type")
   end
 
   defp interrupt_type(_state), do: nil
@@ -722,8 +722,8 @@ defmodule Handbeam.Agent.Runner do
   end
 
   defp track_search_access({:tool_end, payload}, opts) do
-    tool = Handbeam.Utils.SafeMap.get_first_truthy(payload, :tool, "tool")
-    path = Handbeam.Utils.SafeMap.get_first_truthy(payload, :file_path, "file_path")
+    tool = Handbeam.Utils.SafeMap.get_any(payload, :tool, "tool")
+    path = Handbeam.Utils.SafeMap.get_any(payload, :file_path, "file_path")
     workspace = opts[:working_directory] || opts[:workspace_path]
     successful? = is_nil(payload[:error]) and is_nil(payload["error"])
     normalized_tool = if is_binary(tool), do: String.downcase(tool), else: ""

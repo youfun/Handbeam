@@ -247,8 +247,8 @@ defmodule Handbeam.Agent.Provider.Cursor.Proto do
       opts
       |> Keyword.get(:parameters, [])
       |> Enum.map(fn parameter ->
-        id = Handbeam.Utils.SafeMap.get_first_truthy(parameter, :id, "id") || ""
-        value = Handbeam.Utils.SafeMap.get_first_truthy(parameter, :value, "value") || ""
+        id = Handbeam.Utils.SafeMap.get_any(parameter, :id, "id") || ""
+        value = Handbeam.Utils.SafeMap.get_any(parameter, :value, "value") || ""
         encode_message(3, encode_string(1, id) ++ encode_string(2, value))
       end)
 

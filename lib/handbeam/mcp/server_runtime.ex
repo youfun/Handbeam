@@ -363,9 +363,10 @@ defmodule Handbeam.MCP.ServerRuntime do
   defp format_error(reason), do: inspect(reason)
 
   defp app_version do
-    Application.spec(:handbeam, :vsn) |> to_string()
-  rescue
-    _ -> "unknown"
+    case Application.spec(:handbeam, :vsn) do
+      nil -> "unknown"
+      vsn -> to_string(vsn)
+    end
   end
 
   defp safe_close_port(port) do

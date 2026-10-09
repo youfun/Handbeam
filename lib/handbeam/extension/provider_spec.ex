@@ -29,10 +29,10 @@ defmodule Handbeam.Extension.ProviderSpec do
       spec = %__MODULE__{
         extension: extension,
         name: provider_name,
-        base_url: Handbeam.Utils.SafeMap.get_first_truthy(opts, :base_url, "base_url"),
-        api: Handbeam.Utils.SafeMap.get_first_truthy(opts, :api, "api"),
-        api_key_env: Handbeam.Utils.SafeMap.get_first_truthy(opts, :api_key_env, "api_key_env"),
-        models: Handbeam.Utils.SafeMap.get_first_truthy(opts, :models, "models") || []
+        base_url: Handbeam.Utils.SafeMap.get_any(opts, :base_url, "base_url"),
+        api: Handbeam.Utils.SafeMap.get_any(opts, :api, "api"),
+        api_key_env: Handbeam.Utils.SafeMap.get_any(opts, :api_key_env, "api_key_env"),
+        models: Handbeam.Utils.SafeMap.get_any(opts, :models, "models") || []
       }
 
       {:ok, spec}

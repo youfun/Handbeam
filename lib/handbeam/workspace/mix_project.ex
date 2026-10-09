@@ -344,8 +344,6 @@ defmodule Handbeam.Workspace.MixProject do
     else
       []
     end
-  rescue
-    _ -> []
   end
 
   defp ensure_lock do

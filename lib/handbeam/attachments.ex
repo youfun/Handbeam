@@ -83,30 +83,28 @@ defmodule Handbeam.Attachments do
 
   def persistable(map) when is_map(map) do
     %{
-      "id" => Handbeam.Utils.SafeMap.get_first_truthy(map, :id, "id"),
-      "kind" =>
-        to_string(Handbeam.Utils.SafeMap.get_first_truthy(map, :kind, "kind") || kind_from(map)),
-      "mime_type" => Handbeam.Utils.SafeMap.get_first_truthy(map, :mime_type, "mime_type"),
+      "id" => Handbeam.Utils.SafeMap.get_any(map, :id, "id"),
+      "kind" => to_string(Handbeam.Utils.SafeMap.get_any(map, :kind, "kind") || kind_from(map)),
+      "mime_type" => Handbeam.Utils.SafeMap.get_any(map, :mime_type, "mime_type"),
       "filename" =>
-        Handbeam.Utils.SafeMap.get_first_truthy(map, :filename, "filename") ||
-          Handbeam.Utils.SafeMap.get_first_truthy(map, :display_name, "display_name"),
-      "size_bytes" => Handbeam.Utils.SafeMap.get_first_truthy(map, :size_bytes, "size_bytes"),
-      "relative_path" =>
-        Handbeam.Utils.SafeMap.get_first_truthy(map, :relative_path, "relative_path"),
+        Handbeam.Utils.SafeMap.get_any(map, :filename, "filename") ||
+          Handbeam.Utils.SafeMap.get_any(map, :display_name, "display_name"),
+      "size_bytes" => Handbeam.Utils.SafeMap.get_any(map, :size_bytes, "size_bytes"),
+      "relative_path" => Handbeam.Utils.SafeMap.get_any(map, :relative_path, "relative_path"),
       "source" => source_string(map),
-      "url" => Handbeam.Utils.SafeMap.get_first_truthy(map, :url, "url")
+      "url" => Handbeam.Utils.SafeMap.get_any(map, :url, "url")
     }
     |> Map.reject(fn {_k, v} -> is_nil(v) end)
   end
 
   defp kind_from(map) do
-    if image?(to_string(Handbeam.Utils.SafeMap.get_first_truthy(map, :mime_type, "mime_type"))),
+    if image?(to_string(Handbeam.Utils.SafeMap.get_any(map, :mime_type, "mime_type"))),
       do: "image",
       else: "text"
   end
 
   defp source_string(map) do
-    case Handbeam.Utils.SafeMap.get_first_truthy(map, :source, "source") do
+    case Handbeam.Utils.SafeMap.get_any(map, :source, "source") do
       nil -> nil
       value -> to_string(value)
     end
@@ -118,17 +116,17 @@ defmodule Handbeam.Attachments do
 
   defp actual_size(map, opts) when is_map(map) do
     path =
-      Handbeam.Utils.SafeMap.get_first_truthy(map, :controlled_path, "controlled_path") ||
-        Handbeam.Utils.SafeMap.get_first_truthy(map, :storage_path, "storage_path") ||
+      Handbeam.Utils.SafeMap.get_any(map, :controlled_path, "controlled_path") ||
+        Handbeam.Utils.SafeMap.get_any(map, :storage_path, "storage_path") ||
         resolve_declared(map, opts)
 
-    file_size(path, map[:size_bytes] || map["size_bytes"])
+    file_size(path, Handbeam.Utils.SafeMap.get_any(map, [:size_bytes, "size_bytes"]))
   end
 
   defp resolve_declared(map, opts) do
     workspace = Keyword.get(opts, :workspace_path)
     conversation_id = Keyword.get(opts, :conversation_id)
-    relative = map[:relative_path] || map["relative_path"]
+    relative = Handbeam.Utils.SafeMap.get_any(map, [:relative_path, "relative_path"])
 
     case {workspace, conversation_id, relative, Keyword.get(opts, :chat_scope)} do
       {ws, cid, rel, _} when is_binary(ws) and is_binary(cid) and is_binary(rel) ->
@@ -160,10 +158,14 @@ defmodule Handbeam.Attachments do
   defp image_item?(%Imported{canonical_type: type}), do: image?(type)
 
   defp image_item?(map),
-    do: image?(to_string(map[:mime_type] || map["mime_type"] || map[:canonical_type]))
+    do: image?(to_string(declared_type(map)))
 
   defp text_item?(%Imported{canonical_type: type}), do: text?(type)
 
   defp text_item?(map),
-    do: text?(to_string(map[:mime_type] || map["mime_type"] || map[:canonical_type]))
+    do: text?(to_string(declared_type(map)))
+
+  defp declared_type(map) do
+    Handbeam.Utils.SafeMap.get_any(map, [:mime_type, "mime_type"]) || map[:canonical_type]
+  end
 end

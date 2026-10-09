@@ -5,9 +5,9 @@ defmodule Handbeam.Permissions.Remember do
 
   @spec pattern(map()) :: String.t()
   def pattern(call) when is_map(call) do
-    name = normalize_name(Handbeam.Utils.SafeMap.get_first_truthy(call, :name, "name"))
+    name = normalize_name(Handbeam.Utils.SafeMap.get_any(call, :name, "name"))
 
-    input = Handbeam.Utils.SafeMap.get_first_truthy(call, :input, "input") || %{}
+    input = Handbeam.Utils.SafeMap.get_any(call, :input, "input") || %{}
     do_pattern(name, input)
   end
 

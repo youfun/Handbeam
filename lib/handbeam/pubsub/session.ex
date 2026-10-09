@@ -635,7 +635,7 @@ defmodule Handbeam.PubSub.Session do
   end
 
   defp payload_run_id(payload) when is_map(payload) do
-    Handbeam.Utils.SafeMap.get_first_truthy(payload, :run_id, "run_id")
+    Handbeam.Utils.SafeMap.get_any(payload, :run_id, "run_id")
   end
 
   defp payload_run_id(_payload), do: nil

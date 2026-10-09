@@ -89,7 +89,7 @@ defmodule Handbeam.Agent.Tool do
   end
 
   defp working_directory(context) when is_map(context) do
-    Handbeam.Utils.SafeMap.get_first_truthy(context, :working_directory, "working_directory")
+    Handbeam.Utils.SafeMap.get_any(context, :working_directory, "working_directory")
   end
 
   defp working_directory(_context), do: nil

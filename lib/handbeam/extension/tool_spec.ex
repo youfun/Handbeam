@@ -41,11 +41,11 @@ defmodule Handbeam.Extension.ToolSpec do
         extension: extension,
         name: tool_name,
         handbeam_name: handbeam_name,
-        description: Handbeam.Utils.SafeMap.get_first_truthy(opts, :description, "description"),
+        description: Handbeam.Utils.SafeMap.get_any(opts, :description, "description"),
         input_schema:
-          Handbeam.Utils.SafeMap.get_first_truthy(opts, :input_schema, "input_schema") || %{},
+          Handbeam.Utils.SafeMap.get_any(opts, :input_schema, "input_schema") || %{},
         permissions:
-          Handbeam.Utils.SafeMap.get_first_truthy(opts, :permissions, "permissions") || %{}
+          Handbeam.Utils.SafeMap.get_any(opts, :permissions, "permissions") || %{}
       }
 
       {:ok, spec}

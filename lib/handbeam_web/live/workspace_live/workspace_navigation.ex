@@ -90,10 +90,10 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
   def close_file_browser(socket), do: assign(socket, :show_file_browser, false)
 
   def import_workspace(socket, item) when is_map(item) do
-    path = Handbeam.Utils.SafeMap.get_first_truthy(item, :path, "path")
+    path = Handbeam.Utils.SafeMap.get_any(item, :path, "path")
 
     name =
-      Handbeam.Utils.SafeMap.get_first_truthy(item, :name, "name") ||
+      Handbeam.Utils.SafeMap.get_any(item, :name, "name") ||
         Path.basename(to_string(path || ""))
 
     cond do

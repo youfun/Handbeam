@@ -140,7 +140,7 @@ defmodule Handbeam.Tool.Builtin.Git do
 
   def execute(%{"action" => action} = input, context) when is_binary(action) do
     workspace =
-      Handbeam.Utils.SafeMap.get_first_truthy(context, :working_directory, "working_directory")
+      Handbeam.Utils.SafeMap.get_any(context, :working_directory, "working_directory")
 
     with {:ok, action} <- parse_action(action),
          {:ok, opts} <- action_opts(action, input) do

@@ -7,7 +7,7 @@ defmodule Handbeam.Agent.Auth.CodexCredential do
   alias Handbeam.Agent.Auth.{CodexOAuth, Epoch, RefreshLock, Storage}
 
   def store_login(provider_id, credential, opts \\ []) do
-    access = Handbeam.Utils.SafeMap.get_first_truthy(credential, :access, "access")
+    access = Handbeam.Utils.SafeMap.get_any(credential, :access, "access")
 
     with {:ok, _account} <- CodexOAuth.account_id(access) do
       RefreshLock.trans(provider_id, fn ->

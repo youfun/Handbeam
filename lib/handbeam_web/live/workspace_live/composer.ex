@@ -17,7 +17,7 @@ defmodule HandbeamWeb.WorkspaceLive.Composer do
     attachments =
       Enum.reject(
         socket.assigns.pending_attachments,
-        &(Handbeam.Utils.SafeMap.get_first_truthy(&1, :id, "id") == id)
+        &(Handbeam.Utils.SafeMap.get_any(&1, :id, "id") == id)
       )
 
     assign(socket, :pending_attachments, attachments)
@@ -203,7 +203,7 @@ defmodule HandbeamWeb.WorkspaceLive.Composer do
   def attachment_filename(_), do: "image"
 
   def image_attachment?(att) when is_map(att) do
-    to_string(Handbeam.Utils.SafeMap.get_first_truthy(att, "kind", :kind) || "") != "text"
+    to_string(Handbeam.Utils.SafeMap.get_any(att, "kind", :kind) || "") != "text"
   end
 
   def image_attachment?(_), do: false
@@ -250,7 +250,7 @@ defmodule HandbeamWeb.WorkspaceLive.Composer do
     attachments = Enum.take(socket.assigns.pending_attachments ++ new, 4)
     {assign(socket, :pending_attachments, attachments), attachments}
   rescue
-    error ->
+    error in File.Error ->
       socket = assign(socket, :composer_error, Exception.message(error))
       {socket, socket.assigns.pending_attachments}
   end
@@ -281,7 +281,7 @@ defmodule HandbeamWeb.WorkspaceLive.Composer do
   end
 
   defp merge_upload_urls(original, persistable) do
-    by_id = Map.new(original, &{Handbeam.Utils.SafeMap.get_first_truthy(&1, :id, "id"), &1})
+    by_id = Map.new(original, &{Handbeam.Utils.SafeMap.get_any(&1, :id, "id"), &1})
 
     Enum.map(persistable, fn attachment ->
       case by_id[attachment["id"]] do

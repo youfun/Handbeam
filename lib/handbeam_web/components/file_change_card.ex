@@ -394,7 +394,7 @@ defmodule HandbeamWeb.FileChangeCard do
   defp entry_id(%{id: id}) when is_binary(id), do: id
 
   defp entry_id(entry),
-    do: to_string(Handbeam.Utils.SafeMap.get_first_truthy(entry, "id", :id) || "change")
+    do: to_string(Handbeam.Utils.SafeMap.get_any(entry, "id", :id) || "change")
 
   defp count(lines, :add), do: Enum.count(lines, &(&1["type"] in ["ins", "add", "added", "+"]))
 

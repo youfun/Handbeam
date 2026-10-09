@@ -50,9 +50,9 @@ defmodule Handbeam.Attachments.MessageBuilder do
   defp promote(map, opts) when is_map(map) do
     workspace = Keyword.get(opts, :workspace_path)
     conversation_id = Keyword.get(opts, :conversation_id)
-    relative = Handbeam.Utils.SafeMap.get_first_truthy(map, :relative_path, "relative_path")
-    storage = Handbeam.Utils.SafeMap.get_first_truthy(map, :storage_path, "storage_path")
-    controlled = Handbeam.Utils.SafeMap.get_first_truthy(map, :controlled_path, "controlled_path")
+    relative = Handbeam.Utils.SafeMap.get_any(map, :relative_path, "relative_path")
+    storage = Handbeam.Utils.SafeMap.get_any(map, :storage_path, "storage_path")
+    controlled = Handbeam.Utils.SafeMap.get_any(map, :controlled_path, "controlled_path")
 
     cond do
       Keyword.get(opts, :chat_scope) == :free and is_binary(relative) and
@@ -61,7 +61,7 @@ defmodule Handbeam.Attachments.MessageBuilder do
              :ok <-
                Access.verify_canonical(
                  path,
-                 Handbeam.Utils.SafeMap.get_first_truthy(map, :mime_type, "mime_type")
+                 Handbeam.Utils.SafeMap.get_any(map, :mime_type, "mime_type")
                ) do
           {:ok, promoted_map(map, path, Path.basename(relative))}
         end
@@ -71,7 +71,7 @@ defmodule Handbeam.Attachments.MessageBuilder do
              :ok <-
                Access.verify_canonical(
                  path,
-                 Handbeam.Utils.SafeMap.get_first_truthy(map, :mime_type, "mime_type")
+                 Handbeam.Utils.SafeMap.get_any(map, :mime_type, "mime_type")
                ) do
           {:ok, promoted_map(map, path, relative)}
         end
@@ -79,16 +79,16 @@ defmodule Handbeam.Attachments.MessageBuilder do
       is_binary(controlled) ->
         imported = %Imported{
           attachment_id:
-            Handbeam.Utils.SafeMap.get_first_truthy(map, :id, "id") || map[:attachment_id] ||
+            Handbeam.Utils.SafeMap.get_any(map, :id, "id") || map[:attachment_id] ||
               Ecto.UUID.generate(),
-          source: Handbeam.Utils.SafeMap.get_first_truthy(map, :source, "source") || :picker,
+          source: Handbeam.Utils.SafeMap.get_any(map, :source, "source") || :picker,
           display_name:
-            Handbeam.Utils.SafeMap.get_first_truthy(map, :filename, "filename") ||
+            Handbeam.Utils.SafeMap.get_any(map, :filename, "filename") ||
               map[:display_name] || "attachment",
           canonical_type:
-            Handbeam.Utils.SafeMap.get_first_truthy(map, :mime_type, "mime_type") ||
+            Handbeam.Utils.SafeMap.get_any(map, :mime_type, "mime_type") ||
               map[:canonical_type],
-          source_mime: Handbeam.Utils.SafeMap.get_first_truthy(map, :source_mime, "source_mime"),
+          source_mime: Handbeam.Utils.SafeMap.get_any(map, :source_mime, "source_mime"),
           size_bytes: 0,
           controlled_path: controlled,
           state: :staged
@@ -129,16 +129,16 @@ defmodule Handbeam.Attachments.MessageBuilder do
     {:ok, %File.Stat{size: size}} = File.lstat(path)
 
     %{
-      id: Handbeam.Utils.SafeMap.get_first_truthy(map, :id, "id"),
-      kind: Handbeam.Utils.SafeMap.get_first_truthy(map, :kind, "kind"),
-      mime_type: Handbeam.Utils.SafeMap.get_first_truthy(map, :mime_type, "mime_type"),
+      id: Handbeam.Utils.SafeMap.get_any(map, :id, "id"),
+      kind: Handbeam.Utils.SafeMap.get_any(map, :kind, "kind"),
+      mime_type: Handbeam.Utils.SafeMap.get_any(map, :mime_type, "mime_type"),
       filename:
-        Handbeam.Utils.SafeMap.get_first_truthy(map, :filename, "filename") || map[:display_name],
+        Handbeam.Utils.SafeMap.get_any(map, :filename, "filename") || map[:display_name],
       size_bytes: size,
       storage_path: path,
       relative_path: relative,
-      source: Handbeam.Utils.SafeMap.get_first_truthy(map, :source, "source") || :picker,
-      url: Handbeam.Utils.SafeMap.get_first_truthy(map, :url, "url")
+      source: Handbeam.Utils.SafeMap.get_any(map, :source, "source") || :picker,
+      url: Handbeam.Utils.SafeMap.get_any(map, :url, "url")
     }
   end
 

@@ -108,7 +108,7 @@ defmodule Handbeam.ConversationTranscriptStore.ConversationStore do
     |> Map.put_new("created_at", now)
     |> Map.put(
       "updated_at",
-      Handbeam.Utils.SafeMap.get_first_truthy(entry, "updated_at", :updated_at) || now
+      Handbeam.Utils.SafeMap.get_any(entry, "updated_at", :updated_at) || now
     )
   end
 

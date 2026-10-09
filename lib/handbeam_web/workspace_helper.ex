@@ -85,7 +85,7 @@ defmodule HandbeamWeb.WorkspaceHelper do
       &(get_in(&1, ["origin", "kind"]) == "thread" or &1["content_type"] == "thread_handoff")
     )
     |> Enum.find_value(fn entry ->
-      content = Handbeam.Utils.SafeMap.get_first_truthy(entry, "content", :content)
+      content = Handbeam.Utils.SafeMap.get_any(entry, "content", :content)
       if is_binary(content) and content != "", do: content
     end)
     |> case do
@@ -108,12 +108,12 @@ defmodule HandbeamWeb.WorkspaceHelper do
     |> Enum.filter(&user_msg_entry?/1)
     |> Enum.with_index(1)
     |> Enum.flat_map(fn {entry, index} ->
-      case Handbeam.Utils.SafeMap.get_first_truthy(entry, "id", :id) do
+      case Handbeam.Utils.SafeMap.get_any(entry, "id", :id) do
         id when is_binary(id) and id != "" ->
-          content = Handbeam.Utils.SafeMap.get_first_truthy(entry, "content", :content)
+          content = Handbeam.Utils.SafeMap.get_any(entry, "content", :content)
 
           attachments =
-            Handbeam.Utils.SafeMap.get_first_truthy(entry, "attachments", :attachments) || []
+            Handbeam.Utils.SafeMap.get_any(entry, "attachments", :attachments) || []
 
           [
             %{
@@ -140,7 +140,7 @@ defmodule HandbeamWeb.WorkspaceHelper do
   defp user_msg_entry?(_entry), do: false
 
   defp user_message_nav_age(entry) do
-    timestamp = Handbeam.Utils.SafeMap.get_first_truthy(entry, "created_at", :created_at)
+    timestamp = Handbeam.Utils.SafeMap.get_any(entry, "created_at", :created_at)
 
     case timestamp && DateTime.from_iso8601(timestamp) do
       {:ok, dt, _} ->
@@ -193,7 +193,7 @@ defmodule HandbeamWeb.WorkspaceHelper do
 
   @doc "Conversation card for a registered preview_id."
   def preview_card(entry) when is_map(entry) do
-    details = Handbeam.Utils.SafeMap.get_first_truthy(entry, "details", :details) || %{}
+    details = Handbeam.Utils.SafeMap.get_any(entry, "details", :details) || %{}
     preview_id = map_get(details, "preview_id") || map_get(entry, "preview_id")
 
     if is_binary(preview_id) do
@@ -210,7 +210,7 @@ defmodule HandbeamWeb.WorkspaceHelper do
 
   @doc "Explicit takeover prompt from a browser tool result. Never auto-covers chat."
   def browser_takeover_prompt(entry) when is_map(entry) do
-    details = Handbeam.Utils.SafeMap.get_first_truthy(entry, "details", :details) || %{}
+    details = Handbeam.Utils.SafeMap.get_any(entry, "details", :details) || %{}
 
     if map_get(details, "needs_user") in [true, "true"] do
       %{
@@ -562,7 +562,7 @@ defmodule HandbeamWeb.WorkspaceHelper do
   defp tool_name(_), do: "tool"
 
   defp entry_id(entry) when is_map(entry) do
-    case Handbeam.Utils.SafeMap.get_first_truthy(entry, "id", :id) do
+    case Handbeam.Utils.SafeMap.get_any(entry, "id", :id) do
       id when is_binary(id) -> id
       id when is_atom(id) -> Atom.to_string(id)
       id -> to_string(id)
