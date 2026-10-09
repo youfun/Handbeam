@@ -101,11 +101,6 @@ defmodule Handbeam.Agent.CandidateQueue do
     end
   end
 
-  defp put_persisted_id(item, %{"id" => id}) when is_binary(id),
-    do: %{item | message: %{item.message | id: id}}
-
-  defp put_persisted_id(item, _entry), do: item
-
   def handle_call({:drain, deliver_as}, _from, state) do
     queue = Map.fetch!(state, deliver_as)
     messages = :queue.to_list(queue) |> Enum.map(& &1.message)
@@ -175,6 +170,11 @@ defmodule Handbeam.Agent.CandidateQueue do
   end
 
   def handle_info(_msg, state), do: {:noreply, state}
+
+  defp put_persisted_id(item, %{"id" => id}) when is_binary(id),
+    do: %{item | message: %{item.message | id: id}}
+
+  defp put_persisted_id(item, _entry), do: item
 
   defp normalize_message(%Message{} = message, deliver_as, opts) do
     id = Keyword.get(opts, :message_id) || message.id || unique_id("msg-user")
