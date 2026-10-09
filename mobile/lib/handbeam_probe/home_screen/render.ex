@@ -214,26 +214,28 @@ defmodule HandbeamProbe.HomeScreen.Render do
     node(:column, [fill_width: true, padding_bottom: 8], [
       segment_row([
         tab_button(gettext("Model / AI"), {:page, :models}, page == :models),
-        tab_button(gettext("Workspaces"), {:page, :workspace}, page == :workspace)
+        tab_button(gettext("Workspaces"), {:page, :workspace}, page == :workspace),
+        tab_button(gettext("MCP"), {:page, :mcp}, page == :mcp)
       ]),
       segment_row(
         [
-          tab_button(gettext("MCP"), {:page, :mcp}, page == :mcp),
           tab_button(gettext("Git"), {:page, :git}, page == :git),
-          tab_button(gettext("App"), {:page, :app}, page == :app)
-        ],
-        padding_top: 8
-      ),
-      segment_row(
-        [
-          tab_button(gettext("UI"), {:page, :appearance}, page == :appearance,
-            background: if(page == :appearance, do: color(:muted), else: color(:control)),
-            text_color: if(page == :appearance, do: color(:card), else: color(:muted))
-          )
+          tab_button(gettext("App"), {:page, :app}, page == :app),
+          appearance_tab(page)
         ],
         padding_top: 8
       )
     ])
+  end
+
+  # Appearance is not built yet. Keep it the same size as the other tabs,
+  # and only quiet the label, so it does not stretch into a section bar.
+  defp appearance_tab(page) do
+    selected? = page == :appearance
+
+    tab_button(gettext("UI"), {:page, :appearance}, selected?,
+      text_color: if(selected?, do: color(:card), else: color(:hint))
+    )
   end
 
   defp settings_body(%{page: :models} = a),

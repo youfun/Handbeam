@@ -222,7 +222,7 @@ defmodule HandbeamProbe.ModelSettings.Render do
         {:model_field, :om_max_recent_context},
         keyboard: "number"
       ),
-      primary_button(gettext("Save memory details"), :save_memory_details, fill_width: true)
+      secondary_button(gettext("Save memory details"), :save_memory_details, fill_width: true)
     ]
   end
 
@@ -271,7 +271,10 @@ defmodule HandbeamProbe.ModelSettings.Render do
               policy_default_options(state),
               "select-policy-default"
             ),
-            primary_button(gettext("Save workspace policy"), :save_policy, fill_width: true)
+            secondary_button(gettext("Save workspace policy"), :save_policy,
+              fill_width: true,
+              padding_top: 8
+            )
           ]
       )
     ]
@@ -299,7 +302,7 @@ defmodule HandbeamProbe.ModelSettings.Render do
           text(gettext("Available Models"), text_size: 16, weight: 1)
           | spaced([
               secondary_button(gettext("Add provider"), :add_provider),
-              primary_button(gettext("Add model"), :add_model)
+              secondary_button(gettext("Add model"), :add_model)
             ])
         ],
         align: "center",
@@ -351,18 +354,7 @@ defmodule HandbeamProbe.ModelSettings.Render do
 
       provider ->
         models = Enum.filter(state.models, &(&1.provider_id == provider.id))
-
-        [provider_row(provider, models)] ++
-          if(models == [],
-            do: [
-              text(gettext("No models yet for this provider."),
-                text_size: 12,
-                text_color: color(:hint),
-                padding_top: 8
-              )
-            ],
-            else: Enum.map(models, &model_row/1)
-          )
+        [provider_row(provider, models)]
     end
   end
 
@@ -372,22 +364,45 @@ defmodule HandbeamProbe.ModelSettings.Render do
         do: gettext("This provider has no models yet."),
         else: gettext("%{count} models", count: length(models))
 
-    card([
-      row(
-        [
-          text(provider.name, text_size: 15, weight: 1)
-          | provider_actions(provider)
-        ],
-        align: "center"
-      ),
-      text(Labels.key_status(provider.key_status),
+    card(
+      [
+        row(
+          [
+            text(provider.name, text_size: 15, weight: 1)
+            | provider_actions(provider)
+          ],
+          align: "center"
+        ),
+        text(Labels.key_status(provider.key_status),
+          text_size: 12,
+          text_color: color(:hint),
+          padding_top: 6
+        ),
+        text(count_line, text_size: 12, text_color: color(:hint), padding_bottom: 8),
+        quiet_button(gettext("Delete provider"), {:ask_delete_provider, provider.id},
+          text_color: color(:danger)
+        )
+      ] ++ provider_models(models)
+    )
+  end
+
+  defp provider_models([]) do
+    [
+      text(gettext("No models yet for this provider."),
         text_size: 12,
         text_color: color(:hint),
-        padding_top: 6
-      ),
-      text(count_line, text_size: 12, text_color: color(:hint), padding_bottom: 8),
-      danger_button(gettext("Delete provider"), {:ask_delete_provider, provider.id})
-    ])
+        padding_top: 8
+      )
+    ]
+  end
+
+  defp provider_models(models) do
+    Enum.flat_map(models, fn model ->
+      [
+        node(:box, height: 1, fill_width: true, background: color(:separator)),
+        model_row(model)
+      ]
+    end)
   end
 
   defp provider_actions(provider) do
@@ -410,12 +425,8 @@ defmodule HandbeamProbe.ModelSettings.Render do
       [
         fill_width: true,
         align: "center",
-        padding: 10,
-        padding_bottom: 2,
-        background: color(:card),
-        border_color: color(:border),
-        border_width: 1,
-        corner_radius: 8,
+        padding_top: 10,
+        padding_bottom: 4,
         on_tap: {self(), edit},
         id: "model-row-#{model.provider_id}-#{model.model_id}"
       ],
