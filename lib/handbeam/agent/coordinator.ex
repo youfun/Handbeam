@@ -645,9 +645,7 @@ defmodule Handbeam.Agent.Coordinator do
       {:ok, entries} ->
         entries
         |> Enum.reject(&(current_run_id && Map.get(&1, "run_id") == current_run_id))
-        |> Enum.flat_map(
-          &Handbeam.Attachments.History.to_messages(&1, workspace_path, conversation_id)
-        )
+        |> Handbeam.Attachments.History.to_messages(workspace_path, conversation_id)
 
       {:error, reason} ->
         Logger.warning(fn ->

@@ -45,7 +45,7 @@ defmodule Handbeam.Agent.CompactorTest do
     def stream(messages, tool_defs, config, _on_chunk), do: complete(messages, tool_defs, config)
   end
 
-  defp build_state(messages, opts \\ []) do
+  defp build_state(messages, opts) do
     provider = Keyword.get(opts, :provider, ProbeProvider)
     provider_config = Keyword.get(opts, :provider_config, %{})
     max_tokens = Keyword.get(opts, :max_tokens, 200)
@@ -172,9 +172,11 @@ defmodule Handbeam.Agent.CompactorTest do
       {:compacted, compacted} = Compactor.maybe_compact(state)
 
       assert_received {:summary_request, request_messages, [], config}
-      parent = Enum.take(request_messages, length(messages))
-      assert Enum.map(parent, & &1.content) == Enum.map(messages, & &1.content)
-      assert config.system_prompt == state.config.system_prompt
+      assert Enum.map(request_messages, & &1.content) |> hd() == String.duplicate("a", 900)
+      refute Enum.any?(request_messages, &(&1.content == "original request"))
+      refute Enum.any?(request_messages, &(&1.content == "latest"))
+      refute config.system_prompt == state.config.system_prompt
+      refute Map.has_key?(config, :cache_fork)
       assert List.last(request_messages).role == :user
       assert List.last(request_messages).content =~ "## Goal"
 
@@ -190,9 +192,10 @@ defmodule Handbeam.Agent.CompactorTest do
       assert Enum.at(compacted.messages, 1).role == :user
       assert summary_message?(Enum.at(compacted.messages, 1))
       assert Enum.at(compacted.messages, 1).content =~ "Alpha goal"
+      assert Compactor.request_tokens(compacted.messages, nil) < state.config.max_tokens
     end
 
-    test "keeps the parent tool definitions and ignores a summary that calls tools" do
+    test "removes parent tool definitions and ignores a summary that calls tools" do
       messages = [
         Message.user("original request"),
         Message.assistant(String.duplicate("a", 900)),
@@ -210,10 +213,62 @@ defmodule Handbeam.Agent.CompactorTest do
 
       {:compacted, compacted} = Compactor.maybe_compact(state, tool_defs: tool_defs)
 
-      assert_received {:summary_request, request_messages, ^tool_defs, config}
-      assert config.system_prompt == state.config.system_prompt
-      assert hd(request_messages).content == "original request"
+      assert_received {:summary_request, request_messages, [], config}
+      refute config.system_prompt == state.config.system_prompt
+      refute Enum.any?(request_messages, &(&1.content == "original request"))
       refute Enum.any?(compacted.messages, &summary_message?/1)
+    end
+
+    test "isolates and sanitizes the history sent to the summarizer" do
+      encrypted = String.duplicate("cipher", 2_000)
+      tool_output = String.duplicate("result", 1_000)
+
+      old_reasoning = %{
+        type: "responses_reasoning",
+        item: %{type: "reasoning", encrypted_content: encrypted}
+      }
+
+      recent_reasoning = %{
+        type: "responses_reasoning",
+        item: %{type: "reasoning", encrypted_content: "recent-cipher"}
+      }
+
+      messages = [
+        Message.user("original request"),
+        Message.assistant_blocks([old_reasoning, %{type: "image", data: "old-image"}]),
+        Message.tool_results([
+          %{type: "tool_result", tool_use_id: "old", content: tool_output, images: ["image"]}
+        ]),
+        Message.user(String.duplicate("boundary", 500)),
+        Message.assistant_blocks([recent_reasoning, %{type: "text", text: "recent"}]),
+        Message.user("latest")
+      ]
+
+      state =
+        build_state(messages,
+          max_tokens: 2_000,
+          compaction: [reserve_tokens: 100, keep_recent_tokens: 1_500],
+          provider_config: %{
+            summary_response: {:ok, summary_text("Sanitized")},
+            test_pid: self(),
+            cache_fork: true,
+            previous_response_id: "parent-response",
+            use_previous_response_id: true
+          }
+        )
+
+      {:compacted, compacted} = Compactor.maybe_compact(state)
+
+      assert_received {:summary_request, request_messages, [], config}
+      serialized = inspect(request_messages, limit: :infinity, printable_limit: :infinity)
+      refute serialized =~ encrypted
+      refute serialized =~ "old-image"
+      refute serialized =~ String.duplicate("result", 400)
+      refute Map.has_key?(config, :cache_fork)
+      refute Map.has_key?(config, :previous_response_id)
+      refute config.use_previous_response_id
+      assert Enum.any?(compacted.messages, &(&1 == Enum.at(messages, 4)))
+      assert Compactor.request_tokens(compacted.messages, nil) < state.config.max_tokens
     end
 
     test "preserves recent messages intact based on the keep_recent_tokens budget" do
@@ -332,18 +387,34 @@ defmodule Handbeam.Agent.CompactorTest do
     end
 
     test "falls back to truncation when summary generation fails" do
-      long_text = String.duplicate("a", 500)
+      long_text = String.duplicate("a", 5_000)
+      encrypted = String.duplicate("encrypted", 2_000)
+      tool_output = String.duplicate("tool-result", 1_000)
+
+      old_blocks = [
+        %{
+          type: "responses_reasoning",
+          item: %{type: "reasoning", encrypted_content: encrypted}
+        },
+        %{type: "tool_result", tool_use_id: "old", content: tool_output, images: ["image"]}
+      ]
+
+      recent_reasoning = %{
+        type: "responses_reasoning",
+        item: %{type: "reasoning", encrypted_content: "recent-encrypted"}
+      }
 
       messages = [
         Message.user("original"),
+        Message.assistant_blocks(old_blocks),
         Message.assistant(long_text),
-        Message.assistant("recent"),
+        Message.assistant_blocks([recent_reasoning, %{type: "text", text: "recent"}]),
         Message.user("latest")
       ]
 
       state =
         build_state(messages,
-          max_tokens: 120,
+          max_tokens: 4_000,
           compaction: [reserve_tokens: 20, keep_recent_tokens: 20],
           provider_config: %{summary_response: {:error, :boom}, test_pid: self()}
         )
@@ -352,8 +423,14 @@ defmodule Handbeam.Agent.CompactorTest do
         ExUnit.CaptureLog.capture_log(fn ->
           {:compacted, compacted} = Compactor.maybe_compact(state)
           compacted_msg = Enum.at(compacted.messages, 1)
-          assert String.length(compacted_msg.content) <= 203
+          serialized = inspect(compacted_msg, limit: :infinity, printable_limit: :infinity)
+          refute serialized =~ encrypted
+          refute serialized =~ "image"
+          assert serialized =~ "[truncated for compaction]"
+          assert String.length(hd(compacted_msg.content).content) <= 2_030
+          assert Enum.at(compacted.messages, 3) == Enum.at(messages, 3)
           refute Enum.any?(compacted.messages, &summary_message?/1)
+          assert Compactor.request_tokens(compacted.messages, nil) < state.config.max_tokens
         end)
 
       assert log =~ "summary compaction failed, falling back to truncation"

@@ -10,6 +10,7 @@ defmodule Handbeam.Agent.Compactor do
 
   @default_keep_recent 10
   @truncate_length 200
+  @summary_tool_result_length 2_000
   @summary_prefix "Previous analysis summary (from earlier in this session):"
 
   @summary_system_prompt """
@@ -98,6 +99,20 @@ defmodule Handbeam.Agent.Compactor do
 
   def request_tokens(messages, _anchor), do: estimate_messages_tokens(messages)
 
+  @doc "Estimate a complete provider request, including uncached system and tool payloads."
+  @spec request_tokens([Message.t()], map() | nil, keyword()) :: non_neg_integer()
+  def request_tokens(messages, anchor, opts) when is_list(opts) do
+    message_tokens = request_tokens(messages, anchor)
+
+    if is_map(anchor) do
+      message_tokens
+    else
+      message_tokens +
+        estimate_payload_tokens(Keyword.get(opts, :system_prompt)) +
+        estimate_payload_tokens(Keyword.get(opts, :tool_defs, []))
+    end
+  end
+
   defp compact_messages_in_state(%State{} = state, messages, opts) do
     keep_recent_tokens = compaction_limit(:keep_recent_tokens, state.config, 20_000)
 
@@ -154,26 +169,36 @@ defmodule Handbeam.Agent.Compactor do
 
   defp prepare_summary_compaction(_, _keep_recent_tokens), do: :noop
 
-  defp summarize_compaction(_prepared, %State{} = state, messages, opts) do
+  defp summarize_compaction(prepared, %State{} = state, _messages, opts) do
     provider = state.config.provider
-    tool_defs = Keyword.get(opts, :tool_defs, [])
-    {request_messages, suffix_count} = append_compaction_suffix(messages)
+
+    summary_messages =
+      [prepared.previous_summary | prepared.messages_to_summarize]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.map(&sanitize_summary_message/1)
+
+    {request_messages, _suffix_count} = append_compaction_suffix(summary_messages)
 
     config =
       opts
       |> Keyword.get(:provider_config, state.config.provider_config)
       |> Map.delete(:provider_state)
       |> Map.delete("provider_state")
-      |> Map.put(:system_prompt, state.config.system_prompt)
-      |> Map.put(:cache_fork, true)
-      |> Map.put(:cache_fork_suffix, suffix_count)
+      |> Map.delete(:previous_response_id)
+      |> Map.delete("previous_response_id")
+      |> Map.put(:use_previous_response_id, false)
+      |> Map.delete(:cache_fork)
+      |> Map.delete(:cache_fork_suffix)
+      |> Map.delete("cache_fork")
+      |> Map.delete("cache_fork_suffix")
+      |> Map.put(:system_prompt, @summary_system_prompt)
 
     Logger.warning(
-      "[Compactor] summary_request system_prompt=parent tools=#{length(tool_defs)} " <>
-        "messages=#{length(request_messages)} serialized=false"
+      "[Compactor] summary_request system_prompt=isolated tools=0 " <>
+        "messages=#{length(request_messages)}"
     )
 
-    with {:ok, response} <- provider.complete(request_messages, tool_defs, config),
+    with {:ok, response} <- provider.complete(request_messages, [], config),
          :ok <- log_summary_usage(response),
          :ok <- reject_tool_calls(response),
          {:ok, summary_text} <- extract_summary_text(response) do
@@ -204,6 +229,32 @@ defmodule Handbeam.Agent.Compactor do
     #{@summary_prompt}
     """
   end
+
+  defp sanitize_summary_message(%Message{content: blocks} = message) when is_list(blocks) do
+    blocks =
+      blocks
+      |> Enum.reject(&reasoning_or_image_block?/1)
+      |> Enum.map(&sanitize_summary_block/1)
+
+    %{message | content: blocks}
+  end
+
+  defp sanitize_summary_message(message), do: message
+
+  defp reasoning_or_image_block?(block) when is_map(block) do
+    block_type(block) in ["responses_reasoning", "thinking", "image"]
+  end
+
+  defp reasoning_or_image_block?(_block), do: false
+
+  defp sanitize_summary_block(block) when is_map(block) do
+    block
+    |> truncate_tool_result(@summary_tool_result_length)
+    |> Map.delete(:images)
+    |> Map.delete("images")
+  end
+
+  defp sanitize_summary_block(block), do: block
 
   defp reject_tool_calls(%{messages: messages}) when is_list(messages) do
     if Enum.any?(messages, &tool_call_message?/1),
@@ -320,13 +371,15 @@ defmodule Handbeam.Agent.Compactor do
 
   defp compact_message(%Message{content: blocks} = msg) when is_list(blocks) do
     compacted_blocks =
-      Enum.map(blocks, fn
-        %{type: type} = block when type in ["tool_result", "server_tool_result"] ->
-          %{block | content: "[compacted; old observations are not actionable]"}
+      blocks
+      |> Enum.reject(&reasoning_or_image_block?/1)
+      |> Enum.map(fn
+        block when is_map(block) ->
+          block
+          |> truncate_tool_result(@summary_tool_result_length)
+          |> truncate_thinking()
           |> Map.delete(:images)
-
-        %{type: "thinking", thinking: text} = block when byte_size(text) > @truncate_length ->
-          %{block | thinking: String.slice(text, 0, @truncate_length) <> "..."}
+          |> Map.delete("images")
 
         block ->
           block
@@ -344,6 +397,38 @@ defmodule Handbeam.Agent.Compactor do
   end
 
   defp compact_message(msg), do: msg
+
+  defp truncate_tool_result(block, limit) when is_map(block) do
+    type = block_type(block)
+    content = Map.get(block, :content) || Map.get(block, "content")
+
+    if type in ["tool_result", "server_tool_result"] and is_binary(content) and
+         String.length(content) > limit do
+      put_block_content(block, String.slice(content, 0, limit) <> "\n[truncated for compaction]")
+    else
+      block
+    end
+  end
+
+  defp truncate_thinking(%{type: "thinking", thinking: text} = block)
+       when is_binary(text) and byte_size(text) > @truncate_length do
+    %{block | thinking: String.slice(text, 0, @truncate_length) <> "..."}
+  end
+
+  defp truncate_thinking(%{"type" => "thinking", "thinking" => text} = block)
+       when is_binary(text) and byte_size(text) > @truncate_length do
+    %{block | "thinking" => String.slice(text, 0, @truncate_length) <> "..."}
+  end
+
+  defp truncate_thinking(block), do: block
+
+  defp block_type(block), do: Map.get(block, :type) || Map.get(block, "type")
+
+  defp put_block_content(block, content) do
+    if Map.has_key?(block, :content),
+      do: Map.put(block, :content, content),
+      else: Map.put(block, "content", content)
+  end
 
   defp find_cut_point(messages, keep_recent_tokens) when is_list(messages) and messages != [] do
     threshold_index = find_threshold_index(messages, keep_recent_tokens)
@@ -445,19 +530,43 @@ defmodule Handbeam.Agent.Compactor do
   defp estimate_message_tokens(%Message{content: blocks}) when is_list(blocks) do
     text_cost =
       blocks
-      |> Enum.map_join("\n", &inspect/1)
-      |> String.length()
+      |> Handbeam.JSON.encode!()
+      |> byte_size()
       |> then(&max(1, div(&1, 4)))
+
+    encrypted_reasoning_cost =
+      Enum.reduce(blocks, 0, fn block, cost ->
+        encrypted =
+          if block_type(block) == "responses_reasoning" do
+            item = Map.get(block, :item) || Map.get(block, "item") || %{}
+            Map.get(item, :encrypted_content) || Map.get(item, "encrypted_content")
+          end
+
+        if is_binary(encrypted), do: cost + div(byte_size(encrypted), 4), else: cost
+      end)
 
     # Two recent images are retained on the wire. Charge their visual cost,
     # not just a few tokens of opaque reference text.
-    text_cost +
+    text_cost + encrypted_reasoning_cost +
       Enum.reduce(blocks, 0, fn block, cost ->
-        cost + 6_000 * length(Map.get(block, :images, []))
+        images = Map.get(block, :images) || Map.get(block, "images") || []
+        cost + 6_000 * length(images)
       end)
   end
 
   defp estimate_message_tokens(_), do: 1
+
+  defp estimate_payload_tokens(nil), do: 0
+
+  defp estimate_payload_tokens(payload) when is_binary(payload),
+    do: max(1, div(byte_size(payload), 4))
+
+  defp estimate_payload_tokens(payload) do
+    payload
+    |> Handbeam.JSON.encode!()
+    |> byte_size()
+    |> then(&max(1, div(&1, 4)))
+  end
 
   defp fire_on_compaction(_middle, %State{config: %{on_compaction: nil}}), do: :ok
 

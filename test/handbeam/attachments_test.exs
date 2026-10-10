@@ -315,6 +315,39 @@ defmodule Handbeam.AttachmentsTest do
              %{type: "text", text: "visible"}
            ]
 
+    recent_item = %{
+      "type" => "reasoning",
+      "id" => "rs_recent",
+      "encrypted_content" => "enc-recent"
+    }
+
+    restored_window =
+      History.to_messages(
+        [
+          %{
+            "role" => "assistant",
+            "content" => "old visible",
+            "status" => "completed",
+            "content_blocks" => [%{"type" => "responses_reasoning", "item" => item}]
+          },
+          %{"role" => "user", "content" => String.duplicate("middle", 20_000)},
+          %{
+            "role" => "assistant",
+            "content" => "recent visible",
+            "status" => "completed",
+            "content_blocks" => [
+              %{"type" => "responses_reasoning", "item" => recent_item}
+            ]
+          }
+        ],
+        nil,
+        nil
+      )
+
+    [old, _middle, recent] = restored_window
+    refute Enum.any?(old.content, &(&1["type"] == "responses_reasoning"))
+    assert Enum.any?(recent.content, &(&1["type"] == "responses_reasoning"))
+
     [phased] =
       History.to_messages(
         %{

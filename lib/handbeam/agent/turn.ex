@@ -831,11 +831,46 @@ defmodule Handbeam.Agent.Turn do
     outbound_messages = ToolResultProjection.project(outbound_messages, stored, suffix_from)
 
     provider = state.config.provider
+    {provider_config, tool_defs} = completion_tool_defs(state, opts, provider_config)
+
+    estimated_tokens =
+      Compactor.request_tokens(outbound_messages, state.usage_anchor,
+        system_prompt: provider_config[:system_prompt],
+        tool_defs: tool_defs
+      )
+
+    if estimated_tokens > state.config.max_tokens do
+      error =
+        "Context remains too large after compaction " <>
+          "(estimated #{estimated_tokens} tokens, window #{state.config.max_tokens}); " <>
+          "request was not sent"
+
+      Logger.error("[Turn] #{error}")
+      mw_run(%{state | status: :error, error: error}, :on_error)
+    else
+      invoke_configured_provider_completion(
+        state,
+        opts,
+        outbound_messages,
+        provider_config,
+        provider,
+        tool_defs
+      )
+    end
+  end
+
+  defp invoke_configured_provider_completion(
+         state,
+         opts,
+         outbound_messages,
+         provider_config,
+         provider,
+         tool_defs
+       ) do
     streaming? = Keyword.get(opts, :streaming, false)
     {chunk_tracker, streamed_text_tracker} = start_stream_trackers(streaming?)
     on_chunk = completion_on_chunk(opts, streaming?, chunk_tracker, streamed_text_tracker)
     provider_config = prepare_completion_config(provider_config, opts, streaming?, on_chunk)
-    {provider_config, tool_defs} = completion_tool_defs(state, opts, provider_config)
 
     Logger.debug(
       "[Turn] provider call provider=#{inspect(provider)} streaming=#{streaming?} " <>
@@ -1404,43 +1439,47 @@ defmodule Handbeam.Agent.Turn do
 
     case result do
       {:error, reason} ->
-        retry_config = retry_config(state, provider_config)
+        if prompt_too_long?(format_error(reason)) do
+          result
+        else
+          retry_config = retry_config(state, provider_config)
 
-        case {Retry.should_retry_error?(reason, attempt, retry_config),
-              chunks_emitted?(chunk_tracker)} do
-          {{:retry, _delay_ms}, false} ->
-            if uncertain_cursor_error?(reason) do
-              result
-            else
-              remaining = remaining_budget_ms(loop_opts)
+          case {Retry.should_retry_error?(reason, attempt, retry_config),
+                chunks_emitted?(chunk_tracker)} do
+            {{:retry, _delay_ms}, false} ->
+              if uncertain_cursor_error?(reason) do
+                result
+              else
+                remaining = remaining_budget_ms(loop_opts)
 
-              case Retry.delay_ms(attempt, retry_config,
-                     retry_after_ms: retry_after_ms(reason),
-                     remaining_ms: remaining
-                   ) do
-                :budget_exceeded ->
-                  {:error, {:run_budget_exceeded, reason}}
+                case Retry.delay_ms(attempt, retry_config,
+                       retry_after_ms: retry_after_ms(reason),
+                       remaining_ms: remaining
+                     ) do
+                  :budget_exceeded ->
+                    {:error, {:run_budget_exceeded, reason}}
 
-                delay_ms ->
-                  retry_provider_call(
-                    provider,
-                    state,
-                    outbound_messages,
-                    tool_defs,
-                    provider_config,
-                    streaming?,
-                    on_chunk,
-                    chunk_tracker,
-                    attempt,
-                    delay_ms,
-                    reason,
-                    loop_opts
-                  )
+                  delay_ms ->
+                    retry_provider_call(
+                      provider,
+                      state,
+                      outbound_messages,
+                      tool_defs,
+                      provider_config,
+                      streaming?,
+                      on_chunk,
+                      chunk_tracker,
+                      attempt,
+                      delay_ms,
+                      reason,
+                      loop_opts
+                    )
+                end
               end
-            end
 
-          {_retry_result, _chunks_emitted?} ->
-            result
+            {_retry_result, _chunks_emitted?} ->
+              result
+          end
         end
 
       _ ->
@@ -2228,10 +2267,15 @@ defmodule Handbeam.Agent.Turn do
   defp uncertain_cursor_error?(_), do: false
 
   defp prompt_too_long?(reason) when is_binary(reason) do
-    String.contains?(reason, "context_length_exceeded") or
-      String.contains?(reason, "maximum context length") or
-      String.contains?(reason, "Prompt is too long") or
-      String.contains?(reason, "prompt too long")
+    normalized = String.downcase(reason)
+
+    String.contains?(normalized, "context_length_exceeded") or
+      String.contains?(normalized, "maximum context length") or
+      String.contains?(normalized, "prompt is too long") or
+      String.contains?(normalized, "prompt too long") or
+      (String.contains?(normalized, "exceeded request buffer limit") and
+         (String.contains?(normalized, "507") or String.contains?(normalized, "context") or
+            String.contains?(normalized, "prompt")))
   end
 
   defp prompt_too_long?(_), do: false

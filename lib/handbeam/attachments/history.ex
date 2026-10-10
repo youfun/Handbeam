@@ -4,13 +4,23 @@ defmodule Handbeam.Attachments.History do
   Missing or invalid images become explicit text, never silent text-only history.
   """
 
+  alias Handbeam.Agent.Compactor
   alias Handbeam.Agent.Message
   alias Handbeam.Attachments
   alias Handbeam.Attachments.Access
 
-  @spec to_messages(map(), String.t() | nil, String.t() | nil) :: [Message.t()]
-  def to_messages(entry, workspace_path, conversation_id \\ nil)
+  @reasoning_replay_recent_tokens 20_000
 
+  def to_messages(entry_or_entries, workspace_path, conversation_id \\ nil)
+
+  @spec to_messages([map()], String.t() | nil, String.t() | nil) :: [Message.t()]
+  def to_messages(entries, workspace_path, conversation_id) when is_list(entries) do
+    entries
+    |> Enum.flat_map(&to_messages(&1, workspace_path, conversation_id))
+    |> retain_recent_reasoning(@reasoning_replay_recent_tokens)
+  end
+
+  @spec to_messages(map(), String.t() | nil, String.t() | nil) :: [Message.t()]
   def to_messages(entry, workspace_path, conversation_id) when is_map(entry) do
     role = entry["role"]
     text = entry["content"]
@@ -39,6 +49,30 @@ defmodule Handbeam.Attachments.History do
   end
 
   def to_messages(_, _, _), do: []
+
+  defp retain_recent_reasoning(messages, token_budget) do
+    {kept, _tokens} =
+      messages
+      |> Enum.reverse()
+      |> Enum.map_reduce(0, fn message, tokens ->
+        without_reasoning = drop_reasoning(message)
+        next_tokens = tokens + Compactor.request_tokens([without_reasoning], nil)
+        kept_message = if tokens < token_budget, do: message, else: without_reasoning
+        {kept_message, next_tokens}
+      end)
+
+    Enum.reverse(kept)
+  end
+
+  defp drop_reasoning(%Message{content: blocks} = message) when is_list(blocks) do
+    %{message | content: Enum.reject(blocks, &reasoning_block?/1)}
+  end
+
+  defp drop_reasoning(message), do: message
+
+  defp reasoning_block?(%{"type" => "responses_reasoning"}), do: true
+  defp reasoning_block?(%{type: "responses_reasoning"}), do: true
+  defp reasoning_block?(_block), do: false
 
   defp restore_tool(entry, conversation_id) do
     images = Handbeam.Tool.Images.project(entry["images"])

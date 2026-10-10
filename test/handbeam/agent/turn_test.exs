@@ -91,6 +91,52 @@ defmodule Handbeam.Agent.TurnTest do
     def stream(messages, tools, config, _on_chunk), do: complete(messages, tools, config)
   end
 
+  defmodule BufferLimitProvider do
+    @behaviour Handbeam.Agent.Provider
+
+    alias Handbeam.Agent.Message
+
+    @impl true
+    def complete(messages, _tools, config) do
+      if String.starts_with?(config.system_prompt || "", "You are performing CONTEXT") do
+        send(config.notify, :summary_request)
+        {:error, :summary_unavailable}
+      else
+        send(config.notify, {:provider_request, messages})
+        key = {__MODULE__, config.error}
+        calls = Process.get(key, 0)
+        Process.put(key, calls + 1)
+
+        if calls == 0 do
+          {:error, config.error}
+        else
+          {:ok,
+           %{
+             stop_reason: :end_turn,
+             messages: [Message.assistant("Recovered after buffer compaction")],
+             usage: %{input_tokens: 5, output_tokens: 5}
+           }}
+        end
+      end
+    end
+
+    @impl true
+    def stream(messages, tools, config, _on_chunk), do: complete(messages, tools, config)
+  end
+
+  defmodule NeverCalledProvider do
+    @behaviour Handbeam.Agent.Provider
+
+    @impl true
+    def complete(_messages, _tools, config) do
+      send(config.notify, :provider_called)
+      {:error, :should_not_be_called}
+    end
+
+    @impl true
+    def stream(messages, tools, config, _on_chunk), do: complete(messages, tools, config)
+  end
+
   test "tool_start redacts secrets for every tool, not just browser" do
     config = %Config{
       provider: SensitiveInputProvider,
@@ -746,7 +792,7 @@ defmodule Handbeam.Agent.TurnTest do
         provider: FakeProvider,
         model: "fake",
         max_turns: 50,
-        max_tokens: 50,
+        max_tokens: 10_000,
         compaction: %{fallback: :truncate, reserve_tokens: 10, keep_recent_tokens: 5},
         provider_config: %{
           scenario: :prompt_too_long_once,
@@ -766,6 +812,76 @@ defmodule Handbeam.Agent.TurnTest do
 
       assert result.status == :completed
       assert List.last(result.messages).content =~ "Recovered after compaction"
+    end
+
+    test "classifies the Magpie 507 buffer error as prompt-too-long and compacts once" do
+      error =
+        "Codex: 507 Insufficient Storage: exceeded request buffer limit while retrying upstream"
+
+      config = %Config{
+        provider: BufferLimitProvider,
+        model: "fake",
+        max_turns: 50,
+        max_tokens: 10_000,
+        compaction: %{fallback: :truncate, reserve_tokens: 1_000, keep_recent_tokens: 20},
+        provider_config: %{error: error, notify: self(), max_retries: 3}
+      }
+
+      state =
+        State.init(config, [
+          Handbeam.Agent.Message.user("original"),
+          Handbeam.Agent.Message.assistant(String.duplicate("a", 4_000)),
+          Handbeam.Agent.Message.user("latest")
+        ])
+
+      result = Turn.run_loop(state, [])
+
+      assert_receive {:provider_request, first_request}
+      assert_receive :summary_request
+      assert_receive {:provider_request, second_request}
+      assert length(second_request) == length(first_request)
+
+      assert String.length(Enum.at(second_request, 1).content) <
+               String.length(Enum.at(first_request, 1).content)
+
+      assert result.status == :completed
+    end
+
+    test "does not classify an unrelated 507 as prompt-too-long" do
+      error = "Codex: 507 Insufficient Storage: account storage unavailable"
+
+      config = %Config{
+        provider: BufferLimitProvider,
+        model: "fake",
+        max_turns: 50,
+        max_tokens: 10_000,
+        provider_config: %{error: error, notify: self(), max_retries: 0}
+      }
+
+      result = Turn.run_loop(State.init(config, "hello"), [])
+
+      assert_receive {:provider_request, _messages}
+      refute_receive :summary_request
+      assert result.status == :error
+      assert result.error == error
+    end
+
+    test "does not send a request that remains over the window after compaction" do
+      config = %Config{
+        provider: NeverCalledProvider,
+        model: "fake",
+        max_turns: 50,
+        max_tokens: 100,
+        compaction: %{fallback: :truncate, reserve_tokens: 10, keep_recent_tokens: 5},
+        provider_config: %{notify: self()}
+      }
+
+      result = Turn.run_loop(State.init(config, String.duplicate("oversized", 2_000)), [])
+
+      refute_receive :provider_called
+      assert result.status == :error
+      assert result.error =~ "Context remains too large after compaction"
+      assert result.error =~ "request was not sent"
     end
   end
 

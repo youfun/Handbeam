@@ -808,11 +808,7 @@ defmodule Handbeam.Agent.Delegation do
 
       {:ok, entries} ->
         workspace = session.child_opts[:workspace_path]
-
-        Enum.flat_map(
-          entries,
-          &Handbeam.Attachments.History.to_messages(&1, workspace, session.id)
-        )
+        Handbeam.Attachments.History.to_messages(entries, workspace, session.id)
     end
   end
 
