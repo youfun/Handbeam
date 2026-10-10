@@ -257,7 +257,12 @@ defmodule Handbeam.Agent.Provider.OpenAIStreamTest do
             [%{"delta" => nil}],
             [%{"delta" => %{"content" => "Done"}, "finish_reason" => "stop"}]
           ] do
-        acc = OpenAIStream.process_event(new_acc(), %{"choices" => choices, "usage" => usage})
+        acc =
+          OpenAIStream.process_event(%{new_acc() | finish_reason: "stop"}, %{
+            "choices" => choices,
+            "usage" => usage
+          })
+
         assert {:ok, %{usage: result}} = OpenAIStream.build_response(acc)
         assert result.input_tokens == 100
         assert result.total_input_tokens == 100
@@ -274,7 +279,12 @@ defmodule Handbeam.Agent.Provider.OpenAIStreamTest do
         "prompt_tokens_details" => %{"cached_tokens" => 2000, "cache_write_tokens" => 400}
       }
 
-      acc = OpenAIStream.process_event(new_acc(), %{"choices" => [], "usage" => usage})
+      acc =
+        OpenAIStream.process_event(%{new_acc() | finish_reason: "stop"}, %{
+          "choices" => [],
+          "usage" => usage
+        })
+
       assert {:ok, %{usage: result}} = OpenAIStream.build_response(acc)
       assert result.input_tokens == 2600
       assert result.total_input_tokens == 2600
@@ -505,13 +515,13 @@ defmodule Handbeam.Agent.Provider.OpenAIStreamTest do
       assert {:ok, %{stop_reason: :tool_use}} =
                OpenAIStream.build_response(%{new_acc() | finish_reason: "tool_calls"})
 
-      assert {:ok, %{stop_reason: :end_turn}} =
+      assert {:error, "Provider output truncated (finish_reason=length)"} =
                OpenAIStream.build_response(%{new_acc() | finish_reason: "length"})
 
-      assert {:ok, %{stop_reason: :end_turn}} =
+      assert {:error, "Provider output blocked (finish_reason=content_filter)"} =
                OpenAIStream.build_response(%{new_acc() | finish_reason: "content_filter"})
 
-      assert {:ok, %{stop_reason: :end_turn}} =
+      assert {:error, "Provider stream ended with missing finish_reason"} =
                OpenAIStream.build_response(%{new_acc() | finish_reason: nil})
     end
   end

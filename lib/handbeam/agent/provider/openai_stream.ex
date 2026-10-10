@@ -23,6 +23,9 @@ defmodule Handbeam.Agent.Provider.OpenAIStream do
   alias Handbeam.Agent.Message
   alias Handbeam.Agent.Provider.SSE
 
+  @max_trailing_whitespace_bytes 2048
+  @default_receive_timeout 120_000
+
   @doc """
   Execute a streaming request against an OpenAI-compatible endpoint.
 
@@ -44,6 +47,8 @@ defmodule Handbeam.Agent.Provider.OpenAIStream do
       reasoning_content: "",
       tool_calls: %{},
       finish_reason: nil,
+      trailing_whitespace_bytes: 0,
+      stream_error: nil,
       usage: %{},
       on_chunk: on_chunk,
       tool_defs: tool_defs
@@ -61,6 +66,7 @@ defmodule Handbeam.Agent.Provider.OpenAIStream do
          body: Handbeam.JSON.encode!(body),
          into: stream_handler
        ] ++ req_options)
+      |> Keyword.put_new(:receive_timeout, @default_receive_timeout)
       |> Keyword.put(:retry, false)
 
     case req_mod.request(req_opts) do
@@ -101,42 +107,35 @@ defmodule Handbeam.Agent.Provider.OpenAIStream do
   end
 
   @doc false
-  def process_event(acc, %{"choices" => [%{"delta" => delta} | _]} = event) when is_map(delta) do
-    acc = %{acc | usage: event["usage"] || acc.usage}
-
-    acc =
-      case delta do
-        %{"content" => text} when is_binary(text) and text != "" ->
-          acc.on_chunk.(text)
-          %{acc | content: acc.content <> text}
-
-        _ ->
-          acc
-      end
-
-    acc =
-      case delta do
-        %{"reasoning_content" => text} when is_binary(text) and text != "" ->
-          %{acc | reasoning_content: acc.reasoning_content <> text}
-
-        _ ->
-          acc
-      end
-
-    acc = accumulate_tool_calls(acc, Map.get(delta, "tool_calls", []))
-
-    case event do
-      %{"choices" => [%{"finish_reason" => reason} | _]} when is_binary(reason) ->
-        %{acc | finish_reason: reason}
-
-      _ ->
-        acc
-    end
+  def process_event(acc, %{"error" => _} = event) do
+    {:halt, Map.put(acc, :stream_error, parse_error(200, event))}
   end
 
-  # Choices without a text delta can still carry the final usage totals.
-  def process_event(acc, %{"choices" => [%{} | _]} = event),
-    do: %{acc | usage: event["usage"] || acc.usage}
+  def process_event(acc, %{"choices" => [choice | _]} = event) when is_map(choice) do
+    acc = %{acc | usage: event["usage"] || acc.usage}
+    delta = choice["delta"] || %{}
+
+    with %{} = acc <- append_text(acc, delta["content"]) do
+      acc =
+        case delta do
+          %{"reasoning_content" => text} when is_binary(text) and text != "" ->
+            %{acc | reasoning_content: acc.reasoning_content <> text}
+
+          _ ->
+            acc
+        end
+
+      acc = accumulate_tool_calls(acc, Map.get(delta, "tool_calls", []))
+
+      case choice do
+        %{"finish_reason" => reason} when is_binary(reason) ->
+          %{acc | finish_reason: reason}
+
+        _ ->
+          acc
+      end
+    end
+  end
 
   def process_event(acc, %{"choices" => [], "usage" => usage}) when is_map(usage) do
     %{acc | usage: usage}
@@ -147,6 +146,32 @@ defmodule Handbeam.Agent.Provider.OpenAIStream do
   end
 
   def process_event(acc, _event), do: acc
+
+  defp append_text(acc, text) when is_binary(text) and text != "" do
+    trimmed = String.trim_trailing(text)
+
+    trailing =
+      if trimmed == "",
+        do: Map.get(acc, :trailing_whitespace_bytes, 0) + byte_size(text),
+        else: byte_size(text) - byte_size(trimmed)
+
+    if trailing >= @max_trailing_whitespace_bytes do
+      error = "Provider emitted #{@max_trailing_whitespace_bytes} bytes of consecutive whitespace"
+
+      # A single delta can contain both useful text and the runaway suffix.
+      if trimmed != "", do: acc.on_chunk.(trimmed)
+
+      {:halt, acc |> Map.put(:content, acc.content <> trimmed) |> Map.put(:stream_error, error)}
+    else
+      acc.on_chunk.(text)
+
+      acc
+      |> Map.put(:content, acc.content <> text)
+      |> Map.put(:trailing_whitespace_bytes, trailing)
+    end
+  end
+
+  defp append_text(acc, _text), do: acc
 
   # ── Tool Call Accumulation ───────────────────────────────────────────
 
@@ -185,6 +210,20 @@ defmodule Handbeam.Agent.Provider.OpenAIStream do
   # ── Response Building ────────────────────────────────────────────────
 
   @doc false
+  def build_response(%{stream_error: error}) when is_binary(error), do: {:error, error}
+
+  def build_response(%{finish_reason: reason}) when reason not in ["stop", "tool_calls"] do
+    error =
+      case reason do
+        "length" -> "Provider output truncated (finish_reason=length)"
+        "content_filter" -> "Provider output blocked (finish_reason=content_filter)"
+        nil -> "Provider stream ended with missing finish_reason"
+        other -> "Provider stream ended with unsupported finish_reason=#{inspect(other)}"
+      end
+
+    {:error, error}
+  end
+
   def build_response(acc) do
     reasoning_blocks =
       if acc.reasoning_content != "",
@@ -241,7 +280,8 @@ defmodule Handbeam.Agent.Provider.OpenAIStream do
          %{
            stop_reason: stop_reason,
            messages: [message],
-           usage: Handbeam.Agent.Provider.openai_usage(acc.usage)
+           usage: Handbeam.Agent.Provider.openai_usage(acc.usage),
+           response_metadata: %{finish_reason: acc.finish_reason}
          }}
     end
   end
@@ -344,9 +384,6 @@ defmodule Handbeam.Agent.Provider.OpenAIStream do
 
   defp parse_finish_reason("stop"), do: :end_turn
   defp parse_finish_reason("tool_calls"), do: :tool_use
-  defp parse_finish_reason("length"), do: :end_turn
-  defp parse_finish_reason("content_filter"), do: :end_turn
-  defp parse_finish_reason(_), do: :end_turn
 
   defp dev_log(message) do
     if dev_env?(), do: Logger.debug(message)
@@ -358,15 +395,19 @@ defmodule Handbeam.Agent.Provider.OpenAIStream do
 
   defp parse_error(status, body) when is_binary(body) do
     case Handbeam.JSON.decode(body) do
-      {:ok, %{"error" => error}} -> "#{error["type"]}: #{error["message"]}"
+      {:ok, %{"error" => _} = decoded} -> parse_error(status, decoded)
       _ -> "HTTP #{status}: #{body}"
     end
   end
 
   defp parse_error(status, body) when is_map(body) do
     case body do
-      %{"error" => error} -> "#{error["type"]}: #{error["message"]}"
-      _ -> "HTTP #{status}: #{inspect(body)}"
+      %{"error" => error} when is_map(error) ->
+        type = error["type"] || error["code"] || "provider_error"
+        "#{type}: #{error["message"]}"
+
+      _ ->
+        "HTTP #{status}: #{inspect(body)}"
     end
   end
 end

@@ -431,6 +431,15 @@ defmodule Handbeam.Agent.Turn do
     payload = if result.error, do: Map.put(payload, :error, result.error), else: payload
 
     payload =
+      case result.provider_response_metadata do
+        %{finish_reason: reason} when is_nil(result.error) ->
+          Map.put(payload, :provider_finish_reason, reason)
+
+        _ ->
+          payload
+      end
+
+    payload =
       case result.interrupt_data do
         %{signal: signal, evidence: evidence} ->
           payload |> Map.put(:signal, signal) |> Map.put(:evidence, evidence)
