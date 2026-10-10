@@ -82,7 +82,8 @@ defmodule HandbeamWeb.WorkspaceHelper do
   def timeline_summary(entries) when is_list(entries) do
     entries
     |> Enum.reject(
-      &(get_in(&1, ["origin", "kind"]) == "thread" or &1["content_type"] == "thread_handoff")
+      &(get_in(&1, ["origin", "kind"]) == "thread" or &1["content_type"] == "thread_handoff" or
+          delegation_reports(&1) != [])
     )
     |> Enum.find_value(fn entry ->
       content = Handbeam.Utils.SafeMap.get_any(entry, "content", :content)
@@ -97,6 +98,8 @@ defmodule HandbeamWeb.WorkspaceHelper do
   def timeline_summary(_entries), do: ""
 
   @user_nav_summary_limit 36
+  @background_report_marker "Background subagent report"
+  @legacy_report_marker "Delegated report (requires parent review):"
 
   @doc """
   User turns for the conversation navigator: id, 1-based index, and a short summary.
@@ -134,10 +137,159 @@ defmodule HandbeamWeb.WorkspaceHelper do
 
   defp user_msg_entry?(entry) when is_map(entry) do
     (Map.get(entry, "content_type") == "user_msg" or Map.get(entry, :content_type) == "user_msg") and
-      get_in(entry, ["origin", "kind"]) != "thread"
+      get_in(entry, ["origin", "kind"]) != "thread" and delegation_reports(entry) == []
   end
 
   defp user_msg_entry?(_entry), do: false
+
+  @doc """
+  Projects a synthetic delegation transcript entry into report cards.
+
+  The original entry remains untouched for persistence and model context. This
+  projection deliberately exposes only report metadata and the JSON `report`
+  field, never the synthetic wrapper text or its full JSON payload.
+  """
+  def delegation_reports(entry) when is_map(entry) do
+    content_type = Handbeam.Utils.SafeMap.get_any(entry, "content_type", :content_type)
+    content = Handbeam.Utils.SafeMap.get_any(entry, "content", :content)
+
+    if content_type == "user_msg" and delegation_report_entry?(entry, content) do
+      content
+      |> report_chunks()
+      |> Enum.with_index()
+      |> Enum.map(fn {chunk, index} -> project_delegation_report(chunk, index) end)
+    else
+      []
+    end
+  end
+
+  def delegation_reports(_entry), do: []
+
+  defp delegation_report_entry?(entry, content) do
+    source = Handbeam.Utils.SafeMap.get_any(entry, "source", :source)
+    channel = Handbeam.Utils.SafeMap.get_any(entry, "channel", :channel)
+
+    (source in [:delegation, "delegation"] and channel in [:internal, "internal"]) or
+      (is_binary(content) and
+         (String.starts_with?(content, @background_report_marker) or
+            String.starts_with?(content, @legacy_report_marker)))
+  end
+
+  defp report_chunks(content) when is_binary(content) do
+    chunks =
+      Regex.split(~r/\n\n(?=Background subagent report)/, content, trim: true)
+
+    if chunks == [], do: [content], else: chunks
+  end
+
+  defp report_chunks(_content), do: [""]
+
+  defp project_delegation_report(chunk, index) do
+    header_child_id =
+      case Regex.run(~r/child_conversation_id\s+([^\s)]+)/, chunk, capture: :all_but_first) do
+        [id] -> id
+        _ -> nil
+      end
+
+    data = decode_report_payload(chunk)
+    report = report_text(data)
+    error = report_error(data)
+    child_id = display_optional(report_value(data, "child_conversation_id") || header_child_id)
+
+    %{
+      key: "#{child_id || "unknown"}-#{index}",
+      subagent_type: display_value(report_value(data, "subagent_type"), "subagent"),
+      status: display_value(report_value(data, "status"), "unknown"),
+      child_conversation_id: child_id,
+      child_run_id: display_optional(report_value(data, "child_run_id")),
+      report: report,
+      error: error,
+      availability: report_availability(report, error),
+      usage: report_usage(data)
+    }
+  end
+
+  defp decode_report_payload(chunk) do
+    json =
+      case String.split(chunk, "\n", parts: 2) do
+        [_header, payload] -> String.trim(payload)
+        [payload] -> String.trim(payload)
+      end
+
+    case Handbeam.JSON.decode(json) do
+      {:ok, data} when is_map(data) -> data
+      _ -> %{}
+    end
+  end
+
+  defp report_text(data) do
+    case report_value(data, "report") do
+      report when is_binary(report) -> String.trim(report)
+      _ -> ""
+    end
+  end
+
+  defp report_error(data) do
+    case report_value(data, "error") do
+      error when is_binary(error) -> String.trim(error)
+      _ -> ""
+    end
+  end
+
+  defp report_availability(report, _error) when report != "", do: :available
+  defp report_availability(_report, error) when error != "", do: :failed
+  defp report_availability(_report, _error), do: :unavailable
+
+  defp report_usage(data) do
+    usage = report_value(data, "usage")
+
+    %{
+      input_tokens: usage_token(usage, "input_tokens"),
+      output_tokens: usage_token(usage, "output_tokens"),
+      cache_read_tokens: usage_token(usage, "cache_read_input_tokens"),
+      cache_write_tokens: usage_token(usage, "cache_creation_input_tokens")
+    }
+  end
+
+  defp usage_token(usage, key) when is_map(usage) do
+    case report_value(usage, key) do
+      value when is_integer(value) and value >= 0 ->
+        value
+
+      value when is_binary(value) ->
+        case Integer.parse(value) do
+          {parsed, ""} when parsed >= 0 -> parsed
+          _ -> nil
+        end
+
+      _ ->
+        nil
+    end
+  end
+
+  defp usage_token(_usage, _key), do: nil
+
+  defp report_value(map, key) when is_map(map) do
+    Handbeam.Utils.SafeMap.get(map, key)
+  end
+
+  defp display_value(value, fallback) when is_binary(value) do
+    if String.trim(value) == "", do: fallback, else: value
+  end
+
+  defp display_value(value, _fallback) when is_atom(value) and not is_nil(value),
+    do: Atom.to_string(value)
+
+  defp display_value(_value, fallback), do: fallback
+
+  defp display_optional(value) when is_binary(value) do
+    if String.trim(value) == "", do: nil, else: value
+  end
+
+  defp display_optional(value) when is_atom(value) and not is_nil(value),
+    do: Atom.to_string(value)
+
+  defp display_optional(_value), do: nil
 
   defp user_message_nav_age(entry) do
     timestamp = Handbeam.Utils.SafeMap.get_any(entry, "created_at", :created_at)

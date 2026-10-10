@@ -19,6 +19,11 @@
  */
 export const ComposerPasteUpload = {
   mounted() {
+    this.handleEvent?.("prefill-subagent-follow-up", ({ value }) => {
+      this.el.value = String(value || "");
+      this.el.focus();
+    });
+
     this.onKeyDown = (e) => {
       if (e.key !== "Enter" || e.isComposing || e.keyCode === 229) return;
 

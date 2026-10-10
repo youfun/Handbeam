@@ -394,6 +394,18 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   @impl true
+  def handle_event("prefill_subagent_follow_up", %{"child" => child}, socket)
+      when is_binary(child) and child != "" do
+    value = "@#{child} "
+
+    {:noreply,
+     socket
+     |> assign(:input_value, value)
+     |> assign(:skill_suggestions, nil)
+     |> push_event("prefill-subagent-follow-up", %{value: value})}
+  end
+
+  @impl true
   def handle_event("select_skill_suggestion", %{"name" => skill_name}, socket) do
     new_value = Skills.select(socket.assigns.input_value, skill_name)
 

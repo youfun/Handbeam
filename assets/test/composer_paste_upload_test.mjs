@@ -111,4 +111,26 @@ function after(fn) {
   hook.destroyed();
 }
 
+{
+  const el = document.querySelector("#ai-input");
+  let prefill;
+
+  const hook = {
+    ...ComposerPasteUpload,
+    el,
+    upload: () => {},
+    handleEvent: (name, callback) => {
+      if (name === "prefill-subagent-follow-up") prefill = callback;
+    },
+  };
+  hook.mounted();
+
+  prefill({ value: "@child-research " });
+
+  assert.equal(el.value, "@child-research ");
+  assert.equal(document.activeElement, el);
+
+  hook.destroyed();
+}
+
 console.log("composer_paste_upload_test passed");

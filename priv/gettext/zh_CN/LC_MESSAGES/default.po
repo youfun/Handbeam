@@ -1594,3 +1594,45 @@ msgstr "跟随系统"
 
 msgid "Could not save theme preference."
 msgstr "无法保存主题偏好。"
+
+msgid "Child ID"
+msgstr "子代理 ID"
+
+msgid "Run ID"
+msgstr "运行 ID"
+
+msgid "Input"
+msgstr "输入"
+
+msgid "Output"
+msgstr "输出"
+
+msgid "Cache read"
+msgstr "缓存读取"
+
+msgid "Cache write"
+msgstr "缓存写入"
+
+msgid "Copy child ID"
+msgstr "复制子代理 ID"
+
+msgid "Copy"
+msgstr "复制"
+
+msgid "Copy report"
+msgstr "复制报告"
+
+msgid "Report content unavailable"
+msgstr "报告内容不可用"
+
+msgid "Follow up"
+msgstr "跟进"
+
+msgid "Report available"
+msgstr "报告可用"
+
+msgid "Report failed"
+msgstr "报告失败"
+
+msgid "Report unavailable"
+msgstr "报告不可用"

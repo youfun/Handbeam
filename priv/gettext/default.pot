@@ -1020,3 +1020,45 @@ msgstr ""
 
 msgid "Always allow saves these rules in this workspace:"
 msgstr ""
+
+msgid "Child ID"
+msgstr ""
+
+msgid "Run ID"
+msgstr ""
+
+msgid "Input"
+msgstr ""
+
+msgid "Output"
+msgstr ""
+
+msgid "Cache read"
+msgstr ""
+
+msgid "Cache write"
+msgstr ""
+
+msgid "Copy child ID"
+msgstr ""
+
+msgid "Copy"
+msgstr ""
+
+msgid "Copy report"
+msgstr ""
+
+msgid "Report content unavailable"
+msgstr ""
+
+msgid "Follow up"
+msgstr ""
+
+msgid "Report available"
+msgstr ""
+
+msgid "Report failed"
+msgstr ""
+
+msgid "Report unavailable"
+msgstr ""

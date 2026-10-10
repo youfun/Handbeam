@@ -41,6 +41,7 @@ defmodule HandbeamWeb.WorkspaceLive.ViewComponents do
   defdelegate tool_entry_count(entries), to: HandbeamWeb.WorkspaceHelper
   defdelegate timeline_summary(entries), to: HandbeamWeb.WorkspaceHelper
   defdelegate user_message_nav_items(entries), to: HandbeamWeb.WorkspaceHelper
+  defdelegate delegation_reports(entry), to: HandbeamWeb.WorkspaceHelper
   defdelegate format_duration(ms), to: HandbeamWeb.WorkspaceHelper
   defdelegate format_bytes(bytes), to: HandbeamWeb.WorkspaceHelper
   defdelegate format_tokens(tokens), to: HandbeamWeb.WorkspaceHelper

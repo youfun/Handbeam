@@ -5390,6 +5390,164 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
   end
 
   describe "conversation navigator" do
+    test "renders delegation reports as collapsed cards without wrapper JSON or user navigation",
+         %{
+           conn: conn
+         } do
+      completed =
+        "Background subagent report for child_conversation_id child-research (requires your review; use task_status to follow up):\n" <>
+          Handbeam.JSON.encode!(%{
+            status: :completed,
+            subagent_type: "researcher",
+            child_conversation_id: "child-research",
+            child_run_id: "run-research",
+            usage: %{
+              input_tokens: 5_481,
+              output_tokens: 827,
+              cache_read_input_tokens: 300
+            },
+            report: "## Finding\n\nOnly the **report** is rendered."
+          })
+
+      max_turns =
+        "Background subagent report for child_conversation_id child-max (requires your review; use task_status to follow up):\n" <>
+          Handbeam.JSON.encode!(%{
+            status: :max_turns,
+            subagent_type: "researcher",
+            child_conversation_id: "child-max",
+            usage: %{input_tokens: "1200", output_tokens: 42},
+            report: "Reached the turn limit with a usable result."
+          })
+
+      failed =
+        "Background subagent report for child_conversation_id child-error (requires your review; use task_status to follow up):\n" <>
+          Handbeam.JSON.encode!(%{
+            status: :error,
+            subagent_type: "advisor",
+            child_conversation_id: "child-error",
+            error: "Provider unavailable"
+          })
+
+      legacy =
+        "Background subagent report for child_conversation_id child-legacy (requires your review):\n" <>
+          Handbeam.JSON.encode!(%{report: "Legacy report body"})
+
+      {:ok, conversation} =
+        Handbeam.ConversationStore.create("default",
+          id: "conv-subagent-reports",
+          title: "Subagent reports",
+          timeline: [
+            %{
+              "id" => "report-completed",
+              "content_type" => "user_msg",
+              "role" => "user",
+              "source" => "delegation",
+              "channel" => "internal",
+              "content" => completed
+            },
+            %{
+              "id" => "nav-user-1",
+              "content_type" => "user_msg",
+              "role" => "user",
+              "content" => "First real user message"
+            },
+            %{
+              "id" => "report-max",
+              "content_type" => "user_msg",
+              "role" => "user",
+              "source" => "delegation",
+              "channel" => "internal",
+              "content" => max_turns
+            },
+            %{
+              "id" => "report-error",
+              "content_type" => "user_msg",
+              "role" => "user",
+              "source" => "delegation",
+              "channel" => "internal",
+              "content" => failed
+            },
+            %{
+              "id" => "report-legacy",
+              "content_type" => "user_msg",
+              "role" => "user",
+              "content" => legacy
+            },
+            %{
+              "id" => "report-malformed",
+              "content_type" => "user_msg",
+              "role" => "user",
+              "source" => "delegation",
+              "channel" => "internal",
+              "content" => "not valid report JSON"
+            },
+            %{
+              "id" => "nav-user-2",
+              "content_type" => "user_msg",
+              "role" => "user",
+              "content" => "Second real user message"
+            }
+          ]
+        )
+
+      {:ok, view, html} = live(conn, "/w/default/c/#{conversation["id"]}")
+
+      assert html |> Floki.parse_fragment!() |> Floki.find("[data-subagent-report]") |> length() ==
+               5
+
+      assert has_element?(
+               view,
+               "[data-subagent-report][data-status='completed'] details:not([open])"
+             )
+
+      assert has_element?(view, "[data-subagent-report][data-status='max_turns']")
+
+      assert has_element?(
+               view,
+               "[data-subagent-report][data-status='error']",
+               "Provider unavailable"
+             )
+
+      assert has_element?(
+               view,
+               "[data-subagent-report][data-status='unknown']",
+               "Legacy report body"
+             )
+
+      assert has_element?(
+               view,
+               "#subagent-report-report-malformed-unknown-0",
+               "Report unavailable"
+             )
+
+      assert has_element?(
+               view,
+               "[data-subagent-report] [data-source*='Only the **report** is rendered.']"
+             )
+
+      assert has_element?(view, "[data-subagent-report]", "Input 5.5K")
+      assert has_element?(view, "[data-subagent-report]", "Output 827")
+      assert has_element?(view, "[data-subagent-report] [data-copy='child-research']")
+      refute html =~ "Background subagent report"
+      refute html =~ "child_run_id"
+      refute has_element?(view, "[data-user-msg='report-completed']")
+      refute has_element?(view, "[data-user-msg='report-max']")
+      refute has_element?(view, "[data-user-msg='report-malformed']")
+      refute has_element?(view, "[data-target-id='report-completed']")
+      assert has_element?(view, "[data-target-id='nav-user-1']")
+      assert has_element?(view, "[data-target-id='nav-user-2']")
+      assert has_element?(view, "#turn-header", "First real user message")
+
+      html =
+        view
+        |> element(
+          "#subagent-report-report-completed-child-research-0 .subagent-report-follow-up"
+        )
+        |> render_click()
+
+      assert html =~ "@child-research "
+    end
+
     test "lists only user messages next to the scroll-to-bottom control", %{conn: conn} do
       isolate_conversation_home!()
 

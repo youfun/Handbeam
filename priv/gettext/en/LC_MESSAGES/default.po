@@ -1615,3 +1615,45 @@ msgstr "System"
 
 msgid "Could not save theme preference."
 msgstr "Could not save theme preference."
+
+msgid "Child ID"
+msgstr "Child ID"
+
+msgid "Run ID"
+msgstr "Run ID"
+
+msgid "Input"
+msgstr "Input"
+
+msgid "Output"
+msgstr "Output"
+
+msgid "Cache read"
+msgstr "Cache read"
+
+msgid "Cache write"
+msgstr "Cache write"
+
+msgid "Copy child ID"
+msgstr "Copy child ID"
+
+msgid "Copy"
+msgstr "Copy"
+
+msgid "Copy report"
+msgstr "Copy report"
+
+msgid "Report content unavailable"
+msgstr "Report content unavailable"
+
+msgid "Follow up"
+msgstr "Follow up"
+
+msgid "Report available"
+msgstr "Report available"
+
+msgid "Report failed"
+msgstr "Report failed"
+
+msgid "Report unavailable"
+msgstr "Report unavailable"

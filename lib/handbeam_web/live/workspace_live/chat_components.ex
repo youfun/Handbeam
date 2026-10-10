@@ -7,6 +7,151 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
 
   import HandbeamWeb.WorkspaceLive.ViewComponents
 
+  attr :id, :string, required: true
+  attr :report, :map, required: true
+
+  def subagent_report_card(assigns) do
+    ~H"""
+    <div
+      id={@id}
+      class="subagent-report-card"
+      data-subagent-report
+      data-status={@report.status}
+    >
+      <details>
+        <summary class="subagent-report-summary">
+          <span class="subagent-report-icon" aria-hidden="true">↳</span>
+          <span class="subagent-report-title">
+            <strong>{@report.subagent_type}</strong>
+            <span aria-hidden="true">·</span>
+            <span>{@report.status}</span>
+            <span aria-hidden="true">·</span>
+            <span>{report_availability_label(@report.availability)}</span>
+          </span>
+          <span class="subagent-report-chevron" aria-hidden="true">⌄</span>
+        </summary>
+
+        <div class="subagent-report-body">
+          <dl class="subagent-report-meta">
+            <div :if={@report.child_conversation_id} class="subagent-report-meta-row">
+              <dt>{gettext("Child ID")}</dt>
+              <dd>
+                <code>{@report.child_conversation_id}</code>
+                <button
+                  id={"#{@id}-copy-child"}
+                  type="button"
+                  class="subagent-report-action"
+                  phx-hook="CopyText"
+                  data-copy={@report.child_conversation_id}
+                  title={gettext("Copy child ID")}
+                  aria-label={gettext("Copy child ID")}
+                >
+                  {gettext("Copy")}
+                </button>
+              </dd>
+            </div>
+            <div :if={@report.child_run_id} class="subagent-report-meta-row">
+              <dt>{gettext("Run ID")}</dt>
+              <dd><code>{@report.child_run_id}</code></dd>
+            </div>
+            <div class="subagent-report-meta-row">
+              <dt>{gettext("Status")}</dt>
+              <dd>{@report.status}</dd>
+            </div>
+            <div
+              :if={Enum.any?(@report.usage, fn {_key, value} -> is_integer(value) end)}
+              class="subagent-report-meta-row"
+            >
+              <dt>Token</dt>
+              <dd class="subagent-report-usage">
+                <span :if={is_integer(@report.usage.input_tokens)}>
+                  {gettext("Input")} {format_tokens(@report.usage.input_tokens)}
+                </span>
+                <span :if={is_integer(@report.usage.output_tokens)}>
+                  {gettext("Output")} {format_tokens(@report.usage.output_tokens)}
+                </span>
+                <span :if={is_integer(@report.usage.cache_read_tokens)}>
+                  {gettext("Cache read")} {format_tokens(@report.usage.cache_read_tokens)}
+                </span>
+                <span :if={is_integer(@report.usage.cache_write_tokens)}>
+                  {gettext("Cache write")} {format_tokens(@report.usage.cache_write_tokens)}
+                </span>
+              </dd>
+            </div>
+          </dl>
+
+          <div
+            :if={@report.report != ""}
+            id={"#{@id}-markdown"}
+            data-entry-id={@id}
+            data-source={@report.report}
+            data-final="true"
+            data-streaming="false"
+            class="subagent-report-markdown msg-markdown-wrapper"
+            phx-hook="StreamingMarkdown"
+          >
+            <button
+              class="msg-copy-btn"
+              title={gettext("Copy report")}
+              aria-label={gettext("Copy report")}
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+            </button>
+            <div
+              id={"#{@id}-markdown-content"}
+              data-markdown-target
+              phx-update="ignore"
+              class="markdown-body prose prose-sm max-w-none break-words"
+            >
+              <div class="markdown-noscript-fallback whitespace-pre-wrap break-words">
+                {@report.report}
+              </div>
+              <noscript>{@report.report}</noscript>
+            </div>
+          </div>
+
+          <div :if={@report.report == ""} class="subagent-report-empty">
+            {if @report.error != "", do: @report.error, else: gettext("Report content unavailable")}
+          </div>
+
+          <div class="subagent-report-footer">
+            <button
+              :if={@report.child_conversation_id}
+              type="button"
+              class="subagent-report-action subagent-report-follow-up"
+              phx-click={
+                JS.push("prefill_subagent_follow_up",
+                  value: %{child: @report.child_conversation_id}
+                )
+                |> JS.focus(to: "#ai-input")
+              }
+            >
+              {gettext("Follow up")}
+            </button>
+          </div>
+        </div>
+      </details>
+    </div>
+    """
+  end
+
+  defp report_availability_label(:available), do: gettext("Report available")
+  defp report_availability_label(:failed), do: gettext("Report failed")
+  defp report_availability_label(_), do: gettext("Report unavailable")
+
   attr :add_project_form, :any, required: true
   attr :available_clis, :any, default: []
   attr :available_models, :any, required: true
@@ -334,16 +479,22 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
             data-running={@running}
           >
             <div :for={{dom_id, entry} <- @streams.timeline} id={dom_id} data-run-id={entry["run_id"]}>
+              <% reports = delegation_reports(entry) %>
               <HandbeamWeb.ThreadHandoff.card
                 :if={HandbeamWeb.ThreadHandoff.show?(entry, @timeline)}
                 entry={entry}
                 conversation_id={@current_conversation_id}
                 workspace_id={@current_workspace_id}
               />
+              <.subagent_report_card
+                :for={report <- reports}
+                id={"subagent-report-#{entry["id"] || dom_id}-#{report.key}"}
+                report={report}
+              />
               <div
                 :if={
                   entry["content_type"] == "user_msg" and
-                    get_in(entry, ["origin", "kind"]) != "thread"
+                    get_in(entry, ["origin", "kind"]) != "thread" and reports == []
                 }
                 class="msg-row flex w-full msg-user justify-end"
                 data-user-msg={entry["id"]}
