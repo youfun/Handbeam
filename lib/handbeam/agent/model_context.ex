@@ -25,6 +25,9 @@ defmodule Handbeam.Agent.ModelContext do
 
     You own the context sent on later requests in this run. The transcript is not rewritten.
 
+    Every tool result ends with a `[context: ~N of M tokens]` marker: the request size
+    estimated when that result was produced. Keep later requests below M.
+
     After a long tool result is no longer needed verbatim, call `read_context`, then `edit_context`.
     Copy `old_text` from the body under a `[[ctx:N]]` line. Do not include that fence line.
     `new_text` replaces that one span. Keep the plan, paths, and facts; pass an empty `new_text` to delete the span.
@@ -130,14 +133,6 @@ defmodule Handbeam.Agent.ModelContext do
   end
 
   def replace(_messages, _old, _new), do: {:error, "old_text is required"}
-
-  @spec edit(State.t(), term(), term()) :: {:ok, State.t()} | {:error, String.t()}
-  def edit(%State{} = state, old, new) do
-    case replace(visible(state), old, new) do
-      {:ok, revised} -> {:ok, install(state, revised)}
-      {:error, reason} -> {:error, reason}
-    end
-  end
 
   defp validate(old, new) do
     cond do

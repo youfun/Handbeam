@@ -173,6 +173,180 @@ defmodule Handbeam.E2E.ModelContextTest do
     assert transcript_output(sid, "read") =~ "PLAN: keep this"
   end
 
+  test "a failed edit_context reports the miss", %{workspace: workspace} do
+    File.write!(Path.join(workspace, "old.txt"), "PLAN: keep this\nUNIQUE-OLD-LOG\n")
+    parent = self()
+
+    script = fn messages, _defs ->
+      send(parent, {:provider_messages, messages})
+      text = joined(messages)
+
+      cond do
+        text =~ "old_text was not found" ->
+          "done"
+
+        text =~ "UNIQUE-OLD-LOG" ->
+          {:tools,
+           [
+             %{
+               name: "edit_context",
+               input: %{"old_text" => "NOT-IN-CONTEXT", "new_text" => "kept-skeleton"}
+             }
+           ]}
+
+        true ->
+          {:tools, [%{name: "read", input: %{"file_path" => "old.txt"}}]}
+      end
+    end
+
+    sid = start_run!(workspace, "read old.txt", script)
+    reported = await_messages("old_text was not found")
+    reported_text = joined(reported)
+    assert reported_text =~ "old_text was not found in the editable context"
+    refute reported_text =~ "Context updated"
+    assert tool_result_text(reported) =~ "UNIQUE-OLD-LOG"
+
+    assert_receive {:agent_event, %{kind: :run_end, payload: %{status: :completed}}}, 20_000
+    output = transcript_output(sid, "edit_context")
+    assert output =~ "old_text was not found in the editable context"
+    refute output =~ "Context updated"
+    assert transcript_output(sid, "read") =~ "UNIQUE-OLD-LOG"
+  end
+
+  test "a second edit in the same batch sees the first revision", %{workspace: workspace} do
+    File.write!(Path.join(workspace, "old.txt"), "PLAN: keep this\nUNIQUE-OLD-LOG\n")
+    parent = self()
+
+    script = fn messages, _defs ->
+      send(parent, {:provider_messages, messages})
+      text = joined(messages)
+
+      cond do
+        text =~ "old_text was not found" ->
+          "done"
+
+        text =~ "UNIQUE-OLD-LOG" ->
+          {:tools,
+           [
+             %{
+               name: "edit_context",
+               input: %{"old_text" => "UNIQUE-OLD-LOG", "new_text" => "kept-skeleton"}
+             },
+             %{
+               name: "edit_context",
+               input: %{"old_text" => "UNIQUE-OLD-LOG", "new_text" => "second-pass"}
+             }
+           ]}
+
+        true ->
+          {:tools, [%{name: "read", input: %{"file_path" => "old.txt"}}]}
+      end
+    end
+
+    sid = start_run!(workspace, "read old.txt", script)
+    edited = await_messages("old_text was not found")
+    results = tool_result_text(edited)
+    assert results =~ "kept-skeleton"
+    assert results =~ "PLAN: keep this"
+    assert results =~ "old_text was not found in the editable context"
+    refute results =~ "UNIQUE-OLD-LOG"
+    refute results =~ "second-pass"
+    assert length(String.split(results, "Context updated")) == 2
+
+    assert_receive {:agent_event, %{kind: :run_end, payload: %{status: :completed}}}, 20_000
+    outputs = transcript_outputs(sid, "edit_context")
+    assert Enum.count(outputs, &(&1 =~ "Context updated")) == 1
+    assert Enum.any?(outputs, &(&1 =~ "old_text was not found in the editable context"))
+    assert transcript_output(sid, "read") =~ "UNIQUE-OLD-LOG"
+  end
+
+  test "tool results report the measured context budget", %{workspace: workspace} do
+    File.write!(Path.join(workspace, "note.txt"), "small body\n")
+    parent = self()
+
+    script = fn messages, _defs ->
+      send(parent, {:provider_messages, messages})
+      rounds = Enum.count(messages, &match?(%Message{role: :tool_result}, &1))
+
+      cond do
+        rounds == 0 ->
+          {:tools, [%{name: "read", input: %{"file_path" => "note.txt"}}],
+           %{input_tokens: 50_000, output_tokens: 10}}
+
+        rounds == 1 ->
+          {:tools, [%{name: "read", input: %{"file_path" => "note.txt"}}],
+           %{input_tokens: 90_000, output_tokens: 10}}
+
+        true ->
+          "done"
+      end
+    end
+
+    sid = start_run!(workspace, "read note.txt", script)
+
+    assert_receive {:provider_messages, _first}, 20_000
+    assert_receive {:provider_messages, second}, 20_000
+    result = tool_result_text(second)
+    assert [_, count] = Regex.run(~r/\[context: ~(\d+) of 200000 tokens\]/, result)
+    assert String.to_integer(count) >= 50_000
+    assert String.to_integer(count) < 60_000
+
+    assert_receive {:provider_messages, third}, 20_000
+    third_text = tool_result_text(third)
+
+    # The first result keeps the trailer it was created with. Rewriting it
+    # with the newer 90k estimate would change every earlier tool result on
+    # every request and bust the provider prefix cache.
+    assert third_text =~ "[context: ~#{count} of 200000 tokens]"
+
+    trailers =
+      Regex.scan(~r/\[context: ~(\d+) of 200000 tokens\]/, third_text)
+
+    assert [[_, ^count], [_, later]] = trailers
+    assert String.to_integer(later) >= 90_000
+    assert String.to_integer(later) < 100_000
+
+    assert_receive {:agent_event, %{kind: :run_end, payload: %{status: :completed}}}, 20_000
+    refute transcript_output(sid, "read") =~ "[context:"
+  end
+
+  test "stateless providers offer context editing", %{workspace: workspace} do
+    defs = Handbeam.Tool.Registry.tool_defs()
+
+    providers = [
+      Handbeam.Agent.Provider.Anthropic,
+      Handbeam.Agent.Provider.OpenAI,
+      Handbeam.Agent.Provider.DeepSeek,
+      Handbeam.Agent.Provider.OpenRouter,
+      Handbeam.Agent.Provider.StepFun,
+      Handbeam.Agent.Provider.ZenMux
+    ]
+
+    for provider <- providers do
+      prompt = provider_prompt(workspace, provider)
+      assert prompt =~ "You own the context sent on later requests in this run."
+
+      names =
+        defs
+        |> Handbeam.Agent.Provider.filter_context_tools(provider)
+        |> Enum.map(& &1.name)
+
+      assert "read_context" in names
+      assert "edit_context" in names
+    end
+
+    cursor = provider_prompt(workspace, Handbeam.Agent.Provider.Cursor)
+    refute cursor =~ "You own the context sent on later requests in this run."
+
+    cursor_names =
+      defs
+      |> Handbeam.Agent.Provider.filter_context_tools(Handbeam.Agent.Provider.Cursor)
+      |> Enum.map(& &1.name)
+
+    refute "read_context" in cursor_names
+    refute "edit_context" in cursor_names
+  end
+
   defp start_run!(workspace, text, script, extra \\ []) do
     sid = "model-context-e2e-#{System.unique_integer([:positive])}"
     {:ok, _} = ConversationStore.create("default", id: sid)
@@ -200,12 +374,42 @@ defmodule Handbeam.E2E.ModelContextTest do
     ]
   end
 
-  defp transcript_output(sid, tool_name) do
+  defp provider_prompt(workspace, provider) do
+    [
+      workspace_path: workspace,
+      model: "provider-probe",
+      provider: provider,
+      provider_config: %{},
+      tools: Handbeam.Agent.default_tools(),
+      mcp: false,
+      source: :cli
+    ]
+    |> Config.from_opts()
+    |> Map.fetch!(:system_prompt)
+  end
+
+  defp await_messages(needle) do
+    assert_receive {:provider_messages, messages}, 20_000
+
+    if joined(messages) =~ needle do
+      messages
+    else
+      await_messages(needle)
+    end
+  end
+
+  defp transcript_outputs(sid, tool_name) do
     {:ok, entries} = ConversationTranscriptStore.list(sid)
 
     entries
-    |> Enum.find(&(&1["tool_name"] == tool_name))
-    |> Map.fetch!("output")
+    |> Enum.filter(&(&1["tool_name"] == tool_name))
+    |> Enum.map(& &1["output"])
+  end
+
+  defp transcript_output(sid, tool_name) do
+    sid
+    |> transcript_outputs(tool_name)
+    |> List.first()
   end
 
   defp consecutive_users?(roles) do

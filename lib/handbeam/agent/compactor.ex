@@ -82,16 +82,21 @@ defmodule Handbeam.Agent.Compactor do
     end
   end
 
-  # The anchor's input_tokens is the full provider input, including cache
-  # reads and writes, plus the system prompt and tool schemas. Messages added
-  # after that call are estimated from their text. Without a measurement yet,
-  # the message-text estimate is the whole request.
-  defp request_tokens(messages, %{input_tokens: input, sent_count: sent})
-       when is_integer(input) and input > 0 and is_integer(sent) and sent >= 0 do
+  @doc """
+  Tokens the next provider request will carry.
+
+  The anchor's `input_tokens` is the full provider input, including cache
+  reads and writes, plus the system prompt and tool schemas. Messages added
+  after that call are estimated from their text. Without a measurement yet,
+  the message-text estimate is the whole request.
+  """
+  @spec request_tokens([Message.t()], map() | nil) :: non_neg_integer()
+  def request_tokens(messages, %{input_tokens: input, sent_count: sent})
+      when is_integer(input) and input > 0 and is_integer(sent) and sent >= 0 do
     input + estimate_messages_tokens(Enum.drop(messages, sent))
   end
 
-  defp request_tokens(messages, _anchor), do: estimate_messages_tokens(messages)
+  def request_tokens(messages, _anchor), do: estimate_messages_tokens(messages)
 
   defp compact_messages_in_state(%State{} = state, messages, opts) do
     keep_recent_tokens = compaction_limit(:keep_recent_tokens, state.config, 20_000)

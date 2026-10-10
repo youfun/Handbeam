@@ -21,7 +21,6 @@ defmodule Handbeam.Agent.Turn do
   alias Handbeam.Agent.Provider.Retry
   alias Handbeam.Agent.Tool.Executor
   alias Handbeam.Extension.HookPipeline
-  alias Handbeam.Utils.SafeMap
 
   require Logger
 
@@ -172,7 +171,7 @@ defmodule Handbeam.Agent.Turn do
     result_msg = Message.tool_results(denied_blocks |> Enum.reverse())
 
     state
-    |> State.append_messages([result_msg])
+    |> append_tool_results([result_msg])
     |> mw_run(:after_tool_execution)
     |> inject_candidate_messages(opts, :steer)
     |> do_turn(opts)
@@ -181,8 +180,8 @@ defmodule Handbeam.Agent.Turn do
   defp continue_after_approval(state, approved_calls, denied_blocks, opts) do
     {executable, _already_denied} = executable_approved_calls(approved_calls, denied_blocks)
 
-    case Executor.execute_all_with_details(executable, state) do
-      {:ok, result_msg, ui_blocks} ->
+    case Executor.execute_all_with_context(executable, state) do
+      {:ok, result_msg, ui_blocks, state} ->
         merge_approved_execution(%{
           state: state,
           approved_calls: approved_calls,
@@ -221,8 +220,7 @@ defmodule Handbeam.Agent.Turn do
     emit_tool_end_events(execution.executable, execution.ui_blocks, execution.opts)
 
     execution.state
-    |> apply_context_edit(execution.executable, execution.ui_blocks)
-    |> State.append_messages([merged_msg])
+    |> append_tool_results([merged_msg])
     |> Map.update!(:messages, &Handbeam.Tool.Images.bound_history/1)
     |> mw_run(:after_tool_execution)
     |> inject_candidate_messages(execution.opts, :steer)
@@ -823,12 +821,13 @@ defmodule Handbeam.Agent.Turn do
   end
 
   defp do_provider_completion(state, opts, outbound_messages, provider_config) do
-    kept = ToolResultProjection.retained(outbound_messages)
+    suffix_from = context_suffix_from(state)
+    kept = ToolResultProjection.retained(outbound_messages, suffix_from)
 
     stored =
       ToolResultProjection.persist(kept, state.config.working_directory)
 
-    outbound_messages = ToolResultProjection.project(outbound_messages, stored)
+    outbound_messages = ToolResultProjection.project(outbound_messages, stored, suffix_from)
 
     provider = state.config.provider
     streaming? = Keyword.get(opts, :streaming, false)
@@ -861,6 +860,69 @@ defmodule Handbeam.Agent.Turn do
 
     dispatch_provider_result(provider_result, completion, streamed_text, provider_t0)
   end
+
+  # An installed model context is the prefix the model already accepted.
+  # Its length is the visible-list index of messages appended after
+  # `context_base_count`. The boundary assumes the `{:context, ...}` hook
+  # transform does not prepend or drop messages: an extension that changes
+  # the prefix length can shift the boundary and spill results the model
+  # chose to keep.
+  defp context_suffix_from(%State{model_context: context}) when is_list(context),
+    do: length(context)
+
+  defp context_suffix_from(%State{}), do: 0
+
+  # Appends a finished tool-result batch, freezing the budget trailer into
+  # each result once. Rewriting the trailer on every request would change
+  # every earlier tool result and bust the provider prefix cache, so each
+  # result keeps the anchor-based estimate of the request that first carried
+  # it. Only providers that offer context editing get the marker; its meaning
+  # is explained in `ModelContext.prompt_section/0`.
+  defp append_tool_results(%State{} = state, messages) when is_list(messages) do
+    if Handbeam.Agent.Provider.context_editing?(state.config.provider) do
+      State.append_messages(state, Enum.map(messages, &annotate_context_budget(&1, state)))
+    else
+      State.append_messages(state, messages)
+    end
+  end
+
+  defp annotate_context_budget(%Message{} = message, %State{} = state) do
+    used =
+      Compactor.request_tokens(
+        ModelContext.visible(state) ++ [message],
+        state.usage_anchor
+      )
+
+    trailer = "\n[context: ~#{used} of #{state.config.max_tokens} tokens]"
+    annotate_context_blocks(message, trailer)
+  end
+
+  defp annotate_context_blocks(%Message{content: blocks} = message, trailer)
+       when is_list(blocks) do
+    %{message | content: Enum.map(blocks, &append_block_budget(&1, trailer))}
+  end
+
+  defp annotate_context_blocks(message, _trailer), do: message
+
+  defp append_block_budget(block, trailer) when is_map(block) do
+    content = block[:content] || block["content"]
+
+    cond do
+      not is_binary(content) ->
+        block
+
+      String.ends_with?(content, trailer) ->
+        block
+
+      Map.has_key?(block, :content) ->
+        %{block | content: content <> trailer}
+
+      true ->
+        Map.put(block, "content", content <> trailer)
+    end
+  end
+
+  defp append_block_budget(block, _trailer), do: block
 
   defp start_stream_trackers(false), do: {nil, nil}
 
@@ -1913,7 +1975,7 @@ defmodule Handbeam.Agent.Turn do
     result_msg = Message.tool_results(Enum.reverse(denied_blocks))
 
     state
-    |> State.append_messages([result_msg])
+    |> append_tool_results([result_msg])
     |> mw_run(:after_tool_execution)
     |> inject_candidate_messages(opts, :steer)
     |> do_turn(opts)
@@ -1923,7 +1985,7 @@ defmodule Handbeam.Agent.Turn do
     t0 = System.monotonic_time(:millisecond)
 
     case execute_tool_calls_with_guard_results(allowed_calls, state) do
-      {:ok, result_msg, ui_blocks} ->
+      {:ok, result_msg, ui_blocks, state} ->
         finish_allowed_tool_execution(%{
           state: state,
           allowed_calls: allowed_calls,
@@ -1958,8 +2020,7 @@ defmodule Handbeam.Agent.Turn do
     }
 
     execution.state
-    |> apply_context_edit(execution.allowed_calls, execution.ui_blocks)
-    |> State.append_messages([merged_msg])
+    |> append_tool_results([merged_msg])
     |> Map.update!(:messages, &Handbeam.Tool.Images.bound_history/1)
     |> mw_run(:after_tool_execution)
     |> inject_candidate_messages(execution.opts, :steer)
@@ -2012,7 +2073,7 @@ defmodule Handbeam.Agent.Turn do
          tool_calls,
          %State{tool_guard_result_blocks: []} = state
        ) do
-    Executor.execute_all_with_details(tool_calls, state)
+    Executor.execute_all_with_context(tool_calls, state)
   end
 
   defp execute_tool_calls_with_guard_results(
@@ -2034,12 +2095,12 @@ defmodule Handbeam.Agent.Turn do
         &MapSet.member?(denied_ids, Handbeam.Utils.SafeMap.get_any(&1, [:id, "id"]))
       )
 
-    with {:ok, result_msg, ui_blocks} <-
-           Executor.execute_all_with_details(executable_calls, state) do
+    with {:ok, result_msg, ui_blocks, state} <-
+           Executor.execute_all_with_context(executable_calls, state) do
       all_ui_blocks = order_guarded_blocks(tool_calls, ui_blocks ++ denied_blocks)
 
       {:ok, %{result_msg | content: Enum.map(all_ui_blocks, &Executor.strip_details/1)},
-       all_ui_blocks}
+       all_ui_blocks, state}
     end
   end
 
@@ -2110,27 +2171,6 @@ defmodule Handbeam.Agent.Turn do
 
   defp extract_tool_calls(messages) do
     Enum.flat_map(messages, &Message.tool_calls/1)
-  end
-
-  defp apply_context_edit(state, calls, blocks) do
-    calls
-    |> Enum.zip(blocks)
-    |> Enum.reduce(state, fn {call, block}, acc ->
-      name = SafeMap.get_any(call, :name, "name")
-      failed? = SafeMap.get_any(block, :is_error, "is_error") == true
-      input = SafeMap.get_any(call, :input, "input") || %{}
-      old = SafeMap.get_any(input, "old_text", :old_text)
-      new = SafeMap.get_any(input, "new_text", :new_text)
-
-      if name == "edit_context" and not failed? and is_binary(old) and is_binary(new) do
-        case ModelContext.edit(acc, old, new) do
-          {:ok, edited} -> edited
-          {:error, _reason} -> acc
-        end
-      else
-        acc
-      end
-    end)
   end
 
   defp bounded_tool_output(output) when is_binary(output),

@@ -16,6 +16,9 @@ defmodule Handbeam.Agent.Provider.ZenMux do
   @default_model "openai/gpt-5"
 
   @impl true
+  def context_editing?, do: true
+
+  @impl true
   def complete(messages, tool_defs, config) do
     config
     |> normalize_config()

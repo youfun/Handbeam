@@ -25,6 +25,9 @@ defmodule Handbeam.Agent.Provider.StepFun do
   @default_connect_timeout 30_000
 
   @impl true
+  def context_editing?, do: true
+
+  @impl true
   def complete(messages, tool_defs, config) do
     config
     |> normalize_config()

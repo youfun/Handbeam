@@ -139,8 +139,13 @@ defmodule Handbeam.Agent.ModelContextTest do
              %{name: "read", description: "", input_schema: %{}}
            ]
 
+    assert Provider.context_editing?(Handbeam.Agent.Provider.Anthropic)
     assert Provider.context_editing?(Handbeam.Agent.Provider.OpenAI)
-    assert Provider.context_editing?(Handbeam.Agent.Provider.Cursor)
+    assert Provider.context_editing?(Handbeam.Agent.Provider.DeepSeek)
+    assert Provider.context_editing?(Handbeam.Agent.Provider.OpenRouter)
+    assert Provider.context_editing?(Handbeam.Agent.Provider.StepFun)
+    assert Provider.context_editing?(Handbeam.Agent.Provider.ZenMux)
+    refute Provider.context_editing?(Handbeam.Agent.Provider.Cursor)
     refute Provider.context_editing?(HiddenContext)
   end
 end

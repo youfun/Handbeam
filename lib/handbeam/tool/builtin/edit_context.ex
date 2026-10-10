@@ -54,8 +54,8 @@ defmodule Handbeam.Tool.Builtin.EditContext do
     messages = context[:model_messages] || []
 
     case ModelContext.replace(messages, old, new) do
-      {:ok, _revised} ->
-        {:ok, "Context updated. The original task is unchanged."}
+      {:ok, revised} ->
+        {:ok, "Context updated. The original task is unchanged.", %{model_context: revised}}
 
       {:error, reason} ->
         {:error, reason}

@@ -6,8 +6,9 @@ defmodule Handbeam.Agent.ToolResultProjection do
   follows those results. Earlier tool results longer than 2_000 bytes become
   one line that points at a file under `.handbeam/tool-results`. The file
   name includes a content hash, and an existing file is reused only when its
-  bytes match. `project/2` only rewrites the message list. `persist/2` writes
-  the omitted bodies.
+  bytes match. A `read_context` result stays, and so does every message before
+  the accepted model-context prefix. `project/3` only rewrites the message
+  list. `persist/2` writes the omitted bodies.
   """
 
   alias Handbeam.Agent.Message
@@ -19,12 +20,14 @@ defmodule Handbeam.Agent.ToolResultProjection do
 
   @type keep :: %{id: String.t(), relative: String.t(), content: String.t()}
 
-  @spec retained([Message.t()]) :: [keep()]
-  def retained(messages) when is_list(messages) do
-    current_ids = current_result_ids(messages)
+  @spec retained([Message.t()], non_neg_integer()) :: [keep()]
+  def retained(messages, suffix_from \\ 0) when is_list(messages) and is_integer(suffix_from) do
+    {_prefix, suffix} = split_suffix(messages, suffix_from)
+    current_ids = current_result_ids(suffix)
+    view_ids = context_view_ids(messages)
 
-    messages
-    |> Enum.flat_map(&keep_message(&1, current_ids))
+    suffix
+    |> Enum.flat_map(&keep_message(&1, current_ids, view_ids))
     |> Enum.uniq_by(& &1.id)
   end
 
@@ -33,11 +36,47 @@ defmodule Handbeam.Agent.ToolResultProjection do
     Map.new(keeps, fn keep -> {keep.id, write_kept(keep, working_directory)} end)
   end
 
-  @spec project([Message.t()], %{optional(String.t()) => :ok | :error}) :: [Message.t()]
-  def project(messages, stored) when is_list(messages) and is_map(stored) do
-    current_ids = current_result_ids(messages)
-    Enum.map(messages, &age_message(&1, stored, current_ids))
+  @spec project([Message.t()], %{optional(String.t()) => :ok | :error}, non_neg_integer()) :: [
+          Message.t()
+        ]
+  def project(messages, stored, suffix_from \\ 0)
+      when is_list(messages) and is_map(stored) and is_integer(suffix_from) do
+    {prefix, suffix} = split_suffix(messages, suffix_from)
+    current_ids = current_result_ids(suffix)
+    view_ids = context_view_ids(messages)
+    prefix ++ Enum.map(suffix, &age_message(&1, stored, current_ids, view_ids))
   end
+
+  defp split_suffix(messages, suffix_from) do
+    Enum.split(messages, suffix_from |> max(0) |> min(length(messages)))
+  end
+
+  defp context_view_ids(messages) do
+    messages
+    |> Enum.flat_map(&view_tool_ids/1)
+    |> MapSet.new()
+  end
+
+  defp view_tool_ids(%Message{role: :assistant, content: blocks}) when is_list(blocks) do
+    Enum.flat_map(blocks, fn
+      block when is_map(block) ->
+        type = SafeMap.get_any(block, :type, "type")
+        name = SafeMap.get_any(block, :name, "name")
+        id = SafeMap.get_any(block, :id, "id")
+
+        if type in ["tool_use", "server_tool_use"] and name == "read_context" and
+             is_binary(id) and id != "" do
+          [id]
+        else
+          []
+        end
+
+      _ ->
+        []
+    end)
+  end
+
+  defp view_tool_ids(_message), do: []
 
   # The latest assistant tool-use batch is still unseen when no later
   # assistant message exists, even if a user steer sits after the results.
@@ -103,18 +142,18 @@ defmodule Handbeam.Agent.ToolResultProjection do
   defp tool_result_message?(%Message{role: :tool_result}), do: true
   defp tool_result_message?(_message), do: false
 
-  defp keep_message(%Message{role: :tool_result, content: blocks}, current_ids)
+  defp keep_message(%Message{role: :tool_result, content: blocks}, current_ids, view_ids)
        when is_list(blocks) do
-    Enum.flat_map(blocks, &keep_block(&1, current_ids))
+    Enum.flat_map(blocks, &keep_block(&1, current_ids, view_ids))
   end
 
-  defp keep_message(_message, _current_ids), do: []
+  defp keep_message(_message, _current_ids, _view_ids), do: []
 
-  defp keep_block(block, current_ids) when is_map(block) do
+  defp keep_block(block, current_ids, view_ids) when is_map(block) do
     fields = block_fields(block)
 
     if omittable?(fields) and not spill_reference?(fields.content) and
-         not current_result?(fields, current_ids) do
+         not current_result?(fields, current_ids) and not view_result?(fields, view_ids) do
       id = artifact_id(fields.tool_use_id, fields.content)
 
       [
@@ -129,20 +168,28 @@ defmodule Handbeam.Agent.ToolResultProjection do
     end
   end
 
-  defp keep_block(_block, _current_ids), do: []
+  defp keep_block(_block, _current_ids, _view_ids), do: []
 
-  defp age_message(%Message{role: :tool_result, content: blocks} = message, stored, current_ids)
+  defp age_message(
+         %Message{role: :tool_result, content: blocks} = message,
+         stored,
+         current_ids,
+         view_ids
+       )
        when is_list(blocks) do
-    aged = Enum.map(blocks, &age_block(&1, stored, current_ids))
+    aged = Enum.map(blocks, &age_block(&1, stored, current_ids, view_ids))
     if aged == blocks, do: message, else: %{message | content: aged}
   end
 
-  defp age_message(message, _stored, _current_ids), do: message
+  defp age_message(message, _stored, _current_ids, _view_ids), do: message
 
-  defp age_block(block, stored, current_ids) when is_map(block) do
+  defp age_block(block, stored, current_ids, view_ids) when is_map(block) do
     fields = block_fields(block)
 
     cond do
+      view_result?(fields, view_ids) ->
+        block
+
       current_result?(fields, current_ids) ->
         block
 
@@ -157,10 +204,14 @@ defmodule Handbeam.Agent.ToolResultProjection do
     end
   end
 
-  defp age_block(block, _stored, _current_ids), do: block
+  defp age_block(block, _stored, _current_ids, _view_ids), do: block
 
   defp current_result?(fields, current_ids) do
     is_binary(fields.tool_use_id) and MapSet.member?(current_ids, fields.tool_use_id)
+  end
+
+  defp view_result?(fields, view_ids) do
+    is_binary(fields.tool_use_id) and MapSet.member?(view_ids, fields.tool_use_id)
   end
 
   defp omittable?(fields) do

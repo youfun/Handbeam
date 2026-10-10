@@ -29,12 +29,12 @@ defmodule Handbeam.Agent.Tool.Executor do
   appends that tool's bounded recovery hint to the model-facing content.
 
   This is the main entry point used by the agent Turn loop.
-  Internally calls `execute_all_with_details/2` and returns only the
+  Internally calls `execute_all_with_context/2` and returns only the
   stripped result message.
   """
   @spec execute_all([map()], State.t()) :: {:ok, Message.t()}
   def execute_all(tool_calls, %State{} = state) do
-    {:ok, result_msg, _ui_blocks} = execute_all_with_details(tool_calls, state)
+    {:ok, result_msg, _ui_blocks, _state} = execute_all_with_context(tool_calls, state)
     {:ok, result_msg}
   end
 
@@ -52,7 +52,21 @@ defmodule Handbeam.Agent.Tool.Executor do
   """
   @spec execute_all_with_details([map()], State.t()) :: {:ok, Message.t(), [map()]}
   def execute_all_with_details(tool_calls, %State{} = state) do
-    execute_all_with_details(tool_calls, state, caller: :model)
+    {:ok, result_msg, ui_blocks, _state} = execute_all_with_context(tool_calls, state)
+    {:ok, result_msg, ui_blocks}
+  end
+
+  @doc """
+  Execute tool calls and install any committed model-context edit.
+
+  `edit_context` proposes a revised transcript. This installs that revision
+  once, before the tool result is appended, and threads it into the next
+  sequential call. A failed edit stays an error result and does not install.
+  """
+  @spec execute_all_with_context([map()], State.t()) ::
+          {:ok, Message.t(), [map()], State.t()}
+  def execute_all_with_context(tool_calls, %State{} = state) do
+    execute_all_with_context(tool_calls, state, caller: :model)
   end
 
   @doc """
@@ -88,7 +102,7 @@ defmodule Handbeam.Agent.Tool.Executor do
             call = apply_hook_args(call, hook_result)
             emit_nested(opts, :tool_start, hook_payload)
 
-            block =
+            {block, _revised} =
               execute_one_with_timeout(
                 call,
                 tool_fns,
@@ -116,9 +130,7 @@ defmodule Handbeam.Agent.Tool.Executor do
     end
   end
 
-  defp execute_all_with_details(tool_calls, %State{} = state, exec_opts) do
-    context = build_context(state, exec_opts)
-
+  defp execute_all_with_context(tool_calls, %State{} = state, exec_opts) do
     tool_fns =
       Handbeam.Tool.Registry.tool_fns()
       |> Map.take(authorized_tools(state.config))
@@ -129,10 +141,17 @@ defmodule Handbeam.Agent.Tool.Executor do
       "[Executor] dispatch sequential=#{length(sequential)} concurrent=#{length(concurrent)}"
     )
 
-    seq_results =
-      Enum.map(sequential, fn call ->
-        execute_one_with_timeout(call, tool_fns, context, timeout_for(call, tool_fns, state))
+    {seq_results, state} =
+      Enum.map_reduce(sequential, state, fn call, state ->
+        context = build_context(state, exec_opts)
+
+        {block, revised} =
+          execute_one_with_timeout(call, tool_fns, context, timeout_for(call, tool_fns, state))
+
+        {block, install_context(state, revised)}
       end)
+
+    context = build_context(state, exec_opts)
 
     # Phase 2: Concurrent tools
     par_results =
@@ -180,7 +199,7 @@ defmodule Handbeam.Agent.Tool.Executor do
     # Strip details for LLM-friendly message
     results = Enum.map(ui_blocks, &strip_details/1)
 
-    {:ok, Message.tool_results(results), ui_blocks}
+    {:ok, Message.tool_results(results), ui_blocks, state}
   end
 
   @doc """
@@ -194,7 +213,12 @@ defmodule Handbeam.Agent.Tool.Executor do
     Map.delete(block, :details)
   end
 
-  defp execute_one(%{name: name, input: input, id: id}, tool_fns, context) do
+  defp execute_one(call, tool_fns, context) do
+    {block, _revised} = execute_one_with_revision(call, tool_fns, context)
+    block
+  end
+
+  defp execute_one_with_revision(%{name: name, input: input, id: id}, tool_fns, context) do
     name = normalize_tool_name(name)
     t0 = System.monotonic_time(:millisecond)
     Logger.debug("[Executor] start tool=#{name} id=#{id}")
@@ -221,6 +245,7 @@ defmodule Handbeam.Agent.Tool.Executor do
           unknown_tool(name, id, input)
       end
 
+    {result, revised} = detach_context_edit(result)
     max_chars = get_max_result_chars(tool_fns, name)
     truncated = bound_result(result, max_chars, context)
     duration_ms = System.monotonic_time(:millisecond) - t0
@@ -230,8 +255,26 @@ defmodule Handbeam.Agent.Tool.Executor do
         "is_error=#{truncated.is_error}"
     )
 
-    result_to_block(truncated, id)
+    {result_to_block(truncated, id), revised}
   end
+
+  defp detach_context_edit(%Result{is_error: true} = result), do: {result, nil}
+
+  defp detach_context_edit(%Result{details: details} = result) when is_map(details) do
+    revised = Map.get(details, :model_context) || Map.get(details, "model_context")
+    details = Map.drop(details, [:model_context, "model_context"])
+    details = if details == %{}, do: nil, else: details
+    revised = if is_list(revised), do: revised, else: nil
+    {%{result | details: details}, revised}
+  end
+
+  defp detach_context_edit(result), do: {result, nil}
+
+  defp install_context(%State{} = state, revised) when is_list(revised) do
+    ModelContext.install(state, revised)
+  end
+
+  defp install_context(%State{} = state, _revised), do: state
 
   # Run a sequential tool inside a supervised Task and enforce timeout so a
   # hung tool (e.g. a bash subprocess that never EOFs on its port) cannot
@@ -248,7 +291,7 @@ defmodule Handbeam.Agent.Tool.Executor do
         Handbeam.AgentRunTaskSupervisor,
         fn ->
           Process.put(:tool_owner, context[:runner_pid])
-          execute_one(call, tool_fns, context)
+          execute_one_with_revision(call, tool_fns, context)
         end
       ])
 
@@ -265,12 +308,12 @@ defmodule Handbeam.Agent.Tool.Executor do
             "reason=#{inspect(reason)}"
         end)
 
-        result_to_block(
-          Result.error(
-            failure_content("Tool execution failed: #{inspect(reason)}", tool_fns, tool_name)
-          ),
-          tool_id
-        )
+        {result_to_block(
+           Result.error(
+             failure_content("Tool execution failed: #{inspect(reason)}", tool_fns, tool_name)
+           ),
+           tool_id
+         ), nil}
 
       nil ->
         Logger.warning(fn ->
@@ -278,16 +321,16 @@ defmodule Handbeam.Agent.Tool.Executor do
             "timeout_ms=#{guard_ms}"
         end)
 
-        result_to_block(
-          Result.error(
-            failure_content(
-              "Tool execution timed out after #{div(guard_ms, 1000)}s",
-              tool_fns,
-              tool_name
-            )
-          ),
-          tool_id
-        )
+        {result_to_block(
+           Result.error(
+             failure_content(
+               "Tool execution timed out after #{div(guard_ms, 1000)}s",
+               tool_fns,
+               tool_name
+             )
+           ),
+           tool_id
+         ), nil}
     end
   end
 

@@ -112,8 +112,10 @@ defmodule Handbeam.Agent.SkillsIntegrationTest do
 
     assert state.status == :completed
 
-    assert provider_config.system_prompt ==
-             "Custom prompt" <> Handbeam.Agent.HostEnvironment.describe()
+    # Not full equality: a context-editing provider (FakeProvider) also gets
+    # the ModelContext protocol appended to the custom prompt. The intent of
+    # this test is that skills stay out of an explicit system_prompt.
+    assert String.starts_with?(provider_config.system_prompt, "Custom prompt")
 
     refute provider_config.system_prompt =~ "<available_skills>"
     refute provider_config.system_prompt =~ "review-helper"

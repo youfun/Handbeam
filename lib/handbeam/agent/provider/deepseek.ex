@@ -15,6 +15,9 @@ defmodule Handbeam.Agent.Provider.DeepSeek do
   @default_model "deepseek-v4-flash"
 
   @impl true
+  def context_editing?, do: true
+
+  @impl true
   def complete(messages, tool_defs, config) do
     config
     |> normalize_config()

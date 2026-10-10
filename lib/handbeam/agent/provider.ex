@@ -56,41 +56,20 @@ defmodule Handbeam.Agent.Provider do
 
   @optional_callbacks [stream: 4, context_editing?: 0]
 
-  # Built-in providers that send the transcript on every call. Cursor is
-  # included because an edited context closes the live session and the next
-  # request replays the edited messages on a new one. Any other provider must
-  # implement `context_editing?/0`; otherwise the context tools stay hidden.
-  @transcript_providers [
-    __MODULE__.Anthropic,
-    __MODULE__.Codex,
-    __MODULE__.Cursor,
-    __MODULE__.DeepSeek,
-    __MODULE__.Ollama,
-    __MODULE__.OpenAI,
-    __MODULE__.OpenAICompat,
-    __MODULE__.OpenCodeGo,
-    __MODULE__.OpenRouter,
-    __MODULE__.StepFun,
-    __MODULE__.ZenMux
-  ]
-
   @context_tool_names ["read_context", "edit_context"]
 
   @doc """
-  Context tools are available only when this provider can apply an edited transcript.
+  Context tools are available only when this provider opts in.
+
+  A provider opts in by defining `context_editing?/0` and returning true.
+  That means the next request observes the edited transcript. Server-side
+  session providers stay opted out until they restart the session and replay
+  the edited messages.
   """
   @spec context_editing?(module()) :: boolean()
   def context_editing?(module) when is_atom(module) do
-    cond do
-      function_exported?(module, :context_editing?, 0) ->
-        module.context_editing?()
-
-      module in @transcript_providers ->
-        true
-
-      true ->
-        false
-    end
+    Code.ensure_loaded?(module) and function_exported?(module, :context_editing?, 0) and
+      module.context_editing?()
   end
 
   def context_editing?(_module), do: false

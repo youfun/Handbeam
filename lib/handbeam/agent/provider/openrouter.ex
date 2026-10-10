@@ -17,6 +17,9 @@ defmodule Handbeam.Agent.Provider.OpenRouter do
   @default_model "openai/gpt-4o"
 
   @impl true
+  def context_editing?, do: true
+
+  @impl true
   def complete(messages, tool_defs, config) do
     config
     |> normalize_config()

@@ -76,6 +76,9 @@ defmodule Handbeam.Agent.Provider.Anthropic do
         }
 
   @impl true
+  def context_editing?, do: true
+
+  @impl true
   @spec complete([Message.t()], [Handbeam.Agent.Provider.tool_def()], config()) ::
           {:ok, Handbeam.Agent.Provider.completion_response()} | {:error, term()}
   def complete(messages, tool_defs, config) do
