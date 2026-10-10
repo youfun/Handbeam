@@ -139,7 +139,7 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
     end
   end
 
-  def select_panel(socket, view) when view in ["changes", "files"] do
+  def select_panel(socket, view) when view in ["changes", "files", "browser"] do
     socket
     |> assign(:right_panel_view, String.to_existing_atom(view))
     |> assign(:right_panel_collapsed, false)

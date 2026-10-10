@@ -8,7 +8,7 @@ defmodule Handbeam.Browser.Supervisor do
 
   use DynamicSupervisor
 
-  alias Handbeam.Browser.{Registry, Session}
+  alias Handbeam.Browser.{Registry, Session, UserSurface}
 
   @default_slot "default"
 
@@ -35,6 +35,30 @@ defmodule Handbeam.Browser.Supervisor do
         }
 
         DynamicSupervisor.start_child(__MODULE__, spec)
+    end
+  end
+
+  @user_slot "user"
+
+  @spec start_user_surface(String.t(), keyword()) :: {:ok, pid()} | {:error, term()}
+  def start_user_surface(conversation_id, opts \\ []) when is_binary(conversation_id) do
+    case Registry.lookup(conversation_id, @user_slot) do
+      {:ok, pid} ->
+        {:ok, pid}
+
+      {:error, :not_found} ->
+        spec = %{
+          id: {conversation_id, @user_slot},
+          start:
+            {UserSurface, :start_link, [Keyword.put(opts, :conversation_id, conversation_id)]},
+          restart: :temporary
+        }
+
+        case DynamicSupervisor.start_child(__MODULE__, spec) do
+          {:ok, pid} -> {:ok, pid}
+          {:error, {:already_started, pid}} -> {:ok, pid}
+          other -> other
+        end
     end
   end
 

@@ -106,6 +106,7 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceComponents do
   attr :revert_confirm_change_id, :any, required: true
   attr :revert_message, :any, required: true
   attr :right_panel_collapsed, :any, required: true
+  attr :current_conversation_id, :any, required: true
   attr :right_panel_view, :any, required: true
   attr :terminal_available?, :any, required: true
   attr :timeline, :any, required: true
@@ -149,6 +150,19 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceComponents do
           class={["workspace-panel-tab", if(@right_panel_view == :files, do: "active", else: "")]}
         >
           {gettext("Files")}
+        </button>
+        <button
+          :if={Handbeam.Browser.UserSurface.desktop?()}
+          type="button"
+          id="workspace-panel-browser"
+          phx-click="select_right_panel_view"
+          phx-value-view="browser"
+          class={[
+            "workspace-panel-tab",
+            if(@right_panel_view == :browser, do: "active", else: "")
+          ]}
+        >
+          {gettext("Browser")}
         </button>
         <button
           :if={@terminal_available?}
@@ -264,6 +278,18 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceComponents do
             </div>
           </div>
         </div>
+      </div>
+
+      <div
+        :if={Handbeam.Browser.UserSurface.desktop?() and @right_panel_view == :browser}
+        class="flex-1 min-h-0"
+      >
+        <.live_component
+          module={HandbeamWeb.WorkspaceLive.BrowserPanel}
+          id="browser-panel"
+          conversation_id={@current_conversation_id}
+          workspace_root={@workspace_root}
+        />
       </div>
 
       <div :if={@terminal_available? and @right_panel_view == :terminal} class="flex-1 min-h-0">

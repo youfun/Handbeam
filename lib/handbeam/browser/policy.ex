@@ -301,6 +301,21 @@ defmodule Handbeam.Browser.Policy do
   defp native_atom("takeover"), do: :takeover
   defp native_atom(_), do: nil
 
+  @doc """
+  True when `url` is an http(s) URL the user browser may load.
+
+  Rejects missing hosts, whitespace, and non-http schemes such as `file:`
+  and `javascript:`. Local and private hosts are allowed: this is the user's
+  address bar, not the agent tool's auto-navigation policy.
+  """
+  @spec allowed_navigation_url?(term()) :: boolean()
+  def allowed_navigation_url?(url) when is_binary(url) do
+    String.length(url) <= 2_000 and String.trim(url) == url and url != "" and
+      not String.contains?(url, ["\n", "\r", " ", "\t"]) and http_url?(url)
+  end
+
+  def allowed_navigation_url?(_), do: false
+
   defp http_url?(url) do
     case URI.parse(url) do
       %URI{scheme: scheme, host: host} when scheme in ["http", "https"] ->

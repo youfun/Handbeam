@@ -216,6 +216,62 @@ defmodule HandbeamWeb.WorkspaceLive.Composer do
     end
   end
 
+  @doc """
+  Copy a local JPEG into the conversation upload directory.
+
+  Returns the same attachment map shape as a composer image upload.
+  """
+  def import_image_file(socket, source_path) when is_binary(source_path) do
+    conversation_id = socket.assigns.current_conversation_id
+    free? = socket.assigns[:chat_scope] == :free
+    workspace_path = socket.assigns[:workspace_root]
+    workspace_id = socket.assigns[:current_workspace_id]
+
+    with true <- is_binary(conversation_id) and conversation_id != "",
+         {:ok, %File.Stat{type: :regular, size: size}} <- File.lstat(source_path),
+         :ok <- image_size(size),
+         {:ok, head} <- read_head(source_path),
+         :ok <- Handbeam.Attachments.Type.match("image/jpeg", "browser-annotation.jpg", head) do
+      id = Ecto.UUID.generate()
+      directory = upload_directory!(free?, workspace_path, conversation_id)
+      filename = "#{id}.jpg"
+      dest = Path.join(directory, filename)
+      File.cp!(source_path, dest)
+
+      {:ok,
+       %{
+         id: id,
+         kind: "image",
+         mime_type: "image/jpeg",
+         size_bytes: size,
+         filename: "browser-annotation.jpg",
+         storage_path: dest,
+         relative_path: upload_relative(free?, dest, workspace_path),
+         url: upload_url(free?, conversation_id, filename, workspace_id)
+       }}
+    else
+      false -> {:error, :invalid_image}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp image_size(size) when is_integer(size) and size > 0 and size <= 5_000_000, do: :ok
+  defp image_size(_), do: {:error, :image_too_large}
+
+  defp read_head(path) do
+    case File.open(path, [:read, :binary]) do
+      {:ok, io} ->
+        try do
+          {:ok, IO.binread(io, 32)}
+        after
+          File.close(io)
+        end
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
   defp consume_images(socket, workspace_path) do
     conversation_id = socket.assigns.current_conversation_id
     free? = socket.assigns[:chat_scope] == :free

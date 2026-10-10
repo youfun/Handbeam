@@ -163,9 +163,7 @@ defmodule Handbeam.Tool.Builtin.Browser do
   defp maybe_reject_url("open", input) do
     case field(input, "url") do
       url when is_binary(url) ->
-        uri = URI.parse(url)
-
-        if uri.scheme in ["http", "https"] and is_binary(uri.host) and uri.host != "" do
+        if Policy.allowed_navigation_url?(url) do
           :ok
         else
           {:error, "only http(s) URLs are allowed"}

@@ -84,6 +84,7 @@ defmodule Handbeam.MixProject do
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
       {:jason, "~> 1.2"},
+      {:websockex, "~> 0.5.1"},
       {:dns_cluster, "~> 0.3.0"},
       {:bandit, "~> 1.12"},
 

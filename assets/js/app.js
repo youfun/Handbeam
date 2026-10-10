@@ -27,6 +27,7 @@ const ConversationSidebar = {
   }
 };
 import { LocalWebGPUProbe } from "./hooks/local_webgpu_probe.js";
+import { BrowserSurface } from "./hooks/browser_surface.js";
 import { GhosttyTerminal } from "../vendor/ghostty.js";
 import { installImageLightbox } from "./image_lightbox.js";
 
@@ -74,7 +75,7 @@ const MobHook = {
 }
 
 let csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content");
-let Hooks = { StreamingMarkdown, ChatScroll, ConversationNav, ComposerPasteUpload, WorkspacePanel, CopyText, ConversationContextMenu, ConversationActivity, ConversationSidebar, LocalWebGPUProbe, GhosttyTerminal, ThemeBridge, MobHook };
+let Hooks = { StreamingMarkdown, ChatScroll, ConversationNav, ComposerPasteUpload, WorkspacePanel, CopyText, ConversationContextMenu, ConversationActivity, ConversationSidebar, LocalWebGPUProbe, GhosttyTerminal, ThemeBridge, MobHook, BrowserSurface };
 
 try {
   let liveSocket = new LiveSocket("/live", Socket, {

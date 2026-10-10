@@ -169,6 +169,7 @@ defmodule HandbeamWeb.WorkspaceLive do
       |> assign(:show_settings_panel, false)
       |> assign(:mobile_right_panel_open, false)
       |> assign(:right_panel_collapsed, false)
+      |> assign(:browser_capture_token, nil)
       |> finish_boot_models()
       |> maybe_remember_boot(params)
 
@@ -510,7 +511,7 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   @impl true
   def handle_event("select_right_panel_view", %{"view" => view}, socket)
-      when view in ["changes", "files"] do
+      when view in ["changes", "files", "browser"] do
     {:noreply, WorkspaceNavigation.select_panel(socket, view)}
   end
 
@@ -1480,9 +1481,78 @@ defmodule HandbeamWeb.WorkspaceLive do
     {:noreply, Schedules.reload(socket)}
   end
 
+  def handle_info({:arm_browser_capture, token}, socket) do
+    {:noreply, assign(socket, :browser_capture_token, token)}
+  end
+
+  def handle_info({:browser_surface_state, conversation_id, summary}, socket) do
+    if browser_panel_current?(socket, conversation_id) do
+      send_update(HandbeamWeb.WorkspaceLive.BrowserPanel,
+        id: "browser-panel",
+        surface: summary
+      )
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:browser_markers, conversation_id, markers}, socket) do
+    if browser_panel_current?(socket, conversation_id) do
+      {:noreply, push_event(socket, "browser_markers", %{annotations: markers})}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_info({:browser_frame, conversation_id, frame}, socket) do
+    if browser_panel_current?(socket, conversation_id) do
+      {:noreply, push_event(socket, "browser_frame", frame)}
+    else
+      {:noreply, socket}
+    end
+  end
+
+  def handle_info({:browser_annotation_ready, conversation_id, token, payload, path}, socket) do
+    if socket.assigns.current_conversation_id == conversation_id and
+         socket.assigns.browser_capture_token == token do
+      {:noreply, deliver_browser_annotation(socket, payload, path)}
+    else
+      {:noreply, socket}
+    end
+  end
+
   def handle_info(msg, socket) do
     Logger.debug("[WorkspaceLive] unhandled message: #{inspect(msg)}")
     {:noreply, socket}
+  end
+
+  defp browser_panel_current?(socket, conversation_id) do
+    socket.assigns.current_conversation_id == conversation_id and
+      socket.assigns.right_panel_view == :browser
+  end
+
+  defp deliver_browser_annotation(socket, payload, path) do
+    {payload, attachments} = browser_screenshot(socket, payload, path)
+    prompt = Handbeam.BrowserAnnotation.format_prompt(payload)
+    Composer.restore_draft(socket, %{content: prompt, attachments: attachments})
+  end
+
+  defp browser_screenshot(socket, payload, path) do
+    too_many? = length(socket.assigns.pending_attachments) >= 4
+
+    cond do
+      too_many? or not is_binary(path) ->
+        {%{payload | screenshot: false}, []}
+
+      true ->
+        case Composer.import_image_file(socket, path) do
+          {:ok, attachment} ->
+            {%{payload | screenshot: true}, [attachment]}
+
+          {:error, _} ->
+            {%{payload | screenshot: false}, []}
+        end
+    end
   end
 
   defp project_event(socket, event) do

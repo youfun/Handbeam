@@ -11,13 +11,24 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
 
   @free_key :free
 
+  defp put_conversation(socket, conversation_id) do
+    token =
+      if socket.assigns[:current_conversation_id] == conversation_id do
+        socket.assigns[:browser_capture_token]
+      end
+
+    socket
+    |> assign(:current_conversation_id, conversation_id)
+    |> assign(:browser_capture_token, token)
+  end
+
   def assign_current(socket, ws, conversation_id) do
     _ = Handbeam.Search.prewarm(ws["path"])
 
     socket
     |> assign(:chat_scope, :workspace)
     |> assign(:current_workspace_id, ws["id"])
-    |> assign(:current_conversation_id, conversation_id)
+    |> put_conversation(conversation_id)
     |> assign(:conversation_menu_id, nil)
     |> assign(:rename_conversation, nil)
     |> assign(:workspace_root, ws["path"])
@@ -130,7 +141,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
     {socket, conv} = ensure_active_conversation(socket, ws_id)
 
     socket
-    |> assign(:current_conversation_id, ConversationState.conversation_id(conv))
+    |> put_conversation(ConversationState.conversation_id(conv))
     |> reload_conversation_stream()
     |> ConversationState.sync_conv_state(opts)
   end
@@ -243,7 +254,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
 
       socket =
         socket
-        |> assign(:current_conversation_id, next_id)
+        |> put_conversation(next_id)
         |> reload_conversation_stream()
         |> ConversationState.sync_conv_state(opts)
         |> ConversationState.sync_conv_to()
@@ -346,7 +357,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
     socket
     |> assign(:chat_scope, :free)
     |> assign(:current_workspace_id, nil)
-    |> assign(:current_conversation_id, conversation_id)
+    |> put_conversation(conversation_id)
     |> assign(:conversation_menu_id, nil)
     |> assign(:rename_conversation, nil)
     |> assign(:workspace_root, nil)
