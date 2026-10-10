@@ -362,16 +362,21 @@ defmodule Handbeam.Agent.Compactor do
       |> Enum.reverse()
       |> Enum.find_value(fn {msg, idx} -> valid_cut_message?(msg) && idx end)
 
-    # 0 is a real cut. `||` would keep it, but a later `> 0` check cannot
-    # tell that boundary apart from "no boundary".
+    # 0 is a real cut. `||` would keep it, then a `> 0` check would treat
+    # "boundary is the first tail message" as "no boundary".
     chosen = first_cut([user_cut, assistant_cut, fallback_cut])
 
     cond do
-      is_integer(chosen) ->
+      is_integer(chosen) and chosen > 0 ->
         chosen
 
-      # No user or assistant boundary. Summarize the whole tail only when a
-      # trailing tool result is itself what overflows the recent window.
+      # The current user message is the tail boundary. Keep it verbatim.
+      chosen == 0 and real_user_message?(hd(messages)) ->
+        0
+
+      # No protected user boundary. A tail that itself exceeds the recent
+      # window — typically one assistant call plus an oversized tool result —
+      # is summarized whole. The original task stays outside this tail.
       estimate_messages_tokens(messages) >= keep_recent_tokens ->
         length(messages)
 

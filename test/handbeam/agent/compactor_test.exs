@@ -499,6 +499,42 @@ defmodule Handbeam.Agent.CompactorTest do
       assert Enum.at(compacted.messages, 1).content == request
     end
 
+    test "summarizes an oversized tool result that sits after the only assistant boundary" do
+      body = String.duplicate("r", 4_000)
+
+      messages = [
+        Message.user("read big.txt"),
+        Message.assistant_blocks([
+          %{type: "tool_use", id: "t1", name: "read", input: %{}}
+        ]),
+        Message.tool_results([%{type: "tool_result", tool_use_id: "t1", content: body}])
+      ]
+
+      state =
+        build_state(messages,
+          max_tokens: 200,
+          compaction: [reserve_tokens: 20, keep_recent_tokens: 20],
+          provider_config: %{summary_response: {:ok, summary_text("Result")}, test_pid: self()}
+        )
+
+      {:compacted, compacted} = Compactor.maybe_compact(state)
+
+      assert_received {:summary_request, _, _, _}
+      assert hd(compacted.messages).content == "read big.txt"
+      assert summary_message?(Enum.at(compacted.messages, 1))
+
+      refute Enum.any?(compacted.messages, fn
+               %Message{content: content} when is_binary(content) ->
+                 String.contains?(content, body)
+
+               %Message{content: blocks} when is_list(blocks) ->
+                 Enum.any?(blocks, &(is_map(&1) and String.contains?(&1[:content] || "", body)))
+
+               _ ->
+                 false
+             end)
+    end
+
     test "summarizes a tail that is only an oversized tool result" do
       body = String.duplicate("r", 4_000)
 
