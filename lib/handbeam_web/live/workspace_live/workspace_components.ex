@@ -60,25 +60,27 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceComponents do
           parent={entry.relative_path}
           depth={@depth + 1}
         />
-        <button
-          :if={entry.kind == :file}
-          type="button"
-          class={[
-            "workspace-file-row file",
-            if(@active_file == Path.join(@workspace_root, entry.relative_path),
-              do: "active",
-              else: ""
-            )
-          ]}
-          style={"--tree-depth: #{@depth}"}
-          phx-click="select_workspace_file"
-          phx-value-path={entry.relative_path}
-          title={entry.relative_path}
-        >
-          <span class="workspace-tree-chevron" aria-hidden="true"></span>
-          <.tree_icon type={icon_type(entry)} />
-          <span class="truncate">{entry.name}</span>
-        </button>
+        <div :if={entry.kind == :file} class="workspace-file-entry">
+          <button
+            type="button"
+            class={[
+              "workspace-file-row file",
+              if(@active_file == Path.join(@workspace_root, entry.relative_path),
+                do: "active",
+                else: ""
+              )
+            ]}
+            style={"--tree-depth: #{@depth}"}
+            phx-click="select_workspace_file"
+            phx-value-path={entry.relative_path}
+            title={entry.relative_path}
+          >
+            <span class="workspace-tree-chevron" aria-hidden="true"></span>
+            <.tree_icon type={icon_type(entry)} />
+            <span class="truncate">{entry.name}</span>
+          </button>
+          <.copy_relative_path path={entry.relative_path} />
+        </div>
         <div
           :if={entry.kind == :symlink}
           class="workspace-file-row symlink"
@@ -273,6 +275,49 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceComponents do
         />
       </div>
     </div>
+    """
+  end
+
+  attr :path, :string, required: true
+
+  def copy_relative_path(assigns) do
+    ~H"""
+    <button
+      type="button"
+      id={"workspace-file-copy-#{Base.url_encode64(@path, padding: false)}"}
+      class="file-change-copy workspace-file-copy"
+      phx-hook="CopyText"
+      data-copy={@path}
+      title={gettext("Copy relative path")}
+      aria-label={gettext("Copy relative path")}
+    >
+      <svg class="copy-idle" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+        <rect
+          x="4.25"
+          y="3.25"
+          width="5.5"
+          height="6.5"
+          rx="0.75"
+          stroke="currentColor"
+          stroke-width="1.1"
+        />
+        <path
+          d="M3.25 8.75H2.75A.75.75 0 0 1 2 8V2.75A.75.75 0 0 1 2.75 2H8a.75.75 0 0 1 .75.75V3.25"
+          stroke="currentColor"
+          stroke-width="1.1"
+          stroke-linecap="round"
+        />
+      </svg>
+      <svg class="copy-done" width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden="true">
+        <path
+          d="M2.5 6.2 4.8 8.5 9.5 3.5"
+          stroke="currentColor"
+          stroke-width="1.2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        />
+      </svg>
+    </button>
     """
   end
 

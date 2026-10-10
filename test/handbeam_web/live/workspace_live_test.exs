@@ -1912,6 +1912,13 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
                  "compact-tab.ex"
                )
 
+        assert has_element?(
+                 view,
+                 "button.workspace-file-copy[data-copy='nested/compact-tab.ex'][aria-label='Copy relative path']"
+               )
+
+        refute has_element?(view, "button.workspace-file-copy[data-copy='nested']")
+
         view
         |> element(
           "button[phx-click='select_workspace_file'][phx-value-path='nested/compact-tab.ex']"

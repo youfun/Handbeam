@@ -1319,6 +1319,55 @@ button.workspace-file-row:hover,
   opacity: 0.75;
 }
 
+.workspace-file-entry {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.workspace-file-entry > .workspace-file-row {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 0;
+}
+
+.workspace-file-entry:hover > .workspace-file-row,
+.workspace-file-entry:has(> .workspace-file-row.active) > .workspace-file-row {
+  background: transparent;
+}
+
+.workspace-file-entry:hover,
+.workspace-file-entry:has(> .workspace-file-row.active) {
+  background: var(--color-surface-hover);
+  color: var(--color-text-primary);
+}
+
+.workspace-file-entry:has(> .workspace-file-row.active) {
+  box-shadow: inset 2px 0 0 var(--color-user-message);
+}
+
+.workspace-file-entry > .workspace-file-row.active {
+  box-shadow: none;
+}
+
+.workspace-file-copy {
+  align-self: center;
+  margin-right: 8px;
+  opacity: 0;
+}
+
+.workspace-file-entry:hover .workspace-file-copy,
+.workspace-file-entry:focus-within .workspace-file-copy,
+.workspace-file-copy[data-copied="true"] {
+  opacity: 1;
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .workspace-file-copy {
+    opacity: 0.7;
+  }
+}
+
 .workspace-tree-chevron {
   width: 12px;
   flex: 0 0 12px;
