@@ -296,17 +296,31 @@ defmodule Handbeam.Agent.Compactor do
         "[#{role_label(role)}]\n#{text}"
 
       role == :assistant and type in ["tool_use", "server_tool_use"] ->
-        "[Assistant tool call] #{name}(#{inspect(input)})"
+        "[Assistant tool call] #{name}(#{inspect_summary_term(input)})"
 
       type in ["tool_result", "server_tool_result"] and is_binary(content) ->
         "[Tool result]\n#{content}"
 
       true ->
-        "[#{role_label(role)} block #{type || "unknown"}]\n#{inspect(block)}"
+        "[#{role_label(role)} block #{type || "unknown"}]\n#{inspect_summary_term(block)}"
     end
   end
 
   defp serialize_block(_role, _block), do: ""
+
+  defp inspect_summary_term(term) do
+    term
+    |> inspect(limit: 50, printable_limit: @summary_tool_result_length)
+    |> truncate_summary_text(@summary_tool_result_length)
+  end
+
+  defp truncate_summary_text(text, limit) do
+    if String.length(text) > limit do
+      String.slice(text, 0, limit) <> "\n[truncated for compaction]"
+    else
+      text
+    end
+  end
 
   defp role_label(:user), do: "User"
   defp role_label(:assistant), do: "Assistant"

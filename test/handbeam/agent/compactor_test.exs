@@ -289,6 +289,63 @@ defmodule Handbeam.Agent.CompactorTest do
       assert Compactor.request_tokens(compacted.messages, nil) < state.config.max_tokens
     end
 
+    test "truncates large write and edit arguments and fallback blocks in the summary prompt" do
+      write_content = "write-prefix-" <> String.duplicate("w", 3_000) <> "-write-tail"
+      edit_content = "edit-prefix-" <> String.duplicate("e", 3_000) <> "-edit-tail"
+      fallback_content = "fallback-prefix-" <> String.duplicate("f", 3_000) <> "-fallback-tail"
+
+      messages = [
+        Message.user("original request"),
+        Message.assistant_blocks([
+          %{
+            type: "tool_use",
+            id: "write-call",
+            name: "write",
+            input: %{file_path: "large.txt", content: write_content}
+          },
+          %{
+            type: "tool_use",
+            id: "edit-call",
+            name: "edit",
+            input: %{file_path: "large.txt", old_text: "old", new_text: edit_content}
+          },
+          %{type: "custom_payload", payload: fallback_content}
+        ]),
+        Message.tool_results([
+          %{type: "tool_result", tool_use_id: "write-call", content: "wrote file"},
+          %{type: "tool_result", tool_use_id: "edit-call", content: "edited file"}
+        ]),
+        Message.user(String.duplicate("boundary", 500)),
+        Message.assistant("recent"),
+        Message.user("latest")
+      ]
+
+      state =
+        build_state(messages,
+          max_tokens: 3_000,
+          compaction: [reserve_tokens: 100, keep_recent_tokens: 1_500],
+          provider_config: %{
+            summary_response: {:ok, summary_text("Tool arguments")},
+            test_pid: self()
+          }
+        )
+
+      {:compacted, _} = Compactor.maybe_compact(state)
+
+      assert_received {:summary_request, [%Message{content: prompt}], [], _config}
+      assert prompt =~ "[Assistant tool call] write("
+      assert prompt =~ "write-prefix-"
+      refute prompt =~ "-write-tail"
+      assert prompt =~ "[Assistant tool call] edit("
+      assert prompt =~ "edit-prefix-"
+      refute prompt =~ "-edit-tail"
+      assert prompt =~ "[Assistant block custom_payload]"
+      assert prompt =~ "fallback-prefix-"
+      refute prompt =~ "-fallback-tail"
+      assert prompt =~ "[truncated for compaction]"
+      assert String.length(prompt) < 10_000
+    end
+
     test "preserves recent messages intact based on the keep_recent_tokens budget" do
       messages = [
         Message.user("original"),
