@@ -11,6 +11,7 @@ defmodule Handbeam.Agent.Tool.Executor do
   alias Handbeam.Agent.{Message, ModelContext, State}
   alias Handbeam.Agent.Tool.{Result, ResultContract}
   alias Handbeam.Extension.HookPipeline
+  alias Handbeam.Utils.SafeMap
 
   require Logger
 
@@ -158,14 +159,17 @@ defmodule Handbeam.Agent.Tool.Executor do
       if concurrent == [] do
         []
       else
-        Task.Supervisor.async_stream_nolink(
-          Handbeam.AgentRunTaskSupervisor,
-          concurrent,
-          &execute_one(&1, tool_fns, context),
-          timeout: timeout_for(hd(concurrent), tool_fns, state),
-          ordered: true,
-          on_timeout: :kill_task
-        )
+        stream =
+          Task.Supervisor.async_stream_nolink(
+            Handbeam.AgentRunTaskSupervisor,
+            concurrent,
+            &execute_one(&1, tool_fns, context),
+            timeout: timeout_for(hd(concurrent), tool_fns, state),
+            ordered: true,
+            on_timeout: :kill_task
+          )
+
+        stream
         |> Enum.with_index()
         |> Enum.map(fn
           {{:ok, result}, _idx} ->
@@ -175,10 +179,10 @@ defmodule Handbeam.Agent.Tool.Executor do
             tc = Enum.at(concurrent, idx)
 
             tool_id =
-              (tc && Handbeam.Utils.SafeMap.get_any(tc, [:id, "id"])) || "unknown"
+              (tc && SafeMap.get_any(tc, [:id, "id"])) || "unknown"
 
             tool_name =
-              (tc && Handbeam.Utils.SafeMap.get_any(tc, [:name, "name"])) || "unknown"
+              (tc && SafeMap.get_any(tc, [:name, "name"])) || "unknown"
 
             Logger.warning(fn ->
               "[Executor] concurrent tool timeout/exit tool=#{tool_name} id=#{tool_id} " <>
@@ -261,7 +265,7 @@ defmodule Handbeam.Agent.Tool.Executor do
   defp detach_context_edit(%Result{is_error: true} = result), do: {result, nil}
 
   defp detach_context_edit(%Result{details: details} = result) when is_map(details) do
-    revised = Map.get(details, :model_context) || Map.get(details, "model_context")
+    revised = SafeMap.get_any(details, :model_context, "model_context")
     details = Map.drop(details, [:model_context, "model_context"])
     details = if details == %{}, do: nil, else: details
     revised = if is_list(revised), do: revised, else: nil
@@ -280,9 +284,9 @@ defmodule Handbeam.Agent.Tool.Executor do
   # hung tool (e.g. a bash subprocess that never EOFs on its port) cannot
   # block the whole Turn forever.
   defp execute_one_with_timeout(call, tool_fns, context, timeout_ms) do
-    tool_id = (call && Handbeam.Utils.SafeMap.get_any(call, [:id, "id"])) || "unknown"
+    tool_id = (call && SafeMap.get_any(call, [:id, "id"])) || "unknown"
 
-    tool_name = (call && Handbeam.Utils.SafeMap.get_any(call, [:name, "name"])) || "unknown"
+    tool_name = (call && SafeMap.get_any(call, [:name, "name"])) || "unknown"
 
     start_task = if context.delegation_config.delegated?, do: :async, else: :async_nolink
 
@@ -520,7 +524,7 @@ defmodule Handbeam.Agent.Tool.Executor do
   defp advisor_tool_allowed?(_name, _config), do: true
 
   defp timeout_for(call, tool_fns, state) do
-    name = Handbeam.Utils.SafeMap.get_any(call, :name, "name")
+    name = SafeMap.get_any(call, :name, "name")
 
     tool_cap =
       case Map.get(tool_fns, name) do
@@ -574,7 +578,7 @@ defmodule Handbeam.Agent.Tool.Executor do
 
   defp partition_by_concurrency(tool_calls, tool_fns) do
     Enum.split_with(tool_calls, fn call ->
-      name = Handbeam.Utils.SafeMap.get_any(call, :name, "name")
+      name = SafeMap.get_any(call, :name, "name")
 
       case Map.fetch(tool_fns, name) do
         {:ok, entry} -> entry.concurrent? == false

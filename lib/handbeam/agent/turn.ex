@@ -21,6 +21,7 @@ defmodule Handbeam.Agent.Turn do
   alias Handbeam.Agent.Provider.Retry
   alias Handbeam.Agent.Tool.Executor
   alias Handbeam.Extension.HookPipeline
+  alias Handbeam.Utils.SafeMap
 
   require Logger
 
@@ -905,7 +906,7 @@ defmodule Handbeam.Agent.Turn do
   defp annotate_context_blocks(message, _trailer), do: message
 
   defp append_block_budget(block, trailer) when is_map(block) do
-    content = block[:content] || block["content"]
+    content = SafeMap.get_any(block, :content, "content")
 
     cond do
       not is_binary(content) ->
