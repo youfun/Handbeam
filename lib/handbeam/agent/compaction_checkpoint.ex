@@ -32,6 +32,7 @@ defmodule Handbeam.Agent.CompactionCheckpoint do
   @spec valid?(map(), [map()]) :: boolean()
   def valid?(checkpoint, entries) do
     with true <- checkpoint?(checkpoint),
+         true <- checkpoint_follows_boundary?(checkpoint, entries),
          {:ok, source} <-
            source_entries(
              entries,
@@ -42,6 +43,33 @@ defmodule Handbeam.Agent.CompactionCheckpoint do
         checkpoint["source_digest"] == digest(source)
     else
       _ -> false
+    end
+  end
+
+  @spec projection([map()]) :: {:ok, map()} | :none
+  def projection(entries) when is_list(entries) do
+    checkpoint =
+      entries
+      |> Enum.reverse()
+      |> Enum.find(&valid?(&1, entries))
+
+    case checkpoint do
+      %{} ->
+        raw = Enum.reject(entries, &checkpoint?/1)
+        first_index = Enum.find_index(raw, &(&1["id"] == checkpoint["first_entry_id"]))
+
+        boundary_index =
+          Enum.find_index(raw, &(&1["id"] == checkpoint["covered_through_id"]))
+
+        {:ok,
+         %{
+           checkpoint: checkpoint,
+           first_entry: Enum.at(raw, first_index),
+           suffix_entries: Enum.drop(raw, boundary_index + 1)
+         }}
+
+      nil ->
+        :none
     end
   end
 
@@ -112,6 +140,16 @@ defmodule Handbeam.Agent.CompactionCheckpoint do
       %{} = checkpoint -> not checkpoint?(checkpoint) or valid?(checkpoint, entries)
       _ -> false
     end
+  end
+
+  defp checkpoint_follows_boundary?(checkpoint, entries) do
+    checkpoint_index = Enum.find_index(entries, &(&1["id"] == checkpoint["id"]))
+
+    boundary_index =
+      Enum.find_index(entries, &(&1["id"] == checkpoint["covered_through_id"]))
+
+    is_integer(checkpoint_index) and is_integer(boundary_index) and
+      checkpoint_index > boundary_index
   end
 
   defp raw_boundary(messages, id_index) do

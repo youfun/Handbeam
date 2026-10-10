@@ -206,7 +206,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
 
   def load_transcript_entries(conversation_id, fallback) when is_binary(conversation_id) do
     case Handbeam.ConversationTranscriptStore.list(conversation_id) do
-      {:ok, entries} -> entries
+      {:ok, entries} -> Handbeam.PubSub.Projection.visible_entries(entries)
       {:error, _reason} -> fallback
     end
   end
@@ -234,6 +234,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
     with true <- is_binary(conv_id) and is_binary(before),
          {:ok, %{entries: entries, before: next_before, has_more?: has_more?}} <-
            Handbeam.ConversationTranscriptStore.page(conv_id, limit: 100, before: before) do
+      entries = Handbeam.PubSub.Projection.visible_entries(entries)
       timeline = deduplicate_entries(entries ++ socket.assigns.timeline)
 
       pending =

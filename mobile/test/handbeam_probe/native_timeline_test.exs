@@ -36,6 +36,27 @@ defmodule HandbeamProbe.NativeTimelineTest do
     end
   end
 
+  test "internal model compaction checkpoints are not rendered" do
+    chat = %{
+      entries: [
+        %{
+          "id" => "compaction-1",
+          "content_type" => "model_compaction",
+          "role" => "internal",
+          "summary" => "PRIVATE-COMPACTION-SUMMARY"
+        },
+        %{"id" => "user-1", "role" => "user", "content" => "visible user message"}
+      ],
+      stream: "",
+      running: false
+    }
+
+    rendered = inspect(render(chat, MapSet.new()), limit: :infinity)
+    assert rendered =~ "visible user message"
+    refute rendered =~ "PRIVATE-COMPACTION-SUMMARY"
+    refute rendered =~ "compaction-1"
+  end
+
   test "sent images sit above the bubble, right aligned, without network or bytes" do
     {chat, dest, relative} = chat_with_png("user-img", "shot.png")
 

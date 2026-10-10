@@ -253,9 +253,46 @@ defmodule Handbeam.Agent.DelegationTest do
     assert Policy.live_parent?(context)
     refute_receive {:provider, :child, _, _, _, _}, 100
 
+    assert {:ok, historical_entry} =
+             Handbeam.ConversationTranscriptStore.append(id, %{
+               "id" => "child-history-fact",
+               "content_type" => "assistant_msg",
+               "message_type" => "assistant",
+               "role" => "assistant",
+               "content" => "verbose child history fact",
+               "status" => "completed"
+             })
+
+    child_entries = ConversationStore.load_messages(id)
+
+    child_messages =
+      Handbeam.Attachments.History.to_messages(child_entries, context.working_directory, id)
+
+    first = hd(child_messages)
+    historical = Enum.find(child_messages, &(&1.id == historical_entry["id"]))
+
+    assert {:ok, _checkpoint} =
+             Handbeam.Agent.CompactionCheckpoint.persist(
+               id,
+               %{
+                 first: first,
+                 previous_summary: nil,
+                 messages_to_summarize: [historical],
+                 summary: "durable child checkpoint",
+                 context_edited: false,
+                 context_generation: 0,
+                 context_window: 200_000,
+                 model: "fake",
+                 run_id: "child-checkpoint-run"
+               },
+               access_context: context
+             )
+
     resume = Task.async(fn -> Delegation.resume_task(context.conversation_id, id) end)
     assert_receive {:provider, :child, resumed_child, resumed_messages, _, _}, 2_000
     assert resumed_child != child
+    assert Enum.any?(resumed_messages, &(Message.text(&1) =~ "durable child checkpoint"))
+    refute Enum.any?(resumed_messages, &(Message.text(&1) =~ "verbose child history fact"))
     assert Enum.any?(resumed_messages, &(Message.text(&1) =~ "Resume the interrupted task"))
     assert {:ok, %{child_conversation_id: ^id, delivery: :follow_up}} = Task.await(resume, 2_000)
     send(resumed_child, :finish)

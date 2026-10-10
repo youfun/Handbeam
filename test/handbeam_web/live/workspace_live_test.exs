@@ -5597,6 +5597,38 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       refute html =~ ~s(data-target-id="nav-tool-1")
     end
 
+    test "hides internal model compaction checkpoints", %{conn: conn} do
+      isolate_conversation_home!()
+
+      {:ok, conversation} =
+        Handbeam.ConversationStore.create("default",
+          id: "conv-hidden-compaction",
+          title: "Hidden compaction",
+          timeline: [
+            %{
+              "id" => "compaction-hidden-1",
+              "content_type" => "model_compaction",
+              "message_type" => "internal",
+              "role" => "internal",
+              "summary" => "PRIVATE-COMPACTION-SUMMARY"
+            },
+            %{
+              "id" => "visible-user",
+              "content_type" => "user_msg",
+              "role" => "user",
+              "content" => "Visible request"
+            }
+          ]
+        )
+
+      {:ok, view, html} = live(conn, "/w/default/c/#{conversation["id"]}")
+
+      assert html =~ "Visible request"
+      refute html =~ "PRIVATE-COMPACTION-SUMMARY"
+      refute has_element?(view, "#timeline-compaction-hidden-1")
+      refute has_element?(view, "[data-target-id='compaction-hidden-1']")
+    end
+
     test "hides the hamburger when there are fewer than two user turns", %{conn: conn} do
       isolate_conversation_home!()
 

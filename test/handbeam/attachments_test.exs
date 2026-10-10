@@ -433,6 +433,136 @@ defmodule Handbeam.AttachmentsTest do
              )
   end
 
+  test "history reuses chained checkpoints, preserves suffix reasoning, and falls back" do
+    {:ok, conv} = Handbeam.ConversationStore.create("default")
+    id = conv["id"]
+
+    append = fn entry ->
+      {:ok, persisted} = Handbeam.ConversationTranscriptStore.append(id, entry)
+      persisted
+    end
+
+    first_entry =
+      append.(%{
+        "id" => "chain-user-1",
+        "content_type" => "user_msg",
+        "message_type" => "user",
+        "role" => "user",
+        "content" => "original task"
+      })
+
+    old_entry =
+      append.(%{
+        "id" => "chain-assistant-1",
+        "content_type" => "assistant_msg",
+        "message_type" => "assistant",
+        "role" => "assistant",
+        "content" => "old answer",
+        "status" => "completed"
+      })
+
+    next_entry =
+      append.(%{
+        "id" => "chain-user-2",
+        "content_type" => "user_msg",
+        "message_type" => "user",
+        "role" => "user",
+        "content" => "next question"
+      })
+
+    reasoning = %{
+      "type" => "reasoning",
+      "id" => "chain-reasoning",
+      "encrypted_content" => "encrypted-chain"
+    }
+
+    recent_entry =
+      append.(%{
+        "id" => "chain-assistant-2",
+        "content_type" => "assistant_msg",
+        "message_type" => "assistant",
+        "role" => "assistant",
+        "content" => "recent answer",
+        "content_blocks" => [%{"type" => "responses_reasoning", "item" => reasoning}],
+        "status" => "completed"
+      })
+
+    [first, old, next, recent] =
+      History.to_messages([first_entry, old_entry, next_entry, recent_entry], nil, id)
+
+    checkpoint_event = fn previous_summary, summarized, summary, run_id ->
+      %{
+        first: first,
+        previous_summary: previous_summary,
+        messages_to_summarize: summarized,
+        summary: summary,
+        context_edited: false,
+        context_generation: 0,
+        context_window: 272_000,
+        model: "gpt-5.6-sol",
+        run_id: run_id
+      }
+    end
+
+    assert {:ok, checkpoint_1} =
+             Handbeam.Agent.CompactionCheckpoint.persist(
+               id,
+               checkpoint_event.(nil, [old], "first durable summary", "run-1"),
+               []
+             )
+
+    entries = Handbeam.ConversationStore.load_messages(id)
+
+    [rebuilt_first, summary_1, rebuilt_next, rebuilt_recent] =
+      History.to_messages(entries, nil, id)
+
+    assert rebuilt_first.id == first.id
+    assert summary_1.id == checkpoint_1["id"]
+    assert summary_1.content =~ "first durable summary"
+    assert rebuilt_next.id == next.id
+    assert rebuilt_recent.id == recent.id
+    assert Enum.any?(rebuilt_recent.content, &(&1["type"] == "responses_reasoning"))
+
+    assert {:ok, checkpoint_2} =
+             Handbeam.Agent.CompactionCheckpoint.persist(
+               id,
+               checkpoint_event.(summary_1, [rebuilt_next], "second durable summary", "run-2"),
+               []
+             )
+
+    suffix_entry =
+      append.(%{
+        "id" => "chain-user-3",
+        "content_type" => "user_msg",
+        "message_type" => "user",
+        "role" => "user",
+        "content" => "appended after checkpoint"
+      })
+
+    [_, summary_2, after_second, appended] =
+      id |> Handbeam.ConversationStore.load_messages() |> History.to_messages(nil, id)
+
+    assert summary_2.id == checkpoint_2["id"]
+    assert summary_2.content =~ "second durable summary"
+    assert after_second.id == recent.id
+    assert appended.id == suffix_entry["id"]
+
+    assert {:ok, _updated} =
+             Handbeam.ConversationTranscriptStore.update(
+               id,
+               next_entry["id"],
+               %{"content" => "edited after first boundary"}
+             )
+
+    [_, fallback_summary, edited, _, _] =
+      id |> Handbeam.ConversationStore.load_messages() |> History.to_messages(nil, id)
+
+    assert fallback_summary.id == checkpoint_1["id"]
+    assert fallback_summary.content =~ "first durable summary"
+    assert edited.id == next_entry["id"]
+    assert edited.content == "edited after first boundary"
+  end
+
   test "history restore is what Coordinator uses for later turns", %{dir: dir} do
     workspace = Path.join(dir, "ws")
     File.mkdir_p!(workspace)

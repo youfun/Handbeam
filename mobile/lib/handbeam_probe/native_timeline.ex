@@ -7,7 +7,10 @@ defmodule HandbeamProbe.NativeTimeline do
   alias HandbeamWeb.WorkspaceHelper
 
   def project(chat, groups, segments, outputs) do
-    entries = if chat, do: chat.entries, else: []
+    entries =
+      if chat,
+        do: Enum.reject(chat.entries, &(&1["content_type"] == "model_compaction")),
+        else: []
 
     entries =
       Enum.map(entries, fn entry ->

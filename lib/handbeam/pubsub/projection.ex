@@ -55,11 +55,17 @@ defmodule Handbeam.PubSub.Projection do
     history_page(id, max(count, 100), nil, [])
   end
 
+  @doc "Hide internal transcript records from user-facing projections."
+  def visible_entries(entries) when is_list(entries) do
+    Enum.reject(entries, &(&1["content_type"] == "model_compaction"))
+  end
+
   defp history_page(id, count, before, newer) do
     case Handbeam.ConversationTranscriptStore.page(id, limit: min(count, 200), before: before) do
       {:ok, page} ->
-        entries = page.entries ++ newer
-        remaining = count - length(page.entries)
+        visible = visible_entries(page.entries)
+        entries = visible ++ newer
+        remaining = count - length(visible)
 
         if remaining > 0 and page.has_more? do
           history_page(id, remaining, page.before, entries)

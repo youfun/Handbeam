@@ -4,7 +4,7 @@ defmodule Handbeam.Attachments.History do
   Missing or invalid images become explicit text, never silent text-only history.
   """
 
-  alias Handbeam.Agent.Compactor
+  alias Handbeam.Agent.{CompactionCheckpoint, Compactor}
   alias Handbeam.Agent.Message
   alias Handbeam.Attachments
   alias Handbeam.Attachments.Access
@@ -15,9 +15,29 @@ defmodule Handbeam.Attachments.History do
 
   @spec to_messages([map()], String.t() | nil, String.t() | nil) :: [Message.t()]
   def to_messages(entries, workspace_path, conversation_id) when is_list(entries) do
-    entries
-    |> Enum.flat_map(&to_messages(&1, workspace_path, conversation_id))
-    |> retain_recent_reasoning(@reasoning_replay_recent_tokens)
+    case CompactionCheckpoint.projection(entries) do
+      {:ok, projection} ->
+        first = to_messages(projection.first_entry, workspace_path, conversation_id)
+
+        summary = %Message{
+          role: :user,
+          content:
+            "#{Compactor.summary_prefix()}\n#{String.trim(projection.checkpoint["summary"])}",
+          id: projection.checkpoint["id"]
+        }
+
+        suffix =
+          projection.suffix_entries
+          |> Enum.flat_map(&to_messages(&1, workspace_path, conversation_id))
+          |> retain_recent_reasoning(@reasoning_replay_recent_tokens)
+
+        first ++ [summary] ++ suffix
+
+      :none ->
+        entries
+        |> Enum.flat_map(&to_messages(&1, workspace_path, conversation_id))
+        |> retain_recent_reasoning(@reasoning_replay_recent_tokens)
+    end
   end
 
   @spec to_messages(map(), String.t() | nil, String.t() | nil) :: [Message.t()]
