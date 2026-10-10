@@ -389,11 +389,13 @@ mix compile           # 编译
 mix format            # 格式化
 mix test              # 测试
 mix test --dry-run    # 列出测试但不执行 (1.20+)
-mix phx.server        # 启动开发服务器
-iex -S mix phx.server # 启动 + IEx 交互
+mix phx.server        # 启动开发服务器，默认 http://127.0.0.1:5002
+iex -S mix phx.server # 启动 + IEx 交互，端口相同
 mix ecto.migrate      # 数据库迁移
 mix precommit         # 提交前检查
 ```
+
+开发服务默认监听 `http://127.0.0.1:5002`。`config/runtime.exs` 对所有环境都会覆盖 Endpoint 的 `http`，端口取 `PORT`，未设置时是 **5002**。`config/dev.exs` 里的 4010 不生效。用 `PORT=... mix phx.server` 可以改端口。正式包 `scripts/start.sh` 默认是 5008，不要和开发端口混用。
 
 ### Elixir 1.20 新增开发命令
 
