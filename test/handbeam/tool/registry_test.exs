@@ -373,6 +373,33 @@ defmodule Handbeam.Tool.RegistryTest do
     def execute(_input, _context), do: {:ok, "nested"}
   end
 
+  describe "entries from before deferred?" do
+    test "a tool map without deferred? stays eager and does not crash the registry" do
+      stale = %{
+        kind: :virtual,
+        name: "stale_before_deferred",
+        description: "registered before deferred?",
+        input_schema: %{"type" => "object"},
+        module: nil,
+        executor: fn _input, _context -> {:ok, "ok"} end,
+        max_result_chars: :unlimited,
+        concurrent?: true,
+        timeout_ms: nil,
+        hint: nil,
+        nested_only?: false,
+        meta: %{}
+      }
+
+      :sys.replace_state(Registry, fn state ->
+        %{state | tools: Map.put(state.tools, stale.name, stale)}
+      end)
+
+      refute Enum.any?(Registry.deferred_catalog(), &(&1.name == stale.name))
+      assert Enum.any?(Registry.tool_defs(), &(&1.name == stale.name))
+      assert Registry.prompt_snippets() =~ stale.name
+    end
+  end
+
   describe "nested-only exposure" do
     test "omits nested-only module and virtual tools from provider defs and prompt snippets" do
       assert :ok = Registry.register(Handbeam.Tool.Builtin.Read)

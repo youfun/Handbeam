@@ -7,6 +7,10 @@ defmodule Handbeam.Agent.Provider.Cursor do
   Usage/cost is unknown and never reported as zero. `provider_state` only
   carries the session id; the live connection belongs to
   `Handbeam.Agent.Provider.Cursor.Session`.
+
+  Context edits are applied by closing that session and replaying the edited
+  transcript on a new one. While the old session is waiting for tool results
+  it would otherwise keep the deleted text.
   """
 
   @behaviour Handbeam.Agent.Provider

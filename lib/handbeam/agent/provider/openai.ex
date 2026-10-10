@@ -17,6 +17,7 @@ defmodule Handbeam.Agent.Provider.OpenAI do
   - `:api_url` - Base URL (default: "https://api.openai.com")
   - `:base_url` - Alias for `:api_url` (Handbeam convention)
   - `:provider_state` - opaque provider-owned state carried across turns
+  - `:context_generation` - model-context generation; a mismatch drops continuation
   - `:use_previous_response_id` - Reuse provider response ids for continuation
   - `:store` - Persist the response server-side when supported
   - `:include` - Additional response fields to include
@@ -195,6 +196,9 @@ defmodule Handbeam.Agent.Provider.OpenAI do
   defp maybe_put_previous_response_id(body, config) do
     previous_response_id =
       cond do
+        context_fork?(config) ->
+          nil
+
         Map.has_key?(config, :previous_response_id) ->
           Map.get(config, :previous_response_id)
 
@@ -206,6 +210,14 @@ defmodule Handbeam.Agent.Provider.OpenAI do
       end
 
     maybe_put_optional_request_field(body, "previous_response_id", previous_response_id)
+  end
+
+  # An edited or compacted transcript is a new branch. The stored response id
+  # still points at the server copy that contains the removed text.
+  defp context_fork?(config) do
+    requested = config[:context_generation] || 0
+    bound = get_in(config, [:provider_state, :context_generation]) || 0
+    requested != bound
   end
 
   defp maybe_put_optional_request_field(body, _key, nil), do: body

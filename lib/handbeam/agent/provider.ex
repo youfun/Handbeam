@@ -45,7 +45,65 @@ defmodule Handbeam.Agent.Provider do
               on_chunk :: (String.t() -> :ok)
             ) :: {:ok, completion_response()} | {:error, term()}
 
-  @optional_callbacks [stream: 4]
+  @doc """
+  Whether `read_context` and `edit_context` may be offered for this provider.
+
+  The next request has to observe the edited transcript. A provider that only
+  continues a server-side session returns false unless installing an edited
+  context restarts that session and replays the edited messages.
+  """
+  @callback context_editing?() :: boolean()
+
+  @optional_callbacks [stream: 4, context_editing?: 0]
+
+  # Built-in providers that send the transcript on every call. Cursor is
+  # included because an edited context closes the live session and the next
+  # request replays the edited messages on a new one. Any other provider must
+  # implement `context_editing?/0`; otherwise the context tools stay hidden.
+  @transcript_providers [
+    __MODULE__.Anthropic,
+    __MODULE__.Codex,
+    __MODULE__.Cursor,
+    __MODULE__.DeepSeek,
+    __MODULE__.Ollama,
+    __MODULE__.OpenAI,
+    __MODULE__.OpenAICompat,
+    __MODULE__.OpenCodeGo,
+    __MODULE__.OpenRouter,
+    __MODULE__.StepFun,
+    __MODULE__.ZenMux
+  ]
+
+  @context_tool_names ["read_context", "edit_context"]
+
+  @doc """
+  Context tools are available only when this provider can apply an edited transcript.
+  """
+  @spec context_editing?(module()) :: boolean()
+  def context_editing?(module) when is_atom(module) do
+    cond do
+      function_exported?(module, :context_editing?, 0) ->
+        module.context_editing?()
+
+      module in @transcript_providers ->
+        true
+
+      true ->
+        false
+    end
+  end
+
+  def context_editing?(_module), do: false
+
+  @doc "Drop context tools when this provider cannot apply an edited transcript."
+  @spec filter_context_tools([tool_def()], module()) :: [tool_def()]
+  def filter_context_tools(tool_defs, provider) when is_list(tool_defs) do
+    if context_editing?(provider) do
+      tool_defs
+    else
+      Enum.reject(tool_defs, &(&1.name in @context_tool_names))
+    end
+  end
 
   # ── Shared Helpers (used by provider implementations) ──────────────
 

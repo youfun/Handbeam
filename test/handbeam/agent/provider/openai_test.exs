@@ -199,6 +199,21 @@ defmodule Handbeam.Agent.Provider.OpenAITest do
       assert decoded["previous_response_id"] == "resp_explicit"
     end
 
+    test "drops previous_response_id after the model context is forked" do
+      config =
+        config_that_captures_request()
+        |> Map.put(:context_generation, 1)
+        |> Map.put(:provider_state, %{response_id: "resp_prev", context_generation: 0})
+        |> Map.put(:use_previous_response_id, true)
+        |> Map.put(:previous_response_id, "resp_explicit")
+
+      OpenAI.complete([Message.user("edited context")], [], config)
+
+      assert_received {:request_body, body}
+      decoded = Jason.decode!(body)
+      refute Map.has_key?(decoded, "previous_response_id")
+    end
+
     test "includes reasoning effort for Responses reasoning models" do
       config =
         config_that_captures_request()

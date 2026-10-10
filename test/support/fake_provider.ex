@@ -32,6 +32,9 @@ defmodule Handbeam.TestSupport.FakeProvider do
   alias Handbeam.Agent.Message
 
   @impl true
+  def context_editing?, do: true
+
+  @impl true
   def complete(messages, tool_defs, config) do
     if config[:stream] && is_function(config[:on_chunk]) do
       stream(messages, tool_defs, config, config[:on_chunk])
@@ -260,24 +263,11 @@ defmodule Handbeam.TestSupport.FakeProvider do
   # may block on `receive` to hold a run open.
   defp do_complete(messages, tool_defs, {:script, fun}, _turn) when is_function(fun, 2) do
     case fun.(messages, tool_defs) do
-      {:tools, calls} ->
-        tool_calls =
-          Enum.map(calls, fn call ->
-            %{
-              type: "tool_use",
-              id: "toolu_script_#{System.unique_integer([:positive])}",
-              name: call.name,
-              input: call.input
-            }
-          end)
+      {:tools, calls, usage} when is_list(calls) and is_map(usage) ->
+        script_tool_response(calls, usage)
 
-        {:ok,
-         %{
-           stop_reason: :tool_use,
-           messages: [Message.tool_use(tool_calls)],
-           usage: %{input_tokens: 3, output_tokens: 3},
-           response_metadata: %{id: "fake-msg-script-tools", model: "fake-model"}
-         }}
+      {:tools, calls} ->
+        script_tool_response(calls, %{input_tokens: 3, output_tokens: 3})
 
       text when is_binary(text) ->
         {:ok,
@@ -458,5 +448,25 @@ defmodule Handbeam.TestSupport.FakeProvider do
            response_metadata: %{id: "fake-msg-mem-learn", model: "fake-model"}
          }}
     end
+  end
+
+  defp script_tool_response(calls, usage) do
+    tool_calls =
+      Enum.map(calls, fn call ->
+        %{
+          type: "tool_use",
+          id: "toolu_script_#{System.unique_integer([:positive])}",
+          name: call.name,
+          input: call.input
+        }
+      end)
+
+    {:ok,
+     %{
+       stop_reason: :tool_use,
+       messages: [Message.tool_use(tool_calls)],
+       usage: usage,
+       response_metadata: %{id: "fake-msg-script-tools", model: "fake-model"}
+     }}
   end
 end

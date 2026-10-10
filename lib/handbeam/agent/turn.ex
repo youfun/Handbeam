@@ -8,11 +8,20 @@ defmodule Handbeam.Agent.Turn do
   This is a pure function — no GenServer, no process overhead.
   """
 
-  alias Handbeam.Agent.{Compactor, Message, Reasoning, State}
+  alias Handbeam.Agent.{
+    Compactor,
+    Message,
+    ModelContext,
+    Reasoning,
+    State,
+    ToolResultProjection
+  }
+
   alias Handbeam.Agent.Middleware
   alias Handbeam.Agent.Provider.Retry
   alias Handbeam.Agent.Tool.Executor
   alias Handbeam.Extension.HookPipeline
+  alias Handbeam.Utils.SafeMap
 
   require Logger
 
@@ -212,6 +221,7 @@ defmodule Handbeam.Agent.Turn do
     emit_tool_end_events(execution.executable, execution.ui_blocks, execution.opts)
 
     execution.state
+    |> apply_context_edit(execution.executable, execution.ui_blocks)
     |> State.append_messages([merged_msg])
     |> Map.update!(:messages, &Handbeam.Tool.Images.bound_history/1)
     |> mw_run(:after_tool_execution)
@@ -496,7 +506,7 @@ defmodule Handbeam.Agent.Turn do
 
   defp apply_context_hook(state, provider_config, opts) do
     session_id = Keyword.get(opts, :session_id)
-    messages = State.messages(state)
+    messages = ModelContext.visible(state)
 
     if session_id do
       payload = %{
@@ -757,28 +767,45 @@ defmodule Handbeam.Agent.Turn do
   # cannot indefinitely grow the message history and stall the provider with
   # oversized payloads.
   defp maybe_compact(%State{} = state, opts) do
-    case Compactor.maybe_compact(state, compaction_call_opts(state, opts)) do
+    visible = ModelContext.visible(state)
+    probe = %{state | messages: visible}
+
+    call_opts =
+      state
+      |> compaction_call_opts(opts)
+      |> Keyword.put(:usage_anchor, state.usage_anchor)
+
+    case Compactor.maybe_compact(probe, call_opts) do
       {:compacted, compacted} ->
-        Logger.info(
-          "[Turn] context compacted before=#{length(state.messages)} " <>
-            "after=#{length(compacted.messages)} max_tokens=#{state.config.max_tokens}"
-        )
+        state = ModelContext.install(state, compacted.messages)
 
-        :telemetry.execute(
-          [:handbeam, :compaction, :done],
-          %{messages_before: length(state.messages), messages_after: length(compacted.messages)},
-          %{turn: state.turn + 1}
-        )
+        if ModelContext.visible(state) == visible do
+          state
+        else
+          Logger.info(
+            "[Turn] context compacted before=#{length(visible)} " <>
+              "after=#{length(ModelContext.visible(state))} max_tokens=#{state.config.max_tokens}"
+          )
 
-        case Middleware.run(:after_compaction, compacted, state.config.middleware || []) do
-          {:halted, reason} ->
-            %{compacted | status: :halted, error: "Halted by middleware: #{reason}"}
+          :telemetry.execute(
+            [:handbeam, :compaction, :done],
+            %{
+              messages_before: length(visible),
+              messages_after: length(ModelContext.visible(state))
+            },
+            %{turn: state.turn + 1}
+          )
 
-          %State{} = s ->
-            s
+          case Middleware.run(:after_compaction, state, state.config.middleware || []) do
+            {:halted, reason} ->
+              %{state | status: :halted, error: "Halted by middleware: #{reason}"}
+
+            %State{} = s ->
+              s
+          end
         end
 
-      {:unchanged, state} ->
+      {:unchanged, _state} ->
         state
     end
   end
@@ -796,6 +823,13 @@ defmodule Handbeam.Agent.Turn do
   end
 
   defp do_provider_completion(state, opts, outbound_messages, provider_config) do
+    kept = ToolResultProjection.retained(outbound_messages)
+
+    stored =
+      ToolResultProjection.persist(kept, state.config.working_directory)
+
+    outbound_messages = ToolResultProjection.project(outbound_messages, stored)
+
     provider = state.config.provider
     streaming? = Keyword.get(opts, :streaming, false)
     {chunk_tracker, streamed_text_tracker} = start_stream_trackers(streaming?)
@@ -904,7 +938,8 @@ defmodule Handbeam.Agent.Turn do
         &Handbeam.Tool.Builtin.Task.contextualize_def(&1, state.config, authorized_tools)
       )
 
-    eager ++ loaded_tool_defs(state, context, authorized_tools, eager)
+    (eager ++ loaded_tool_defs(state, context, authorized_tools, eager))
+    |> Handbeam.Agent.Provider.filter_context_tools(state.config.provider)
   end
 
   defp omit_idle_tool_search(defs, context, authorized_tools) do
@@ -1000,7 +1035,8 @@ defmodule Handbeam.Agent.Turn do
         new_msgs,
         usage,
         response,
-        :after_tool_request
+        :after_tool_request,
+        length(completion.outbound_messages)
       )
 
     continue_after_tool_request(state, new_msgs, completion.opts)
@@ -1020,7 +1056,8 @@ defmodule Handbeam.Agent.Turn do
         new_msgs,
         usage,
         response,
-        :after_completion
+        :after_completion,
+        length(completion.outbound_messages)
       )
 
     emit_completion_messages(
@@ -1034,7 +1071,7 @@ defmodule Handbeam.Agent.Turn do
     continue_after_end_turn(state, new_msgs, completion.opts)
   end
 
-  defp record_provider_response(state, opts, new_msgs, usage, response, middleware) do
+  defp record_provider_response(state, opts, new_msgs, usage, response, middleware, sent_count) do
     emit_provider_items(opts, new_msgs)
 
     state =
@@ -1044,6 +1081,7 @@ defmodule Handbeam.Agent.Turn do
       |> State.merge_usage(usage)
       |> State.merge_provider_state(Map.get(response, :provider_state, %{}))
       |> State.put_provider_response_metadata(Map.get(response, :response_metadata, %{}))
+      |> ModelContext.note_anchor(usage, sent_count)
 
     emit(opts, :usage_updated, %{usage: state.usage})
     if state.config.delegated?, do: emit(opts, :delegation_usage, state.usage)
@@ -1118,13 +1156,16 @@ defmodule Handbeam.Agent.Turn do
 
   defp retry_prompt_too_long(state, opts, error_msg) do
     Logger.info("[Turn] Prompt too long — forcing compaction and retrying")
-    compacted_state = Compactor.force_compact(state, compaction_call_opts(state, opts))
+    visible = ModelContext.visible(state)
+    probe = %{state | messages: visible}
+    compacted = Compactor.force_compact(probe, compaction_call_opts(state, opts))
 
-    if compacted_state.messages == state.messages do
+    if compacted.messages == visible do
       state = %{state | status: :error, error: error_msg}
       mw_run(state, :on_error)
     else
-      do_completion(compacted_state, Keyword.put(opts, :prompt_too_long_retried, true))
+      state = ModelContext.install(state, compacted.messages)
+      do_completion(state, Keyword.put(opts, :prompt_too_long_retried, true))
     end
   end
 
@@ -1917,6 +1958,7 @@ defmodule Handbeam.Agent.Turn do
     }
 
     execution.state
+    |> apply_context_edit(execution.allowed_calls, execution.ui_blocks)
     |> State.append_messages([merged_msg])
     |> Map.update!(:messages, &Handbeam.Tool.Images.bound_history/1)
     |> mw_run(:after_tool_execution)
@@ -2010,11 +2052,12 @@ defmodule Handbeam.Agent.Turn do
     Enum.map(tool_calls, &Map.fetch!(by_id, Handbeam.Utils.SafeMap.get_any(&1, [:id, "id"])))
   end
 
-  defp build_provider_config(%State{config: config, provider_state: provider_state}) do
+  defp build_provider_config(%State{config: config, provider_state: provider_state} = state) do
     config.provider_config
     |> Map.put(:model, config.model)
     |> Map.put(:system_prompt, config.system_prompt)
     |> Map.put(:provider_state, provider_state)
+    |> Map.put(:context_generation, state.context_generation || 0)
     |> Map.put(:working_directory, config.working_directory)
     |> maybe_put_context(config)
     |> apply_reasoning_level(config)
@@ -2067,6 +2110,27 @@ defmodule Handbeam.Agent.Turn do
 
   defp extract_tool_calls(messages) do
     Enum.flat_map(messages, &Message.tool_calls/1)
+  end
+
+  defp apply_context_edit(state, calls, blocks) do
+    calls
+    |> Enum.zip(blocks)
+    |> Enum.reduce(state, fn {call, block}, acc ->
+      name = SafeMap.get_any(call, :name, "name")
+      failed? = SafeMap.get_any(block, :is_error, "is_error") == true
+      input = SafeMap.get_any(call, :input, "input") || %{}
+      old = SafeMap.get_any(input, "old_text", :old_text)
+      new = SafeMap.get_any(input, "new_text", :new_text)
+
+      if name == "edit_context" and not failed? and is_binary(old) and is_binary(new) do
+        case ModelContext.edit(acc, old, new) do
+          {:ok, edited} -> edited
+          {:error, _reason} -> acc
+        end
+      else
+        acc
+      end
+    end)
   end
 
   defp bounded_tool_output(output) when is_binary(output),

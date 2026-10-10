@@ -27,7 +27,11 @@ defmodule Handbeam.Agent.State do
     :tool_guard_result_blocks,
     :advisor,
     :progress,
-    :auto_review
+    :auto_review,
+    :model_context,
+    :context_base_count,
+    :usage_anchor,
+    context_generation: 0
   ]
 
   @type status ::
@@ -56,7 +60,11 @@ defmodule Handbeam.Agent.State do
           interrupt_data: map() | nil,
           tool_guard_denied_calls: [map()],
           tool_guard_result_blocks: [map()],
-          advisor: map()
+          advisor: map(),
+          model_context: [Message.t()] | nil,
+          context_base_count: non_neg_integer(),
+          usage_anchor: map() | nil,
+          context_generation: non_neg_integer()
         }
 
   @doc "Create initial state from config and user prompt."
@@ -96,7 +104,11 @@ defmodule Handbeam.Agent.State do
       tool_guard_result_blocks: [],
       advisor: Handbeam.Agent.Advisor.initial_state(advisor_mode(config.advisor)),
       progress: Handbeam.Agent.ProgressGuard.initial(),
-      auto_review: Handbeam.Permissions.AutoReview.initial_ledger()
+      auto_review: Handbeam.Permissions.AutoReview.initial_ledger(),
+      model_context: nil,
+      context_base_count: 0,
+      usage_anchor: nil,
+      context_generation: 0
     }
   end
 
@@ -146,7 +158,12 @@ defmodule Handbeam.Agent.State do
   @doc "Merge provider state for the next turn."
   @spec merge_provider_state(t(), map()) :: t()
   def merge_provider_state(%__MODULE__{} = state, provider_state) when is_map(provider_state) do
-    %{state | provider_state: Map.merge(state.provider_state, provider_state)}
+    merged =
+      (state.provider_state || %{})
+      |> Map.merge(provider_state)
+      |> Map.put(:context_generation, state.context_generation || 0)
+
+    %{state | provider_state: merged}
   end
 
   @doc "Store provider response metadata."

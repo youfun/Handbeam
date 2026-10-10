@@ -186,6 +186,8 @@ defmodule Handbeam.Tool.Registry do
       Handbeam.Tool.Builtin.Task,
       Handbeam.Tool.Builtin.TaskStatus,
       Handbeam.Tool.Builtin.ToolSearch,
+      Handbeam.Tool.Builtin.ReadContext,
+      Handbeam.Tool.Builtin.EditContext,
       Handbeam.Tool.Builtin.WebFetch,
       Handbeam.Tool.Builtin.Write,
       Handbeam.Tool.Builtin.FindThread,
@@ -425,7 +427,7 @@ defmodule Handbeam.Tool.Registry do
     catalog =
       state.tools
       |> Map.values()
-      |> Enum.filter(& &1.deferred?)
+      |> Enum.filter(&deferred_entry?/1)
       |> Enum.sort_by(& &1.name)
       |> Enum.map(&catalog_entry/1)
 
@@ -532,6 +534,10 @@ defmodule Handbeam.Tool.Registry do
     function_exported?(mod, :deferred?, 0) and mod.deferred?()
   end
 
+  # Entries registered before `:deferred?` existed stay in the GenServer
+  # across a code reload. Missing means eager, the only exposure those tools had.
+  defp deferred_entry?(entry) when is_map(entry), do: Map.get(entry, :deferred?, false)
+
   defp deferred_exposure?(meta) do
     meta[:exposure] in ["deferred", "nested"] or meta["exposure"] in ["deferred", "nested"]
   end
@@ -577,7 +583,7 @@ defmodule Handbeam.Tool.Registry do
     tools
     |> Map.values()
     |> Enum.filter(fn entry ->
-      not entry.nested_only? and not entry.deferred? and
+      not entry.nested_only? and not deferred_entry?(entry) and
         (is_nil(name_set) or MapSet.member?(name_set, entry.name))
     end)
     |> Enum.sort_by(& &1.name)

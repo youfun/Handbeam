@@ -8,7 +8,7 @@ defmodule Handbeam.Agent.Tool.Executor do
   Supports parallel execution via Task.async_stream.
   """
 
-  alias Handbeam.Agent.{Message, State}
+  alias Handbeam.Agent.{Message, ModelContext, State}
   alias Handbeam.Agent.Tool.{Result, ResultContract}
   alias Handbeam.Extension.HookPipeline
 
@@ -695,12 +695,14 @@ defmodule Handbeam.Agent.Tool.Executor do
     |> Map.put(:parent_tool_call_id, Keyword.get(opts, :parent_tool_call_id))
   end
 
-  defp build_context(%State{
-         config: config,
-         run_metadata: run_metadata,
-         usage: usage,
-         tool_guard_overrides: overrides
-       }) do
+  defp build_context(%State{} = state) do
+    %State{
+      config: config,
+      run_metadata: run_metadata,
+      usage: usage,
+      tool_guard_overrides: overrides
+    } = state
+
     context = config.context || %{}
     metadata = run_metadata || %{}
 
@@ -733,5 +735,6 @@ defmodule Handbeam.Agent.Tool.Executor do
     })
     |> Enum.reject(fn {_key, value} -> is_nil(value) end)
     |> Map.new()
+    |> Map.put(:model_messages, ModelContext.visible(state))
   end
 end

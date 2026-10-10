@@ -113,7 +113,7 @@ defmodule Handbeam.Agent.Config do
       source: Keyword.get(opts, :source),
       skill_paths: List.wrap(Keyword.get(opts, :skill_paths, [])),
       delegated?: Keyword.get(opts, :delegated?, false),
-      system_prompt: build_system_prompt(opts),
+      system_prompt: build_system_prompt(opts, provider),
       working_directory: working_directory(opts),
       model: Keyword.get(opts, :model, @default_model),
       max_turns: Keyword.get(opts, :max_turns),
@@ -243,7 +243,7 @@ defmodule Handbeam.Agent.Config do
     end
   end
 
-  defp build_system_prompt(opts) do
+  defp build_system_prompt(opts, provider) do
     base =
       Keyword.get_lazy(opts, :system_prompt, fn ->
         if Keyword.get(opts, :chat_scope) == :free,
@@ -259,7 +259,16 @@ defmodule Handbeam.Agent.Config do
     |> maybe_append_task_instructions(opts)
     |> maybe_inject_inline_previews(opts)
     |> append_prompt_section(Handbeam.Tool.Deferred.prompt_section(opts))
+    |> maybe_append_model_context(provider)
     |> append_prompt_section(Handbeam.Agent.HostEnvironment.describe())
+  end
+
+  defp maybe_append_model_context(prompt, provider) do
+    if Handbeam.Agent.Provider.context_editing?(provider) do
+      append_prompt_section(prompt, Handbeam.Agent.ModelContext.prompt_section())
+    else
+      prompt
+    end
   end
 
   defp maybe_inject_inline_previews(system_prompt, opts) do
