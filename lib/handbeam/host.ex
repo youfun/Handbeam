@@ -2,7 +2,8 @@ defmodule Handbeam.Host do
   @moduledoc """
   Values the host writes once, before Handbeam and the tool registry start.
 
-  Desktop Mix never sets `:host`, so readers fall back to the desktop defaults.
+  Desktop Mix sets `:host` only for the dev data root. Capability readers
+  still fall back to the desktop defaults.
   The host stores declarations. It does not authorize a run, and it does not
   infer one capability from another.
 

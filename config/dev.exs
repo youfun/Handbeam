@@ -1,8 +1,14 @@
 import Config
 
+# Keep Mix dev off the packaged data root at ~/.handbeam.
+# Conversations, models, and workspaces follow :host data_dir.
+config :handbeam, :host, %{
+  data_dir: Path.expand("~/.handbeam_dev")
+}
+
 # Configure your database
 config :handbeam, Handbeam.Repo,
-  database: Path.expand("../handbeam_dev.db", __DIR__),
+  database: Path.expand("~/.handbeam_dev/handbeam_dev.db"),
   pool_size: 5,
   stacktrace: true,
   show_sensitive_data_on_connection_error: true
@@ -16,11 +22,14 @@ config :handbeam, Handbeam.Repo,
 config :handbeam, HandbeamWeb.Endpoint,
   # Bind all interfaces in Amp orbs so portal health checks can reach $PORT.
   # Keep loopback-only on a normal local machine.
+  # runtime.exs overrides this for every env. Unset PORT listens on 5002.
   http: [
     ip: if(System.get_env("AMP_ORB") == "1", do: {0, 0, 0, 0}, else: {127, 0, 0, 1}),
-    port: String.to_integer(System.get_env("PORT") || "4010")
+    port: String.to_integer(System.get_env("PORT") || "5002")
   ],
-  check_origin: true,
+  # Opening http://127.0.0.1 does not match url host "localhost".
+  # Without this, LiveView websocket is refused and menu clicks never arrive.
+  check_origin: ["//localhost", "//127.0.0.1"],
   code_reloader: true,
   debug_errors: true,
   secret_key_base:

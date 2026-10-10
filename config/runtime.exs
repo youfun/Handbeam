@@ -15,7 +15,13 @@ if match?({:unix, :darwin}, :os.type()) and System.get_env("HANDBEAM_COMPUTER_PO
          String.to_integer(System.fetch_env!("HANDBEAM_COMPUTER_PORT"))
 
   config :handbeam, :computer_use_token, System.fetch_env!("HANDBEAM_COMPUTER_TOKEN")
-  host = %{computer_use_backend: Handbeam.ComputerUse.Native}
+
+  # Dev already sets data_dir to ~/.handbeam_dev. Replacing :host here would
+  # drop it and fall back to $HOME, which is the packaged app's data root.
+  host =
+    :handbeam
+    |> Application.get_env(:host, %{})
+    |> Map.put(:computer_use_backend, Handbeam.ComputerUse.Native)
 
   host =
     case System.get_env("HANDBEAM_DATA_DIR") do
