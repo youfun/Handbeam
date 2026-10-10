@@ -190,21 +190,14 @@ defmodule Handbeam.Agent.CompactorTest do
       {:compacted, compacted} = Compactor.maybe_compact(state)
 
       assert_received {:summary_request, request_messages, [], config}
-      assert Enum.map(request_messages, & &1.content) |> hd() == String.duplicate("a", 900)
-      refute Enum.any?(request_messages, &(&1.content == "original request"))
-      refute Enum.any?(request_messages, &(&1.content == "latest"))
+      assert [%Message{role: :user, content: prompt}] = request_messages
+      assert prompt =~ String.duplicate("a", 900)
+      refute prompt =~ "original request"
+      refute prompt =~ "latest"
       refute config.system_prompt == state.config.system_prompt
       refute Map.has_key?(config, :cache_fork)
-      assert List.last(request_messages).role == :user
-      assert List.last(request_messages).content =~ "## Goal"
-
-      refute Enum.any?(request_messages, fn
-               %Message{content: content} when is_binary(content) ->
-                 String.contains?(content, "<conversation>")
-
-               _ ->
-                 false
-             end)
+      assert prompt =~ "<conversation>"
+      assert prompt =~ "## Goal"
 
       assert hd(compacted.messages).content == "original request"
       assert Enum.at(compacted.messages, 1).role == :user
@@ -239,7 +232,7 @@ defmodule Handbeam.Agent.CompactorTest do
 
     test "isolates and sanitizes the history sent to the summarizer" do
       encrypted = String.duplicate("cipher", 2_000)
-      tool_output = String.duplicate("result", 1_000)
+      tool_output = "tool-prefix-" <> String.duplicate("x", 3_000) <> "-tool-tail"
 
       old_reasoning = %{
         type: "responses_reasoning",
@@ -253,7 +246,11 @@ defmodule Handbeam.Agent.CompactorTest do
 
       messages = [
         Message.user("original request"),
-        Message.assistant_blocks([old_reasoning, %{type: "image", data: "old-image"}]),
+        Message.assistant_blocks([
+          old_reasoning,
+          %{type: "image", data: "old-image"},
+          %{type: "tool_use", id: "old", name: "read", input: %{path: "large.txt"}}
+        ]),
         Message.tool_results([
           %{type: "tool_result", tool_use_id: "old", content: tool_output, images: ["image"]}
         ]),
@@ -278,10 +275,13 @@ defmodule Handbeam.Agent.CompactorTest do
       {:compacted, compacted} = Compactor.maybe_compact(state)
 
       assert_received {:summary_request, request_messages, [], config}
-      serialized = inspect(request_messages, limit: :infinity, printable_limit: :infinity)
-      refute serialized =~ encrypted
-      refute serialized =~ "old-image"
-      refute serialized =~ String.duplicate("result", 400)
+      assert [%Message{role: :user, content: prompt}] = request_messages
+      refute prompt =~ encrypted
+      refute prompt =~ "old-image"
+      refute prompt =~ "-tool-tail"
+      assert prompt =~ "[Assistant tool call] read("
+      assert prompt =~ "[Tool result]\ntool-prefix-"
+      assert prompt =~ "[truncated for compaction]"
       refute Map.has_key?(config, :cache_fork)
       refute Map.has_key?(config, :previous_response_id)
       refute config.use_previous_response_id

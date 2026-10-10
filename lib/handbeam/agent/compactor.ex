@@ -172,12 +172,18 @@ defmodule Handbeam.Agent.Compactor do
   defp summarize_compaction(prepared, %State{} = state, _messages, opts) do
     provider = state.config.provider
 
-    summary_messages =
-      [prepared.previous_summary | prepared.messages_to_summarize]
-      |> Enum.reject(&is_nil/1)
+    messages_to_summarize =
+      prepared.messages_to_summarize
       |> Enum.map(&sanitize_summary_message/1)
 
-    {request_messages, _suffix_count} = append_compaction_suffix(summary_messages)
+    previous_summary =
+      if prepared.previous_summary,
+        do: sanitize_summary_message(prepared.previous_summary),
+        else: nil
+
+    request_messages = [
+      Message.user(build_summary_prompt(messages_to_summarize, previous_summary))
+    ]
 
     config =
       opts
@@ -209,25 +215,29 @@ defmodule Handbeam.Agent.Compactor do
     end
   end
 
-  defp append_compaction_suffix(messages) do
-    instruction = Message.user(compaction_instruction())
+  defp build_summary_prompt(messages_to_summarize, previous_summary) do
+    previous_summary_section =
+      case previous_summary do
+        %Message{} = message ->
+          "<previous-summary>\n#{summary_body(message)}\n</previous-summary>\n\n"
 
-    case List.last(messages) do
-      %Message{role: :assistant} ->
-        {messages ++ [instruction], 1}
+        nil ->
+          ""
+      end
 
-      _ ->
-        {messages ++ [Message.assistant("Continuing."), instruction], 2}
-    end
-  end
-
-  defp compaction_instruction do
     """
-    #{@summary_system_prompt}
-    Do not call tools. Reply with the handoff summary only.
+    #{previous_summary_section}<conversation>
+    #{serialize_messages(messages_to_summarize)}
+    </conversation>
 
     #{@summary_prompt}
     """
+  end
+
+  defp summary_body(%Message{content: content}) when is_binary(content) do
+    content
+    |> String.replace_prefix(@summary_prefix, "")
+    |> String.trim()
   end
 
   defp sanitize_summary_message(%Message{content: blocks} = message) when is_list(blocks) do
@@ -255,6 +265,52 @@ defmodule Handbeam.Agent.Compactor do
   end
 
   defp sanitize_summary_block(block), do: block
+
+  defp serialize_messages(messages) do
+    messages
+    |> Enum.map(&serialize_message/1)
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.join("\n\n")
+  end
+
+  defp serialize_message(%Message{role: role, content: content}) when is_binary(content) do
+    "[#{role_label(role)}]\n#{content}"
+  end
+
+  defp serialize_message(%Message{role: role, content: blocks}) when is_list(blocks) do
+    blocks
+    |> Enum.map(&serialize_block(role, &1))
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.join("\n")
+  end
+
+  defp serialize_block(role, block) when is_map(block) do
+    type = block_type(block)
+    text = Map.get(block, :text) || Map.get(block, "text")
+    name = Map.get(block, :name) || Map.get(block, "name")
+    input = Map.get(block, :input) || Map.get(block, "input") || %{}
+    content = Map.get(block, :content) || Map.get(block, "content")
+
+    cond do
+      type == "text" and is_binary(text) ->
+        "[#{role_label(role)}]\n#{text}"
+
+      role == :assistant and type in ["tool_use", "server_tool_use"] ->
+        "[Assistant tool call] #{name}(#{inspect(input)})"
+
+      type in ["tool_result", "server_tool_result"] and is_binary(content) ->
+        "[Tool result]\n#{content}"
+
+      true ->
+        "[#{role_label(role)} block #{type || "unknown"}]\n#{inspect(block)}"
+    end
+  end
+
+  defp serialize_block(_role, _block), do: ""
+
+  defp role_label(:user), do: "User"
+  defp role_label(:assistant), do: "Assistant"
+  defp role_label(other), do: to_string(other)
 
   defp reject_tool_calls(%{messages: messages}) when is_list(messages) do
     if Enum.any?(messages, &tool_call_message?/1),
