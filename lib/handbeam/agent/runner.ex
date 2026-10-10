@@ -200,6 +200,7 @@ defmodule Handbeam.Agent.Runner do
       state.opts
       |> Keyword.put(:candidate_queue, state.queue_pid)
       |> maybe_put_run_deadline(state, deadline)
+      |> put_compaction_callback(self())
       |> put_persistence_callback(state.conversation_id)
 
     start_task = if state.opts[:delegated?], do: :async, else: :async_nolink
@@ -249,6 +250,17 @@ defmodule Handbeam.Agent.Runner do
       }}, state}
   end
 
+  def handle_call({:persist_compaction, event}, _from, state) when is_map(event) do
+    reply =
+      Handbeam.Agent.CompactionCheckpoint.persist(
+        state.conversation_id,
+        event,
+        state.opts
+      )
+
+    {:reply, reply, state}
+  end
+
   def handle_call(:cancel, from, %{status: status, task: task} = state)
       when status in [:running, :awaiting_approval] do
     cleanup_os_processes(state)
@@ -281,6 +293,7 @@ defmodule Handbeam.Agent.Runner do
       state.opts
       |> Keyword.put(:candidate_queue, state.queue_pid)
       |> maybe_put_run_deadline(state, deadline)
+      |> put_compaction_callback(self())
       |> put_persistence_callback(state.conversation_id)
 
     resume = resume_fun(state)
@@ -692,6 +705,21 @@ defmodule Handbeam.Agent.Runner do
         :ok ->
           persist_and_callback(conversation_id, event, opts, user_on_event)
       end
+    end)
+  end
+
+  defp put_compaction_callback(opts, runner) when is_pid(runner) do
+    Keyword.put(opts, :on_compaction_complete, fn event, state ->
+      event =
+        Map.merge(event, %{
+          context_edited: state.context_edited,
+          context_generation: state.context_generation,
+          context_window: state.config.max_tokens,
+          model: state.config.model,
+          run_id: state.config.run_id
+        })
+
+      GenServer.call(runner, {:persist_compaction, event}, 30_000)
     end)
   end
 

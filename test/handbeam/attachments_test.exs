@@ -368,6 +368,69 @@ defmodule Handbeam.AttachmentsTest do
                id: "msg_final"
              }
            ]
+
+    assert phased.id == "msg_final"
+  end
+
+  test "history stamps transcript provenance and checkpoints reject live or edited context" do
+    {:ok, conv} = Handbeam.ConversationStore.create("default")
+    id = conv["id"]
+
+    {:ok, first_entry} =
+      Handbeam.ConversationTranscriptStore.append(id, %{
+        "id" => "history-user-1",
+        "content_type" => "user_msg",
+        "message_type" => "user",
+        "role" => "user",
+        "content" => "original"
+      })
+
+    {:ok, assistant_entry} =
+      Handbeam.ConversationTranscriptStore.append(id, %{
+        "id" => "history-assistant-1",
+        "content_type" => "assistant_msg",
+        "message_type" => "assistant",
+        "role" => "assistant",
+        "content" => "older answer",
+        "status" => "completed"
+      })
+
+    [first, assistant] = History.to_messages([first_entry, assistant_entry], nil, id)
+    assert first.id == first_entry["id"]
+    assert assistant.id == assistant_entry["id"]
+
+    event = %{
+      first: first,
+      previous_summary: nil,
+      messages_to_summarize: [assistant],
+      summary: "durable summary",
+      context_edited: false,
+      context_generation: 0,
+      context_window: 272_000,
+      model: "gpt-5.6-sol",
+      run_id: "run-1"
+    }
+
+    assert {:ok, checkpoint} =
+             Handbeam.Agent.CompactionCheckpoint.persist(id, event, [])
+
+    assert checkpoint["content_type"] == "model_compaction"
+    assert checkpoint["first_entry_id"] == first.id
+    assert checkpoint["covered_through_id"] == assistant.id
+
+    assert {:error, :invalid_provenance} =
+             Handbeam.Agent.CompactionCheckpoint.persist(
+               id,
+               put_in(event, [:messages_to_summarize], [%{assistant | id: nil}]),
+               []
+             )
+
+    assert {:error, :context_edited} =
+             Handbeam.Agent.CompactionCheckpoint.persist(
+               id,
+               Map.put(event, :context_edited, true),
+               []
+             )
   end
 
   test "history restore is what Coordinator uses for later turns", %{dir: dir} do

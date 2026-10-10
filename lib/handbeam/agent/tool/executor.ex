@@ -275,7 +275,9 @@ defmodule Handbeam.Agent.Tool.Executor do
   defp detach_context_edit(result), do: {result, nil}
 
   defp install_context(%State{} = state, revised) when is_list(revised) do
-    ModelContext.install(state, revised)
+    state
+    |> ModelContext.install(revised)
+    |> Map.put(:context_edited, true)
   end
 
   defp install_context(%State{} = state, _revised), do: state

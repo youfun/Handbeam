@@ -32,6 +32,7 @@ defmodule Handbeam.Agent.Config do
     :max_tokens,
     :compaction,
     :on_compaction,
+    :on_compaction_complete,
     :allowed_tools,
     :runner_pid,
     :run_id,
@@ -71,7 +72,8 @@ defmodule Handbeam.Agent.Config do
             keep_recent_tokens: pos_integer(),
             fallback: :truncate
           },
-          on_compaction: (list(), t() -> any()) | nil
+          on_compaction: (list(), t() -> any()) | nil,
+          on_compaction_complete: (map(), t() -> any()) | nil
         }
 
   @default_model "step-router-v1"
@@ -134,7 +136,8 @@ defmodule Handbeam.Agent.Config do
       max_messages: Keyword.get(opts, :max_messages, @default_max_messages),
       max_tokens: context_window(opts, provider_config),
       compaction: build_compaction(opts),
-      on_compaction: Keyword.get(opts, :on_compaction)
+      on_compaction: Keyword.get(opts, :on_compaction),
+      on_compaction_complete: Keyword.get(opts, :on_compaction_complete)
     }
   end
 

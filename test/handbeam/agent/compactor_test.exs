@@ -51,6 +51,7 @@ defmodule Handbeam.Agent.CompactorTest do
     max_tokens = Keyword.get(opts, :max_tokens, 200)
     compaction = Keyword.get(opts, :compaction, reserve_tokens: 20, keep_recent_tokens: 20)
     on_compaction = Keyword.get(opts, :on_compaction)
+    on_compaction_complete = Keyword.get(opts, :on_compaction_complete)
 
     config =
       Config.from_opts(
@@ -58,7 +59,8 @@ defmodule Handbeam.Agent.CompactorTest do
         provider_config: provider_config,
         max_tokens: max_tokens,
         compaction: compaction,
-        on_compaction: on_compaction
+        on_compaction: on_compaction,
+        on_compaction_complete: on_compaction_complete
       )
 
     %State{config: config, messages: messages}
@@ -584,6 +586,70 @@ defmodule Handbeam.Agent.CompactorTest do
   end
 
   describe "on_compaction callback" do
+    test "successful summary receives a checkpoint id after entry-aligned provenance" do
+      parent = self()
+
+      callback = fn event, _state ->
+        send(parent, {:compaction_complete, event})
+        {:ok, %{"id" => "checkpoint-1"}}
+      end
+
+      shared = "tool-entry-1"
+
+      messages = [
+        %{Message.user("original") | id: "user-1"},
+        %{Message.assistant(String.duplicate("old", 500)) | id: "assistant-1"},
+        %{
+          Message.tool_use([%{type: "tool_use", id: "call-1", name: "read", input: %{}}])
+          | id: shared
+        },
+        %{
+          Message.tool_results([
+            Message.tool_result_block("call-1", String.duplicate("result", 300))
+          ])
+          | id: shared
+        },
+        %{Message.user("latest") | id: "user-2"}
+      ]
+
+      state =
+        build_state(messages,
+          max_tokens: 250,
+          compaction: [reserve_tokens: 20, keep_recent_tokens: 20],
+          provider_config: %{summary_response: {:ok, summary_text("Complete")}, test_pid: self()},
+          on_compaction_complete: callback
+        )
+
+      assert {:compacted, compacted} = Compactor.maybe_compact(state)
+      assert_received {:compaction_complete, event}
+
+      summarized_ids = Enum.map(event.messages_to_summarize, & &1.id)
+      recent_ids = compacted.messages |> Enum.drop(2) |> Enum.map(& &1.id)
+      assert Enum.count(summarized_ids, &(&1 == shared)) in [0, 2]
+      assert Enum.count(recent_ids, &(&1 == shared)) in [0, 2]
+      assert Enum.at(compacted.messages, 1).id == "checkpoint-1"
+    end
+
+    test "failed summary does not fire completion callback" do
+      callback = fn _event, _state -> send(self(), :should_not_complete) end
+
+      state =
+        build_state(
+          [
+            Message.user("original"),
+            Message.assistant(String.duplicate("x", 1_200)),
+            Message.user("latest")
+          ],
+          max_tokens: 250,
+          compaction: [reserve_tokens: 20, keep_recent_tokens: 20],
+          provider_config: %{summary_response: {:error, :offline}, test_pid: self()},
+          on_compaction_complete: callback
+        )
+
+      assert {:compacted, _compacted} = Compactor.maybe_compact(state)
+      refute_received :should_not_complete
+    end
+
     test "fires callback with messages about to be summarized" do
       test_pid = self()
 

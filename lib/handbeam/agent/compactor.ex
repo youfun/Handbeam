@@ -122,7 +122,23 @@ defmodule Handbeam.Agent.Compactor do
 
         case summarize_compaction(prepared, state, messages, opts) do
           {:ok, summary_text} ->
-            compacted = [prepared.first, build_summary_message(summary_text) | prepared.recent]
+            checkpoint_id =
+              fire_on_compaction_complete(
+                %{
+                  first: prepared.first,
+                  previous_summary: prepared.previous_summary,
+                  messages_to_summarize: prepared.messages_to_summarize,
+                  summary: summary_text
+                },
+                state
+              )
+
+            compacted =
+              [
+                prepared.first,
+                build_summary_message(summary_text, checkpoint_id) | prepared.recent
+              ]
+
             %{state | messages: compacted}
 
           {:error, reason} ->
@@ -152,6 +168,7 @@ defmodule Handbeam.Agent.Compactor do
       cut_index = find_cut_point(tail, keep_recent_tokens)
       messages_to_summarize = Enum.take(tail, cut_index)
       recent = Enum.drop(tail, cut_index)
+      {messages_to_summarize, recent} = align_entry_boundary(messages_to_summarize, recent)
 
       if messages_to_summarize == [] do
         :noop
@@ -168,6 +185,21 @@ defmodule Handbeam.Agent.Compactor do
   end
 
   defp prepare_summary_compaction(_, _keep_recent_tokens), do: :noop
+
+  defp align_entry_boundary(messages_to_summarize, [%Message{id: id} | _] = recent)
+       when is_binary(id) and id != "" do
+    case List.last(messages_to_summarize) do
+      %Message{id: ^id} ->
+        {same_entry, rest} = Enum.split_while(recent, &(&1.id == id))
+        {messages_to_summarize ++ same_entry, rest}
+
+      _ ->
+        {messages_to_summarize, recent}
+    end
+  end
+
+  defp align_entry_boundary(messages_to_summarize, recent),
+    do: {messages_to_summarize, recent}
 
   defp summarize_compaction(prepared, %State{} = state, _messages, opts) do
     provider = state.config.provider
@@ -408,8 +440,12 @@ defmodule Handbeam.Agent.Compactor do
 
   defp extract_summary_text(_response), do: {:error, :invalid_summary_response}
 
-  defp build_summary_message(summary_text) do
-    %Message{role: :user, content: "#{@summary_prefix}\n#{String.trim(summary_text)}"}
+  defp build_summary_message(summary_text, checkpoint_id) do
+    %Message{
+      role: :user,
+      content: "#{@summary_prefix}\n#{String.trim(summary_text)}",
+      id: checkpoint_id
+    }
   end
 
   defp pop_existing_summary([message | rest]) do
@@ -651,4 +687,40 @@ defmodule Handbeam.Agent.Compactor do
   end
 
   defp fire_on_compaction(_, _), do: :ok
+
+  defp fire_on_compaction_complete(
+         _event,
+         %State{config: %{on_compaction_complete: nil}}
+       ),
+       do: nil
+
+  defp fire_on_compaction_complete(
+         event,
+         %State{config: %{on_compaction_complete: callback}} = state
+       )
+       when is_function(callback, 2) do
+    case callback.(event, state) do
+      {:ok, %{"id" => id}} when is_binary(id) -> id
+      {:ok, %{id: id}} when is_binary(id) -> id
+      _ -> nil
+    end
+  rescue
+    e ->
+      Logger.warning(fn ->
+        "on_compaction_complete callback crashed: #{Exception.message(e)}\n" <>
+          "Stacktrace: #{Exception.format_stacktrace(__STACKTRACE__)}"
+      end)
+
+      nil
+  catch
+    kind, payload ->
+      Logger.warning(fn ->
+        "on_compaction_complete callback error (#{kind}): #{inspect(payload)}\n" <>
+          "Stacktrace: #{Exception.format_stacktrace(__STACKTRACE__)}"
+      end)
+
+      nil
+  end
+
+  defp fire_on_compaction_complete(_, _), do: nil
 end

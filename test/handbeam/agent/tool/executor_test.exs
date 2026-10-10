@@ -54,12 +54,38 @@ defmodule Handbeam.Agent.Tool.ExecutorTest do
   setup do
     ensure_registered(Handbeam.Tool.Builtin.Read)
     ensure_registered(Handbeam.Tool.Builtin.Bash)
+    ensure_registered(Handbeam.Tool.Builtin.EditContext)
     ensure_registered(ResultFixtureTool)
     ensure_registered(ExitingFixtureTool)
     :ok
   end
 
   describe "execute_all/2" do
+    test "successful edit_context marks the run as diverged from its transcript" do
+      state =
+        State.init(%Config{}, [
+          Handbeam.Agent.Message.user("original"),
+          Handbeam.Agent.Message.assistant("replace this exact span")
+        ])
+
+      assert {:ok, _result, _ui_blocks, updated} =
+               Executor.execute_all_with_context(
+                 [
+                   %{
+                     id: "edit-1",
+                     name: "edit_context",
+                     input: %{
+                       "old_text" => "replace this exact span",
+                       "new_text" => "short replacement"
+                     }
+                   }
+                 ],
+                 state
+               )
+
+      assert updated.context_edited
+    end
+
     test "executes a known tool call" do
       config = %Config{
         working_directory: @fixtures_dir

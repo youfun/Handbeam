@@ -27,25 +27,28 @@ defmodule Handbeam.Attachments.History do
     attachments = List.wrap(entry["attachments"])
     conversation_id = conversation_id || entry["conversation_id"]
 
-    cond do
-      role == "tool" and attachments == [] and entry["images"] not in [nil, []] ->
-        restore_tool(entry, conversation_id)
+    messages =
+      cond do
+        role == "tool" and attachments == [] and entry["images"] not in [nil, []] ->
+          restore_tool(entry, conversation_id)
 
-      role == "user" and attachments != [] ->
-        case rebuild_user(text, attachments, workspace_path, conversation_id, entry) do
-          {:ok, content} -> [%Message{role: :user, content: content}]
-          {:error, _reason} -> fallback_user(text, attachments)
-        end
+        role == "user" and attachments != [] ->
+          case rebuild_user(text, attachments, workspace_path, conversation_id, entry) do
+            {:ok, content} -> [%Message{role: :user, content: content}]
+            {:error, _reason} -> fallback_user(text, attachments)
+          end
 
-      role == "user" and is_binary(text) and text != "" ->
-        [Message.user(text)]
+        role == "user" and is_binary(text) and text != "" ->
+          [Message.user(text)]
 
-      role == "assistant" and replayable_assistant?(entry) and is_binary(text) and text != "" ->
-        [assistant_message(entry, text)]
+        role == "assistant" and replayable_assistant?(entry) and is_binary(text) and text != "" ->
+          [assistant_message(entry, text)]
 
-      true ->
-        []
-    end
+        true ->
+          []
+      end
+
+    stamp_entry_id(messages, entry["id"])
   end
 
   def to_messages(_, _, _), do: []
@@ -63,6 +66,12 @@ defmodule Handbeam.Attachments.History do
 
     Enum.reverse(kept)
   end
+
+  defp stamp_entry_id(messages, id) when is_binary(id) and id != "" do
+    Enum.map(messages, &%{&1 | id: id})
+  end
+
+  defp stamp_entry_id(messages, _id), do: messages
 
   defp drop_reasoning(%Message{content: blocks} = message) when is_list(blocks) do
     %{message | content: Enum.reject(blocks, &reasoning_block?/1)}

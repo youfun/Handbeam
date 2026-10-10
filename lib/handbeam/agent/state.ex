@@ -31,6 +31,7 @@ defmodule Handbeam.Agent.State do
     :model_context,
     :context_base_count,
     :usage_anchor,
+    context_edited: false,
     context_generation: 0
   ]
 
@@ -64,6 +65,7 @@ defmodule Handbeam.Agent.State do
           model_context: [Message.t()] | nil,
           context_base_count: non_neg_integer(),
           usage_anchor: map() | nil,
+          context_edited: boolean(),
           context_generation: non_neg_integer()
         }
 
@@ -108,6 +110,7 @@ defmodule Handbeam.Agent.State do
       model_context: nil,
       context_base_count: 0,
       usage_anchor: nil,
+      context_edited: false,
       context_generation: 0
     }
   end
