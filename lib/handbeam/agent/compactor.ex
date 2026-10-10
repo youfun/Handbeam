@@ -75,12 +75,23 @@ defmodule Handbeam.Agent.Compactor do
     reserve_tokens = compaction_limit(:reserve_tokens, config, 16_384)
     max_tokens = compaction_limit(:max_tokens, config, 200_000)
 
-    if estimate_messages_tokens(messages) <= max_tokens - reserve_tokens do
+    if request_tokens(messages, Keyword.get(opts, :usage_anchor)) <= max_tokens - reserve_tokens do
       {:unchanged, state}
     else
       {:compacted, compact_messages_in_state(state, messages, opts)}
     end
   end
+
+  # The anchor's input_tokens is the full provider input, including cache
+  # reads and writes, plus the system prompt and tool schemas. Messages added
+  # after that call are estimated from their text. Without a measurement yet,
+  # the message-text estimate is the whole request.
+  defp request_tokens(messages, %{input_tokens: input, sent_count: sent})
+       when is_integer(input) and input > 0 and is_integer(sent) and sent >= 0 do
+    input + estimate_messages_tokens(Enum.drop(messages, sent))
+  end
+
+  defp request_tokens(messages, _anchor), do: estimate_messages_tokens(messages)
 
   defp compact_messages_in_state(%State{} = state, messages, opts) do
     keep_recent_tokens = compaction_limit(:keep_recent_tokens, state.config, 20_000)
@@ -351,10 +362,29 @@ defmodule Handbeam.Agent.Compactor do
       |> Enum.reverse()
       |> Enum.find_value(fn {msg, idx} -> valid_cut_message?(msg) && idx end)
 
-    user_cut || assistant_cut || fallback_cut || 0
+    # 0 is a real cut. `||` would keep it, but a later `> 0` check cannot
+    # tell that boundary apart from "no boundary".
+    chosen = first_cut([user_cut, assistant_cut, fallback_cut])
+
+    cond do
+      is_integer(chosen) ->
+        chosen
+
+      # No user or assistant boundary. Summarize the whole tail only when a
+      # trailing tool result is itself what overflows the recent window.
+      estimate_messages_tokens(messages) >= keep_recent_tokens ->
+        length(messages)
+
+      true ->
+        0
+    end
   end
 
   defp find_cut_point(_messages, _keep_recent_tokens), do: 0
+
+  defp first_cut(cuts) do
+    Enum.find(cuts, &is_integer/1)
+  end
 
   defp find_threshold_index(messages, keep_recent_tokens) do
     max_index = length(messages) - 1

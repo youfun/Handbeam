@@ -1,7 +1,7 @@
 defmodule Handbeam.Agent.CompactorTest do
   use ExUnit.Case, async: true
 
-  alias Handbeam.Agent.{Compactor, Config, Message, State}
+  alias Handbeam.Agent.{Compactor, Config, Message, ModelContext, State}
 
   defmodule ProbeProvider do
     @behaviour Handbeam.Agent.Provider
@@ -358,6 +358,42 @@ defmodule Handbeam.Agent.CompactorTest do
 
       assert log =~ "summary compaction failed, falling back to truncation"
     end
+
+    test "compacts when cached input fills the window" do
+      messages = [
+        Message.user("original"),
+        Message.assistant("notes " <> String.duplicate("x", 80)),
+        Message.user("current request")
+      ]
+
+      state =
+        build_state(messages,
+          max_tokens: 200_000,
+          compaction: [reserve_tokens: 16_384, keep_recent_tokens: 20],
+          provider_config: %{summary_response: {:ok, summary_text("Cache")}, test_pid: self()}
+        )
+
+      usage = %{
+        input_tokens: 1_000,
+        cache_read_input_tokens: 180_000,
+        cache_creation_input_tokens: 9_000
+      }
+
+      anchored = ModelContext.note_anchor(state, usage, length(messages))
+      assert anchored.usage_anchor.input_tokens == 190_000
+
+      assert {:unchanged, _} =
+               Compactor.maybe_compact(state, usage_anchor: %{input_tokens: 1_000, sent_count: 3})
+
+      refute_received {:summary_request, _, _, _}
+
+      assert {:compacted, compacted} =
+               Compactor.maybe_compact(anchored, usage_anchor: anchored.usage_anchor)
+
+      assert_received {:summary_request, _, _, _}
+      assert Enum.any?(compacted.messages, &summary_message?/1)
+      assert List.last(compacted.messages).content == "current request"
+    end
   end
 
   describe "on_compaction callback" do
@@ -440,6 +476,59 @@ defmodule Handbeam.Agent.CompactorTest do
       {:compacted, compacted} = Compactor.maybe_compact(state)
       assert %State{} = compacted
       assert Enum.any?(compacted.messages, &summary_message?/1)
+    end
+
+    test "keeps a current user message when that message is the tail boundary" do
+      request = "EXACT-REQUEST " <> String.duplicate("q", 4_000)
+
+      messages = [
+        Message.user("original"),
+        Message.user(request)
+      ]
+
+      state =
+        build_state(messages,
+          max_tokens: 200,
+          compaction: [reserve_tokens: 20, keep_recent_tokens: 20],
+          provider_config: %{summary_response: {:ok, summary_text("Request")}, test_pid: self()}
+        )
+
+      {:compacted, compacted} = Compactor.maybe_compact(state)
+
+      refute_received {:summary_request, _, _, _}
+      assert Enum.at(compacted.messages, 1).content == request
+    end
+
+    test "summarizes a tail that is only an oversized tool result" do
+      body = String.duplicate("r", 4_000)
+
+      messages = [
+        Message.user("original"),
+        Message.tool_results([%{type: "tool_result", tool_use_id: "t1", content: body}])
+      ]
+
+      state =
+        build_state(messages,
+          max_tokens: 200,
+          compaction: [reserve_tokens: 20, keep_recent_tokens: 20],
+          provider_config: %{summary_response: {:ok, summary_text("Overflow")}, test_pid: self()}
+        )
+
+      {:compacted, compacted} = Compactor.maybe_compact(state)
+
+      assert_received {:summary_request, _, _, _}
+      assert summary_message?(Enum.at(compacted.messages, 1))
+
+      refute Enum.any?(compacted.messages, fn
+               %Message{content: content} when is_binary(content) ->
+                 String.contains?(content, body)
+
+               %Message{content: blocks} when is_list(blocks) ->
+                 Enum.any?(blocks, &(is_map(&1) and String.contains?(&1[:content] || "", body)))
+
+               _ ->
+                 false
+             end)
     end
   end
 end
