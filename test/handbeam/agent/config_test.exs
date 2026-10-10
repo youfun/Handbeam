@@ -98,6 +98,33 @@ defmodule Handbeam.Agent.ConfigTest do
     assert Config.from_opts(source: :live_view, max_turns: 3).max_turns == 3
   end
 
+  describe "context window" do
+    test "uses the selected model contextWindow" do
+      config =
+        Config.from_opts(
+          provider_config: %{
+            model_meta: %{"contextWindow" => 272_000},
+            max_tokens: 32_000
+          }
+        )
+
+      assert config.max_tokens == 272_000
+      assert config.provider_config.max_tokens == 32_000
+    end
+
+    test "keeps the default for unknown models and honors an explicit override" do
+      assert Config.from_opts(provider_config: %{max_tokens: 32_000}).max_tokens == 200_000
+
+      assert Config.from_opts(provider_config: %{model_meta: %{"contextWindow" => 0}}).max_tokens ==
+               200_000
+
+      assert Config.from_opts(
+               max_tokens: 128_000,
+               provider_config: %{model_meta: %{"contextWindow" => 272_000}}
+             ).max_tokens == 128_000
+    end
+  end
+
   test "appends task_instructions after the default prompt and workspace contract" do
     workspace =
       Path.join(System.tmp_dir!(), "handbeam-config-task-#{System.unique_integer([:positive])}")

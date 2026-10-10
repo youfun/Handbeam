@@ -362,6 +362,21 @@ defmodule Handbeam.Agent.DelegationTest do
     assert reason =~ "monetary budget"
   end
 
+  test "inherited child model keeps its context window", %{context: context} do
+    delegation_config = %{
+      context.delegation_config
+      | provider_config:
+          Map.put(context.delegation_config.provider_config, :model_meta, %{
+            "contextWindow" => 272_000
+          })
+    }
+
+    {:ok, opts} =
+      Policy.child_opts(%{context | delegation_config: delegation_config}, 30_000)
+
+    assert Config.from_opts(opts).max_tokens == 272_000
+  end
+
   test "neither delegated nor ordinary runs are restarted with the original input" do
     assert Handbeam.Agent.RunSupervisor.child_spec(run_opts: [delegated?: true]).restart ==
              :temporary

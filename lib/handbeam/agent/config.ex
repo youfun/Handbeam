@@ -132,10 +132,29 @@ defmodule Handbeam.Agent.Config do
       middleware: Keyword.get(opts, :middleware, default_middleware(observational)),
       provider_config: provider_config,
       max_messages: Keyword.get(opts, :max_messages, @default_max_messages),
-      max_tokens: Keyword.get(opts, :max_tokens, @default_max_tokens),
+      max_tokens: context_window(opts, provider_config),
       compaction: build_compaction(opts),
       on_compaction: Keyword.get(opts, :on_compaction)
     }
+  end
+
+  # `Config.max_tokens` is the request context window. Provider
+  # `:max_tokens` remains the independent response-output limit.
+  defp context_window(opts, provider_config) do
+    case Keyword.get(opts, :max_tokens) do
+      value when is_integer(value) and value > 0 ->
+        value
+
+      _ ->
+        model_meta = provider_config[:model_meta] || provider_config["model_meta"] || %{}
+
+        case model_meta["contextWindow"] ||
+               model_meta[:context_window] ||
+               model_meta["context_window"] do
+          value when is_integer(value) and value > 0 -> value
+          _ -> @default_max_tokens
+        end
+    end
   end
 
   @doc """

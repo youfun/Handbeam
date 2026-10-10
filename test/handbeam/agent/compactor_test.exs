@@ -489,6 +489,41 @@ defmodule Handbeam.Agent.CompactorTest do
       assert Enum.any?(compacted.messages, &summary_message?/1)
       assert List.last(compacted.messages).content == "current request"
     end
+
+    test "uses the selected model context window for the compaction threshold" do
+      messages = [
+        Message.user("original"),
+        Message.assistant("notes " <> String.duplicate("x", 80)),
+        Message.user("current request")
+      ]
+
+      config =
+        Config.from_opts(
+          provider: ProbeProvider,
+          provider_config: %{
+            model_meta: %{"contextWindow" => 272_000},
+            summary_response: {:ok, summary_text("Window")},
+            test_pid: self()
+          },
+          compaction: [reserve_tokens: 16_384, keep_recent_tokens: 20]
+        )
+
+      state = %State{config: config, messages: messages}
+
+      assert {:unchanged, _} =
+               Compactor.maybe_compact(state,
+                 usage_anchor: %{input_tokens: 200_000, sent_count: length(messages)}
+               )
+
+      refute_received {:summary_request, _, _, _}
+
+      assert {:compacted, _} =
+               Compactor.maybe_compact(state,
+                 usage_anchor: %{input_tokens: 255_617, sent_count: length(messages)}
+               )
+
+      assert_received {:summary_request, _, _, _}
+    end
   end
 
   describe "on_compaction callback" do
