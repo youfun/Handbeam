@@ -138,6 +138,24 @@ defmodule Handbeam.Agent.CompactorTest do
     end)
   end
 
+  test "counts encrypted reasoning once in request estimates" do
+    blocks = [
+      %{
+        type: "responses_reasoning",
+        item: %{
+          type: "reasoning",
+          id: "rs_estimate",
+          encrypted_content: String.duplicate("cipher", 2_000)
+        }
+      },
+      %{type: "text", text: "visible"}
+    ]
+
+    expected = max(1, div(byte_size(Handbeam.JSON.encode!(blocks)), 4))
+
+    assert Compactor.request_tokens([Message.assistant_blocks(blocks)], nil) == expected
+  end
+
   describe "maybe_compact/1" do
     test "returns state unchanged when within reserve budget" do
       messages = [Message.user("hello"), Message.assistant("hi")]

@@ -534,20 +534,9 @@ defmodule Handbeam.Agent.Compactor do
       |> byte_size()
       |> then(&max(1, div(&1, 4)))
 
-    encrypted_reasoning_cost =
-      Enum.reduce(blocks, 0, fn block, cost ->
-        encrypted =
-          if block_type(block) == "responses_reasoning" do
-            item = Map.get(block, :item) || Map.get(block, "item") || %{}
-            Map.get(item, :encrypted_content) || Map.get(item, "encrypted_content")
-          end
-
-        if is_binary(encrypted), do: cost + div(byte_size(encrypted), 4), else: cost
-      end)
-
     # Two recent images are retained on the wire. Charge their visual cost,
     # not just a few tokens of opaque reference text.
-    text_cost + encrypted_reasoning_cost +
+    text_cost +
       Enum.reduce(blocks, 0, fn block, cost ->
         images = Map.get(block, :images) || Map.get(block, "images") || []
         cost + 6_000 * length(images)
