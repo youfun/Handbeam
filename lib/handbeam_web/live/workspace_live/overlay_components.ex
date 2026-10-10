@@ -171,7 +171,6 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
                 </svg>
               </span>
               <span class="truncate flex-1 min-w-0">{ws["name"]}</span>
-              <span :if={ws["default"]} class="sheet-section-sub">default</span>
               <span
                 id={"sheet-workspace-count-#{ws["id"]}"}
                 class="sheet-conv-count"

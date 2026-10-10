@@ -465,7 +465,6 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
                 </svg>
               </span>
               <span class="truncate flex-1">{ws["name"]}</span>
-              <span :if={ws["default"]} class="text-tertiary text-[0.6rem]">default</span>
             </button>
             <span class="workspace-title-rule" aria-hidden="true"></span>
             <div class="workspace-row-actions">
