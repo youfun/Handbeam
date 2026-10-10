@@ -84,17 +84,21 @@ defmodule Handbeam.Schedule.Clock do
   end
 
   defp recover_unknown(now) do
-    if schedule_runs?() do
+    if tables_ready?() do
       Store.recover_unknown(now, &run_present?/2)
-      |> Enum.each(fn run ->
-        case Store.get(run.schedule_id) do
-          {:ok, schedule} -> Notice.unknown(schedule, run)
-          _ -> :ok
-        end
-      end)
+      |> notify_unknown()
     else
       :ok
     end
+  end
+
+  defp notify_unknown(runs) do
+    Enum.each(runs, fn run ->
+      case Store.get(run.schedule_id) do
+        {:ok, schedule} -> Notice.unknown(schedule, run)
+        _ -> :ok
+      end
+    end)
   end
 
   defp run_present?(conversation_id, run_id) do
@@ -117,7 +121,7 @@ defmodule Handbeam.Schedule.Clock do
   end
 
   defp schedule(state) do
-    if enabled?() do
+    if enabled?() and tables_ready?() do
       %{state | timer: Process.send_after(self(), :tick, delay())}
     else
       %{state | timer: nil}
@@ -145,13 +149,14 @@ defmodule Handbeam.Schedule.Clock do
     Application.get_env(:handbeam, :schedule_clock, enabled: true)[:enabled] != false
   end
 
-  # A fresh install starts this process before migrations. Missing the table
-  # is not a failed recovery.
-  defp schedule_runs? do
-    query = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schedule_runs'"
+  # A fresh install starts this process before migrations. Missing either
+  # table is not a failed recovery; delay/0 also reads schedules.
+  defp tables_ready? do
+    query =
+      "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name IN ('schedules', 'schedule_runs')"
 
     case Handbeam.Repo.query(query) do
-      {:ok, %{rows: [[1]]}} -> true
+      {:ok, %{rows: [[2]]}} -> true
       _ -> false
     end
   rescue
