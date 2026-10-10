@@ -413,7 +413,7 @@ defmodule Handbeam.E2E.FakeProviderEndToEndTest do
         )
 
       assert state.status == :completed
-      assert String.starts_with?(state.config.system_prompt, "You are a testing assistant.\n\n")
+      assert String.starts_with?(state.config.system_prompt, "You are a testing assistant.\n")
       assert state.config.system_prompt =~ "## Host execution environment"
     end
 

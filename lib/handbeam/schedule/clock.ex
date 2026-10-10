@@ -84,13 +84,17 @@ defmodule Handbeam.Schedule.Clock do
   end
 
   defp recover_unknown(now) do
-    Store.recover_unknown(now, &run_present?/2)
-    |> Enum.each(fn run ->
-      case Store.get(run.schedule_id) do
-        {:ok, schedule} -> Notice.unknown(schedule, run)
-        _ -> :ok
-      end
-    end)
+    if schedule_runs?() do
+      Store.recover_unknown(now, &run_present?/2)
+      |> Enum.each(fn run ->
+        case Store.get(run.schedule_id) do
+          {:ok, schedule} -> Notice.unknown(schedule, run)
+          _ -> :ok
+        end
+      end)
+    else
+      :ok
+    end
   end
 
   defp run_present?(conversation_id, run_id) do
@@ -139,5 +143,18 @@ defmodule Handbeam.Schedule.Clock do
 
   defp enabled? do
     Application.get_env(:handbeam, :schedule_clock, enabled: true)[:enabled] != false
+  end
+
+  # A fresh install starts this process before migrations. Missing the table
+  # is not a failed recovery.
+  defp schedule_runs? do
+    query = "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schedule_runs'"
+
+    case Handbeam.Repo.query(query) do
+      {:ok, %{rows: [[1]]}} -> true
+      _ -> false
+    end
+  rescue
+    _ -> false
   end
 end

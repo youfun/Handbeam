@@ -34,7 +34,7 @@ defmodule Handbeam.Schedule.Recorder do
         :ok
 
       AgentEvent.terminal_status?(status) ->
-        Store.finish_by_run_id(run_id, map_status(status), reason(payload, status))
+        finish_scheduled_run(run_id, status, payload)
 
       true ->
         :ok
@@ -44,6 +44,22 @@ defmodule Handbeam.Schedule.Recorder do
   end
 
   def handle_info(_message, state), do: {:noreply, state}
+
+  # A run_end is broadcast for every conversation. Only a scheduled run has a
+  # matching schedule_runs row, and that table may not exist yet on a fresh
+  # install. A missing row is not a failed finish.
+  defp finish_scheduled_run(run_id, status, payload) do
+    Store.finish_by_run_id(run_id, map_status(status), reason(payload, status))
+  rescue
+    error in [Exqlite.Error] ->
+      if missing_schedule_runs?(error), do: :ok, else: reraise(error, __STACKTRACE__)
+  end
+
+  defp missing_schedule_runs?(%{message: message}) when is_binary(message) do
+    String.contains?(message, "no such table: schedule_runs")
+  end
+
+  defp missing_schedule_runs?(_error), do: false
 
   defp map_status(status) when status in [:completed, "completed"], do: "completed"
   defp map_status(status) when status in [:cancelled, "cancelled"], do: "cancelled"

@@ -120,6 +120,11 @@ if [[ "$skip_setup" -eq 0 ]]; then
   bash "$PROBE_ROOT/script/ci_setup_android.sh"
 fi
 
+# mob.pack_apk starts :handbeam. Clock reads schedule_runs during that start,
+# and a fresh CI database has no schema until this runs.
+mix ecto.create --quiet
+mix ecto.migrate --quiet
+
 if [[ "$skip_test" -eq 0 ]]; then
   mix test
 fi
