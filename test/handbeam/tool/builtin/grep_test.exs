@@ -132,6 +132,43 @@ defmodule Handbeam.Tool.Builtin.GrepTest do
     assert second =~ "marker four"
   end
 
+  test "treats omitted, nil, and empty cursors as the first page" do
+    File.write!(Path.join(@work_dir, "one.txt"), "marker one\nmarker two\n")
+
+    base = %{"pattern" => "marker", "path" => ".", "limit" => 1}
+    context = %{working_directory: @work_dir}
+
+    assert {:ok, omitted} = grep(base, context)
+    assert {:ok, nil_cursor} = grep(Map.put(base, "cursor", nil), context)
+    assert {:ok, empty_cursor} = grep(Map.put(base, "cursor", ""), context)
+
+    assert nil_cursor == omitted
+    assert empty_cursor == omitted
+    assert omitted =~ "marker one"
+    refute omitted =~ "marker two"
+  end
+
+  test "rejects a cursor returned by a different query with actionable guidance" do
+    File.write!(Path.join(@work_dir, "one.txt"), "marker one\nmarker two\nother\n")
+
+    assert {:ok, first} =
+             grep(%{"pattern" => "marker", "path" => ".", "limit" => 1}, %{
+               working_directory: @work_dir
+             })
+
+    [_, cursor] = Regex.run(~r/next_cursor: (\S+)/, first)
+
+    assert {:error, reason, details} =
+             Grep.execute(
+               %{"pattern" => "other", "path" => ".", "limit" => 1, "cursor" => cursor},
+               %{working_directory: @work_dir}
+             )
+
+    assert reason =~ "Omit cursor for a new query"
+    assert reason =~ "next_cursor returned by the same query"
+    assert details.code == :cursor_invalid
+  end
+
   test "paginates 5000 fallback matches without duplicates or one huge result" do
     body = Enum.map_join(1..5_000, "\n", &"bulk_page_marker #{&1}")
     File.write!(Path.join(@work_dir, "bulk.txt"), body)
@@ -180,9 +217,14 @@ defmodule Handbeam.Tool.Builtin.GrepTest do
     assert Grep.name() == "grep"
     assert Grep.concurrent?() == true
     assert is_integer(Grep.max_result_chars())
-    assert "pattern" in Grep.input_schema().required
+    assert Grep.input_schema().required == []
     assert Grep.description() =~ "file_search"
+    assert Grep.input_schema().properties.pattern.description =~ "omit"
     assert Grep.input_schema().properties.glob.description =~ "not a search pattern"
+
+    for compatibility_field <- [:output_mode, :"-n", :"-A", :"-B", :"-C"] do
+      refute Map.has_key?(Grep.input_schema().properties, compatibility_field)
+    end
   end
 
   test "elixir fallback finds matches without rg" do

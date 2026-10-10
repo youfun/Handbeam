@@ -44,7 +44,8 @@ defmodule Handbeam.Tool.Builtin.Grep do
       properties: %{
         pattern: %{
           type: "string",
-          description: "Required content pattern (regex by default)"
+          description:
+            "Content pattern (regex by default); omit only when glob is used to list files"
         },
         path: %{
           type: "string",
@@ -60,20 +61,18 @@ defmodule Handbeam.Tool.Builtin.Grep do
           items: %{type: "string"},
           description: "Path substrings to exclude"
         },
-        cursor: %{type: "string", description: "Opaque next_cursor from a previous result"},
+        cursor: %{
+          type: "string",
+          description: "Opaque next_cursor returned by the same query; omit for a new query"
+        },
         ignore_case: %{type: "boolean", default: false},
         literal: %{type: "boolean", default: false},
         context: %{type: "integer", default: 0},
         before_context: %{type: "integer", default: 0},
         after_context: %{type: "integer", default: 0},
-        limit: %{type: "integer", description: "Maximum matching lines", default: @default_limit},
-        output_mode: %{type: "string", description: "Accepted for compatibility"},
-        "-n": %{type: "boolean", description: "Accepted for compatibility"},
-        "-A": %{type: "integer", description: "Lines after each match"},
-        "-B": %{type: "integer", description: "Lines before each match"},
-        "-C": %{type: "integer", description: "Context lines around each match"}
+        limit: %{type: "integer", description: "Maximum matching lines", default: @default_limit}
       },
-      required: ["pattern"]
+      required: []
     }
   end
 
@@ -147,7 +146,10 @@ defmodule Handbeam.Tool.Builtin.Grep do
     wanted = limit(input) + 1
 
     if cursor == :invalid do
-      throw({:invalid_cursor, "cursor does not match this query and workspace"})
+      throw(
+        {:invalid_cursor,
+         "Invalid cursor for this query or workspace. Omit cursor for a new query; to continue, use next_cursor returned by the same query."}
+      )
     end
 
     files =
@@ -572,7 +574,7 @@ defmodule Handbeam.Tool.Builtin.Grep do
     Base.url_encode64(:erlang.term_to_binary(payload), padding: false)
   end
 
-  defp decode_cursor(nil, _input, _workspace), do: nil
+  defp decode_cursor(cursor, _input, _workspace) when cursor in [nil, ""], do: nil
 
   defp decode_cursor(cursor, input, workspace) when is_binary(cursor) do
     with {:ok, binary} <- Base.url_decode64(cursor, padding: false),
@@ -584,6 +586,8 @@ defmodule Handbeam.Tool.Builtin.Grep do
       _ -> :invalid
     end
   end
+
+  defp decode_cursor(_cursor, _input, _workspace), do: :invalid
 
   defp cursor_term(binary) do
     {:ok, :erlang.binary_to_term(binary, [:safe])}

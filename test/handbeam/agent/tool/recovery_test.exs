@@ -218,7 +218,8 @@ defmodule Handbeam.Agent.Tool.RecoveryTest do
                %{working_directory: workspace}
              )
 
-    assert reason =~ "cursor"
+    assert reason =~ "Omit cursor for a new query"
+    assert reason =~ "next_cursor returned by the same query"
     assert details.code == :cursor_invalid
   end
 
