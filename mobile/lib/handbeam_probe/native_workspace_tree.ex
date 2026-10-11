@@ -106,25 +106,15 @@ defmodule HandbeamProbe.NativeWorkspaceTree do
   def handle_listed(socket, _), do: socket
 
   def render(tree) do
-    node(:column, [weight: 1, fill_width: true], [
-      text(gettext("Files in %{name}", name: tree.workspace_name || gettext("Workspace")),
-        text_size: 14,
-        font_weight: "bold"
-      ),
-      text(gettext("Current workspace only. Read-only."),
-        text_size: 12,
-        text_color: color(:hint),
-        padding_top: 4,
-        padding_bottom: 8
-      ),
+    node(:column, [weight: 1, fill_width: true, spacing: 0], [
       actions_row([
         button(
           if(tree.show_hidden, do: gettext("Hide hidden"), else: gettext("Show hidden")),
           event(tree, :toggle_hidden),
-          text_size: 11,
-          padding: 6
+          text_size: 10,
+          padding: 4
         ),
-        button(gettext("Refresh"), event(tree, :refresh), text_size: 11, padding: 6)
+        button(gettext("Refresh"), event(tree, :refresh), text_size: 10, padding: 4)
       ]),
       notice(tree.error),
       scroll(dir_nodes(tree, "", 0), id: scroll_id(tree), retain_scroll: true)
@@ -450,22 +440,23 @@ defmodule HandbeamProbe.NativeWorkspaceTree do
     mark = if MapSet.member?(tree.expanded, entry.relative_path), do: "▾ ", else: "▸ "
 
     button(
-      mark <> gettext("Folder") <> " · " <> entry.name,
+      mark <> entry.name,
       event(tree, :toggle, %{relative_dir: entry.relative_path}),
       fill_width: true,
-      text_size: 13,
-      padding: 8,
-      padding_left: 8 + depth * 12,
-      background: color(:surface)
+      style: :plain,
+      text_size: 12,
+      padding: 4,
+      padding_left: 7 + depth * 12
     )
   end
 
   defp entry_row(tree, %{kind: :file} = entry, depth) do
     button(entry.name, event(tree, :open, %{relative_path: entry.relative_path}),
       fill_width: true,
-      text_size: 13,
-      padding: 8,
-      padding_left: 8 + depth * 12
+      style: :plain,
+      text_size: 12,
+      padding: 4,
+      padding_left: 20 + depth * 12
     )
   end
 

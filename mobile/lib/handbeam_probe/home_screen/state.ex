@@ -94,7 +94,13 @@ defmodule HandbeamProbe.HomeScreen.State do
 
     # ── file navigation ──
     workspace_tree: nil,
-    file_viewer: nil
+    workspace_panel_tab: :files,
+    changes_ui: nil,
+    file_viewer: nil,
+
+    # ── subagent navigation ──
+    expanded_handoffs: nil,
+    thread_stack: []
   ]
 
   @type t :: %__MODULE__{}
@@ -112,6 +118,13 @@ defmodule HandbeamProbe.HomeScreen.State do
         pending_requests: PendingRequests.new(),
         merged_intake_ids: MapSet.new(),
         workspace_tree: NativeWorkspaceTree.idle(),
+        changes_ui: %{
+          expanded: MapSet.new(),
+          confirming: nil,
+          status_overrides: %{},
+          feedback: nil
+        },
+        expanded_handoffs: MapSet.new(),
         file_viewer: NativeFileViewer.new()
       },
       overrides
@@ -133,7 +146,16 @@ defmodule HandbeamProbe.HomeScreen.State do
       work_segments: %{},
       tool_outputs: %{},
       file_diffs: %{},
-      approval_open: true
+      approval_open: true,
+      workspace_panel_tab: :files,
+      changes_ui: %{
+        expanded: MapSet.new(),
+        confirming: nil,
+        status_overrides: %{},
+        feedback: nil
+      },
+      expanded_handoffs: MapSet.new(),
+      thread_stack: []
     ]
   end
 

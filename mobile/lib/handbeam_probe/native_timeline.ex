@@ -133,6 +133,70 @@ defmodule HandbeamProbe.NativeTimeline do
     Map.put(entry, "file_diff_open", open?)
   end
 
+  defp entry(%{"content_type" => "thread_handoff"} = entry, chat) do
+    content = entry["content"] || %{}
+    data = content["data"] || %{}
+    handoff_id = content["handoff_id"] || entry["id"] || "handoff"
+    expanded? = MapSet.member?(Map.get(chat, :expanded_handoffs, MapSet.new()), handoff_id)
+    messages = List.wrap(data["messages"])
+    {conversation_id, agent_id} = handoff_target(data, chat)
+    message_ref = conversation_id || agent_id
+    label = handoff_label(content["event"], agent_id)
+    summary = handoff_summary(messages)
+    marker = if expanded?, do: "▾", else: "▸"
+
+    details =
+      if expanded? do
+        Enum.map(messages, fn message ->
+          text(to_string(message["content"] || ""),
+            text_size: 12,
+            markdown: (message["role"] || "assistant") == "assistant"
+          )
+        end)
+      else
+        []
+      end
+
+    actions =
+      [
+        if(is_binary(conversation_id) or is_binary(agent_id),
+          do:
+            button(
+              gettext("Open thread"),
+              {:open_subagent_thread, conversation_id, agent_id},
+              text_size: 10,
+              padding: 5
+            )
+        ),
+        if(is_binary(message_ref),
+          do:
+            button(gettext("Message"), {:prefill_subagent_message, message_ref},
+              text_size: 10,
+              padding: 5
+            )
+        )
+      ]
+      |> Enum.reject(&is_nil/1)
+
+    node(
+      :column,
+      [fill_width: true, spacing: 5, padding: 7, background: "#F5F3EE", corner_radius: 8],
+      [
+        button("#{marker}  #{label}  #{summary}", {:toggle_thread_handoff, handoff_id},
+          style: :plain,
+          size: :small,
+          text_size: 10,
+          padding: 4
+        )
+        | details ++
+            if(actions == [],
+              do: [],
+              else: [node(:row, [fill_width: true, spacing: 6], actions)]
+            )
+      ]
+    )
+  end
+
   defp entry(%{"content_type" => "tool"} = entry, chat) do
     entry = Map.put(entry, "workspace_path", chat_workspace_path(chat))
     open? = entry["work_collapsed"] != true
@@ -479,6 +543,45 @@ defmodule HandbeamProbe.NativeTimeline do
   # Resolved when entries entered chat state (NativeLocalImage.resolve_entries/3);
   # render never stats the filesystem.
   defp upload_src(_chat, att), do: NativeLocalImage.sent_src(att)
+
+  defp handoff_target(data, chat) do
+    origin = data["origin"] || %{}
+    current_conversation_id = Map.get(chat || %{}, :current_conversation_id)
+    origin_conversation_id = origin["conversation_id"]
+
+    if is_binary(origin_conversation_id) and origin_conversation_id != current_conversation_id do
+      {origin_conversation_id, origin["agent_id"]}
+    else
+      {nil, data["peer"]}
+    end
+  end
+
+  defp handoff_label("sent", agent_id), do: "Delegated to #{short_agent(agent_id)}"
+  defp handoff_label("received", agent_id), do: "Reply from #{short_agent(agent_id)}"
+  defp handoff_label(_event, agent_id), do: "Subagent · #{short_agent(agent_id)}"
+
+  defp short_agent(value) when is_binary(value) do
+    value
+    |> String.split([":", "/"], trim: true)
+    |> List.last()
+    |> case do
+      nil -> "subagent"
+      label -> String.slice(label, 0, 24)
+    end
+  end
+
+  defp short_agent(_value), do: "subagent"
+
+  defp handoff_summary(messages) do
+    messages
+    |> Enum.map(&to_string(&1["content"] || ""))
+    |> Enum.reject(&(&1 == ""))
+    |> List.last()
+    |> case do
+      nil -> ""
+      value -> value |> String.replace(~r/\s+/, " ") |> String.slice(0, 80)
+    end
+  end
 
   defp chat_workspace_path(%{workspace_path: path}) when is_binary(path), do: path
   defp chat_workspace_path(_), do: nil

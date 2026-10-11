@@ -18,8 +18,7 @@ defmodule HandbeamProbe.HomeScreen.Render do
     NativeComposer,
     NativeTimeline,
     NativeWorkspaceOpen,
-    NativeWorkspaces,
-    NativeWorkspaceTree
+    NativeWorkspaces
   }
 
   def render(a) do
@@ -51,7 +50,13 @@ defmodule HandbeamProbe.HomeScreen.Render do
   defp shell(a), do: render_page(a)
 
   defp render_page(a) do
-    back_target = if a.page != :chat, do: inspect({:page, :chat})
+    back_target =
+      cond do
+        a.page != :chat -> inspect({:page, :chat})
+        (a.thread_stack || []) != [] -> inspect(:close_subagent_thread)
+        true -> nil
+      end
+
     notice = Map.get(a, :notice)
 
     page(
@@ -73,6 +78,14 @@ defmodule HandbeamProbe.HomeScreen.Render do
     )
   end
 
+  defp header(%{page: :chat, thread_stack: [_ | _]} = a) do
+    row([
+      icon("back", :close_subagent_thread),
+      text(chat_title(a), text_size: 13, font_weight: "bold", weight: 1),
+      text(gettext("Child thread"), text_size: 10, text_color: color(:hint))
+    ])
+  end
+
   defp header(%{page: :chat} = a) do
     row([
       icon("menu", {:page, :history}),
@@ -90,6 +103,16 @@ defmodule HandbeamProbe.HomeScreen.Render do
       icon("info", {:page, :about}),
       icon("settings", {:page, :settings})
     ])
+  end
+
+  defp header(%{page: :files} = a) do
+    row(
+      [
+        icon("back", {:page, :chat}),
+        HandbeamProbe.NativeChanges.render_tabs(a)
+      ],
+      weights: [0, 1]
+    )
   end
 
   defp header(a) do
@@ -123,7 +146,9 @@ defmodule HandbeamProbe.HomeScreen.Render do
               )
             ] ++
               NativeTimeline.render(
-                a.chat,
+                a.chat
+                |> Map.put(:expanded_handoffs, a.expanded_handoffs || MapSet.new())
+                |> Map.put(:current_conversation_id, Map.get(a.chat.conversation, "id")),
                 a.work_groups,
                 a.work_segments,
                 a.tool_outputs,
@@ -165,7 +190,7 @@ defmodule HandbeamProbe.HomeScreen.Render do
   end
 
   defp content(%{page: :files} = a),
-    do: NativeWorkspaceTree.render(a.workspace_tree || NativeWorkspaceTree.idle())
+    do: HandbeamProbe.NativeChanges.render_content(a)
 
   defp content(%{page: :permissions} = a),
     do: scroll(NativeApproval.render_modes(a.permission_mode))
@@ -278,7 +303,6 @@ defmodule HandbeamProbe.HomeScreen.Render do
 
   defp page_title(:history), do: gettext("Conversations")
   defp page_title(:attachments), do: gettext("Attachments")
-  defp page_title(:files), do: gettext("Workspace files")
   defp page_title(_), do: gettext("Settings")
 
   defp composer_controls(a) do

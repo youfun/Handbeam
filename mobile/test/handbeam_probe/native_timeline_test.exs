@@ -464,6 +464,48 @@ defmodule HandbeamProbe.NativeTimelineTest do
     refute render_sent_card(chat, nil)
   end
 
+  test "thread handoffs render compact controls for details, navigation and direct messages" do
+    parent_id = Ecto.UUID.generate()
+    child_id = Ecto.UUID.generate()
+
+    chat = %{
+      conversation: %{"id" => parent_id},
+      current_conversation_id: parent_id,
+      expanded_handoffs: MapSet.new(["handoff-1"]),
+      entries: [
+        %{
+          "id" => "handoff-entry",
+          "content_type" => "thread_handoff",
+          "content" => %{
+            "type" => "thread_handoff",
+            "handoff_id" => "handoff-1",
+            "event" => "received",
+            "data" => %{
+              "origin" => %{
+                "conversation_id" => child_id,
+                "agent_id" => "researcher"
+              },
+              "messages" => [
+                %{"role" => "assistant", "content" => "The mobile audit is complete."}
+              ]
+            }
+          }
+        }
+      ],
+      stream: "",
+      running: false
+    }
+
+    encoded = inspect(NativeTimeline.render(chat, MapSet.new()), limit: :infinity)
+
+    assert encoded =~ "Reply from researcher"
+    assert encoded =~ "The mobile audit is complete."
+    assert encoded =~ ":toggle_thread_handoff"
+    assert encoded =~ ":open_subagent_thread"
+    assert encoded =~ child_id
+    assert encoded =~ ":prefill_subagent_message"
+  end
+
   # Sent-image paths are resolved when entries enter chat state; render itself
   # never touches the filesystem.
   defp render(chat, toggles),

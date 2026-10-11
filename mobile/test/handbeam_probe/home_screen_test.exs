@@ -147,6 +147,33 @@ defmodule HandbeamProbe.HomeScreenTest do
     %{view: settle(mount_screen(HomeScreen)), dir: dir}
   end
 
+  test "handoff navigation opens a child conversation and returns to its parent", %{view: view} do
+    {:ok, parent} = Handbeam.ConversationStore.create("default", title: "Parent")
+    {:ok, child} = Handbeam.ConversationStore.create("default", title: "Researcher")
+
+    view = info(view, {:tap, {:conversation, parent["id"]}})
+
+    view =
+      info(
+        view,
+        {:tap, {:open_subagent_thread, child["id"], "researcher"}}
+      )
+
+    assert assigns(view).chat.conversation["id"] == child["id"]
+    assert assigns(view).thread_stack == [parent["id"]]
+
+    view = info(view, {:tap, :close_subagent_thread})
+    assert assigns(view).chat.conversation["id"] == parent["id"]
+    assert assigns(view).thread_stack == []
+  end
+
+  test "handoff Message action prefills an exact subagent mention", %{view: view} do
+    view = info(view, {:tap, {:prefill_subagent_message, "researcher"}})
+
+    assert assigns(view).page == :chat
+    assert assigns(view).draft == "@researcher "
+  end
+
   test "native chat and placeholder pages have no web view", %{view: view} do
     # The checked-in Android bridge implements :icon (Mob's tag manifest omits it).
     assert_renderable(view, extra: [:icon, :settings_select, :settings_button])

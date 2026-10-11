@@ -24,6 +24,7 @@ defmodule HandbeamProbe.HomeScreen do
 
   alias HandbeamProbe.HomeScreen.{
     AppSettings,
+    Async,
     Chat,
     Delivery,
     FileNav,
@@ -42,11 +43,14 @@ defmodule HandbeamProbe.HomeScreen do
   alias HandbeamProbe.{
     Bridge.Inbound,
     NativeApproval,
+    NativeChanges,
+    NativeWorkspaceTree,
     NativeWorkspaces,
     PendingRequests,
     ShareCopy
   }
 
+  alias Handbeam.Agent.Delegation
   alias Handbeam.WorkspaceStore
 
   @toggles [
@@ -168,6 +172,93 @@ defmodule HandbeamProbe.HomeScreen do
   defp dispatch({:change, :review_place, _} = msg, socket), do: Chat.handle(msg, socket)
   defp dispatch({:change, :review_feeling, _} = msg, socket), do: Chat.handle(msg, socket)
   defp dispatch({:submit, :send} = msg, socket), do: Chat.handle(msg, socket)
+
+  defp dispatch({:tap, {:toggle_thread_handoff, handoff_id}}, socket)
+       when is_binary(handoff_id) do
+    expanded = socket.assigns.expanded_handoffs || MapSet.new()
+
+    expanded =
+      if MapSet.member?(expanded, handoff_id),
+        do: MapSet.delete(expanded, handoff_id),
+        else: MapSet.put(expanded, handoff_id)
+
+    Mob.Socket.assign(socket, :expanded_handoffs, expanded)
+  end
+
+  defp dispatch({:tap, {:prefill_subagent_message, agent_id}}, socket)
+       when is_binary(agent_id) do
+    socket
+    |> Mob.Socket.assign(:page, :chat)
+    |> Mob.Socket.assign(:draft, "@#{agent_id} ")
+    |> Notice.clear()
+  end
+
+  defp dispatch({:tap, {:open_subagent_thread, conversation_id, agent_id}}, socket) do
+    case resolve_subagent_conversation(socket, conversation_id, agent_id) do
+      {:ok, child_id} ->
+        parent_id = Nav.current_conversation_id(socket)
+        stack = socket.assigns.thread_stack || []
+        next = Nav.handle({:tap, {:conversation, child_id}}, socket)
+
+        if Nav.current_conversation_id(next) == child_id and is_binary(parent_id) do
+          Mob.Socket.assign(next, :thread_stack, [parent_id | stack])
+        else
+          next
+        end
+
+      {:error, reason} ->
+        Notice.put_error(socket, reason)
+    end
+  end
+
+  defp dispatch({:tap, :close_subagent_thread}, socket) do
+    case socket.assigns.thread_stack || [] do
+      [parent_id | rest] ->
+        socket = Nav.handle({:tap, {:conversation, parent_id}}, socket)
+        Mob.Socket.assign(socket, :thread_stack, rest)
+
+      [] ->
+        socket
+    end
+  end
+
+  defp dispatch({:tap, {:workspace_panel_tab, tab}}, socket) when tab in [:changes, :files] do
+    Mob.Socket.assign(socket, :workspace_panel_tab, tab)
+  end
+
+  defp dispatch({:tap, {:toggle_change, change_id}}, socket) when is_binary(change_id) do
+    state = NativeChanges.toggle(socket.assigns, change_id)
+    Mob.Socket.assign(socket, :changes_ui, state.changes_ui)
+  end
+
+  defp dispatch({:tap, {:confirm_revert_change, change_id}}, socket)
+       when is_binary(change_id) do
+    state = NativeChanges.confirm(socket.assigns, change_id)
+    Mob.Socket.assign(socket, :changes_ui, state.changes_ui)
+  end
+
+  defp dispatch({:tap, :cancel_revert_change}, socket) do
+    state = NativeChanges.cancel_confirm(socket.assigns)
+    Mob.Socket.assign(socket, :changes_ui, state.changes_ui)
+  end
+
+  defp dispatch({:tap, {:revert_change, change_id}}, socket) when is_binary(change_id) do
+    with {:ok, change} <- NativeChanges.find_change(socket.assigns, change_id),
+         root when is_binary(root) <- workspace_path(socket.assigns.workspace) do
+      state = NativeChanges.mark_reverting(socket.assigns, change_id)
+
+      socket
+      |> Mob.Socket.assign(:changes_ui, state.changes_ui)
+      |> Async.run(:change_reverted, fn ->
+        {change_id, NativeChanges.revert(change, root)}
+      end)
+    else
+      _ ->
+        state = NativeChanges.apply_revert_result(socket.assigns, change_id, {:error, :not_found})
+        Mob.Socket.assign(socket, :changes_ui, state.changes_ui)
+    end
+  end
+
   defp dispatch({:tap, tap} = msg, socket) when tap in @chat_taps, do: Chat.handle(msg, socket)
 
   defp dispatch({:tap, {toggle, _}} = msg, socket) when toggle in @toggles,
@@ -425,7 +516,53 @@ defmodule HandbeamProbe.HomeScreen do
             ],
        do: GitSettings.result(kind, result, socket)
 
+  defp async_result(:change_reverted, {change_id, result}, socket) do
+    state = NativeChanges.apply_revert_result(socket.assigns, change_id, result)
+
+    socket
+    |> Mob.Socket.assign(:changes_ui, state.changes_ui)
+    |> refresh_workspace_tree_after_revert(result)
+  end
+
   defp async_result(_kind, _result, socket), do: socket
+
+  defp resolve_subagent_conversation(_socket, conversation_id, _agent_id)
+       when is_binary(conversation_id) and conversation_id != "",
+       do: {:ok, conversation_id}
+
+  defp resolve_subagent_conversation(socket, _conversation_id, child_ref)
+       when is_binary(child_ref) do
+    parent_id = Nav.current_conversation_id(socket)
+
+    with true <- is_binary(parent_id),
+         {:ok, children} <- Delegation.status(parent_id, :list),
+         child when not is_nil(child) <-
+           Enum.find(children, &(child_ref in [&1.child_conversation_id, &1.subagent_type])) do
+      {:ok, child.child_conversation_id}
+    else
+      _ -> {:error, "Subagent thread is no longer available."}
+    end
+  end
+
+  defp resolve_subagent_conversation(_socket, _conversation_id, _agent_id),
+    do: {:error, "Subagent thread is unavailable."}
+
+  defp workspace_path(%{"path" => path}) when is_binary(path), do: path
+  defp workspace_path(%{path: path}) when is_binary(path), do: path
+  defp workspace_path(_workspace), do: nil
+
+  defp refresh_workspace_tree_after_revert(socket, {:ok, _info}) do
+    tree = socket.assigns.workspace_tree
+
+    if is_map(tree) do
+      tree = %{tree | dirs: %{}, expanded: MapSet.new(), error: nil}
+      socket |> Mob.Socket.assign(:workspace_tree, tree) |> NativeWorkspaceTree.ensure()
+    else
+      socket
+    end
+  end
+
+  defp refresh_workspace_tree_after_revert(socket, _result), do: socket
 
   # ── render ──
 

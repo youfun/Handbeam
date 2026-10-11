@@ -12,6 +12,7 @@ defmodule HandbeamProbe.HomeScreen.Chat do
   use Gettext, backend: HandbeamProbe.Gettext
   import Mob.Socket, only: [assign: 2, assign: 3]
 
+  alias Handbeam.Agent.Delegation
   alias HandbeamProbe.HomeScreen.{Nav, Notice, Platform, Share}
 
   alias HandbeamProbe.{
@@ -239,15 +240,21 @@ defmodule HandbeamProbe.HomeScreen.Chat do
       true ->
         case Nav.ensure_conversation(socket) do
           {:ok, socket} ->
-            inbound_id = Ecto.UUID.generate()
-            deliver_as = socket.assigns[:deliver_mode] || :steer
-
-            case Share.begin_send(socket, inbound_id, deliver_as, composer_mode) do
-              {:ready, socket} ->
-                send_after_intake_pending(socket, inbound_id, deliver_as, composer_mode)
-
-              {:pending, socket} ->
+            case maybe_send_direct_message(socket, content, composer_mode) do
+              {:handled, socket} ->
                 socket
+
+              :continue ->
+                inbound_id = Ecto.UUID.generate()
+                deliver_as = socket.assigns[:deliver_mode] || :steer
+
+                case Share.begin_send(socket, inbound_id, deliver_as, composer_mode) do
+                  {:ready, socket} ->
+                    send_after_intake_pending(socket, inbound_id, deliver_as, composer_mode)
+
+                  {:pending, socket} ->
+                    socket
+                end
             end
 
           {:error, _reason} ->
@@ -258,6 +265,40 @@ defmodule HandbeamProbe.HomeScreen.Chat do
         end
     end
   end
+
+  defp maybe_send_direct_message(socket, content, :chat) do
+    with [_, ref, message] <- Regex.run(~r/\A@([\w.-]+)\s+(\S.*)\z/s, content),
+         [] <- socket.assigns.pending_attachments,
+         conversation_id when is_binary(conversation_id) <- Nav.current_conversation_id(socket),
+         {:ok, children} <- Delegation.status(conversation_id, :list),
+         true <- Enum.any?(children, &(ref in [&1.child_conversation_id, &1.subagent_type])) do
+      case Delegation.message(conversation_id, ref, message, source: :mobile) do
+        {:ok, %{delivery: delivery}} ->
+          a = socket.assigns
+
+          socket =
+            assign(socket,
+              draft: "",
+              drafts: NativeWorkspaces.clear_draft(a.drafts, a.workspace, a.chat.conversation)
+            )
+
+          note =
+            if delivery == :steer,
+              do: gettext("Sent to subagent %{ref}.", ref: ref),
+              else: gettext("Subagent %{ref} is answering a follow-up.", ref: ref)
+
+          {:handled, Notice.put_info(socket, note)}
+
+        {:error, reason} ->
+          reason = if is_binary(reason), do: reason, else: inspect(reason)
+          {:handled, Notice.put_error(socket, reason)}
+      end
+    else
+      _ -> :continue
+    end
+  end
+
+  defp maybe_send_direct_message(_socket, _content, _composer_mode), do: :continue
 
   @doc "Second half of a send, once any merged share intakes are marked `send_pending`."
   def send_after_intake_pending(socket, inbound_id, deliver_as \\ :steer, composer_mode \\ :chat) do
