@@ -5,12 +5,20 @@ defmodule HandbeamProbe.ConversationBean do
 
   Idle is the leaf stem. Running walks, looks around, then walks again on the
   same 7.6 second cycle as the web sidebar. Waiting holds the standing pose.
+
+  The node keeps the web 24×26 viewBox, drawn 1:1. Android does not
+  scale a smaller box, so shrinking it to the CSS 20×22 slot would clip
+  the walk. Idle is only the stem, and that stem sits at the same x as
+  the web sprite. Do not shift it left to meet the folder stroke: the
+  web slot centers both icons and leaves the stem inset.
   """
 
   import Bitwise
 
   alias Mob.Canvas
 
+  # Web viewBox, also the on-screen canvas. Do not shrink this: the
+  # Android renderer treats draw coordinates as dp inside `width`/`height`.
   @width 24
   @height 26
   @frame_ms 125

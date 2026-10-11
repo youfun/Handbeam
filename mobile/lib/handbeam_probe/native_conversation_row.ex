@@ -13,10 +13,12 @@ defmodule HandbeamProbe.NativeConversationRow do
       )
 
   The rename field is shown only when `opts[:rename]` is a map whose id
-  equals this conversation. Selection is a thin mark and title color.
-  Every row shows the pixel bean: a still stem while idle, a walking bean
-  while running, and a standing bean while waiting. The menu lists pin,
-  rename, and archive.
+  equals this conversation. Selection is the web sidebar highlight:
+  the row fills with the active surface and the title turns ink, with
+  no active bar. Every row shows
+  the pixel bean: a still stem while idle, a walking bean while running,
+  and a standing bean while waiting. The open menu is one card under the
+  more button, not a stack of loose labels.
   """
 
   use Gettext, backend: HandbeamProbe.Gettext
@@ -38,13 +40,14 @@ defmodule HandbeamProbe.NativeConversationRow do
     menu_open? = Keyword.get(opts, :menu_open?, false)
     activity = activity(opts)
 
+    highlight = if(selected?, do: color(:active), else: color(:surface))
+
     [
       node(:column, [fill_width: true, background: color(:surface)], [
         row(
           [
             row(
               [
-                selected_mark(selected?),
                 HandbeamProbe.ConversationBean.canvas(id, activity,
                   frame: Keyword.get(opts, :bean_frame, 0)
                 ),
@@ -54,11 +57,12 @@ defmodule HandbeamProbe.NativeConversationRow do
               on_tap: {self(), {:conversation, id}},
               weight: 1,
               fill_width: true,
-              background: color(:surface)
+              background: highlight
             ),
             menu_button(id)
           ],
-          background: color(:surface),
+          background: highlight,
+          corner_radius: 6,
           padding_top: 2,
           padding_bottom: 2
         )
@@ -73,12 +77,6 @@ defmodule HandbeamProbe.NativeConversationRow do
       title when is_binary(title) and title != "" -> title
       _ -> gettext("New conversation")
     end
-  end
-
-  defp selected_mark(false), do: nil
-
-  defp selected_mark(true) do
-    text("▍", text_size: 13, text_color: color(:ink), padding_right: 4)
   end
 
   defp activity(opts) do
@@ -96,6 +94,7 @@ defmodule HandbeamProbe.NativeConversationRow do
       id: "conversation-title-#{id}",
       text_size: 13,
       text_color: if(selected?, do: color(:ink), else: color(:muted)),
+      font_weight: if(selected?, do: "medium"),
       max_lines: 1,
       ellipsize: "end",
       weight: 1,
@@ -124,10 +123,61 @@ defmodule HandbeamProbe.NativeConversationRow do
         else: gettext("Pin")
 
     [
-      action(pin_label, {:toggle_pin_conversation, id}, "conversation-action-pin-#{id}"),
-      action(gettext("Rename"), {:rename_conversation, id}, "conversation-action-rename-#{id}"),
-      action(gettext("Archive"), {:archive_conversation, id}, "conversation-action-archive-#{id}")
+      row(
+        [
+          node(:box, weight: 1),
+          node(
+            :column,
+            [
+              id: "conversation-menu-panel-#{id}",
+              fill_width: false,
+              background: color(:card),
+              border_color: color(:border),
+              border_width: 1,
+              corner_radius: 8,
+              padding: 4
+            ],
+            [
+              menu_item(
+                pin_label,
+                {:toggle_pin_conversation, id},
+                "conversation-action-pin-#{id}"
+              ),
+              menu_item(
+                gettext("Rename"),
+                {:rename_conversation, id},
+                "conversation-action-rename-#{id}"
+              ),
+              menu_item(
+                gettext("Archive"),
+                {:archive_conversation, id},
+                "conversation-action-archive-#{id}"
+              )
+            ]
+          )
+        ],
+        align: "top"
+      )
     ]
+  end
+
+  # Hug the label. fill_width stretches the card to the drawer. A weighted
+  # spacer in the parent row pushes the hugging card under the more button;
+  # Column does not honor align: "end".
+  defp menu_item(label, tag, id) do
+    text(label,
+      id: id,
+      on_tap: {self(), tag},
+      text_size: 13,
+      text_color: color(:ink),
+      text_align: "left",
+      fill_width: false,
+      padding_left: 12,
+      padding_right: 12,
+      padding_top: 8,
+      padding_bottom: 8,
+      background: color(:card)
+    )
   end
 
   defp action(label, tag, id) do

@@ -4,6 +4,7 @@ defmodule HandbeamProbe.ConversationBeanTest do
   # Rasterizer and pose. Inputs that must hold:
   # - "conv-1" hashes to the same palette slot as the web sidebar (266869767).
   # - An idle bean is only the leaf stem: no eye pixels.
+  # - Idle ink stays in the web viewBox. The stem is not shifted left.
   # - A running bean at frame 0 stands with eyes on y 14.
   # - Frame 2 is the first hop, so those eyes move to y 13.
   # - Waiting holds the standing pose instead of walking.
@@ -36,6 +37,7 @@ defmodule HandbeamProbe.ConversationBeanTest do
 
     refute eye?(idle, 14)
     assert covers?(idle, 12, 10)
+    refute covers?(idle, 4, 10)
     assert eye?(standing, 14)
     assert eye?(standing, 15)
     refute eye?(standing, 13)

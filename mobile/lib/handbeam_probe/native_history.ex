@@ -101,7 +101,10 @@ defmodule HandbeamProbe.NativeHistory do
             background: color(:surface),
             text_color: color(:muted),
             text_size: 12,
-            padding: 4
+            padding_top: 4,
+            padding_bottom: 4,
+            padding_left: if(folder?, do: 0, else: 4),
+            padding_right: 4
           ),
           node(:box, weight: 1, height: 1, background: color(:separator)),
           action,
@@ -130,12 +133,17 @@ defmodule HandbeamProbe.NativeHistory do
     ]
   end
 
-  # Same stroke folder as the web sidebar SVG, drawn once for both hosts.
+  # Same canvas as the conversation bean. Android does not scale a
+  # smaller canvas around the 24×24 stroke, so this box is 24 wide and
+  # the path is drawn in that space. Both left edges then share x = 0.
+  @folder_width 24
+  @folder_height 26
+
   defp folder_icon(id, tag) do
     node(:canvas,
       id: "history-folder-#{id}",
-      width: 18,
-      height: 16,
+      width: @folder_width,
+      height: @folder_height,
       padding_right: 4,
       on_tap: {self(), tag},
       draw: folder_stroke()
@@ -145,13 +153,54 @@ defmodule HandbeamProbe.NativeHistory do
   defp folder_stroke do
     ink = color(:muted)
 
+    folder_outline()
+    |> Enum.map(fn {x, y} -> {x, y + 1} end)
+    |> then(&Canvas.path(&1, color: ink, width: 1.4, closed: true, cap: :round, join: :round))
+    |> List.wrap()
+  end
+
+  # SVG `M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z`
+  # sampled so both hosts draw the web sidebar folder, not a pixel box.
+  defp folder_outline do
     [
-      Canvas.rect(2, 2, 6, 1, color: ink, fill: true),
-      Canvas.rect(7, 2, 1, 3, color: ink, fill: true),
-      Canvas.rect(2, 4, 13, 1, color: ink, fill: true),
-      Canvas.rect(14, 4, 1, 9, color: ink, fill: true),
-      Canvas.rect(2, 12, 13, 1, color: ink, fill: true),
-      Canvas.rect(2, 2, 1, 11, color: ink, fill: true)
+      {3.0, 7.0},
+      {3.04, 6.61},
+      {3.15, 6.23},
+      {3.34, 5.89},
+      {3.59, 5.59},
+      {3.89, 5.34},
+      {4.23, 5.15},
+      {4.61, 5.04},
+      {5.0, 5.0},
+      {9.0, 5.0},
+      {11.0, 7.0},
+      {19.0, 7.0},
+      {19.39, 7.04},
+      {19.77, 7.15},
+      {20.11, 7.34},
+      {20.41, 7.59},
+      {20.66, 7.89},
+      {20.85, 8.23},
+      {20.96, 8.61},
+      {21.0, 9.0},
+      {21.0, 17.0},
+      {20.96, 17.39},
+      {20.85, 17.77},
+      {20.66, 18.11},
+      {20.41, 18.41},
+      {20.11, 18.66},
+      {19.77, 18.85},
+      {19.39, 18.96},
+      {19.0, 19.0},
+      {5.0, 19.0},
+      {4.61, 18.96},
+      {4.23, 18.85},
+      {3.89, 18.66},
+      {3.59, 18.41},
+      {3.34, 18.11},
+      {3.15, 17.77},
+      {3.04, 17.39},
+      {3.0, 17.0}
     ]
   end
 

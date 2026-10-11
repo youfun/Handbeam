@@ -5,6 +5,9 @@ defmodule HandbeamProbe.NativeUI do
   @card "#FFFFFF"
   @control "#F4F3F0"
   @bubble "#E7E5E1"
+  # Web `--sig-bg-surface-active`. Conversation selection uses this, not
+  # `:control`, which is the lighter settings chip.
+  @active "#E6E3DE"
   @border "#E4E0DA"
   @separator "#F0EEEA"
   @ink "#1A1815"
@@ -17,6 +20,7 @@ defmodule HandbeamProbe.NativeUI do
   def color(:card), do: @card
   def color(:control), do: @control
   def color(:bubble), do: @bubble
+  def color(:active), do: @active
   def color(:border), do: @border
   def color(:separator), do: @separator
   def color(:ink), do: @ink

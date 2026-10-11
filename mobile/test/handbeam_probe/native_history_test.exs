@@ -64,6 +64,8 @@ defmodule HandbeamProbe.NativeHistoryTest do
     assert "Alpha" in texts(rendered)
     assert "Beta" in texts(rendered)
     assert icon_names(rendered, "history-folder-a") == ["canvas"]
+    assert folder_slot?(rendered, "a")
+    assert workspace_label_inset?(rendered, "a")
     assert icon_names(rendered, "history-chevron-a") == ["chevron_down"]
     refute texts(rendered) |> Enum.any?(&String.contains?(&1, "Inactive over 72 hours"))
     assert "2" in texts(rendered)
@@ -153,6 +155,26 @@ defmodule HandbeamProbe.NativeHistoryTest do
   end
 
   defp texts(nodes), do: collect(nodes, fn %{props: props} -> [props[:text]] end)
+
+  defp workspace_label_inset?(nodes, id) do
+    Enum.any?(flat_nodes(nodes), fn node ->
+      node.props[:id] == "history-group-#{id}" and node.props[:padding_left] == 0
+    end)
+  end
+
+  defp folder_slot?(nodes, id) do
+    Enum.any?(flat_nodes(nodes), fn node ->
+      node.props[:id] == "history-folder-#{id}" and node.props[:width] == 24 and
+        node.props[:height] == 26 and match?([%{op: :path}], node.props[:draw])
+    end)
+  end
+
+  defp flat_nodes(nodes) do
+    Enum.flat_map(nodes, fn
+      %{children: children} = node -> [node | flat_nodes(children)]
+      node -> [node]
+    end)
+  end
 
   defp icon_names(nodes, id) do
     collect(nodes, fn

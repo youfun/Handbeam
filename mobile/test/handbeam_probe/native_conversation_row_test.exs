@@ -20,6 +20,8 @@ defmodule HandbeamProbe.NativeConversationRowTest do
 
     assert text?(idle, "Ship the row")
     assert bean?(idle, "conv-1")
+    assert bean_slot?(idle, "conv-1")
+    assert bean_ink_x(idle) == 11
     refute menu_action?(idle)
     refute text?(idle, "●")
 
@@ -31,6 +33,7 @@ defmodule HandbeamProbe.NativeConversationRowTest do
     assert text?(menu, gettext("Pin"))
     assert text?(menu, gettext("Rename"))
     assert text?(menu, gettext("Archive"))
+    assert menu_panel?(menu, "conv-1")
     assert tap?(menu, {:toggle_pin_conversation, "conv-1"})
     assert tap?(menu, {:rename_conversation, "conv-1"})
     assert tap?(menu, {:archive_conversation, "conv-1"})
@@ -39,20 +42,21 @@ defmodule HandbeamProbe.NativeConversationRowTest do
     refute text?(pinned, gettext("Pin"))
   end
 
-  test "selected row uses a light mark and does not fill with the control color" do
+  test "selected row uses the web active highlight and does not draw a bar" do
     selected = nodes(@conversation, selected?: true, running?: false, menu_open?: false)
     plain = nodes(@conversation, selected?: false, running?: false, menu_open?: false)
 
-    assert text?(selected, "▍")
+    refute text?(selected, "▍")
     refute text?(plain, "▍")
+    assert title_color(selected) == control_argb(NativeUI.color(:ink))
+    assert title_color(plain) == control_argb(NativeUI.color(:muted))
+    assert title_weight(selected) == "medium"
+    refute title_weight(plain)
 
-    control = NativeUI.color(:control)
-
-    backgrounds =
-      selected |> flat() |> Enum.map(& &1.props[:background]) |> Enum.reject(&is_nil/1)
-
-    refute control in backgrounds
-    refute control_argb(control) in backgrounds
+    active = control_argb(NativeUI.color(:active))
+    assert row_background(selected) == active
+    assert row_background(plain) == control_argb(NativeUI.color(:surface))
+    refute active == control_argb(NativeUI.color(:control))
   end
 
   test "rename field is shown only for the pending conversation" do
@@ -88,11 +92,30 @@ defmodule HandbeamProbe.NativeConversationRowTest do
     end)
   end
 
+  defp bean_ink_x(nodes) do
+    nodes
+    |> flat()
+    |> Enum.find(&(&1.type == :canvas and &1.props[:id] == "conversation-bean-conv-1"))
+    |> then(fn node ->
+      node.props[:draw]
+      |> Enum.map(& &1[:x])
+      |> Enum.min()
+    end)
+  end
+
+  defp bean_slot?(nodes, id) do
+    Enum.any?(flat(nodes), fn node ->
+      node.type == :canvas and node.props[:id] == "conversation-bean-#{id}" and
+        node.props[:width] == 24 and node.props[:height] == 26
+    end)
+  end
+
   defp eyes?(nodes) do
     Enum.any?(flat(nodes), fn node ->
       node.type == :canvas and
         Enum.any?(node.props[:draw] || [], fn op ->
-          op[:op] == :rect and op[:color] == "#263b25" and op[:y] in [13, 14]
+          op[:op] == :rect and op[:color] == "#263b25" and op[:y] in [13, 14] and
+            op[:x] in [8, 14]
         end)
     end)
   end
@@ -102,6 +125,36 @@ defmodule HandbeamProbe.NativeConversationRowTest do
       [gettext("Pin"), gettext("Unpin"), gettext("Rename"), gettext("Archive")],
       &text?(nodes, &1)
     )
+  end
+
+  defp title_node(nodes) do
+    Enum.find(flat(nodes), &(&1.props[:id] == "conversation-title-conv-1"))
+  end
+
+  defp title_color(nodes), do: title_node(nodes).props[:text_color]
+  defp title_weight(nodes), do: title_node(nodes).props[:font_weight]
+
+  defp row_background(nodes) do
+    nodes
+    |> flat()
+    |> Enum.find(&(&1.props[:id] == "conversation-open-conv-1"))
+    |> then(& &1.props[:background])
+  end
+
+  defp menu_panel?(nodes, id) do
+    Enum.any?(flat(nodes), fn node ->
+      node.type == :column and node.props[:id] == "conversation-menu-panel-#{id}" and
+        node.props[:fill_width] == false and node.props[:corner_radius] == 8 and
+        Enum.all?(node.children, &(&1.props[:fill_width] == false)) and
+        weighted_spacer?(nodes, node)
+    end)
+  end
+
+  defp weighted_spacer?(nodes, panel) do
+    Enum.any?(flat(nodes), fn node ->
+      node.type == :row and panel in node.children and
+        Enum.any?(node.children, &(&1.type == :box and &1.props[:weight] == 1))
+    end)
   end
 
   defp tap?(nodes, tag) do
