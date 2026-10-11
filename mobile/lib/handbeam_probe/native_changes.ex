@@ -6,12 +6,12 @@ defmodule HandbeamProbe.NativeChanges do
   alias HandbeamProbe.{NativeTimeline, NativeUI, NativeWorkspaceTree}
   alias HandbeamWeb.{ChangeHelper, FileChangeCard}
 
-  @row_fill "#F4F1EA"
-  @active_tab_fill "#DCE7F7"
-  @muted "#8D857A"
-  @danger "#A54842"
-  @success "#3F775D"
-  @diff_background "#252321"
+  @row_fill NativeUI.color(:change_row)
+  @active_tab_fill NativeUI.color(:change_tab)
+  @muted NativeUI.color(:change_ink)
+  @danger NativeUI.color(:change_danger)
+  @success NativeUI.color(:change_success)
+  @diff_background NativeUI.color(:change_diff)
 
   def render_tabs(state) when is_map(state) do
     tab = Map.get(state, :workspace_panel_tab, :files)
@@ -24,18 +24,18 @@ defmodule HandbeamProbe.NativeChanges do
           style: :plain,
           size: :small,
           fill: tab_fill(tab, :changes),
-          text_color: "#3D4651"
+          text_color: NativeUI.color(:change_label)
         ),
         NativeUI.button("Files", {:workspace_panel_tab, :files},
           style: :plain,
           size: :small,
           fill: tab_fill(tab, :files),
-          text_color: "#3D4651"
+          text_color: NativeUI.color(:change_label)
         )
       ],
       spacing: 2,
       weights: [1, 1],
-      background: "#FBFAF7"
+      background: NativeUI.color(:change_panel)
     )
   end
 
@@ -190,7 +190,7 @@ defmodule HandbeamProbe.NativeChanges do
         style: :plain,
         size: :small,
         fill: @row_fill,
-        text_color: "#4B4742"
+        text_color: NativeUI.color(:change_path)
       )
     ]
 
@@ -210,7 +210,7 @@ defmodule HandbeamProbe.NativeChanges do
         NativeUI.text(patch,
           font: :monospace,
           selectable: true,
-          text_color: "#E8E2D9",
+          text_color: NativeUI.color(:change_diff_ink),
           background: @diff_background,
           padding: 8
         )
@@ -245,7 +245,7 @@ defmodule HandbeamProbe.NativeChanges do
             spacing: 6,
             weights: [1, 0, 0],
             padding: 5,
-            background: "#FAF8F4"
+            background: NativeUI.color(:change_action)
           )
         ]
 
@@ -263,7 +263,7 @@ defmodule HandbeamProbe.NativeChanges do
             spacing: 6,
             padding: 5,
             weights: [1, 0],
-            background: "#FAF8F4"
+            background: NativeUI.color(:change_action)
           )
         ]
 
@@ -362,7 +362,7 @@ defmodule HandbeamProbe.NativeChanges do
   defp relative_path(path, _root), do: path || "file"
 
   defp tab_fill(tab, tab), do: @active_tab_fill
-  defp tab_fill(_active, _tab), do: "#F1EFEB"
+  defp tab_fill(_active, _tab), do: NativeUI.color(:change_idle)
 
   defp ui_state(state) do
     default = %{expanded: MapSet.new(), confirming: nil, status_overrides: %{}, feedback: nil}

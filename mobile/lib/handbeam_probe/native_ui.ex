@@ -15,6 +15,34 @@ defmodule HandbeamProbe.NativeUI do
   @hint "#9C9590"
   @added "#24834A"
   @danger "#B42318"
+  @change_row "#F4F1EA"
+  @change_tab "#DCE7F7"
+  @change_ink "#8D857A"
+  @change_danger "#A54842"
+  @change_success "#3F775D"
+  @change_diff "#252321"
+  @change_label "#3D4651"
+  @change_panel "#FBFAF7"
+  @change_path "#4B4742"
+  @change_diff_ink "#E8E2D9"
+  @change_action "#FAF8F4"
+  @change_idle "#F1EFEB"
+  @handoff_card "#F5F3EE"
+  @bean_colors [
+    "#7eb8c9",
+    "#c9846a",
+    "#6a9a72",
+    "#8b7ec4",
+    "#c5a552",
+    "#c47d9b",
+    "#58aaa0",
+    "#6e94cc"
+  ]
+  @bean_outline "#263b25"
+  @bean_highlight "#f1efb5"
+  @bean_eyes "#263b25"
+  @bean_cheek "#db9968"
+  @bean_shadow "#9c9590"
 
   def color(:surface), do: @surface
   def color(:card), do: @card
@@ -28,6 +56,26 @@ defmodule HandbeamProbe.NativeUI do
   def color(:hint), do: @hint
   def color(:added), do: @added
   def color(:danger), do: @danger
+  def color(:change_row), do: @change_row
+  def color(:change_tab), do: @change_tab
+  def color(:change_ink), do: @change_ink
+  def color(:change_danger), do: @change_danger
+  def color(:change_success), do: @change_success
+  def color(:change_diff), do: @change_diff
+  def color(:change_label), do: @change_label
+  def color(:change_panel), do: @change_panel
+  def color(:change_path), do: @change_path
+  def color(:change_diff_ink), do: @change_diff_ink
+  def color(:change_action), do: @change_action
+  def color(:change_idle), do: @change_idle
+  def color(:handoff_card), do: @handoff_card
+  def color(:bean_outline), do: @bean_outline
+  def color(:bean_highlight), do: @bean_highlight
+  def color(:bean_eyes), do: @bean_eyes
+  def color(:bean_cheek), do: @bean_cheek
+  def color(:bean_shadow), do: @bean_shadow
+
+  def bean_colors, do: @bean_colors
 
   defp control_type do
     if HandbeamProbe.NativePlatform.ios?(), do: :button, else: :settings_button

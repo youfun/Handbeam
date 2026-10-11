@@ -23,12 +23,12 @@ defmodule HandbeamProbe.ConversationBean do
   @height 26
   @frame_ms 125
   @cycle_ms 7600
-  @colors ["#7eb8c9", "#c9846a", "#6a9a72", "#8b7ec4", "#c5a552", "#c47d9b", "#58aaa0", "#6e94cc"]
-  @outline_mix "#263b25"
-  @highlight_mix "#f1efb5"
-  @eyes "#263b25"
-  @cheek "#db9968"
-  @shadow "#9c9590"
+  @colors HandbeamProbe.NativeUI.bean_colors()
+  @outline_mix HandbeamProbe.NativeUI.color(:bean_outline)
+  @highlight_mix HandbeamProbe.NativeUI.color(:bean_highlight)
+  @eyes HandbeamProbe.NativeUI.color(:bean_eyes)
+  @cheek HandbeamProbe.NativeUI.color(:bean_cheek)
+  @shadow HandbeamProbe.NativeUI.color(:bean_shadow)
 
   @leaf_outline "M11 5h1v3h-1zM11 3h1v3h-1zM12 2h4v1h1v1h-1v1h-4V4h-1V3h1z"
   @body_outline "M9 8h6v1h2v1h1v1h1v10h-1v1h-1v1H7v-1H6v-1H5V11h1v-1h1V9h2z"

@@ -180,7 +180,13 @@ defmodule HandbeamProbe.NativeTimeline do
 
     node(
       :column,
-      [fill_width: true, spacing: 5, padding: 7, background: "#F5F3EE", corner_radius: 8],
+      [
+        fill_width: true,
+        spacing: 5,
+        padding: 7,
+        background: color(:handoff_card),
+        corner_radius: 8
+      ],
       [
         button("#{marker}  #{label}  #{summary}", {:toggle_thread_handoff, handoff_id},
           style: :plain,
