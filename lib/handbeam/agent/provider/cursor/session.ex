@@ -48,6 +48,8 @@ defmodule Handbeam.Agent.Provider.Cursor.Session do
     :on_event,
     :generation,
     :heartbeat_ref,
+    :receive_timeout,
+    :timeout_ticket,
     :consumed_user_ids,
     :consumed_nil_users,
     :uncertain_run_id
@@ -201,11 +203,11 @@ defmodule Handbeam.Agent.Provider.Cursor.Session do
     {:noreply, fail_running(%{state | caller: nil, caller_mon: nil}, "Cursor caller exited")}
   end
 
-  def handle_info({:run_timeout, generation}, %{generation: generation} = state) do
+  def handle_info({:run_timeout, ticket}, %{timeout_ticket: ticket} = state) do
     {:noreply, fail_running(state, "Cursor run timed out")}
   end
 
-  def handle_info({:run_timeout, _generation}, state), do: {:noreply, state}
+  def handle_info({:run_timeout, _ticket}, state), do: {:noreply, state}
 
   def handle_info(:heartbeat, %{transport: nil} = state) do
     {:noreply, %{state | heartbeat_ref: nil}}
@@ -291,7 +293,7 @@ defmodule Handbeam.Agent.Provider.Cursor.Session do
 
           state = send_user_actions(state, extra_users)
 
-          {:noreply, schedule_heartbeat(arm_timeout(state, timeout, generation))}
+          {:noreply, schedule_heartbeat(arm_timeout(state, timeout))}
 
         {:error, transport, reason} ->
           transport_mod.close(transport)
@@ -364,7 +366,7 @@ defmodule Handbeam.Agent.Provider.Cursor.Session do
           state =
             state
             |> send_new_user_actions(messages)
-            |> arm_timeout(timeout, generation)
+            |> arm_timeout(timeout)
 
           {:noreply, maybe_deliver_held(state)}
 
@@ -454,28 +456,31 @@ defmodule Handbeam.Agent.Provider.Cursor.Session do
   end
 
   defp handle_frame({:message, payload}, state) do
-    case Proto.decode_server(payload) do
-      {:interaction, event} ->
-        handle_interaction(event, state)
+    state =
+      case Proto.decode_server(payload) do
+        {:interaction, event} ->
+          handle_interaction(event, state)
 
-      {:exec, exec} ->
-        handle_exec(exec, state)
+        {:exec, exec} ->
+          handle_exec(exec, state)
 
-      {:checkpoint, bin} ->
-        handle_checkpoint(bin, state)
+        {:checkpoint, bin} ->
+          handle_checkpoint(bin, state)
 
-      {:kv, kv} ->
-        handle_kv(kv, state)
+        {:kv, kv} ->
+          handle_kv(kv, state)
 
-      {:interaction_query, query} ->
-        handle_interaction_query(query, state)
+        {:interaction_query, query} ->
+          handle_interaction_query(query, state)
 
-      {:unknown, fields} ->
-        fail_running(
-          state,
-          "Cursor sent unsupported server fields: #{inspect(Enum.map(fields, &elem(&1, 0)))}"
-        )
-    end
+        {:unknown, fields} ->
+          fail_running(
+            state,
+            "Cursor sent unsupported server fields: #{inspect(Enum.map(fields, &elem(&1, 0)))}"
+          )
+      end
+
+    slide_timeout(state)
   end
 
   defp handle_interaction({:text_delta, text}, state) do
@@ -1208,11 +1213,22 @@ defmodule Handbeam.Agent.Provider.Cursor.Session do
   defp maybe_kw(kw, _key, nil), do: kw
   defp maybe_kw(kw, key, value), do: Keyword.put(kw, key, value)
 
-  defp arm_timeout(state, timeout, generation) do
+  # `receive_timeout` is silence, not a cap on a live stream. Each inbound
+  # server frame starts the window again. A timer that already fired carries
+  # the old ticket and does not close the run.
+  defp arm_timeout(state, timeout) do
     cancel_timeout(state)
-    ref = Process.send_after(self(), {:run_timeout, generation}, timeout)
-    %{state | timeout_ref: ref}
+    ticket = System.unique_integer([:positive])
+    ref = Process.send_after(self(), {:run_timeout, ticket}, timeout)
+    %{state | timeout_ref: ref, receive_timeout: timeout, timeout_ticket: ticket}
   end
+
+  defp slide_timeout(%{phase: :running, receive_timeout: timeout} = state)
+       when is_integer(timeout) and timeout > 0 do
+    arm_timeout(state, timeout)
+  end
+
+  defp slide_timeout(state), do: state
 
   defp schedule_heartbeat(state) do
     cancel_heartbeat(state)

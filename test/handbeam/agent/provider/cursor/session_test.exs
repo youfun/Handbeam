@@ -578,6 +578,38 @@ defmodule Handbeam.Agent.Provider.Cursor.SessionTest do
     assert message =~ "refusing to fall back"
   end
 
+  test "inbound thinking slides the run timeout" do
+    id = Ecto.UUID.generate()
+
+    task =
+      Task.async(fn ->
+        Session.complete(
+          id,
+          [Message.user("think")],
+          [],
+          config(%{receive_timeout: 500}),
+          fn _ -> :ok end
+        )
+      end)
+
+    pid = wait_running(id)
+    before = :sys.get_state(pid)
+    Process.sleep(200)
+    send(pid, {:cursor_frames, [{:message, thinking_delta("still thinking")}]})
+    assert %{phase: :running} = GenServer.call(pid, :status)
+    after_frame = :sys.get_state(pid)
+
+    assert is_reference(after_frame.timeout_ref)
+    refute after_frame.timeout_ref == before.timeout_ref
+    assert Process.read_timer(after_frame.timeout_ref) > 300
+
+    send(pid, {:run_timeout, before.timeout_ticket})
+    send(pid, {:cursor_frames, [{:message, text_delta("done")}, {:message, turn_ended()}]})
+
+    assert {:ok, response} = Task.await(task, 1_000)
+    assert Message.text(hd(response.messages)) == "done"
+  end
+
   test "actual run timeout closes the session without leaving a caller" do
     id = Ecto.UUID.generate()
 
@@ -630,6 +662,10 @@ defmodule Handbeam.Agent.Provider.Cursor.SessionTest do
 
   defp text_delta(text) do
     IndependentProto.encode_server_interaction(1, IndependentProto.encode_string(1, text))
+  end
+
+  defp thinking_delta(text) do
+    IndependentProto.encode_server_interaction(4, IndependentProto.encode_string(1, text))
   end
 
   defp turn_ended do
