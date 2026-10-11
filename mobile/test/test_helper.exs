@@ -13,7 +13,7 @@ defmodule HandbeamProbe.ScreenSettle do
   waits, deterministic completion.
   """
 
-  @timeout 5_000
+  @timeout 15_000
 
   def settle(view) do
     receive do

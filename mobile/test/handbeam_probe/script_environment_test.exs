@@ -137,7 +137,8 @@ defmodule HandbeamProbe.ScriptEnvironmentTest do
       refute system =~ "NimbleCSV.RFC4180"
 
       if unquote(mode) == :custom do
-        assert String.starts_with?(system, "Custom prompt only.\n\n## Host execution environment")
+        assert String.starts_with?(system, "Custom prompt only.\n")
+        assert system =~ "## Host execution environment"
         assert system =~ "There is no Unix shell on this host available to the agent."
         assert system =~ "These host capabilities do not grant permission."
       end

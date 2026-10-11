@@ -507,7 +507,7 @@ defmodule HandbeamProbe.HomeScreenTest do
     assert assigns(view).page == :chat
     assert text(view) =~ "persisted answer"
     view = info(view, {:tap, {:page, :history}})
-    assert find(view, :text, text: "Native history").props.on_tap
+    assert find(view, :row, id: "conversation-open-#{conversation["id"]}").props.on_tap
 
     view =
       info(
@@ -521,7 +521,7 @@ defmodule HandbeamProbe.HomeScreenTest do
   test "history starts and opens a free chat without a workspace", %{view: view} do
     workspace_id = assigns(view).workspace["id"]
     view = info(view, {:tap, {:page, :history}})
-    assert find(view, :icon, id: "new_free_chat")
+    assert find(view, :icon, id: "{:new_free_chat}")
 
     view = info(view, {:tap, :new_free_chat})
     assert assigns(view).chat == nil
