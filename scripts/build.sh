@@ -6,17 +6,61 @@ cd "$PROJECT_ROOT"
 
 usage() {
   cat <<'EOF'
-Usage: bash scripts/build.sh [release-directory]
+Usage: bash scripts/build.sh [--replace [app]] [release-directory]
 
 Build Handbeam for the current platform. On macOS this creates a native
 Handbeam.app containing the production release, plus a distributable zip.
 On other platforms it builds the production release into release-directory.
+
+--replace copies the built app over an existing install. The default target
+is /Applications/Handbeam.app. Without --replace, an existing install is left
+alone.
 EOF
 }
 
-if [[ $# -gt 1 ]] || [[ "${1:-}" == "-h" ]] || [[ "${1:-}" == "--help" ]]; then
-  usage
-  [[ $# -le 1 ]] && exit 0
+REPLACE=0
+REPLACE_APP=""
+RELEASE_ARG=""
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    --replace)
+      REPLACE=1
+      if [[ $# -ge 2 && "$2" != --* && "$2" == *.app ]]; then
+        REPLACE_APP="$2"
+        shift 2
+      else
+        shift
+      fi
+      ;;
+    --)
+      shift
+      break
+      ;;
+    -*)
+      echo "未知参数: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+    *)
+      if [[ -n "$RELEASE_ARG" ]]; then
+        echo "只能指定一个 release 目录" >&2
+        usage >&2
+        exit 2
+      fi
+      RELEASE_ARG="$1"
+      shift
+      ;;
+  esac
+done
+
+if [[ $# -gt 0 ]]; then
+  echo "多余参数: $*" >&2
+  usage >&2
   exit 2
 fi
 
@@ -28,8 +72,8 @@ MIX_ENV="${MIX_ENV:-prod}"
 PLATFORM="$(uname -s)"
 echo "当前环境: $MIX_ENV"
 
-if [[ -n "${1:-}" ]]; then
-  RELEASE_DIR="$1"
+if [[ -n "$RELEASE_ARG" ]]; then
+  RELEASE_DIR="$RELEASE_ARG"
 elif [[ "$PLATFORM" == "Darwin" ]]; then
   RELEASE_DIR="$PROJECT_ROOT/desktop/macos/build/handbeam-web"
 else
@@ -105,6 +149,37 @@ if [[ "$PLATFORM" == "Darwin" ]]; then
   echo "Zip:      $ARCHIVE"
   echo "SHA-256:  $(awk '{print $1}' "$CHECKSUM")"
   echo "大小:     $(du -sh "$ARCHIVE" | awk '{print $1}')"
+
+  if [[ "$REPLACE" -eq 1 ]]; then
+    TARGET="${REPLACE_APP:-/Applications/Handbeam.app}"
+    case "$TARGET" in
+      *.app) ;;
+      *)
+        echo "替换目标必须是 .app: $TARGET" >&2
+        exit 2
+        ;;
+    esac
+    if [[ -d "$TARGET" ]]; then
+      built="$(cd "$(dirname "$APP")" && pwd -P)/$(basename "$APP")"
+      installed="$(cd "$(dirname "$TARGET")" && pwd -P)/$(basename "$TARGET")"
+      if [[ "$built" == "$installed" ]]; then
+        echo "替换目标就是刚构建的 App" >&2
+        exit 2
+      fi
+    fi
+    echo ""
+    echo "➡ 替换已安装的应用: $TARGET"
+    mkdir -p "$(dirname "$TARGET")"
+    osascript -e "tell application \"Handbeam\" to quit" >/dev/null 2>&1 || true
+    rm -rf "$TARGET"
+    ditto "$APP" "$TARGET"
+    codesign --verify --deep --strict "$TARGET"
+    # The build copy is a packaging artifact. Launchpad should only show the install.
+    LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
+    "$LSREGISTER" -u "$APP" >/dev/null 2>&1 || true
+    "$LSREGISTER" -f "$TARGET" >/dev/null 2>&1 || true
+    echo "已替换: $TARGET"
+  fi
   exit 0
 fi
 
