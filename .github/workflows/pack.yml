@@ -140,15 +140,20 @@ jobs:
           previous="$(git show "$before:version.properties")"
           previous_version="$(printf '%s\n' "$previous" | awk -F= 'NF == 2 && $1 == "version" {sub(/\r$/, "", $2); print $2}')"
           previous_build="$(printf '%s\n' "$previous" | awk -F= 'NF == 2 && $1 == "build" {sub(/\r$/, "", $2); print $2}')"
-          if [[ "$current" == "$previous_version" && "$build" == "$previous_build" ]]; then
-            echo "version.properties unchanged ($current build $build)."
-            exit 0
-          fi
           tag="v$current"
+          if [[ "$current" == "$previous_version" && "$build" == "$previous_build" ]]; then
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
+              echo "version.properties unchanged ($current build $build); $tag already exists."
+              exit 0
+            fi
+            echo "version.properties unchanged, but $tag is missing; retrying tag creation."
+          fi
           if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null; then
             echo "Tag $tag already exists."
             exit 1
           fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "$tag" -m "Handbeam $current"
           git push origin "refs/tags/$tag"
           echo "release_tag=created" >> "$GITHUB_OUTPUT"
