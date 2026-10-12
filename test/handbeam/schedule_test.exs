@@ -7,7 +7,7 @@ defmodule Handbeam.ScheduleTest do
   alias Handbeam.Agent.Middleware.ToolGuard
   alias Handbeam.ConversationStore
   alias Handbeam.Permissions.ToolPolicy
-  alias Handbeam.Schedule.{Clock, Entry, Rule, Run, Store}
+  alias Handbeam.Schedule.{Clock, Presentation, Rule, Run, Store}
   alias Handbeam.Tool.Builtin.Schedule, as: ScheduleTool
 
   @zone "Asia/Shanghai"
@@ -108,7 +108,7 @@ defmodule Handbeam.ScheduleTest do
   test "a claimed run that never finishes becomes unknown and is not retried" do
     now = ~U[2026-07-18 05:00:00Z]
     {:ok, entry} = create_schedule(now)
-    assert {:ok, claim} = Store.claim(entry, entry.next_run_at)
+    assert {:ok, _claim} = Store.claim(entry, entry.next_run_at)
 
     assert [%Run{status: "unknown"}] =
              Store.recover_unknown(DateTime.add(now, 120, :second), fn _, _ -> false end)
@@ -150,11 +150,14 @@ defmodule Handbeam.ScheduleTest do
              ScheduleTool.execute(%{"action" => "get", "id" => entry.id}, other)
   end
 
-  test "schedule writes prompt unless they are status-only or yolo" do
+  test "schedule writes prompt unless they are status-only, one-shot, or yolo" do
     policy = ToolPolicy.from_settings(%{"tools" => %{"default_mode" => "auto"}})
     yolo = ToolPolicy.from_settings(%{"tools" => %{"default_mode" => "yolo"}})
+    once = %{"kind" => "once", "in_minutes" => 5}
 
     assert ToolPolicy.decision(policy, call("create", %{"rule" => %{}})) == :prompt
+    assert ToolPolicy.decision(policy, call("create", %{"rule" => once})) == :auto
+    assert ToolPolicy.decision(policy, call("update", %{"rule" => once})) == :auto
     assert ToolPolicy.decision(policy, call("run_now", %{})) == :prompt
     assert ToolPolicy.decision(policy, call("update", %{"rule" => %{}})) == :prompt
     assert ToolPolicy.decision(policy, call("pause", %{})) == :auto
@@ -254,6 +257,373 @@ defmodule Handbeam.ScheduleTest do
     assert interval_slots == Enum.uniq(interval_slots)
   end
 
+  test "five minutes freezes to one absolute instant and does not repeat" do
+    now = ~U[2026-08-01 00:00:00Z]
+    Application.put_env(:handbeam, :schedule_now, fn -> now end)
+    id = conversation!()
+
+    assert {:ok, encoded} =
+             ScheduleTool.execute(
+               once_input(%{"kind" => "once", "in_minutes" => 5}),
+               tool_context(id)
+             )
+
+    {:ok, %{"id" => schedule_id}} = Handbeam.JSON.decode(encoded)
+    {:ok, entry} = Store.get(schedule_id)
+    at = DateTime.add(now, 5 * 60, :second)
+
+    assert entry.rule["kind"] == "once"
+    assert entry.rule["at"] == DateTime.to_iso8601(at)
+    assert entry.rule["label"] == "5 分钟后，只一次"
+    assert entry.next_run_at == at
+    assert Store.recent_runs(entry.id) == []
+
+    assert Clock.tick(now) == :ok
+    assert Store.recent_runs(entry.id) == []
+
+    assert Clock.tick(at) == :ok
+    assert [run] = Store.recent_runs(entry.id)
+    assert run.slot_at == at
+    {:ok, done} = Store.get(entry.id)
+    assert done.status == "completed"
+    assert is_nil(done.next_run_at)
+
+    assert Clock.tick(DateTime.add(at, 3_600, :second)) == :ok
+    assert Store.recent_runs(entry.id) == [run]
+  end
+
+  test "a one-shot without a time is rejected and nothing is stored" do
+    now = ~U[2026-08-01 00:10:00Z]
+    Application.put_env(:handbeam, :schedule_now, fn -> now end)
+    id = conversation!()
+
+    assert {:error, "invalid_rule"} =
+             ScheduleTool.execute(once_input(%{"kind" => "once"}), tool_context(id))
+
+    assert {:error, "invalid_once"} =
+             ScheduleTool.execute(
+               once_input(%{"kind" => "once", "in_minutes" => 0}),
+               tool_context(id)
+             )
+
+    assert {:error, :invalid_rule} =
+             Rule.prepare_once(
+               %{"kind" => "once", "in_minutes" => 5, "at" => "2026-08-01T09:00"},
+               @zone,
+               now
+             )
+
+    assert Store.list_for_conversation(id) == []
+  end
+
+  test "a canonical one-shot less than one minute away is rejected" do
+    now = ~U[2026-08-01 00:15:00Z]
+
+    assert {:error, :too_soon} =
+             Rule.prepare_once(
+               %{
+                 "kind" => "once",
+                 "at" => DateTime.to_iso8601(DateTime.add(now, 30, :second)),
+                 "label" => "30 秒后，只一次"
+               },
+               @zone,
+               now
+             )
+
+    assert {:ok, %{at: at}} =
+             Rule.prepare_once(
+               %{
+                 "kind" => "once",
+                 "at" => DateTime.to_iso8601(DateTime.add(now, 60, :second)),
+                 "label" => "1 分钟后，只一次"
+               },
+               @zone,
+               now
+             )
+
+    assert at == DateTime.add(now, 60, :second)
+  end
+
+  test "saving freezes the instant and a late save creates nothing" do
+    now = ~U[2026-08-01 00:20:00Z]
+    Application.put_env(:handbeam, :schedule_now, fn -> now end)
+
+    config = %Config{
+      working_directory: System.tmp_dir!(),
+      model: "fake",
+      middleware: [],
+      context: %{user_time_zone: @zone}
+    }
+
+    state =
+      config
+      |> State.init("5 minutes")
+      |> State.append_messages([
+        Message.tool_use([
+          %{
+            type: "tool_use",
+            id: "once-1",
+            name: "schedule",
+            input: once_input(%{"kind" => "once", "in_minutes" => 5})
+          }
+        ])
+      ])
+
+    frozen = guard_state(ToolGuard.call(:after_tool_request, state))
+    at = DateTime.add(now, 5 * 60, :second)
+    assert tool_rule(frozen)["at"] == DateTime.to_iso8601(at)
+    assert tool_rule(frozen)["label"] == "5 分钟后，只一次"
+
+    later = DateTime.add(now, 4 * 60, :second)
+    Application.put_env(:handbeam, :schedule_now, fn -> later end)
+    refrozen = ScheduleTool.freeze_messages(frozen.messages, %{user_time_zone: @zone}, later)
+    assert tool_rule(%{messages: refrozen})["at"] == DateTime.to_iso8601(at)
+
+    id = conversation!()
+    Application.put_env(:handbeam, :schedule_now, fn -> DateTime.add(at, 1, :second) end)
+
+    assert {:error, ":in_the_past"} =
+             ScheduleTool.execute(
+               once_input(%{
+                 "kind" => "once",
+                 "at" => DateTime.to_iso8601(at),
+                 "label" => "5 分钟后，只一次"
+               }),
+               tool_context(id)
+             )
+
+    assert Store.list_for_conversation(id) == []
+  end
+
+  test "a busy conversation waits, then skips once after thirty minutes" do
+    now = ~U[2026-08-01 01:00:00Z]
+    at = DateTime.add(now, 60, :second)
+    {:ok, entry} = create_once(now, at: at)
+    Phoenix.PubSub.subscribe(Handbeam.PubSub, "runtime:schedules")
+    on_exit(fn -> clear_busy(entry.conversation_id) end)
+    mark_busy(entry.conversation_id)
+
+    Enum.each(0..9, fn minute ->
+      assert Clock.tick(DateTime.add(at, minute * 60, :second)) == :ok
+    end)
+
+    assert Store.recent_runs(entry.id) == []
+    {:ok, waiting} = Store.get(entry.id)
+    assert waiting.status == "active"
+    assert waiting.next_run_at == at
+    refute_received {:schedule_notice, _, _}
+
+    deadline = DateTime.add(at, 30 * 60, :second)
+    assert Clock.tick(deadline) == :ok
+    assert [%Run{status: "skipped", reason: "busy", slot_at: ^at}] = Store.recent_runs(entry.id)
+    {:ok, done} = Store.get(entry.id)
+    assert done.status == "completed"
+    assert is_nil(done.next_run_at)
+    assert_receive {:schedule_notice, conv, notice} when conv == entry.conversation_id
+    assert notice["content"] =~ "已跳过"
+
+    assert Clock.tick(DateTime.add(deadline, 60, :second)) == :ok
+    assert length(Store.recent_runs(entry.id)) == 1
+  end
+
+  test "an idle one-shot catches up one slot however late it is" do
+    now = ~U[2026-08-01 02:00:00Z]
+    at = DateTime.add(now, 60, :second)
+    {:ok, entry} = create_once(now, at: at)
+    late = DateTime.add(at, 5 * 3_600, :second)
+
+    assert Clock.tick(late) == :ok
+    assert [run] = Store.recent_runs(entry.id)
+    assert run.slot_at == at
+    {:ok, done} = Store.get(entry.id)
+    assert done.status == "completed"
+    assert is_nil(done.next_run_at)
+
+    assert Clock.tick(DateTime.add(late, 60, :second)) == :ok
+    assert Store.recent_runs(entry.id) == [run]
+  end
+
+  test "releasing an unstarted claim lets the same slot start, and a started claim stays put" do
+    now = ~U[2026-08-01 03:00:00Z]
+    at = DateTime.add(now, 60, :second)
+    {:ok, entry} = create_once(now, at: at)
+    assert {:ok, claim} = Store.claim(entry, at)
+    request_id = claim.run.request_id
+
+    assert {:ok, released} = Store.release_claim(claim.run)
+    assert released.status == "active"
+    assert released.next_run_at == at
+    assert Store.recent_runs(entry.id) == []
+
+    assert {:ok, again} = Store.claim(released, at)
+    assert again.run.request_id == request_id
+    assert {:ok, started} = Store.record(again.run, "started", run_id: "run-started")
+    assert {:error, :not_releasable} = Store.release_claim(started)
+    assert [%Run{status: "started"}] = Store.recent_runs(entry.id)
+  end
+
+  test "manual one-shot runs never consume or restore the planned slot" do
+    now = ~U[2026-08-01 03:30:00Z]
+    at = DateTime.add(now, 300, :second)
+    {:ok, entry} = create_once(now, at: at)
+
+    assert {:ok, first} = Store.run_now(entry, now)
+    assert {:ok, %{run: completed}} = Store.finish_run(first.run, "completed", now: now)
+    assert completed.status == "completed"
+
+    {:ok, still_planned} = Store.get(entry.id)
+    assert still_planned.status == "active"
+    assert still_planned.next_run_at == at
+
+    assert {:ok, second} = Store.run_now(still_planned, now)
+    assert {:ok, started} = Store.record(second.run, "started", run_id: "manual-run")
+    assert :ok = Store.finish_by_run_id(started.run_id, "failed", "provider")
+
+    {:ok, after_failure} = Store.get(entry.id)
+    assert after_failure.status == "active"
+    assert after_failure.next_run_at == at
+
+    assert {:ok, third} = Store.run_now(after_failure, now)
+    assert {:error, :not_releasable} = Store.release_claim(third.run)
+
+    {:ok, after_release} = Store.get(entry.id)
+    assert after_release.status == "active"
+    assert after_release.next_run_at == at
+    assert Enum.any?(Store.recent_runs(entry.id), &(&1.id == third.run.id))
+
+    armed = Presentation.once(after_release, Store.recent_runs(entry.id), now)
+    assert armed.headline == "5 分钟后，只一次"
+
+    waiting = Presentation.once(after_release, Store.recent_runs(entry.id), at)
+    assert "对话正忙，空闲后开始" in waiting.lines
+  end
+
+  test "recovering an unknown manual one-shot leaves its parent scheduled" do
+    now = ~U[2026-08-01 03:45:00Z]
+    at = DateTime.add(now, 300, :second)
+    {:ok, entry} = create_once(now, at: at)
+    assert {:ok, manual} = Store.run_now(entry, now)
+
+    assert [%Run{id: id, status: "unknown"}] =
+             Store.recover_unknown(DateTime.add(now, 60, :second), fn _, _ -> false end)
+
+    assert id == manual.run.id
+    {:ok, still_planned} = Store.get(entry.id)
+    assert still_planned.status == "active"
+    assert still_planned.next_run_at == at
+  end
+
+  test "pausing across the instant does not catch up, and resume only works while it is still ahead" do
+    now = ~U[2026-08-01 04:00:00Z]
+    at = DateTime.add(now, 120, :second)
+    {:ok, entry} = create_once(now, at: at)
+    assert {:ok, paused} = Store.pause(entry, now)
+    assert Clock.tick(DateTime.add(at, 600, :second)) == :ok
+    assert Store.recent_runs(entry.id) == []
+
+    assert {:error, :in_the_past} = Store.resume(paused, DateTime.add(at, 600, :second))
+    {:ok, still} = Store.get(entry.id)
+    assert still.status == "paused"
+    assert is_nil(still.next_run_at)
+
+    {:ok, early} = create_once(now, at: at)
+    {:ok, early_paused} = Store.pause(early, now)
+    assert {:ok, resumed} = Store.resume(early_paused, DateTime.add(now, 30, :second))
+    assert resumed.status == "active"
+    assert resumed.next_run_at == at
+  end
+
+  test "a one-shot terminal write is atomic and a completed one cannot be paused back to life" do
+    now = ~U[2026-08-01 05:00:00Z]
+    at = DateTime.add(now, 60, :second)
+    {:ok, entry} = create_once(now, at: at)
+    assert {:ok, claim} = Store.claim(entry, at)
+    Phoenix.PubSub.subscribe(Handbeam.PubSub, "runtime:schedules")
+
+    on_exit(fn -> Application.delete_env(:handbeam, :schedule_finish_fault) end)
+
+    Application.put_env(:handbeam, :schedule_finish_fault, fn :after_run ->
+      {:error, :injected}
+    end)
+
+    assert {:error, :injected} = Store.finish_run(claim.run, "completed")
+    refute_received {:schedule_changed, _}
+    {:ok, pending} = Store.get(entry.id)
+    assert pending.status == "active"
+    assert is_nil(pending.next_run_at)
+    assert [%Run{status: "claimed"}] = Store.recent_runs(entry.id)
+
+    Application.delete_env(:handbeam, :schedule_finish_fault)
+    assert {:ok, %{schedule: done}} = Store.finish_run(claim.run, "completed")
+    assert done.status == "completed"
+    assert is_nil(done.next_run_at)
+    assert_receive {:schedule_changed, conv} when conv == entry.conversation_id
+    assert [%Run{status: "completed"}] = Store.recent_runs(entry.id)
+    assert {:error, :not_pausable} = Store.pause(done, now)
+    {:ok, still} = Store.get(entry.id)
+    assert still.status == "completed"
+  end
+
+  test "an unfinished one-shot claim becomes unknown and is not retried" do
+    now = ~U[2026-08-01 06:00:00Z]
+    at = DateTime.add(now, 60, :second)
+    {:ok, entry} = create_once(now, at: at)
+    assert {:ok, _claim} = Store.claim(entry, at)
+
+    assert [%Run{status: "unknown"}] =
+             Store.recover_unknown(DateTime.add(at, 120, :second), fn _, _ -> false end)
+
+    {:ok, done} = Store.get(entry.id)
+    assert done.status == "completed"
+    assert is_nil(done.next_run_at)
+    assert Clock.tick(DateTime.add(at, 600, :second)) == :ok
+    assert [run] = Store.recent_runs(entry.id)
+    assert run.status == "unknown"
+
+    view = Presentation.once(done, [run], at)
+    assert view.headline == "结果不明，不会自动重跑"
+    assert view.headline != "已完成"
+  end
+
+  test "the card and the sidebar use the run result, not a second success story" do
+    now = ~U[2026-08-01 07:00:00Z]
+    at = DateTime.add(now, 300, :second)
+    {:ok, armed} = create_once(now, at: at)
+    armed_view = Presentation.once(armed, [], now)
+    assert armed_view.switch == :on
+    assert armed_view.action == :pause
+    assert "下次还要" in armed_view.lines
+    assert armed_view.headline == "5 分钟后，只一次"
+
+    {:ok, claim} = Store.claim(armed, at)
+    assert {:ok, %{schedule: failed_parent, run: failed}} = Store.finish_run(claim.run, "failed")
+    failed_view = Presentation.once(failed_parent, [failed], at)
+    assert failed_view.headline == "失败"
+    assert failed_view.headline != "已完成"
+    assert "没有下次" in failed_view.lines
+
+    {:ok, other} = create_once(now, at: at)
+    {:ok, other_claim} = Store.claim(other, at)
+    {:ok, %{schedule: done, run: completed}} = Store.finish_run(other_claim.run, "completed")
+    done_view = Presentation.once(done, [completed], at)
+    assert done_view.headline == "已完成"
+    assert done_view.switch == :off
+    assert "没有下次" in done_view.lines
+
+    assert Presentation.deleted().headline == "已删除"
+    assert Presentation.deleted().lines == ["已删除"]
+  end
+
+  test "a repeating schedule stays active when a slot does not run" do
+    now = ~U[2026-08-01 08:00:00Z]
+    {:ok, entry} = create_schedule(DateTime.add(now, -60, :second))
+    assert Clock.tick(now) == :ok
+    {:ok, current} = Store.get(entry.id)
+    assert current.status == "active"
+    assert current.next_run_at
+    assert [%Run{status: "skipped"}] = Store.recent_runs(entry.id)
+  end
+
   defp create_schedule(now, extra \\ []) do
     id = Keyword.get(extra, :conversation_id, unique_id("sched"))
     {:ok, _} = ConversationStore.create("default", id: id, title: "Schedule")
@@ -269,6 +639,82 @@ defmodule Handbeam.ScheduleTest do
       model: "fake/model",
       created_by: "user"
     })
+  end
+
+  defp create_once(now, extra) do
+    at = Keyword.fetch!(extra, :at)
+
+    create_schedule(now,
+      rule: %{
+        "kind" => "once",
+        "at" => DateTime.to_iso8601(at),
+        "label" => "5 分钟后，只一次"
+      }
+    )
+  end
+
+  defp conversation! do
+    id = unique_id("once")
+    {:ok, _} = ConversationStore.create("default", id: id, title: "Once")
+    id
+  end
+
+  defp once_input(rule) do
+    %{
+      "action" => "create",
+      "name" => "Check",
+      "instruction" => "看编译",
+      "model" => "fake/model",
+      "time_zone" => @zone,
+      "rule" => rule
+    }
+  end
+
+  defp tool_context(conversation_id) do
+    %{
+      conversation_id: conversation_id,
+      workspace_id: "default",
+      source: :live_view,
+      user_time_zone: @zone
+    }
+  end
+
+  defp guard_state(%State{} = state), do: state
+  defp guard_state({_, %State{} = state}), do: state
+  defp guard_state({_, %State{} = state, _data}), do: state
+  defp guard_state({_, _, %State{} = state}), do: state
+
+  defp tool_rule(%{messages: messages}) do
+    messages
+    |> Enum.find(&(&1.role == :assistant))
+    |> Map.fetch!(:content)
+    |> Enum.find(&(Map.get(&1, :type) == "tool_use" or Map.get(&1, "type") == "tool_use"))
+    |> then(fn block ->
+      input = Map.get(block, :input) || Map.get(block, "input")
+      input["rule"] || input[:rule]
+    end)
+  end
+
+  defp mark_busy(conversation_id) do
+    send(
+      Process.whereis(Handbeam.Runtime.TaskTracker),
+      {:run_lifecycle, conversation_id, :run_start, %{run_id: "busy-#{conversation_id}"}}
+    )
+
+    assert Enum.any?(
+             Handbeam.Runtime.TaskTracker.snapshot().tasks,
+             &(&1.conversation_id == conversation_id and &1.status == :running)
+           )
+  end
+
+  defp clear_busy(conversation_id) do
+    send(
+      Process.whereis(Handbeam.Runtime.TaskTracker),
+      {:run_lifecycle, conversation_id, :run_end,
+       %{status: "completed", run_id: "busy-#{conversation_id}"}}
+    )
+
+    Handbeam.Runtime.TaskTracker.snapshot()
   end
 
   defp weekly(days, times), do: %{"kind" => "weekly", "weekdays" => days, "times" => times}

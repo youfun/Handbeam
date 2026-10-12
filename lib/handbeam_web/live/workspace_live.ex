@@ -156,6 +156,7 @@ defmodule HandbeamWeb.WorkspaceLive do
       |> RuntimeProjection.subscribe_session()
       |> RuntimeProjection.subscribe_tasks()
       |> restore_session()
+      |> Schedules.reload()
       |> load_available_skills()
       # Mobile mode
       |> assign(:mobile_mode, mobile_mode)
@@ -728,6 +729,7 @@ defmodule HandbeamWeb.WorkspaceLive do
         |> WorkspaceNavigation.after_switch()
         |> RuntimeProjection.subscribe_session()
         |> restore_session()
+        |> Schedules.reload()
         |> WorkspaceNavigation.close_mobile_sheets()
 
       {:noreply, push_patch(socket, to: "/w/#{ws_id}/c/#{conv_id}")}
@@ -1470,6 +1472,17 @@ defmodule HandbeamWeb.WorkspaceLive do
     MessageSubmission.start_free_chat_run(socket, conv_id, content, run_opts)
   end
 
+  def handle_info({:schedule_changed, conv_id}, socket) do
+    socket =
+      if socket.assigns.current_conversation_id == conv_id do
+        Schedules.reload(socket)
+      else
+        socket
+      end
+
+    {:noreply, socket}
+  end
+
   def handle_info({:schedule_notice, conv_id, entry}, socket) do
     socket =
       if socket.assigns.current_conversation_id == conv_id do
@@ -1559,7 +1572,7 @@ defmodule HandbeamWeb.WorkspaceLive do
     socket = RuntimeProjection.apply(socket, event)
 
     socket =
-      if schedule_tool_finished?(event) and socket.assigns.show_schedules do
+      if schedule_tool_finished?(event) do
         Schedules.reload(socket)
       else
         socket

@@ -66,11 +66,41 @@ defmodule Handbeam.Schedule.Clock do
 
   defp dispatch_due(now) do
     Enum.each(Store.due(now), fn entry ->
-      case Store.claim(entry, now) do
-        {:ok, claim} -> handoff(claim)
-        {:error, _reason} -> :ok
+      if Handbeam.Schedule.Rule.once?(entry.rule) do
+        dispatch_once(entry, now)
+      else
+        claim_and_handoff(entry, now)
       end
     end)
+  end
+
+  defp dispatch_once(entry, now) do
+    case Handbeam.Schedule.Rule.busy_deadline(entry.rule) do
+      {:ok, deadline} ->
+        cond do
+          Dispatch.busy?(entry.conversation_id) and DateTime.compare(now, deadline) == :lt ->
+            :ok
+
+          Dispatch.busy?(entry.conversation_id) ->
+            case Store.give_up(entry, now) do
+              {:ok, %{schedule: schedule, run: run}} -> Notice.skip(schedule, run, "busy")
+              _ -> :ok
+            end
+
+          true ->
+            claim_and_handoff(entry, now)
+        end
+
+      :error ->
+        claim_and_handoff(entry, now)
+    end
+  end
+
+  defp claim_and_handoff(entry, now) do
+    case Store.claim(entry, now) do
+      {:ok, claim} -> handoff(claim)
+      {:error, _reason} -> :ok
+    end
   end
 
   defp handoff(claim) do

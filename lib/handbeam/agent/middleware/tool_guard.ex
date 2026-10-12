@@ -10,7 +10,17 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
 
   @impl true
   def call(:after_tool_request, %State{} = state) do
-    state = %{state | tool_guard_denied_calls: [], tool_guard_result_blocks: []}
+    state = %{
+      state
+      | tool_guard_denied_calls: [],
+        tool_guard_result_blocks: [],
+        messages:
+          Handbeam.Tool.Builtin.Schedule.freeze_messages(
+            state.messages,
+            config_context(state)
+          )
+    }
+
     tool_calls = last_tool_calls(state)
 
     policy =
@@ -99,6 +109,9 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
     interrupted = %{state | status: :interrupted, interrupt_data: data}
     {:interrupt, interrupted, data}
   end
+
+  defp config_context(%State{config: %{context: context}}) when is_map(context), do: context
+  defp config_context(_state), do: %{}
 
   defp last_tool_calls(%State{messages: messages}) do
     messages

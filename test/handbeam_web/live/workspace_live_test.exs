@@ -1712,6 +1712,113 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert rendered =~ "tool-work-collapsed"
     end
 
+    test "a deleted one-shot stays in the fixed dock without treating recurring tools as cards",
+         %{
+           conn: conn
+         } do
+      old_once = %{
+        "id" => "old-once-tool",
+        "content_type" => "tool",
+        "tool_name" => "schedule",
+        "input" => %{
+          "action" => "create",
+          "name" => "很早以前的检查",
+          "instruction" => "即使消息很多也保留删除态",
+          "rule" => %{"kind" => "once", "at" => "2026-10-12T01:05:00Z"}
+        },
+        "output" => Handbeam.JSON.encode!(%{"id" => "old-gone-once"})
+      }
+
+      later_messages =
+        Enum.map(1..101, fn index ->
+          %{
+            "id" => "later-user-#{index}",
+            "content_type" => "user_msg",
+            "role" => "user",
+            "content" => "later message #{index}"
+          }
+        end)
+
+      {:ok, conversation} =
+        Handbeam.ConversationStore.create("default",
+          title: "Schedule projection",
+          timeline: [old_once | later_messages]
+        )
+
+      {:ok, view, _html} = live(conn, "/w/default/c/#{conversation["id"]}")
+
+      assert has_element?(view, "#once-card-old-once-tool", "很早以前的检查")
+      assert has_element?(view, "#once-card-old-once-tool", "即使消息很多也保留删除态")
+      assert has_element?(view, "#once-card-old-once-tool", "已删除")
+
+      send(
+        view.pid,
+        {:agent_event,
+         agent_event(:tool_start, %{
+           tool_use_id: "once-deleted",
+           tool: "schedule",
+           input: %{
+             "action" => "create",
+             "name" => "检查编译",
+             "instruction" => "汇报测试和打包结果",
+             "rule" => %{"kind" => "once", "at" => "2026-10-12T02:05:00Z"}
+           }
+         })}
+      )
+
+      send(
+        view.pid,
+        {:agent_event,
+         agent_event(
+           :tool_end,
+           %{
+             tool_use_id: "once-deleted",
+             tool: "schedule",
+             output: Handbeam.JSON.encode!(%{"id" => "gone-once"})
+           },
+           2
+         )}
+      )
+
+      assert has_element?(view, "#once-card-tool-once-deleted", "检查编译")
+      assert has_element?(view, "#once-card-tool-once-deleted", "汇报测试和打包结果")
+      assert has_element?(view, "#once-card-tool-once-deleted", "已删除")
+      refute has_element?(view, "#once-card-tool-once-deleted [phx-click='schedule_delete']")
+
+      send(
+        view.pid,
+        {:agent_event,
+         agent_event(
+           :tool_start,
+           %{
+             tool_use_id: "recurring-deleted",
+             tool: "schedule",
+             input: %{
+               "action" => "create",
+               "rule" => %{"kind" => "interval", "every_minutes" => 5}
+             }
+           },
+           3
+         )}
+      )
+
+      send(
+        view.pid,
+        {:agent_event,
+         agent_event(
+           :tool_end,
+           %{
+             tool_use_id: "recurring-deleted",
+             tool: "schedule",
+             output: Handbeam.JSON.encode!(%{"id" => "gone-recurring"})
+           },
+           4
+         )}
+      )
+
+      refute has_element?(view, "#once-card-tool-recurring-deleted")
+    end
+
     test "tool_end event with error shows error status", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/")
 

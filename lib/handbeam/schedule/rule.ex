@@ -2,12 +2,17 @@ defmodule Handbeam.Schedule.Rule do
   @moduledoc """
   Frequency rules for a schedule.
 
-  Two kinds only: weekly clock times in an IANA zone, or a fixed interval.
+  Weekly clock times, a fixed interval, or one absolute instant.
   A missing local time (spring forward) uses the first valid instant after the
   gap. A repeated local time (fall back) uses the earlier instant.
+
+  A one-shot delay is frozen by `prepare_once/3` before it is stored. The
+  stored rule is the UTC instant plus the label from that moment.
   """
 
   @min_interval 1
+  @min_once_seconds 60
+  @once_busy_grace_seconds 30 * 60
   @weekdays 1..7
 
   @type rule :: map()
@@ -26,7 +31,15 @@ defmodule Handbeam.Schedule.Rule do
   def next_after(rule, time_zone, %DateTime{} = utc) do
     with {:ok, rule} <- normalize(rule),
          :ok <- zone(time_zone) do
-      {:ok, advance(rule, time_zone, truncate(utc))}
+      case rule do
+        %{kind: :once, at: at} ->
+          if DateTime.compare(at, truncate(utc)) == :gt,
+            do: {:ok, at},
+            else: {:error, :in_the_past}
+
+        _ ->
+          {:ok, advance(rule, time_zone, truncate(utc))}
+      end
     end
   end
 
@@ -38,10 +51,9 @@ defmodule Handbeam.Schedule.Rule do
 
     with {:ok, rule} <- normalize(rule),
          :ok <- zone(time_zone) do
-      if DateTime.compare(from, now) == :gt do
-        :not_due
-      else
-        collect(rule, time_zone, from, now, [])
+      case rule do
+        %{kind: :once, at: at} -> once_due(at, from, now)
+        _ -> recurring_due(rule, time_zone, from, now)
       end
     end
   end
@@ -49,14 +61,27 @@ defmodule Handbeam.Schedule.Rule do
   @spec upcoming(rule(), String.t(), DateTime.t(), pos_integer()) ::
           {:ok, [DateTime.t()]} | {:error, term()}
   def upcoming(rule, time_zone, %DateTime{} = from, count) when is_integer(count) and count > 0 do
-    with {:ok, first} <- next_after(rule, time_zone, from) do
-      {:ok, unfold(rule, time_zone, first, count, [])}
+    with {:ok, rule} <- normalize(rule),
+         :ok <- zone(time_zone) do
+      case rule do
+        %{kind: :once, at: at} ->
+          times = if DateTime.compare(at, truncate(from)) == :gt, do: [at], else: []
+          {:ok, Enum.take(times, count)}
+
+        _ ->
+          with {:ok, first} <- next_after(rule, time_zone, from) do
+            {:ok, unfold(rule, time_zone, first, count, [])}
+          end
+      end
     end
   end
 
   @spec describe(rule()) :: String.t()
   def describe(rule) do
     case normalize(rule) do
+      {:ok, %{kind: :once, label: label}} ->
+        label
+
       {:ok, %{kind: :interval, every_minutes: minutes}} ->
         describe_interval(minutes)
 
@@ -65,6 +90,61 @@ defmodule Handbeam.Schedule.Rule do
 
       _ ->
         "无效规则"
+    end
+  end
+
+  @doc "Freeze a one-shot tool rule at `prepared_at`. Canonical rules stay put."
+  @spec prepare_once(map(), String.t(), DateTime.t()) :: {:ok, rule()} | {:error, term()}
+  def prepare_once(rule, time_zone, %DateTime{} = prepared_at) when is_map(rule) do
+    prepared_at = truncate(prepared_at)
+
+    with :ok <- zone(time_zone) do
+      freeze_once(stringify(rule), time_zone, prepared_at)
+    end
+  end
+
+  def prepare_once(_rule, _time_zone, _prepared_at), do: {:error, :invalid_rule}
+
+  @spec once?(term()) :: boolean()
+  def once?(rule) when is_map(rule), do: match?({:ok, %{kind: :once}}, normalize(rule))
+  def once?(_rule), do: false
+
+  @spec once_at(map()) :: {:ok, DateTime.t()} | :error
+  def once_at(rule) when is_map(rule) do
+    case normalize(rule) do
+      {:ok, %{kind: :once, at: at}} -> {:ok, at}
+      _ -> :error
+    end
+  end
+
+  def once_at(_rule), do: :error
+
+  @spec busy_deadline(map()) :: {:ok, DateTime.t()} | :error
+  def busy_deadline(rule) do
+    case once_at(rule) do
+      {:ok, at} -> {:ok, DateTime.add(at, @once_busy_grace_seconds, :second)}
+      :error -> :error
+    end
+  end
+
+  @spec dump(rule()) :: map()
+  def dump(rule) do
+    case normalize(rule) do
+      {:ok, %{kind: :once, at: at, label: label}} ->
+        %{"kind" => "once", "at" => DateTime.to_iso8601(at), "label" => label}
+
+      {:ok, %{kind: :weekly, weekdays: days, times: times}} ->
+        %{
+          "kind" => "weekly",
+          "weekdays" => days,
+          "times" => Enum.map(times, &format_time/1)
+        }
+
+      {:ok, %{kind: :interval, every_minutes: minutes}} ->
+        %{"kind" => "interval", "every_minutes" => minutes}
+
+      _ ->
+        rule
     end
   end
 
@@ -80,6 +160,159 @@ defmodule Handbeam.Schedule.Rule do
     case DateTime.shift_zone(truncate(utc), time_zone) do
       {:ok, local} -> Calendar.strftime(local, "%Y-%m-%d %H:%M")
       _ -> Calendar.strftime(truncate(utc), "%Y-%m-%d %H:%M UTC")
+    end
+  end
+
+  defp recurring_due(rule, time_zone, from, now) do
+    if DateTime.compare(from, now) == :gt do
+      :not_due
+    else
+      collect(rule, time_zone, from, now, [])
+    end
+  end
+
+  defp once_due(at, from, now) do
+    cond do
+      DateTime.compare(from, now) == :gt -> :not_due
+      DateTime.compare(at, now) == :gt -> :not_due
+      true -> {:ok, %{slot: at, missed: 0, missed_from: nil, missed_to: nil, next_run_at: nil}}
+    end
+  end
+
+  defp freeze_once(rule, time_zone, prepared_at) do
+    kind = Handbeam.Utils.SafeMap.get_any(rule, ["kind", :kind])
+
+    if kind not in ["once", :once] do
+      {:error, :invalid_rule}
+    else
+      minutes = Handbeam.Utils.SafeMap.get_any(rule, ["in_minutes", :in_minutes])
+      at = Handbeam.Utils.SafeMap.get_any(rule, ["at", :at])
+      label = Handbeam.Utils.SafeMap.get_any(rule, ["label", :label])
+
+      cond do
+        present?(minutes) and present?(at) ->
+          {:error, :invalid_rule}
+
+        present?(minutes) ->
+          freeze_relative(minutes, prepared_at)
+
+        match?({:ok, _}, canonical_instant(at)) ->
+          {:ok, utc} = canonical_instant(at)
+          freeze_canonical(utc, label, time_zone, prepared_at)
+
+        present?(at) ->
+          freeze_local(at, time_zone, prepared_at)
+
+        true ->
+          {:error, :invalid_rule}
+      end
+    end
+  end
+
+  defp freeze_relative(minutes, prepared_at) do
+    case integer(minutes) do
+      minutes when is_integer(minutes) and minutes >= @min_interval ->
+        at = DateTime.add(prepared_at, minutes * @min_once_seconds, :second)
+        {:ok, %{kind: :once, at: at, label: "#{minutes} 分钟后，只一次"}}
+
+      _ ->
+        {:error, :invalid_once}
+    end
+  end
+
+  defp freeze_local(text, time_zone, prepared_at) do
+    with {:ok, at} <- wall_utc(text, time_zone) do
+      if DateTime.diff(at, prepared_at) < @min_once_seconds do
+        {:error, :too_soon}
+      else
+        {:ok, %{kind: :once, at: at, label: format_local(at, time_zone) <> "，只一次"}}
+      end
+    end
+  end
+
+  defp freeze_canonical(utc, label, time_zone, prepared_at) do
+    seconds_ahead = DateTime.diff(utc, prepared_at)
+
+    if seconds_ahead >= 0 and seconds_ahead < @min_once_seconds do
+      {:error, :too_soon}
+    else
+      {:ok, %{kind: :once, at: utc, label: label_or_default(label, utc, time_zone)}}
+    end
+  end
+
+  defp label_or_default(label, _at, _time_zone) when is_binary(label) and label != "" do
+    label
+  end
+
+  defp label_or_default(_label, at, time_zone) do
+    format_local(at, time_zone) <> "，只一次"
+  end
+
+  defp present?(value) when value in [nil, ""], do: false
+  defp present?(_value), do: true
+
+  defp canonical_instant(value) when is_binary(value) do
+    case DateTime.from_iso8601(value) do
+      {:ok, dt, _offset} ->
+        {:ok, dt |> DateTime.shift_zone!("Etc/UTC") |> truncate()}
+
+      _ ->
+        :error
+    end
+  end
+
+  defp canonical_instant(%DateTime{} = dt),
+    do: {:ok, dt |> DateTime.shift_zone!("Etc/UTC") |> truncate()}
+
+  defp canonical_instant(_value), do: :error
+
+  defp wall_utc(text, time_zone) when is_binary(text) do
+    case Regex.run(~r/^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?$/, text) do
+      [_, year, month, day, hour, minute, second] ->
+        with {year, ""} <- Integer.parse(year),
+             {month, ""} <- Integer.parse(month),
+             {day, ""} <- Integer.parse(day),
+             {hour, ""} <- Integer.parse(hour),
+             {minute, ""} <- Integer.parse(minute),
+             {:ok, date} <- Date.new(year, month, day),
+             {:ok, time} <- Time.new(hour, minute, seconds(second)) do
+          utc_wall(date, time, time_zone)
+        else
+          _ -> {:error, :invalid_once}
+        end
+
+      _ ->
+        {:error, :invalid_once}
+    end
+  end
+
+  defp wall_utc(_text, _time_zone), do: {:error, :invalid_once}
+
+  defp seconds(nil), do: 0
+  defp seconds(""), do: 0
+
+  defp seconds(value) do
+    case Integer.parse(value) do
+      {seconds, ""} -> seconds
+      _ -> :error
+    end
+  end
+
+  defp utc_wall(date, time, time_zone) do
+    naive = NaiveDateTime.new!(date, time)
+
+    utc =
+      case DateTime.from_naive(naive, time_zone) do
+        {:ok, dt} -> dt
+        {:ambiguous, earlier, _later} -> earlier
+        {:gap, _before, just_after} -> just_after
+        _ -> nil
+      end
+
+    if utc do
+      {:ok, utc |> DateTime.shift_zone!("Etc/UTC") |> truncate()}
+    else
+      {:error, :invalid_once}
     end
   end
 
@@ -161,6 +394,24 @@ defmodule Handbeam.Schedule.Rule do
     with {:ok, days} <- weekdays(Handbeam.Utils.SafeMap.get_any(rule, ["weekdays", :weekdays])),
          {:ok, times} <- times(Handbeam.Utils.SafeMap.get_any(rule, ["times", :times])) do
       {:ok, %{kind: :weekly, weekdays: days, times: times}}
+    end
+  end
+
+  defp normalize(%{"kind" => kind} = rule) when kind in ["once", :once] do
+    at = Handbeam.Utils.SafeMap.get_any(rule, ["at", :at])
+    label = Handbeam.Utils.SafeMap.get_any(rule, ["label", :label])
+    minutes = Handbeam.Utils.SafeMap.get_any(rule, ["in_minutes", :in_minutes])
+
+    cond do
+      present?(minutes) ->
+        {:error, :invalid_rule}
+
+      match?({:ok, _}, canonical_instant(at)) and is_binary(label) and label != "" ->
+        {:ok, utc} = canonical_instant(at)
+        {:ok, %{kind: :once, at: utc, label: label}}
+
+      true ->
+        {:error, :invalid_rule}
     end
   end
 

@@ -37,6 +37,47 @@ defmodule Handbeam.Agent.OperationReceiptTest do
     assert {:ok, %{"status" => "unknown"}} = OperationReceipt.lookup(scope, "op-2", opts)
   end
 
+  test "release frees a matching reservation and leaves every other row", %{opts: opts} do
+    scope = {:message, "conv-receipt"}
+    fingerprint = OperationReceipt.fingerprint({"hello", :new_run})
+
+    assert :ok = OperationReceipt.reserve(scope, "op-rel", fingerprint, opts)
+    assert :ok = OperationReceipt.release_reserved(scope, "op-rel", fingerprint, opts)
+    assert :error = OperationReceipt.lookup(scope, "op-rel", opts)
+    assert :ok = OperationReceipt.reserve(scope, "op-rel", fingerprint, opts)
+    assert :ok = OperationReceipt.complete(scope, "op-rel", %{action: :started}, opts)
+
+    assert {:error, :not_reserved} =
+             OperationReceipt.release_reserved(scope, "op-rel", fingerprint, opts)
+
+    assert :ok = OperationReceipt.reserve(scope, "op-held", fingerprint, opts)
+
+    assert {:error, :idempotency_conflict} =
+             OperationReceipt.release_reserved(
+               scope,
+               "op-held",
+               OperationReceipt.fingerprint("other"),
+               opts
+             )
+
+    assert {:ok, %{"status" => "reserved"}} = OperationReceipt.lookup(scope, "op-held", opts)
+  end
+
+  test "a failed rewrite keeps the reservation", %{opts: opts} do
+    scope = {:message, "conv-receipt"}
+    fingerprint = OperationReceipt.fingerprint({"hello", :new_run})
+    assert :ok = OperationReceipt.reserve(scope, "op-fault", fingerprint, opts)
+
+    on_exit(fn -> Application.delete_env(:handbeam, :operation_receipt_write_fault) end)
+
+    Application.put_env(:handbeam, :operation_receipt_write_fault, fn -> {:error, :injected} end)
+
+    assert {:error, :injected} =
+             OperationReceipt.release_reserved(scope, "op-fault", fingerprint, opts)
+
+    assert {:ok, %{"status" => "reserved"}} = OperationReceipt.lookup(scope, "op-fault", opts)
+  end
+
   test "concurrent reserves of a new id accept one writer", %{opts: opts} do
     scope = {:message, "conv-receipt"}
     fingerprint = OperationReceipt.fingerprint({"race", :new_run})

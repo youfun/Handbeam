@@ -42,7 +42,7 @@ defmodule Handbeam.Agent.Coordinator do
       {:ok, %{running?: true} = active} ->
         cond do
           Keyword.get(opts, :require_idle?, false) ->
-            {:error, :busy}
+            release_idle_busy(id, content, opts)
 
           present_task_instructions?(opts) ->
             {:error, :run_in_progress}
@@ -59,7 +59,7 @@ defmodule Handbeam.Agent.Coordinator do
             case start_run(id, content, opts) do
               {:error, :run_in_progress} ->
                 if Keyword.get(opts, :require_idle?, false),
-                  do: {:error, :busy},
+                  do: release_idle_busy(id, content, opts),
                   else: admit_message(id, content, opts, attempts - 1)
 
               result ->
@@ -74,26 +74,26 @@ defmodule Handbeam.Agent.Coordinator do
   end
 
   defp admit_running(id, content, opts, attempts, active) do
-          candidate_opts =
-            opts
-            |> Keyword.put_new(:deliver_as, :steer)
-            |> Keyword.put(:expected_run_id, active.run_id)
-            |> Keyword.put(:persist_candidate?, Keyword.get(opts, :persist_inbound?, true))
+    candidate_opts =
+      opts
+      |> Keyword.put_new(:deliver_as, :steer)
+      |> Keyword.put(:expected_run_id, active.run_id)
+      |> Keyword.put(:persist_candidate?, Keyword.get(opts, :persist_inbound?, true))
 
-          case enqueue_candidate(id, content, candidate_opts) do
-            {:ok, ack} ->
-              Handbeam.Agent.OperationReceipt.complete({:message, id}, opts[:request_id], ack)
-              maybe_resume_stall(id)
-              {:ok, ack}
+    case enqueue_candidate(id, content, candidate_opts) do
+      {:ok, ack} ->
+        Handbeam.Agent.OperationReceipt.complete({:message, id}, opts[:request_id], ack)
+        maybe_resume_stall(id)
+        {:ok, ack}
 
-            {:error, reason} when reason in [:sealed, :no_active_run, :stale_run] ->
-              with :ok <- await_run_exit(active[:run_supervisor]) do
-                admit_message(id, content, opts, attempts - 1)
-              end
+      {:error, reason} when reason in [:sealed, :no_active_run, :stale_run] ->
+        with :ok <- await_run_exit(active[:run_supervisor]) do
+          admit_message(id, content, opts, attempts - 1)
+        end
 
-            error ->
-              error
-          end
+      error ->
+        error
+    end
   end
 
   # Wait for the exact old tree, not a timer or a lookup that could stop a new run.
@@ -126,11 +126,27 @@ defmodule Handbeam.Agent.Coordinator do
   defp replay_action(:enqueued), do: :enqueued
   defp replay_action(_other), do: :started
 
+  defp release_idle_busy(conversation_id, content, opts) do
+    request_id = Keyword.get(opts, :request_id)
+
+    case Handbeam.Agent.OperationReceipt.release_reserved(
+           {:message, conversation_id},
+           request_id,
+           operation_fingerprint(conversation_id, content, opts)
+         ) do
+      :ok -> {:error, :busy}
+      {:error, _reason} -> {:error, :delivery_unknown}
+    end
+  end
+
+  defp operation_fingerprint(conversation_id, content, opts) do
+    Handbeam.Agent.OperationReceipt.fingerprint({conversation_id, content, opts[:deliver_as]})
+  end
+
   defp reserve_operation(conversation_id, content, opts) do
     request_id = Keyword.get(opts, :request_id)
 
-    fingerprint =
-      Handbeam.Agent.OperationReceipt.fingerprint({conversation_id, content, opts[:deliver_as]})
+    fingerprint = operation_fingerprint(conversation_id, content, opts)
 
     case Handbeam.Agent.OperationReceipt.reserve(
            {:message, conversation_id},

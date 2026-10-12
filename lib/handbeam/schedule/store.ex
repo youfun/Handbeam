@@ -69,10 +69,10 @@ defmodule Handbeam.Schedule.Store do
 
   @spec create(map(), DateTime.t()) :: {:ok, Entry.t()} | {:error, term()}
   def create(attrs, now \\ Handbeam.Schedule.now()) when is_map(attrs) do
-    with {:ok, fields} <- creation_fields(attrs, now) do
-      %Entry{}
-      |> Ecto.Changeset.change(fields)
-      |> Repo.insert()
+    with {:ok, fields} <- creation_fields(attrs, now),
+         {:ok, entry} <- %Entry{} |> Ecto.Changeset.change(fields) |> Repo.insert() do
+      Handbeam.Schedule.notify(entry.conversation_id)
+      {:ok, entry}
     end
   end
 
@@ -97,39 +97,49 @@ defmodule Handbeam.Schedule.Store do
         end
       end
     end)
+    |> notify_entry()
   end
 
   @spec pause(Entry.t(), DateTime.t()) :: {:ok, Entry.t()} | {:error, term()}
   def pause(%Entry{} = entry, now \\ Handbeam.Schedule.now()) do
     versioned(entry, now, fn current, now ->
-      [status: "paused", next_run_at: nil, version: current.version + 1, updated_at: now]
+      if Rule.once?(current.rule) and
+           (current.status != "active" or is_nil(current.next_run_at)) do
+        {:error, :not_pausable}
+      else
+        [status: "paused", next_run_at: nil, version: current.version + 1, updated_at: now]
+      end
     end)
+    |> notify_entry()
   end
 
   @spec resume(Entry.t(), DateTime.t()) :: {:ok, Entry.t()} | {:error, term()}
   def resume(%Entry{} = entry, now \\ Handbeam.Schedule.now()) do
     versioned(entry, now, fn current, now ->
-      case Rule.next_after(current.rule, current.time_zone, now) do
-        {:ok, next} ->
-          [
-            status: "active",
-            next_run_at: next,
-            version: current.version + 1,
-            updated_at: now
-          ]
+      cond do
+        Rule.once?(current.rule) and current.status != "paused" ->
+          {:error, :not_paused}
 
-        {:error, reason} ->
-          {:error, reason}
+        Rule.once?(current.rule) ->
+          resume_once(current, now)
+
+        true ->
+          resume_recurring(current, now)
       end
     end)
+    |> notify_entry()
   end
 
   @spec delete(Entry.t()) :: :ok | {:error, term()}
   def delete(%Entry{} = entry) do
     case from(s in Entry, where: s.id == ^entry.id and s.version == ^entry.version)
          |> Repo.delete_all() do
-      {1, _} -> :ok
-      {0, _} -> {:error, :stale}
+      {1, _} ->
+        Handbeam.Schedule.notify(entry.conversation_id)
+        :ok
+
+      {0, _} ->
+        {:error, :stale}
     end
   end
 
@@ -138,6 +148,7 @@ defmodule Handbeam.Schedule.Store do
     versioned(entry, now, fn current, now ->
       [status: "disabled", next_run_at: nil, version: current.version + 1, updated_at: now]
     end)
+    |> notify_entry()
   end
 
   @spec claim(Entry.t(), DateTime.t()) :: {:ok, map()} | {:error, term()}
@@ -168,6 +179,144 @@ defmodule Handbeam.Schedule.Store do
       end
     end)
     |> normalize_claim()
+    |> notify_claim()
+  end
+
+  @doc "Put a claimed one-shot slot back. Only an unstarted claim can return."
+  @spec release_claim(Run.t()) :: {:ok, Entry.t()} | {:error, term()}
+  def release_claim(%Run{} = run) do
+    Repo.transaction(fn ->
+      current = Repo.get(Run, run.id)
+      schedule = current && Repo.get(Entry, current.schedule_id)
+
+      cond do
+        is_nil(current) or current.kind != "scheduled" or is_nil(current.slot_at) or
+          current.status != "claimed" or not is_nil(current.run_id) ->
+          Repo.rollback(:not_releasable)
+
+        is_nil(schedule) or not planned_once?(schedule, current) or schedule.status != "active" or
+            not is_nil(schedule.next_run_at) ->
+          Repo.rollback(:not_releasable)
+
+        true ->
+          {deleted, _} =
+            from(r in Run,
+              where: r.id == ^current.id and r.status == "claimed" and is_nil(r.run_id)
+            )
+            |> Repo.delete_all()
+
+          if deleted != 1, do: Repo.rollback(:not_releasable)
+
+          {:ok, at} = Rule.once_at(schedule.rule)
+
+          {count, _} =
+            from(s in Entry,
+              where:
+                s.id == ^schedule.id and s.version == ^schedule.version and
+                  s.status == "active" and is_nil(s.next_run_at)
+            )
+            |> Repo.update_all(
+              set: [
+                status: "active",
+                next_run_at: at,
+                version: schedule.version + 1,
+                updated_at: DateTime.truncate(Handbeam.Schedule.now(), :second)
+              ]
+            )
+
+          if count == 0, do: Repo.rollback(:conflict)
+          Repo.get!(Entry, schedule.id)
+      end
+    end)
+    |> notify_entry()
+  end
+
+  @doc "End a one-shot that stayed busy until the grace deadline."
+  @spec give_up(Entry.t(), DateTime.t()) :: {:ok, map()} | {:error, term()}
+  def give_up(%Entry{} = entry, %DateTime{} = now) do
+    now = DateTime.truncate(now, :second)
+
+    Repo.transaction(fn ->
+      current = Repo.get(Entry, entry.id)
+
+      with {:ok, at} <- once_due_at(current),
+           {:ok, deadline} <- Rule.busy_deadline(current.rule),
+           true <- DateTime.compare(now, deadline) != :lt do
+        run = %Run{
+          id: Ecto.UUID.generate(),
+          schedule_id: current.id,
+          slot_at: at,
+          kind: "scheduled",
+          request_id: request_id(current.id, at),
+          status: "skipped",
+          reason: "busy",
+          inserted_at: now,
+          updated_at: now
+        }
+
+        case insert_run(run) do
+          {:ok, run} ->
+            {count, _} =
+              from(s in Entry,
+                where:
+                  s.id == ^current.id and s.version == ^current.version and s.status == "active"
+              )
+              |> Repo.update_all(
+                set: [
+                  status: "completed",
+                  next_run_at: nil,
+                  version: current.version + 1,
+                  updated_at: now
+                ]
+              )
+
+            if count == 0, do: Repo.rollback(:conflict)
+            %{schedule: Repo.get!(Entry, current.id), run: run}
+
+          {:error, reason} ->
+            Repo.rollback(reason)
+        end
+      else
+        _ -> Repo.rollback(:not_due)
+      end
+    end)
+    |> notify_claim()
+  end
+
+  @doc """
+  Finish a schedule run.
+
+  A one-shot writes the run status and `completed` parent in one transaction.
+  A repeating schedule only updates the run.
+  """
+  @spec finish_run(Run.t(), String.t(), keyword()) :: {:ok, map()} | {:error, term()}
+  def finish_run(%Run{} = run, status, opts \\ []) when is_binary(status) do
+    now = Keyword.get(opts, :now, Handbeam.Schedule.now()) |> DateTime.truncate(:second)
+    reason = Keyword.get(opts, :reason)
+
+    Repo.transaction(fn ->
+      current = Repo.get(Run, run.id)
+      schedule = current && Repo.get(Entry, current.schedule_id)
+
+      cond do
+        is_nil(current) or is_nil(schedule) ->
+          Repo.rollback(:not_found)
+
+        planned_once?(schedule, current) ->
+          finish_once(current, schedule, status, reason, now)
+
+        true ->
+          case record(current, status,
+                 now: now,
+                 reason: reason,
+                 run_id: Keyword.get(opts, :run_id, current.run_id)
+               ) do
+            {:ok, updated} -> %{changed: true, once: false, run: updated, schedule: schedule}
+            {:error, reason} -> Repo.rollback(reason)
+          end
+      end
+    end)
+    |> notify_finish()
   end
 
   @spec run_now(Entry.t(), DateTime.t()) :: {:ok, map()} | {:error, term()}
@@ -215,12 +364,18 @@ defmodule Handbeam.Schedule.Store do
   @spec finish_by_run_id(String.t(), String.t(), String.t() | nil) :: :ok
   def finish_by_run_id(run_id, status, reason)
       when is_binary(run_id) and is_binary(status) do
-    now = DateTime.truncate(Handbeam.Schedule.now(), :second)
+    case Repo.get_by(Run, run_id: run_id) do
+      %Run{status: "started"} = run ->
+        _ = finish_run(run, status, reason: reason)
+        :ok
 
-    from(r in Run, where: r.run_id == ^run_id and r.status == "started")
-    |> Repo.update_all(set: [status: status, reason: reason, updated_at: now])
+      %Run{} = run ->
+        _ = repair_once_parent(run)
+        :ok
 
-    :ok
+      nil ->
+        :ok
+    end
   end
 
   @spec recover_unknown(DateTime.t(), (String.t(), String.t() -> boolean())) :: [Run.t()]
@@ -237,10 +392,154 @@ defmodule Handbeam.Schedule.Store do
       end)
 
     Enum.map(claimed ++ started, fn run ->
-      {:ok, updated} = record(run, "unknown", now: now, reason: "delivery_unknown")
-      updated
+      entry = Repo.get!(Entry, run.schedule_id)
+
+      if planned_once?(entry, run) do
+        {:ok, %{run: updated}} =
+          finish_run(run, "unknown", now: now, reason: "delivery_unknown")
+
+        updated
+      else
+        {:ok, updated} = record(run, "unknown", now: now, reason: "delivery_unknown")
+        updated
+      end
     end)
   end
+
+  defp resume_once(current, now) do
+    case Rule.once_at(current.rule) do
+      {:ok, at} ->
+        if DateTime.compare(at, now) == :gt do
+          [status: "active", next_run_at: at, version: current.version + 1, updated_at: now]
+        else
+          {:error, :in_the_past}
+        end
+
+      :error ->
+        {:error, :invalid_rule}
+    end
+  end
+
+  defp resume_recurring(current, now) do
+    case Rule.next_after(current.rule, current.time_zone, now) do
+      {:ok, next} ->
+        [status: "active", next_run_at: next, version: current.version + 1, updated_at: now]
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp once_due_at(%Entry{status: "active"} = current) do
+    if is_nil(current.next_run_at) do
+      :error
+    else
+      Rule.once_at(current.rule)
+    end
+  end
+
+  defp once_due_at(_current), do: :error
+
+  defp finish_once(run, schedule, status, reason, now) do
+    terminal? = run.status not in ["claimed", "started"]
+    parent_done? = schedule.status == "completed" and is_nil(schedule.next_run_at)
+
+    cond do
+      terminal? and parent_done? ->
+        %{changed: false, once: true, run: run, schedule: schedule}
+
+      terminal? ->
+        case write_parent_completed(schedule, now) do
+          {:ok, parent} -> %{changed: true, once: true, run: run, schedule: parent}
+          {:error, error} -> Repo.rollback(error)
+        end
+
+      true ->
+        case write_run_status(run, status, reason, now) do
+          {:ok, updated} ->
+            case finish_fault(:after_run) do
+              :ok ->
+                case write_parent_completed(schedule, now) do
+                  {:ok, parent} -> %{changed: true, once: true, run: updated, schedule: parent}
+                  {:error, error} -> Repo.rollback(error)
+                end
+
+              {:error, error} ->
+                Repo.rollback(error)
+            end
+
+          {:error, error} ->
+            Repo.rollback(error)
+        end
+    end
+  end
+
+  defp write_run_status(run, status, reason, now) do
+    {count, _} =
+      from(r in Run, where: r.id == ^run.id and r.status == ^run.status)
+      |> Repo.update_all(set: [status: status, reason: reason, updated_at: now])
+
+    if count == 1, do: {:ok, Repo.get!(Run, run.id)}, else: {:error, :not_found}
+  end
+
+  defp write_parent_completed(schedule, now) do
+    {count, _} =
+      from(s in Entry, where: s.id == ^schedule.id and s.version == ^schedule.version)
+      |> Repo.update_all(
+        set: [
+          status: "completed",
+          next_run_at: nil,
+          version: schedule.version + 1,
+          updated_at: now
+        ]
+      )
+
+    if count == 1, do: {:ok, Repo.get!(Entry, schedule.id)}, else: {:error, :conflict}
+  end
+
+  defp finish_fault(step) do
+    case Application.get_env(:handbeam, :schedule_finish_fault) do
+      fun when is_function(fun, 1) -> fun.(step)
+      _ -> :ok
+    end
+  end
+
+  defp repair_once_parent(%Run{} = run) do
+    case Repo.get(Entry, run.schedule_id) do
+      %Entry{} = schedule ->
+        if planned_once?(schedule, run),
+          do: finish_run(run, run.status, reason: run.reason),
+          else: :ok
+
+      _ ->
+        :ok
+    end
+  end
+
+  defp planned_once?(schedule, run) do
+    Rule.once?(schedule.rule) and run.kind == "scheduled" and not is_nil(run.slot_at)
+  end
+
+  defp notify_entry({:ok, %Entry{} = entry} = result) do
+    Handbeam.Schedule.notify(entry.conversation_id)
+    result
+  end
+
+  defp notify_entry(other), do: other
+
+  defp notify_claim({:ok, %{schedule: %Entry{} = entry}} = result) do
+    Handbeam.Schedule.notify(entry.conversation_id)
+    result
+  end
+
+  defp notify_claim(other), do: other
+
+  defp notify_finish({:ok, %{changed: true, schedule: %Entry{} = entry}} = result) do
+    Handbeam.Schedule.notify(entry.conversation_id)
+    result
+  end
+
+  defp notify_finish(other), do: other
 
   defp insert_claim(current, due, now) do
     {count, _} =
@@ -429,28 +728,9 @@ defmodule Handbeam.Schedule.Store do
     end
   end
 
-  defp dump_rule(%{kind: :weekly, weekdays: days, times: times}) do
-    %{
-      "kind" => "weekly",
-      "weekdays" => days,
-      "times" => Enum.map(times, &format_time/1)
-    }
-  end
+  defp dump_rule(rule), do: Rule.dump(rule)
 
-  defp dump_rule(%{kind: :interval, every_minutes: minutes}) do
-    %{"kind" => "interval", "every_minutes" => minutes}
-  end
-
-  defp stringify_rule(rule) when is_map(rule) do
-    case Rule.validate(rule) do
-      {:ok, normalized} -> dump_rule(normalized)
-      _ -> rule
-    end
-  end
-
-  defp format_time({hour, minute}) do
-    :io_lib.format("~2..0B:~2..0B", [hour, minute]) |> IO.iodata_to_binary()
-  end
+  defp stringify_rule(rule) when is_map(rule), do: Rule.dump(rule)
 
   defp required(value, _key) when is_binary(value) and value != "", do: :ok
   defp required(_value, key), do: {:error, key}

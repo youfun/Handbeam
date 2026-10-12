@@ -52,6 +52,7 @@ defmodule HandbeamWeb.WorkspaceLive.ToolProjection do
         "tool_status" => Atom.to_string(status),
         "tool_duration_ms" => duration_ms,
         "tool_error" => error,
+        "output" => value(payload, :output),
         "details" => details,
         "file_path" => file_path,
         "diff_lines" => diff_lines,

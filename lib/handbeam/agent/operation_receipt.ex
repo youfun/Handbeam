@@ -72,6 +72,40 @@ defmodule Handbeam.Agent.OperationReceipt do
     end)
   end
 
+  @doc """
+  Drop a reservation that never started work.
+
+  Succeeds only when the record is still `reserved` and the fingerprint matches.
+  A missing, unknown, completed, or conflicting record is not released.
+  """
+  def release_reserved(scope, request_id, fingerprint, opts \\ [])
+
+  def release_reserved(_scope, request_id, _fingerprint, _opts) when request_id in [nil, ""],
+    do: :ok
+
+  def release_reserved(scope, request_id, fingerprint, opts) when is_binary(request_id) do
+    path = path(scope, opts)
+
+    with_lock(path, fn ->
+      case read_records(path) do
+        {:error, :corrupt} ->
+          {:error, :delivery_unknown}
+
+        {:ok, records} ->
+          case Map.get(records, request_id) do
+            %{"fingerprint" => ^fingerprint, "status" => "reserved"} ->
+              write_records_result(path, Map.delete(records, request_id))
+
+            %{"fingerprint" => other} when other != fingerprint ->
+              {:error, :idempotency_conflict}
+
+            _ ->
+              {:error, :not_reserved}
+          end
+      end
+    end)
+  end
+
   def mark_unknown(scope, request_id, opts \\ [])
 
   def mark_unknown(_scope, request_id, _opts) when request_id in [nil, ""], do: :ok
@@ -174,19 +208,56 @@ defmodule Handbeam.Agent.OperationReceipt do
     end
   end
 
-  defp write_records(path, records) do
-    File.mkdir_p!(Path.dirname(path))
+  defp receipt_write_fault do
+    case Application.get_env(:handbeam, :operation_receipt_write_fault) do
+      fun when is_function(fun, 0) ->
+        case fun.() do
+          :ok -> :ok
+          {:error, reason} -> {:error, reason}
+        end
 
-    body =
-      Enum.map_join(Map.values(records), "\n", fn record ->
-        record
-        |> Map.put("$handbeam_operation", @version)
-        |> Handbeam.JSON.encode!()
-      end)
-
-    tmp = path <> "." <> Integer.to_string(System.unique_integer([:positive])) <> ".tmp"
-    File.write!(tmp, body <> "\n")
-    File.rename!(tmp, path)
-    :ok
+      _ ->
+        :ok
+    end
   end
+
+  defp write_records(path, records) do
+    case write_records_result(path, records) do
+      :ok -> :ok
+      {:error, reason} -> raise "operation receipt write failed: #{inspect(reason)}"
+    end
+  end
+
+  defp write_records_result(path, records) do
+    with :ok <- receipt_write_fault(),
+         :ok <- mkdir_result(Path.dirname(path)) do
+      body =
+        Enum.map_join(Map.values(records), "\n", fn record ->
+          record
+          |> Map.put("$handbeam_operation", @version)
+          |> Handbeam.JSON.encode!()
+        end)
+
+      tmp = path <> "." <> Integer.to_string(System.unique_integer([:positive])) <> ".tmp"
+
+      with :ok <- file_result(File.write(tmp, body <> "\n")),
+           :ok <- file_result(File.rename(tmp, path)) do
+        :ok
+      else
+        {:error, _reason} = error ->
+          File.rm(tmp)
+          error
+      end
+    end
+  end
+
+  defp mkdir_result(dir) do
+    case File.mkdir_p(dir) do
+      :ok -> :ok
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp file_result(:ok), do: :ok
+  defp file_result({:error, reason}), do: {:error, reason}
 end

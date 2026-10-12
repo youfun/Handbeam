@@ -13,18 +13,23 @@ defmodule Handbeam.Schedule.Dispatch do
   alias Handbeam.WorkspaceStore
   alias Handbeam.Runtime.TaskTracker
 
+  @spec busy?(String.t()) :: boolean()
+  def busy?(conversation_id) when is_binary(conversation_id) do
+    coordinator_busy?(conversation_id) or task_busy?(conversation_id)
+  end
+
   @spec run(map()) :: :ok
   def run(%{schedule: schedule, run: run} = claim) do
     cond do
       not conversation_ok?(schedule) ->
-        _ = Store.disable(schedule)
+        if run.kind != "manual", do: Store.disable(schedule)
         record_skip(schedule, run, "conversation_unavailable")
 
       not model_ok?(schedule) ->
-        record_skip(schedule, run, "model_not_allowed")
+        close_skipped(schedule, run, "model_not_allowed")
 
       busy?(schedule.conversation_id) ->
-        record_skip(schedule, run, "busy")
+        on_busy(schedule, run)
 
       true ->
         maybe_catch_up(claim)
@@ -45,25 +50,26 @@ defmodule Handbeam.Schedule.Dispatch do
 
             :ok
 
-          {:error, reason} when reason in [:busy, :run_in_progress] ->
-            record_skip(schedule, run, "busy")
+          {:error, :busy} ->
+            on_busy(schedule, run)
+
+          {:error, :run_in_progress} ->
+            if planned_once?(schedule, run),
+              do: close_unknown(schedule, run),
+              else: record_skip(schedule, run, "busy")
 
           {:error, :delivery_unknown} ->
-            _ = Store.record(run, "unknown", reason: "delivery_unknown")
-            Notice.unknown(schedule, run)
-            :ok
+            close_unknown(schedule, run)
 
           {:error, reason} ->
-            _ = Store.record(run, "failed", reason: inspect(reason))
-            :ok
+            close_failed(schedule, run, inspect(reason))
         end
 
       {:error, :model_not_allowed} ->
-        record_skip(schedule, run, "model_not_allowed")
+        close_skipped(schedule, run, "model_not_allowed")
 
       {:error, reason} ->
-        _ = Store.record(run, "failed", reason: inspect(reason))
-        :ok
+        close_failed(schedule, run, inspect(reason))
     end
   end
 
@@ -153,8 +159,49 @@ defmodule Handbeam.Schedule.Dispatch do
     end
   end
 
-  defp busy?(conversation_id) do
-    coordinator_busy?(conversation_id) or task_busy?(conversation_id)
+  defp on_busy(schedule, run) do
+    if planned_once?(schedule, run),
+      do: release_once(schedule, run),
+      else: record_skip(schedule, run, "busy")
+  end
+
+  defp release_once(schedule, run) do
+    case Store.release_claim(run) do
+      {:ok, _entry} -> :ok
+      {:error, :not_releasable} -> :ok
+      {:error, _reason} -> close_unknown(schedule, run)
+    end
+  end
+
+  defp close_unknown(schedule, run) do
+    if planned_once?(schedule, run) do
+      _ = Store.finish_run(run, "unknown", reason: "delivery_unknown")
+    else
+      _ = Store.record(run, "unknown", reason: "delivery_unknown")
+    end
+
+    Notice.unknown(schedule, run)
+    :ok
+  end
+
+  defp close_failed(schedule, run, reason) do
+    if planned_once?(schedule, run) do
+      _ = Store.finish_run(run, "failed", reason: reason)
+    else
+      _ = Store.record(run, "failed", reason: reason)
+    end
+
+    :ok
+  end
+
+  defp close_skipped(schedule, run, reason) do
+    if planned_once?(schedule, run) do
+      _ = Store.finish_run(run, "skipped", reason: reason)
+      Notice.skip(schedule, run, reason)
+      :ok
+    else
+      record_skip(schedule, run, reason)
+    end
   end
 
   defp coordinator_busy?(conversation_id) do
@@ -181,6 +228,10 @@ defmodule Handbeam.Schedule.Dispatch do
     _ = Store.record(run, "skipped", reason: reason)
     Notice.skip(schedule, run, reason)
     :ok
+  end
+
+  defp planned_once?(schedule, run) do
+    Rule.once?(schedule.rule) and run.kind == "scheduled" and not is_nil(run.slot_at)
   end
 
   defp maybe_catch_up(%{missed: missed} = claim) when is_integer(missed) and missed > 0 do

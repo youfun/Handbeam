@@ -9,6 +9,7 @@ import { CopyText } from "./hooks/copy_text.js";
 import { ConversationContextMenu } from "./hooks/conversation_context_menu.js";
 import { ConversationHover } from "./hooks/conversation_hover.js";
 import { ConversationActivity } from "./hooks/conversation_activity.js";
+import { ScheduleCountdown } from "./hooks/schedule_countdown.js";
 
 const ConversationSidebar = {
   ...ConversationHover,
@@ -75,7 +76,7 @@ const MobHook = {
 }
 
 let csrfToken = document.querySelector("meta[name='csrf-token']").getAttribute("content");
-let Hooks = { StreamingMarkdown, ChatScroll, ConversationNav, ComposerPasteUpload, WorkspacePanel, CopyText, ConversationContextMenu, ConversationActivity, ConversationSidebar, LocalWebGPUProbe, GhosttyTerminal, ThemeBridge, MobHook, BrowserSurface };
+let Hooks = { StreamingMarkdown, ChatScroll, ConversationNav, ComposerPasteUpload, WorkspacePanel, CopyText, ConversationContextMenu, ConversationActivity, ConversationSidebar, LocalWebGPUProbe, GhosttyTerminal, ThemeBridge, MobHook, BrowserSurface, ScheduleCountdown };
 
 try {
   let liveSocket = new LiveSocket("/live", Socket, {

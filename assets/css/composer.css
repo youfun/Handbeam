@@ -76,6 +76,18 @@
   background: transparent;
 }
 
+.once-schedule-dock {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.once-schedule-dock .once-schedule-card {
+  margin-top: 0;
+  background: var(--sig-bg-elevated);
+}
+
 .composer-turn-controls {
   display: flex;
   align-items: center;

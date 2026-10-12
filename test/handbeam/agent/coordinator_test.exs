@@ -144,6 +144,14 @@ defmodule Handbeam.Agent.CoordinatorTest do
     end)
   end
 
+  defp idle_message(sid, request_id) do
+    Coordinator.add_message(
+      sid,
+      "later",
+      opts(source: :schedule, require_idle?: true, request_id: request_id, deliver_as: :follow_up)
+    )
+  end
+
   defp opts(extra \\ []) do
     Keyword.merge(
       [
@@ -546,6 +554,80 @@ defmodule Handbeam.Agent.CoordinatorTest do
     assert length(contents) == 1
     assert hd(contents) in ["first review", "second review"]
     refute Enum.any?(contents, &(&1 && String.contains?(&1, "task_instructions")))
+    assert_receive {:agent_event, %{kind: :run_end}}, 1_000
+  end
+
+  test "require_idle releases its reservation when the conversation is busy" do
+    sid = "coord-idle-release-#{System.unique_integer([:positive])}"
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
+    :ok = Session.subscribe(sid)
+    parent = self()
+
+    assert {:ok, %{action: :started}} =
+             Coordinator.add_message(
+               sid,
+               "hold",
+               opts(
+                 provider: HoldProvider,
+                 provider_config: %{notify: parent},
+                 streaming: false
+               )
+             )
+
+    assert_receive {:held, pid}, 5_000
+    request_id = "sched-#{sid}-1"
+
+    assert {:error, :busy} = idle_message(sid, request_id)
+    assert :error = Handbeam.Agent.OperationReceipt.lookup({:message, sid}, request_id)
+    assert {:error, :busy} = idle_message(sid, request_id)
+
+    send(pid, :release)
+    assert_receive {:agent_event, %{kind: :run_end}}, 1_000
+  end
+
+  test "require_idle keeps the reservation when releasing it fails" do
+    sid = "coord-idle-unknown-#{System.unique_integer([:positive])}"
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
+    :ok = Session.subscribe(sid)
+    parent = self()
+
+    assert {:ok, %{action: :started}} =
+             Coordinator.add_message(
+               sid,
+               "hold",
+               opts(
+                 provider: HoldProvider,
+                 provider_config: %{notify: parent},
+                 streaming: false
+               )
+             )
+
+    assert_receive {:held, pid}, 5_000
+    on_exit(fn -> Application.delete_env(:handbeam, :operation_receipt_write_fault) end)
+
+    Application.put_env(:handbeam, :operation_receipt_write_fault, fn ->
+      case Process.get(:receipt_writes, 0) do
+        0 ->
+          Process.put(:receipt_writes, 1)
+          :ok
+
+        _ ->
+          {:error, :injected}
+      end
+    end)
+
+    request_id = "sched-#{sid}-1"
+    assert {:error, :delivery_unknown} = idle_message(sid, request_id)
+
+    assert {:ok, %{"status" => "reserved"}} =
+             Handbeam.Agent.OperationReceipt.lookup({:message, sid}, request_id)
+
+    assert {:ok, entries} = Handbeam.ConversationTranscriptStore.list(sid)
+
+    assert ["hold"] ==
+             entries |> Enum.filter(&(&1["role"] == "user")) |> Enum.map(& &1["content"])
+
+    send(pid, :release)
     assert_receive {:agent_event, %{kind: :run_end}}, 1_000
   end
 

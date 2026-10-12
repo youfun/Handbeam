@@ -146,6 +146,11 @@ defmodule Handbeam.Permissions.ToolPolicy do
       action in ["list", "get", "history", "pause", "resume", "delete"] ->
         :auto
 
+      # A one-shot appears as a card. The switch is the control, so creating
+      # or retiming it does not stop for approval.
+      once_schedule?(input) and action in ["create", "update"] ->
+        :auto
+
       action == "update" and not schedule_update_prompts?(input) ->
         :auto
 
@@ -158,6 +163,13 @@ defmodule Handbeam.Permissions.ToolPolicy do
       true ->
         :prompt
     end
+  end
+
+  defp once_schedule?(input) do
+    rule = Handbeam.Utils.SafeMap.get_any(input, "rule", :rule)
+
+    is_map(rule) and
+      Handbeam.Utils.SafeMap.get_any(rule, "kind", :kind) in ["once", :once]
   end
 
   defp schedule_update_prompts?(input) do

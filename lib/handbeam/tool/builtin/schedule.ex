@@ -8,7 +8,7 @@ defmodule Handbeam.Tool.Builtin.Schedule do
 
   @behaviour Handbeam.Agent.Tool
 
-  alias Handbeam.Agent.Channel
+  alias Handbeam.Agent.{Channel, Message}
   alias Handbeam.Schedule.{Rule, Store}
 
   @actions ~w(list get history create update pause resume delete run_now)
@@ -23,7 +23,7 @@ defmodule Handbeam.Tool.Builtin.Schedule do
     """
     Manage schedules on the current conversation. The user says when and what in ordinary language. Turn that into a rule. There is no default frequency. Do not ask them to fill weekday numbers, cron, or a form.
 
-    create and update need an explicit rule, the saved instruction, and an IANA time zone. Use the conversation time zone when they did not name one. Weekdays are 1=Monday through 7=Sunday. weekly is {kind, weekdays, times}. interval is {kind, every_minutes} with every_minutes >= 1. Saving does not run the task. run_now does not move the next planned time.
+    create and update need an explicit rule, the saved instruction, and an IANA time zone. Use the conversation time zone when they did not name one. Weekdays are 1=Monday through 7=Sunday. weekly is {kind, weekdays, times}. interval is {kind, every_minutes} with every_minutes >= 1 and keeps repeating. A single future check is once: {kind, in_minutes} or {kind, at} as a local YYYY-MM-DDTHH:MM. once runs one time and then stops. Do not store a one-shot check as interval. Put the concrete target in the instruction. Saving does not run the task. run_now does not move the next planned time.
 
     After create or update succeeds, reply in this chat in plain language: time zone, frequency, clock time, that each run is delivered in this chat, and the next local time from next_runs. Say they can change the frequency, time, or language by telling you. Do not dump the raw rule.
 
@@ -45,7 +45,7 @@ defmodule Handbeam.Tool.Builtin.Schedule do
         rule: %{
           type: "object",
           description:
-            "weekly: {kind, weekdays, times}. interval: {kind, every_minutes} with every_minutes >= 1."
+            "weekly: {kind, weekdays, times}. interval: {kind, every_minutes} with every_minutes >= 1. once: {kind, in_minutes} or {kind, at} as local YYYY-MM-DDTHH:MM. once does not repeat."
         },
         time_zone: %{
           type: "string",
@@ -62,6 +62,18 @@ defmodule Handbeam.Tool.Builtin.Schedule do
 
   @impl true
   def concurrent?, do: false
+
+  @doc "Freeze one-shot rules in the latest assistant tool call before approval or execution."
+  def freeze_messages(messages, context, now \\ Handbeam.Schedule.now()) when is_list(messages) do
+    zone = context_zone(context)
+
+    {reversed, _done} =
+      Enum.reduce(Enum.reverse(messages), {[], false}, fn message, {acc, done} ->
+        freeze_message(message, zone, now, acc, done)
+      end)
+
+    reversed
+  end
 
   @impl true
   def execute(input, context) when is_map(input) and is_map(context) do
@@ -107,13 +119,14 @@ defmodule Handbeam.Tool.Builtin.Schedule do
 
   defp perform("create", input, context, conversation_id, workspace_id) do
     with {:ok, zone} <- zone(input, context),
-         {:ok, model} <- model(input, context) do
+         {:ok, model} <- model(input, context),
+         {:ok, rule} <- canonicalize(field(input, "rule"), zone) do
       attrs = %{
         workspace_id: workspace_id,
         conversation_id: conversation_id,
         name: field(input, "name") || "定时任务",
         instruction: field(input, "instruction"),
-        rule: field(input, "rule"),
+        rule: rule,
         time_zone: zone,
         model: model,
         reasoning_level: field(input, "reasoning_level"),
@@ -171,11 +184,12 @@ defmodule Handbeam.Tool.Builtin.Schedule do
   defp update_attrs(input, context, entry) do
     zone = field(input, "time_zone") || entry.time_zone
 
-    with :ok <- if(Rule.valid_zone?(zone), do: :ok, else: {:error, :invalid_time_zone}) do
+    with :ok <- if(Rule.valid_zone?(zone), do: :ok, else: {:error, :invalid_time_zone}),
+         {:ok, rule} <- canonicalize(field(input, "rule") || entry.rule, zone) do
       attrs = %{
         name: field(input, "name") || entry.name,
         instruction: field(input, "instruction") || entry.instruction,
-        rule: field(input, "rule") || entry.rule,
+        rule: rule,
         time_zone: zone,
         reasoning_level: field(input, "reasoning_level") || entry.reasoning_level
       }
@@ -194,6 +208,82 @@ defmodule Handbeam.Tool.Builtin.Schedule do
     case field(input, "id") do
       id when is_binary(id) and id != "" -> Store.get_for_conversation(conversation_id, id)
       _ -> {:error, :not_found}
+    end
+  end
+
+  defp canonicalize(rule, zone) do
+    if once_input?(rule) do
+      case Rule.prepare_once(rule, zone, Handbeam.Schedule.now()) do
+        {:ok, canonical} -> {:ok, Rule.dump(canonical)}
+        error -> error
+      end
+    else
+      {:ok, rule}
+    end
+  end
+
+  defp once_input?(rule) when is_map(rule) do
+    Handbeam.Utils.SafeMap.get_any(rule, ["kind", :kind]) in ["once", :once]
+  end
+
+  defp once_input?(_rule), do: false
+
+  defp context_zone(context) when is_map(context), do: context[:user_time_zone]
+  defp context_zone(_context), do: nil
+
+  defp freeze_message(
+         %Message{role: :assistant, content: content} = message,
+         zone,
+         now,
+         acc,
+         false
+       )
+       when is_list(content) do
+    if Message.tool_calls(message) == [] do
+      {[message | acc], false}
+    else
+      {[%{message | content: Enum.map(content, &freeze_block(&1, zone, now))} | acc], true}
+    end
+  end
+
+  defp freeze_message(message, _zone, _now, acc, done), do: {[message | acc], done}
+
+  defp freeze_block(block, zone, now) when is_map(block) do
+    type = block_value(block, "type")
+    name = block_value(block, "name")
+    input = block_value(block, "input") || %{}
+    action = field(input, "action")
+    rule = field(input, "rule")
+
+    if type == "tool_use" and name == "schedule" and action in ["create", "update"] and
+         once_input?(rule) do
+      rule_zone = field(input, "time_zone") || zone
+
+      case Rule.prepare_once(rule, rule_zone, now) do
+        {:ok, canonical} ->
+          put_block(block, "input", Map.put(input, "rule", Rule.dump(canonical)))
+
+        _ ->
+          block
+      end
+    else
+      block
+    end
+  end
+
+  defp freeze_block(block, _zone, _now), do: block
+
+  defp block_value(block, key) do
+    Map.get(block, key) || Map.get(block, String.to_existing_atom(key))
+  rescue
+    ArgumentError -> Map.get(block, key)
+  end
+
+  defp put_block(block, key, value) do
+    cond do
+      Map.has_key?(block, key) -> Map.put(block, key, value)
+      Map.has_key?(block, String.to_atom(key)) -> Map.put(block, String.to_atom(key), value)
+      true -> Map.put(block, key, value)
     end
   end
 

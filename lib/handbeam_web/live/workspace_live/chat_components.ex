@@ -4,6 +4,7 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
   use HandbeamWeb, :html
 
   alias HandbeamWeb.FileChangeCard
+  alias HandbeamWeb.WorkspaceLive.Schedules
 
   import HandbeamWeb.WorkspaceLive.ViewComponents
 
@@ -187,6 +188,10 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
   attr :skill_suggestions, :any, required: true
   attr :streams, :any, required: true
   attr :timeline, :any, required: true
+  attr :schedules, :list, default: []
+  attr :schedule_runs, :map, default: %{}
+  attr :schedule_once_entries, :list, default: []
+  attr :user_time_zone, :any, default: nil
   attr :uploads, :any, required: true
   attr :workspace_root, :any, required: true
 
@@ -928,6 +933,11 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
 
       <!-- Input area -->
       <div id="ai-input-area" class="composer-dock">
+        <Schedules.composer_once_cards
+          schedules={@schedules}
+          runs={@schedule_runs}
+          timeline={@schedule_once_entries ++ @timeline}
+        />
         <form
           id="composer"
           phx-submit="send_message"
