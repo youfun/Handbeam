@@ -534,6 +534,7 @@ jobs:
           git clone --depth 1 https://github.com/youfun/ish-arm64.git "$RUNNER_TEMP/ish-arm64"
           git -C "$RUNNER_TEMP/ish-arm64" submodule update --init --depth 1
           SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
+          export SDK
           python3 -c 'import os, pathlib; sdk=os.environ["SDK"]; pathlib.Path(os.environ["RUNNER_TEMP"], "ios-cross.txt").write_text("[binaries]\nc = [\"clang\", \"-arch\", \"arm64\", \"-isysroot\", \"%s\", \"-miphoneos-version-min=17.0\"]\nar = \"ar\"\nstrip = \"strip\"\npkg-config = \"false\"\n\n[host_machine]\nsystem = \"darwin\"\ncpu_family = \"aarch64\"\ncpu = \"aarch64\"\nendian = \"little\"\n\n[properties]\nneeds_exe_wrapper = true\nsys_root = \"%s\"\n" % (sdk, sdk))'
           export PATH="$(brew --prefix lld)/bin:$PATH"
           meson setup "$RUNNER_TEMP/ish-arm64/build-ios" --cross-file "$RUNNER_TEMP/ios-cross.txt" \
