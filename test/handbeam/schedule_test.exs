@@ -1,6 +1,8 @@
 defmodule Handbeam.ScheduleTest do
   use Handbeam.DataCase, async: false
 
+  import ExUnit.CaptureLog
+
   alias Handbeam.Agent.{Config, Message, State}
   alias Handbeam.Agent.Middleware.ToolGuard
   alias Handbeam.ConversationStore
@@ -34,7 +36,9 @@ defmodule Handbeam.ScheduleTest do
     now = ~U[2026-07-18 00:00:00Z]
     assert {:ok, next} = Rule.next_after(rule, @zone, now)
     assert DateTime.diff(next, now) == 60
-    assert {:error, :invalid_interval} = Rule.validate(%{"kind" => "interval", "every_minutes" => 0})
+
+    assert {:error, :invalid_interval} =
+             Rule.validate(%{"kind" => "interval", "every_minutes" => 0})
   end
 
   test "saving a schedule does not create a run" do
@@ -57,7 +61,13 @@ defmodule Handbeam.ScheduleTest do
       |> Enum.map(fn {:ok, result} -> result end)
 
     assert Enum.count(results, &match?({:ok, _}, &1)) == 1
-    assert Enum.count(results, &(&1 == {:error, :conflict} or &1 == {:error, :already_claimed})) == 7
+
+    # SQLite runs the transactions one at a time, so the losers usually see the
+    # slot already taken. Overlapping transactions still report a conflict.
+    assert Enum.count(results, fn
+             {:error, reason} -> reason in [:conflict, :already_claimed, :not_due]
+             _ -> false
+           end) == 7
   end
 
   test "a missed window claims only the latest slot and records the skip" do
@@ -66,11 +76,13 @@ defmodule Handbeam.ScheduleTest do
     later = DateTime.add(due, 5 * 60, :second)
 
     assert {:ok, claim} = Store.claim(entry, later)
-    assert claim.missed == 5
+    # The first slot is one minute after creation, so 03:05 runs that minute
+    # and skips the four minutes before it.
+    assert claim.missed == 4
     assert claim.run.kind == "catch_up"
     assert claim.run.slot_at == DateTime.add(due, 5 * 60, :second)
     assert claim.skipped.status == "skipped"
-    assert claim.skipped.reason =~ "missed:5"
+    assert claim.skipped.reason =~ "missed:4"
   end
 
   test "pause, update, and a failed slot do not fire again" do
@@ -114,13 +126,20 @@ defmodule Handbeam.ScheduleTest do
     assert Clock.tick(entry.next_run_at) == :ok
     assert {:ok, disabled} = Store.get(entry.id)
     assert disabled.status == "disabled"
-    assert [%Run{status: "skipped", reason: "conversation_unavailable"}] = Store.recent_runs(entry.id)
+
+    assert [%Run{status: "skipped", reason: "conversation_unavailable"}] =
+             Store.recent_runs(entry.id)
   end
 
   test "a scheduled source cannot change a schedule and another conversation is hidden" do
     now = ~U[2026-07-18 07:00:00Z]
     {:ok, entry} = create_schedule(now)
-    context = %{conversation_id: entry.conversation_id, workspace_id: entry.workspace_id, source: :schedule}
+
+    context = %{
+      conversation_id: entry.conversation_id,
+      workspace_id: entry.workspace_id,
+      source: :schedule
+    }
 
     assert {:error, "schedule_changes_require_user_turn"} =
              ScheduleTool.execute(%{"action" => "pause", "id" => entry.id}, context)
@@ -161,6 +180,50 @@ defmodule Handbeam.ScheduleTest do
     assert halted.error =~ "computer"
   end
 
+  # Invariant: a terminal run_end may arrive while the SQL sandbox owner is
+  # dying. Recording that finish must not stop Schedule.Recorder. Three deaths
+  # inside the supervisor window take the whole application down, and the rest
+  # of the suite then fails because Repo, PubSub, and the journal are gone.
+  test "a sandbox owner exiting during finish leaves the recorder running" do
+    recorder = Process.whereis(Handbeam.Schedule.Recorder)
+    assert is_pid(recorder)
+    ref = Process.monitor(recorder)
+
+    :ok = Ecto.Adapters.SQL.Sandbox.mode(Repo, :manual)
+    parent = self()
+
+    owner =
+      spawn(fn ->
+        :ok = Ecto.Adapters.SQL.Sandbox.checkout(Repo)
+        :ok = Ecto.Adapters.SQL.Sandbox.mode(Repo, {:shared, self()})
+
+        Repo.transaction(fn ->
+          send(parent, :holding)
+
+          receive do
+            :release -> :ok
+          end
+        end)
+      end)
+
+    on_exit(fn ->
+      if Process.alive?(owner), do: send(owner, :release)
+      Ecto.Adapters.SQL.Sandbox.mode(Repo, :manual)
+    end)
+
+    assert_receive :holding, 1_000
+    await_recorder_checkout(recorder)
+
+    log =
+      capture_log(fn ->
+        Process.exit(owner, :kill)
+        refute_receive {:DOWN, ^ref, :process, ^recorder, _reason}, 200
+      end)
+
+    assert Process.whereis(Handbeam.Schedule.Recorder) == recorder
+    assert log =~ "Schedule.Recorder"
+  end
+
   test "three Asia/Shanghai days claim each daily and interval slot once" do
     start = ~U[2026-07-20 00:00:00Z]
 
@@ -181,7 +244,9 @@ defmodule Handbeam.ScheduleTest do
     end)
 
     daily_slots = Store.recent_runs(daily.id) |> Enum.map(& &1.slot_at) |> Enum.reject(&is_nil/1)
-    interval_slots = Store.recent_runs(interval.id) |> Enum.map(& &1.slot_at) |> Enum.reject(&is_nil/1)
+
+    interval_slots =
+      Store.recent_runs(interval.id) |> Enum.map(& &1.slot_at) |> Enum.reject(&is_nil/1)
 
     assert length(daily_slots) == 3
     assert daily_slots == Enum.uniq(daily_slots)
@@ -212,5 +277,43 @@ defmodule Handbeam.ScheduleTest do
     %{id: "call", name: "schedule", input: Map.put(input, "action", action)}
   end
 
-  defp unique_id(prefix), do: prefix <> "-" <> Integer.to_string(System.unique_integer([:positive]))
+  defp unique_id(prefix),
+    do: prefix <> "-" <> Integer.to_string(System.unique_integer([:positive]))
+
+  defp await_recorder_checkout(recorder) do
+    Phoenix.PubSub.broadcast(
+      Handbeam.PubSub,
+      "runtime:runs",
+      {:run_lifecycle, "recorder-owner-exit", :run_end,
+       %{status: "cancelled", run_id: Ecto.UUID.generate(), turns: 0}}
+    )
+
+    deadline = System.monotonic_time(:millisecond) + 1_000
+    await_recorder_checkout(recorder, deadline)
+  end
+
+  defp await_recorder_checkout(recorder, deadline) do
+    case Process.info(recorder, :current_stacktrace) do
+      {:current_stacktrace, stack} ->
+        if Enum.any?(stack, &checkout_frame?/1) do
+          :ok
+        else
+          if System.monotonic_time(:millisecond) >= deadline do
+            flunk("recorder did not block in checkout:\n#{Exception.format_stacktrace(stack)}")
+          else
+            receive do
+            after
+              5 -> await_recorder_checkout(recorder, deadline)
+            end
+          end
+        end
+
+      nil ->
+        flunk("recorder exited before checkout")
+    end
+  end
+
+  defp checkout_frame?({DBConnection.Holder, :checkout, _, _}), do: true
+  defp checkout_frame?({:gen, :do_call, _, _}), do: true
+  defp checkout_frame?(_frame), do: false
 end

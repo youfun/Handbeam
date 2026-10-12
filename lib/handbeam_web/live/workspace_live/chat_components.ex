@@ -697,6 +697,9 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
                     {entry["work_target"]}
                   </span>
                 </div>
+                <% install_prompt = browser_install_prompt(entry) %>
+                <% preview_card = preview_card(entry) %>
+                <% browser_takeover = browser_takeover_prompt(entry) %>
                 <div :if={!entry["work_group_complete"]} class="tool-work-body">
                   <div class="flex items-center gap-2">
                     <span class="tool-name text-xs">{tool_entry_name(entry)}</span>
@@ -720,87 +723,84 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
                     {tool_status_icon(tool_entry_status(entry))}
                     {tool_entry_status(entry)}
                   </div>
-                  <% install_prompt = browser_install_prompt(entry) %>
-                  <% preview_card = preview_card(entry) %>
-                  <% browser_takeover = browser_takeover_prompt(entry) %>
-                  <div
-                    :if={preview_card}
-                    id={"preview-card-#{entry["id"]}"}
-                    class="preview-card mt-2 rounded border border-edge px-2 py-2"
-                  >
-                    <p class="text-xs text-primary">{preview_card.title}</p>
-                    <p class="mt-1 text-xs text-tertiary">{preview_card.preview_id}</p>
-                    <div class="mt-2 flex items-center gap-2">
-                      <button
-                        id={"open-preview-#{entry["id"]}"}
-                        type="button"
-                        class="text-xs text-tertiary hover:text-primary"
-                        phx-click="open_preview"
-                        phx-value-id={preview_card.preview_id}
-                      >
-                        {gettext("打开预览")}
-                      </button>
-                      <button
-                        id={"open-preview-external-#{entry["id"]}"}
-                        type="button"
-                        class="text-xs text-tertiary hover:text-primary"
-                        phx-click="open_preview_external"
-                        phx-value-id={preview_card.preview_id}
-                      >
-                        {gettext("用浏览器打开")}
-                      </button>
-                    </div>
-                  </div>
-                  <div
-                    :if={browser_takeover}
-                    id={"browser-takeover-#{entry["id"]}"}
-                    class="browser-takeover-prompt mt-2 rounded border border-edge px-2 py-2"
-                  >
-                    <p class="text-xs text-primary">{gettext("接管浏览器")}</p>
-                    <p class="mt-1 text-xs text-tertiary">{browser_takeover.reason}</p>
+                </div>
+                <div
+                  :if={preview_card}
+                  id={"preview-card-#{entry["id"]}"}
+                  class="preview-card mt-2 rounded border border-edge px-2 py-2"
+                >
+                  <p class="text-xs text-primary">{preview_card.title}</p>
+                  <p class="mt-1 text-xs text-tertiary">{preview_card.preview_id}</p>
+                  <div class="mt-2 flex items-center gap-2">
                     <button
-                      id={"takeover-browser-#{entry["id"]}"}
+                      id={"open-preview-#{entry["id"]}"}
                       type="button"
-                      class="mt-2 text-xs text-tertiary hover:text-primary"
-                      phx-click="takeover_browser"
-                      phx-value-session={browser_takeover.session_id}
+                      class="text-xs text-tertiary hover:text-primary"
+                      phx-click="open_preview"
+                      phx-value-id={preview_card.preview_id}
                     >
-                      {gettext("接管浏览器")}
+                      {gettext("打开预览")}
+                    </button>
+                    <button
+                      id={"open-preview-external-#{entry["id"]}"}
+                      type="button"
+                      class="text-xs text-tertiary hover:text-primary"
+                      phx-click="open_preview_external"
+                      phx-value-id={preview_card.preview_id}
+                    >
+                      {gettext("用浏览器打开")}
                     </button>
                   </div>
-                  <div
-                    :if={install_prompt}
-                    id={"browser-install-#{entry["id"]}"}
-                    class="browser-install-prompt mt-2 rounded border border-edge px-2 py-2"
+                </div>
+                <div
+                  :if={browser_takeover}
+                  id={"browser-takeover-#{entry["id"]}"}
+                  class="browser-takeover-prompt mt-2 rounded border border-edge px-2 py-2"
+                >
+                  <p class="text-xs text-primary">{gettext("接管浏览器")}</p>
+                  <p class="mt-1 text-xs text-tertiary">{browser_takeover.reason}</p>
+                  <button
+                    id={"takeover-browser-#{entry["id"]}"}
+                    type="button"
+                    class="mt-2 text-xs text-tertiary hover:text-primary"
+                    phx-click="takeover_browser"
+                    phx-value-session={browser_takeover.session_id}
                   >
-                    <p class="text-xs text-primary">{install_prompt.title}</p>
-                    <div class="mt-1 flex items-center gap-2">
-                      <code
-                        id={"browser-install-cmd-#{entry["id"]}"}
-                        class="flex-1 text-xs font-mono break-all"
-                      >
-                        {install_prompt.command}
-                      </code>
-                      <button
-                        id={"browser-install-copy-#{entry["id"]}"}
-                        type="button"
-                        class="text-xs text-tertiary hover:text-primary"
-                        phx-hook="CopyText"
-                        data-copy={install_prompt.command}
-                        title="Copy install command"
-                        aria-label="Copy install command"
-                      >
-                        Copy
-                      </button>
-                    </div>
-                    <p class="mt-1 text-xs text-tertiary">{install_prompt.hint}</p>
+                    {gettext("接管浏览器")}
+                  </button>
+                </div>
+                <div
+                  :if={install_prompt}
+                  id={"browser-install-#{entry["id"]}"}
+                  class="browser-install-prompt mt-2 rounded border border-edge px-2 py-2"
+                >
+                  <p class="text-xs text-primary">{install_prompt.title}</p>
+                  <div class="mt-1 flex items-center gap-2">
+                    <code
+                      id={"browser-install-cmd-#{entry["id"]}"}
+                      class="flex-1 text-xs font-mono break-all"
+                    >
+                      {install_prompt.command}
+                    </code>
+                    <button
+                      id={"browser-install-copy-#{entry["id"]}"}
+                      type="button"
+                      class="text-xs text-tertiary hover:text-primary"
+                      phx-hook="CopyText"
+                      data-copy={install_prompt.command}
+                      title="Copy install command"
+                      aria-label="Copy install command"
+                    >
+                      Copy
+                    </button>
                   </div>
-                  <div
-                    :if={is_nil(install_prompt) and tool_entry_error(entry)}
-                    class="mt-1 text-error truncate"
-                  >
-                    {inspect(tool_entry_error(entry))}
-                  </div>
+                  <p class="mt-1 text-xs text-tertiary">{install_prompt.hint}</p>
+                </div>
+                <div
+                  :if={is_nil(install_prompt) and tool_entry_error(entry)}
+                  class="mt-1 text-error truncate"
+                >
+                  {inspect(tool_entry_error(entry))}
                 </div>
                 <.card
                   :if={FileChangeCard.change_entry?(entry)}

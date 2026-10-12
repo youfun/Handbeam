@@ -1487,6 +1487,7 @@ defmodule Handbeam.ConversationStore do
       "selected_reasoning_level" => string_value(conversation, "selected_reasoning_level"),
       "collaboration" => value(conversation, "collaboration"),
       "last_run_result" => value(conversation, "last_run_result"),
+      "loaded_tools" => value(conversation, "loaded_tools"),
       "archived_at" => string_value(conversation, "archived_at"),
       "pinned_at" => string_value(conversation, "pinned_at"),
       "created_at" => string_value(conversation, "created_at") || now,

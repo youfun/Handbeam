@@ -4,9 +4,14 @@ defmodule Handbeam.Schedule.Recorder do
 
   `:interrupted` is not terminal. A scheduled run should already have been
   turned into `:halted` before it could wait for a person.
+
+  A failed write is logged and dropped. This process stays up: it is a
+  permanent child, and a bookkeeping error must not stop the application.
   """
 
   use GenServer
+
+  require Logger
 
   alias Handbeam.PubSub.AgentEvent
   alias Handbeam.Schedule.Store
@@ -48,11 +53,26 @@ defmodule Handbeam.Schedule.Recorder do
   # A run_end is broadcast for every conversation. Only a scheduled run has a
   # matching schedule_runs row, and that table may not exist yet on a fresh
   # install. A missing row is not a failed finish.
+  #
+  # The checkout can also exit. In tests the SQL sandbox lends this process the
+  # caller's connection, and that owner can die mid-query. In production a
+  # locked database raises. Either one used to kill this permanent child, and
+  # three deaths inside the supervisor window stopped the whole application.
   defp finish_scheduled_run(run_id, status, payload) do
     Store.finish_by_run_id(run_id, map_status(status), reason(payload, status))
-  rescue
-    error in [Exqlite.Error] ->
-      if missing_schedule_runs?(error), do: :ok, else: reraise(error, __STACKTRACE__)
+  catch
+    :error, %Exqlite.Error{} = error ->
+      unless missing_schedule_runs?(error), do: log_finish_failure(:error, error)
+
+    kind, reason ->
+      log_finish_failure(kind, reason)
+  end
+
+  defp log_finish_failure(kind, reason) do
+    Logger.warning(
+      "[Schedule.Recorder] could not record run finish: " <>
+        Exception.format_banner(kind, reason)
+    )
   end
 
   defp missing_schedule_runs?(%{message: message}) when is_binary(message) do

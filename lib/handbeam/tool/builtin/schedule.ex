@@ -65,13 +65,19 @@ defmodule Handbeam.Tool.Builtin.Schedule do
 
   @impl true
   def execute(input, context) when is_map(input) and is_map(context) do
-    with :ok <- reject_unknown(input),
-         {:ok, action} <- action(input),
-         :ok <- write_allowed?(action, context),
-         {:ok, conversation_id, workspace_id} <- identity(context) do
-      perform(action, input, context, conversation_id, workspace_id)
-    else
-      {:error, reason} -> {:error, to_string(reason)}
+    result =
+      with :ok <- reject_unknown(input),
+           {:ok, action} <- action(input),
+           :ok <- write_allowed?(action, context),
+           {:ok, conversation_id, workspace_id} <- identity(context) do
+        perform(action, input, context, conversation_id, workspace_id)
+      else
+        {:error, reason} -> {:error, to_string(reason)}
+      end
+
+    case result do
+      {:error, reason} when is_atom(reason) -> {:error, Atom.to_string(reason)}
+      other -> other
     end
   end
 

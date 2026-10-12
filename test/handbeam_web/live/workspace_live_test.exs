@@ -1708,9 +1708,8 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       send(view.pid, {:agent_event, agent_event(:tool_end, %{tool: "read", duration_ms: 250}, 2)})
 
       rendered = render(view)
-      # Tool icon should be ✓ (done) and show duration
-      assert rendered =~ "✓"
-      assert rendered =~ "250ms"
+      assert rendered =~ "Explored 1 file"
+      assert rendered =~ "tool-work-collapsed"
     end
 
     test "tool_end event with error shows error status", %{conn: conn} do
@@ -1728,8 +1727,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       )
 
       rendered = render(view)
-      # Tool icon should be ✗ (error) and show error message
-      assert rendered =~ "✗"
+      assert rendered =~ "Ran 1 command"
       assert rendered =~ "Permission denied"
     end
 
@@ -3150,8 +3148,8 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       )
 
       rendered = render(view)
-      assert rendered =~ "300ms"
-      assert rendered =~ "✓"
+      assert rendered =~ "Ran 1 command"
+      assert rendered =~ "tool-work-collapsed"
     end
   end
 
@@ -3203,8 +3201,8 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         )
 
         rendered = render(view)
-        assert rendered =~ "✓"
-        assert rendered =~ "150ms"
+        assert rendered =~ "Explored 1 file"
+        assert rendered =~ "tool-work-collapsed"
 
         # 5. Assistant streams response
         send(
