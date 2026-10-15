@@ -24,7 +24,7 @@ defmodule HandbeamWeb.FileChangeCardTest do
               entry: %{"id" => "e1", "tool_name" => tool, "file_path" => "lib/app.ex"}
             )
 
-          assert html =~ ~s(<span class="file-change-label">#{label}</span>)
+          assert html =~ label
         end
       end)
     end

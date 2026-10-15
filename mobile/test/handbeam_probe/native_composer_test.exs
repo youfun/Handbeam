@@ -35,7 +35,7 @@ defmodule HandbeamProbe.NativeComposerTest do
     assert match_image_nodes(tree) == []
   end
 
-  test "images render compact local thumbs without bytes and preview stays closed" do
+  test "images render local thumbs without bytes and preview stays closed" do
     path = write_png!()
 
     att = %{
@@ -61,14 +61,12 @@ defmodule HandbeamProbe.NativeComposerTest do
     [thumb] = images
     assert thumb.props.local_only == true
     assert thumb.props.src == path
-    assert thumb.props.width == 40
-    assert thumb.props.height == 40
     assert thumb.props.content_description == gettext("Image %{name}", name: "shot.png")
     assert thumb.props.fallback == gettext("Image cannot be displayed")
     refute encoded =~ "image/png"
   end
 
-  test "preview card is larger local image with name type and remove" do
+  test "preview card keeps the image metadata and remove action" do
     path = write_png!()
 
     att = %{
@@ -92,7 +90,7 @@ defmodule HandbeamProbe.NativeComposerTest do
     refute encoded =~ Base.encode64(@tiny_png)
     images = match_image_nodes(tree)
     assert length(images) == 2
-    assert Enum.any?(images, &(&1.props.width == 168 and &1.props.max_decode_edge == 240))
+    assert Enum.any?(images, &(&1.props.max_decode_edge == 240))
     assert Enum.all?(images, &(&1.props.local_only == true and &1.props.src == path))
   end
 

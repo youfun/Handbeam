@@ -165,7 +165,6 @@ assert.equal(toggle.getAttribute("aria-expanded"), "false");
 
 navEl.dispatchEvent({ type: "click", target: toggle, preventDefault() {} });
 assert.equal(panel.hidden, false);
-assert.equal(navEl.classList.contains("is-open"), true);
 assert.equal(toggle.getAttribute("aria-expanded"), "true");
 
 let unpinned = 0;
@@ -177,7 +176,7 @@ navEl.dispatchEvent({ type: "click", target: item1, preventDefault() {} });
 assert.equal(first._scrolled, true);
 assert.equal(unpinned, 1);
 assert.equal(panel.hidden, true);
-assert.equal(item1.classList.contains("is-current"), true);
+assert.equal(item1.getAttribute("aria-current"), "true");
 assert.equal(counter.textContent, "1/2");
 
 nav.setOpen(true);

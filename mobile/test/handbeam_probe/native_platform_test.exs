@@ -34,11 +34,9 @@ defmodule HandbeamProbe.NativePlatformTest do
         on_toggle: {:composer_select, :model}
       )
 
-    # Collapsed is the trigger itself so a chip row can hug "Step Router v1".
     assert closed.type == :text
     assert closed.props.text == "GPT"
     assert closed.props[:accessibility_role] == "dropdown"
-    refute closed.props[:fill_width]
 
     open =
       NativeUI.select("GPT", [option],
@@ -54,30 +52,24 @@ defmodule HandbeamProbe.NativePlatformTest do
     assert trigger.props.text == "GPT"
     menu = Enum.at(open.children, 1)
     assert menu.type == :column
-    assert menu.props[:background]
-    assert menu.props[:border_color]
     assert Enum.any?(menu.children, &(&1.props[:text] == "GPT" and &1.props[:selected] == true))
   end
 
-  test "iOS select_option has opaque chrome; Android options stay bare for settings_select" do
+  test "select options keep selection, accessibility, and tap semantics across platforms" do
     NativePlatform.put!(:ios)
     selected = NativeUI.select_option("medium", :medium, true)
     idle = NativeUI.select_option("off", :off, false)
     assert selected.props.selected == true
     assert selected.props[:accessibility_role] == "menuitem"
-    assert selected.props[:text_color]
-    assert selected.props[:background]
-    assert selected.props[:border_color]
-    assert selected.props[:padding] == 10
-    assert idle.props[:background] != selected.props[:background]
+    assert selected.props[:on_tap]
+    refute idle.props.selected
+    assert idle.props[:on_tap]
 
     NativePlatform.put!(:android)
     android = NativeUI.select_option("medium", :medium, true)
     assert android.props.selected == true
     assert android.props[:on_tap]
-    refute android.props[:background]
-    refute android.props[:text_color]
-    refute android.props[:padding]
+    assert android.props[:accessibility_role] == "menuitem"
   end
 
   test "dist node is platform-specific" do

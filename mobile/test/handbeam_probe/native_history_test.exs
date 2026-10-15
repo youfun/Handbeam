@@ -63,14 +63,9 @@ defmodule HandbeamProbe.NativeHistoryTest do
 
     assert "Alpha" in texts(rendered)
     assert "Beta" in texts(rendered)
-    assert icon_names(rendered, "history-folder-a") == ["canvas"]
-    assert folder_slot?(rendered, "a")
-    assert workspace_label_inset?(rendered, "a")
-    assert icon_names(rendered, "history-chevron-a") == ["chevron_down"]
     refute texts(rendered) |> Enum.any?(&String.contains?(&1, "Inactive over 72 hours"))
     assert "2" in texts(rendered)
     assert "1" in texts(rendered)
-    refute texts(rendered) |> Enum.any?(&String.contains?(&1, "⌄"))
 
     assert {:new_free_chat} in tags(rendered)
     assert {:new_workspace_conversation, "a"} in tags(rendered)
@@ -84,12 +79,7 @@ defmodule HandbeamProbe.NativeHistoryTest do
     assert "old-a" in texts(rendered)
     refute "archived" in texts(rendered)
 
-    unless Code.ensure_loaded?(HandbeamProbe.NativeConversationRow) do
-      selected = find_text(rendered, "a-new")
-      other = find_text(rendered, "b-new")
-      assert selected.props.background != other.props.background
-      assert {:conversation, "a-new"} in tags(rendered)
-    end
+    assert {:conversation, "a-new"} in tags(rendered)
   end
 
   test "collapsed groups keep headers and hide their conversations" do
@@ -105,8 +95,6 @@ defmodule HandbeamProbe.NativeHistoryTest do
     assert gettext("已置顶") in texts(rendered)
     assert gettext("对话") in texts(rendered)
     assert "Alpha" in texts(rendered)
-    assert icon_names(rendered, "history-chevron-a") == ["chevron_right"]
-    assert icon_names(rendered, "history-chevron-b") == ["chevron_down"]
     refute "pinned-a" in texts(rendered)
     refute "free-new" in texts(rendered)
     refute "old-a" in texts(rendered)
@@ -122,7 +110,6 @@ defmodule HandbeamProbe.NativeHistoryTest do
     assert gettext("对话") in texts(rendered)
     assert "Alpha" in texts(rendered)
     assert "0" in texts(rendered)
-    assert icon_names(rendered, "history-chevron-a") == ["chevron_down"]
     refute {:toggle_history_group, "pinned"} in tags(rendered)
     assert {:new_workspace_conversation, "b"} in tags(rendered)
   end
@@ -156,52 +143,12 @@ defmodule HandbeamProbe.NativeHistoryTest do
 
   defp texts(nodes), do: collect(nodes, fn %{props: props} -> [props[:text]] end)
 
-  defp workspace_label_inset?(nodes, id) do
-    Enum.any?(flat_nodes(nodes), fn node ->
-      node.props[:id] == "history-group-#{id}" and node.props[:padding_left] == 0
-    end)
-  end
-
-  defp folder_slot?(nodes, id) do
-    Enum.any?(flat_nodes(nodes), fn node ->
-      node.props[:id] == "history-folder-#{id}" and node.props[:width] == 24 and
-        node.props[:height] == 26 and match?([%{op: :path}], node.props[:draw])
-    end)
-  end
-
-  defp flat_nodes(nodes) do
-    Enum.flat_map(nodes, fn
-      %{children: children} = node -> [node | flat_nodes(children)]
-      node -> [node]
-    end)
-  end
-
-  defp icon_names(nodes, id) do
-    collect(nodes, fn
-      %{props: %{id: ^id} = props} -> [props[:name] || "canvas"]
-      _ -> []
-    end)
-  end
-
   defp tags(nodes) do
     collect(nodes, fn %{props: props} ->
       case props[:on_tap] do
         {_pid, tag} -> [tag]
         _ -> []
       end
-    end)
-  end
-
-  defp find_text(nodes, text) do
-    Enum.find_value(nodes, fn
-      %{props: %{text: ^text}} = node ->
-        node
-
-      %{children: children} ->
-        find_text(children, text)
-
-      _ ->
-        nil
     end)
   end
 

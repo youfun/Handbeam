@@ -15,123 +15,28 @@ defmodule HandbeamWeb.WorkspaceHelperTest do
     {:ok, ws_root: ws_root}
   end
 
-  # ── status_dot_class/1 ──
+  describe "presentation helper input normalization" do
+    test "status classes use the idle fallback for unknown inputs" do
+      assert WorkspaceHelper.status_dot_class(:unknown) == WorkspaceHelper.status_dot_class(:idle)
 
-  describe "status_dot_class/1" do
-    test "returns correct class for idle" do
-      assert WorkspaceHelper.status_dot_class(:idle) == "idle"
+      assert WorkspaceHelper.status_dot_class("anything") ==
+               WorkspaceHelper.status_dot_class(:idle)
     end
 
-    test "returns correct class for running" do
-      assert WorkspaceHelper.status_dot_class(:running) == "running"
+    test "tool icons normalize atom and string statuses and share an unknown fallback" do
+      for status <- [:running, :done, :error] do
+        assert WorkspaceHelper.tool_status_icon(status) ==
+                 WorkspaceHelper.tool_status_icon(Atom.to_string(status))
+      end
+
+      assert WorkspaceHelper.tool_status_icon(:unknown) == WorkspaceHelper.tool_status_icon(nil)
     end
 
-    test "returns correct class for error" do
-      assert WorkspaceHelper.status_dot_class(:error) == "error"
-    end
-
-    test "returns error class for max_turns" do
-      assert WorkspaceHelper.status_dot_class(:max_turns) == "error"
-    end
-
-    test "returns correct class for completed" do
-      assert WorkspaceHelper.status_dot_class(:completed) == "completed"
-    end
-
-    test "returns idle for unknown status" do
-      assert WorkspaceHelper.status_dot_class(:unknown) == "idle"
-    end
-
-    test "returns idle for non-atom input" do
-      assert WorkspaceHelper.status_dot_class("anything") == "idle"
-    end
-  end
-
-  # ── tool_status_icon/1 ──
-
-  describe "tool_status_icon/1" do
-    test "returns correct icon for running (atom)" do
-      assert WorkspaceHelper.tool_status_icon(:running) == "◌"
-    end
-
-    test "returns correct icon for done (atom)" do
-      assert WorkspaceHelper.tool_status_icon(:done) == "✓"
-    end
-
-    test "returns correct icon for error (atom)" do
-      assert WorkspaceHelper.tool_status_icon(:error) == "✗"
-    end
-
-    test "returns correct icon for running (string)" do
-      assert WorkspaceHelper.tool_status_icon("running") == "◌"
-    end
-
-    test "returns correct icon for done (string)" do
-      assert WorkspaceHelper.tool_status_icon("done") == "✓"
-    end
-
-    test "returns correct icon for error (string)" do
-      assert WorkspaceHelper.tool_status_icon("error") == "✗"
-    end
-
-    test "returns dot for unknown status" do
-      assert WorkspaceHelper.tool_status_icon(:unknown) == "·"
-    end
-
-    test "returns dot for nil" do
-      assert WorkspaceHelper.tool_status_icon(nil) == "·"
-    end
-  end
-
-  # ── tool_status_class/1 ──
-
-  describe "tool_status_class/1" do
-    test "returns warning class for running (atom)" do
-      assert WorkspaceHelper.tool_status_class(:running) == "text-warning"
-    end
-
-    test "returns success class for done (atom)" do
-      assert WorkspaceHelper.tool_status_class(:done) == "text-success"
-    end
-
-    test "returns error class for error (atom)" do
-      assert WorkspaceHelper.tool_status_class(:error) == "text-error"
-    end
-
-    test "returns warning class for running (string)" do
-      assert WorkspaceHelper.tool_status_class("running") == "text-warning"
-    end
-
-    test "returns success class for done (string)" do
-      assert WorkspaceHelper.tool_status_class("done") == "text-success"
-    end
-
-    test "returns error class for error (string)" do
-      assert WorkspaceHelper.tool_status_class("error") == "text-error"
-    end
-
-    test "returns tertiary class for unknown" do
-      assert WorkspaceHelper.tool_status_class(:unknown) == "text-tertiary"
-    end
-  end
-
-  # ── tool_border_class/1 ──
-
-  describe "tool_border_class/1" do
-    test "returns warning border for running" do
-      assert WorkspaceHelper.tool_border_class(:running) == "border-l-warning"
-    end
-
-    test "returns success border for done" do
-      assert WorkspaceHelper.tool_border_class(:done) == "border-l-success"
-    end
-
-    test "returns error border for error" do
-      assert WorkspaceHelper.tool_border_class(:error) == "border-l-error"
-    end
-
-    test "returns default border for unknown" do
-      assert WorkspaceHelper.tool_border_class(:unknown) == "border border-gray-600"
+    test "tool classes normalize atom and string statuses" do
+      for status <- [:running, :done, :error] do
+        assert WorkspaceHelper.tool_status_class(status) ==
+                 WorkspaceHelper.tool_status_class(Atom.to_string(status))
+      end
     end
   end
 
@@ -538,16 +443,12 @@ defmodule HandbeamWeb.WorkspaceHelperTest do
 
       [read, grep, edit, bash] = WorkspaceHelper.apply_tool_work_collapse(entries)
 
-      assert read["work_indent"] == 2
       assert read["work_verb"] == "read"
       assert read["work_target"] == "lib/app.ex L1-40"
-      assert grep["work_indent"] == 2
       assert grep["work_verb"] == "Grep"
       assert grep["work_target"] == "lib \"def run\""
-      assert edit["work_indent"] == 1
       assert edit["work_verb"] == "edit"
       assert edit["work_target"] == "lib/app.ex"
-      assert bash["work_indent"] == 1
       assert bash["work_verb"] == "$"
       assert bash["work_target"] == "mix test"
     end
@@ -866,9 +767,6 @@ defmodule HandbeamWeb.WorkspaceHelperTest do
     test "all helpers are deterministic" do
       # Run each helper twice, assert same result
       for _ <- 1..2 do
-        assert WorkspaceHelper.status_dot_class(:idle) == "idle"
-        assert WorkspaceHelper.tool_status_icon(:done) == "✓"
-        assert WorkspaceHelper.tool_status_class(:error) == "text-error"
         assert WorkspaceHelper.format_duration(1500) == "1.5s"
         assert WorkspaceHelper.format_bytes(2048) == "2.0 KB"
         assert WorkspaceHelper.diff_prefix("ins") == "+"

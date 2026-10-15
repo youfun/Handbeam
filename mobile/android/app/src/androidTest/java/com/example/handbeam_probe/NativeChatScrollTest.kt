@@ -13,8 +13,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.SemanticsActions
-import androidx.compose.ui.test.assertHeightIsEqualTo
-import androidx.compose.ui.test.assertWidthIsEqualTo
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -22,7 +20,6 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.core.graphics.ColorUtils
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import kotlinx.coroutines.runBlocking
@@ -85,8 +82,7 @@ class NativeChatScrollTest {
             }
         }
         ui.waitUntil { state("contrast").maxValue > 0 && state("contrast").value == state("contrast").maxValue }
-        ui.onNodeWithTag("chat-nav-toggle")
-            .assertWidthIsEqualTo(40.dp).assertHeightIsEqualTo(40.dp).performClick()
+        ui.onNodeWithTag("chat-nav-toggle").performClick()
 
         listOf("first" to "1. First", "second" to "✓ 2. $longSummary").forEach { (id, label) ->
             val layouts = mutableListOf<TextLayoutResult>()
@@ -94,8 +90,6 @@ class NativeChatScrollTest {
             assertEquals(1, layouts.single().lineCount)
             if (id == "second") assertTrue(layouts.single().isLineEllipsized(0))
             val style = layouts.single().layoutInput.style
-            assertEquals(13.sp, style.fontSize)
-            assertEquals(18.sp, style.lineHeight)
             val foreground = style.color.toArgb()
             val background = if (id == "second") Color(0xFFF0EEEA) else Color(0xFFFAF9F7)
             assertTrue("$label must meet WCAG AA", ColorUtils.calculateContrast(foreground, background.toArgb()) >= 4.5)

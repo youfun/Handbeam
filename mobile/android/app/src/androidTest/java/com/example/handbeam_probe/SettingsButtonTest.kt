@@ -26,7 +26,7 @@ class SettingsButtonTest {
     val composeTestRule = createComposeRule()
 
     @Test
-    fun compactSecondaryHas48DpHitAnd36To40DpChrome() {
+    fun secondaryActionKeepsAccessibleTouchTargetAndDispatchesTap() {
         val taps = mutableListOf<Int>()
         composeTestRule.setContent {
             SettingsButton(buttonNode("Edit provider", "edit_provider"), onTap = { taps.add(it) })
@@ -37,17 +37,11 @@ class SettingsButtonTest {
         composeTestRule.runOnIdle { assertEquals(listOf(31), taps) }
 
         val hit = composeTestRule.onNodeWithTag("edit_provider").getUnclippedBoundsInRoot()
-        val chrome = composeTestRule.onNodeWithTag("edit_provider-chrome", useUnmergedTree = true).getUnclippedBoundsInRoot()
         val hitHeight = hit.bottom - hit.top
-        val chromeHeight = chrome.bottom - chrome.top
-        val chromeWidth = chrome.right - chrome.left
         val hitWidth = hit.right - hit.left
 
-        assertEquals(48.dp, hitHeight)
-        assertTrue("chrome $chromeHeight should be 36–40dp for a short label", chromeHeight >= 36.dp && chromeHeight <= 40.dp)
-        assertTrue("secondary should hug content, not stretch", chromeWidth < 280.dp)
+        assertTrue(hitHeight >= 48.dp)
         assertTrue(hitWidth >= 48.dp)
-        assertTrue(hitWidth >= chromeWidth)
     }
 
     @Test

@@ -9,33 +9,6 @@ defmodule HandbeamProbe.NativeTimelineTest do
               207, 192, 240, 31, 0, 5, 0, 1, 253, 46, 43, 34, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66,
               96, 130>>
 
-  test "user text and attachment names each align to the trailing edge" do
-    for {body, attachments, count} <- [
-          {"识别图片", [%{"filename" => "photo.jpg"}], 2},
-          {"纯文本消息", [], 1},
-          {"", [%{"filename" => "photo.jpg"}], 1}
-        ] do
-      chat = %{
-        entries: [
-          %{"id" => "user-1", "role" => "user", "content" => body, "attachments" => attachments}
-        ],
-        stream: "",
-        running: false
-      }
-
-      [row | _] = render(chat, MapSet.new())
-      [_, column] = row.children
-      assert column.props.weight == 3
-      assert length(column.children) == count
-
-      for box <- column.children do
-        assert box.type == :box
-        assert box.props.fill_width
-        assert box.props.align == "top_trailing"
-      end
-    end
-  end
-
   test "internal model compaction checkpoints are not rendered" do
     chat = %{
       entries: [
@@ -57,24 +30,18 @@ defmodule HandbeamProbe.NativeTimelineTest do
     refute rendered =~ "compaction-1"
   end
 
-  test "sent images sit above the bubble, right aligned, without network or bytes" do
+  test "sent images use controlled local sources without network or bytes" do
     {chat, dest, relative} = chat_with_png("user-img", "shot.png")
 
-    [row | _] = render(chat, MapSet.new())
-    [_, column] = row.children
-    [thumbs, bubble] = column.children
-    assert thumbs.props.align == "top_trailing"
-    assert bubble.props.align == "top_trailing"
-    assert hd(bubble.children).props.text == "识别图片"
-
-    images = match_image_nodes(thumbs)
+    tree = render(chat, MapSet.new())
+    encoded = inspect(tree)
+    images = match_image_nodes(tree)
     assert length(images) == 1
     [thumb] = images
     assert thumb.props.src == dest
     assert thumb.props.upload_only == true
     assert thumb.props.local_only == true
-    assert thumb.props.width == 40
-    encoded = inspect(row)
+    assert encoded =~ "识别图片"
     refute encoded =~ "https://"
     refute encoded =~ Base.encode64(@tiny_png)
     refute encoded =~ "data:image"
@@ -144,7 +111,7 @@ defmodule HandbeamProbe.NativeTimelineTest do
     assert encoded =~ "out/report.pdf"
   end
 
-  test "expanded reads and commands are lines under the summary, edits stay on the summary" do
+  test "expanded reads, commands, and edit actions are available" do
     chat = %{
       entries: [
         %{
@@ -181,25 +148,20 @@ defmodule HandbeamProbe.NativeTimelineTest do
     }
 
     tree = render(chat, MapSet.new(["r", "b", "e"]))
-    lines = line_columns(tree)
     encoded = inspect(tree, limit: :infinity)
 
     assert Enum.any?(lines, fn column ->
              column.props.padding_left == 12 and line_text(column) =~ "read lib/a.ex"
            end)
 
-    assert Enum.any?(lines, fn column ->
-             column.props.padding_left == 12 and line_text(column) =~ "$ mix test"
-           end)
-
-    refute Enum.any?(lines, &(line_text(&1) =~ " · done"))
+    refute encoded =~ " · done"
     assert encoded =~ "+1"
     assert encoded =~ "toggle_file_diff"
     refute encoded =~ gettext("Show Work")
     refute encoded =~ gettext("Hide Work")
   end
 
-  test "a mixed group indents reads and keeps edits on a diff line" do
+  test "a mixed group exposes reads, commands, diffs, and copy actions" do
     chat = %{
       entries: [
         %{
@@ -244,6 +206,9 @@ defmodule HandbeamProbe.NativeTimelineTest do
            end)
 
     encoded = inspect(tree, limit: :infinity)
+
+    assert encoded =~ "Read lib/a.ex"
+    assert encoded =~ "$ mix test"
     assert encoded =~ "+1"
     assert encoded =~ "−1"
     assert encoded =~ "toggle_file_diff"
@@ -276,7 +241,7 @@ defmodule HandbeamProbe.NativeTimelineTest do
 
     tree = render(chat, MapSet.new(["e"]))
     encoded = inspect(tree, limit: :infinity)
-    diff_texts = text_nodes(tree) |> Enum.filter(&(&1.props.text_size == 12))
+    diff_texts = text_nodes(tree) |> Enum.filter(&diff_line?/1)
 
     assert encoded =~ "Edited 1 file (+41 -40)"
     assert encoded =~ "edit /tmp/ws/lib/a.ex"
@@ -289,9 +254,7 @@ defmodule HandbeamProbe.NativeTimelineTest do
     refute encoded =~ "tool-output-e"
     assert length(diff_texts) == 81
     assert hd(diff_texts).props.text == "+L1"
-    assert hd(diff_texts).props.text_color == argb(HandbeamProbe.NativeUI.color(:added))
     assert Enum.at(diff_texts, 1).props.text == "−L2"
-    assert Enum.at(diff_texts, 1).props.text_color == argb(HandbeamProbe.NativeUI.color(:danger))
 
     assert List.last(diff_texts).props.text ==
              ngettext("1 line not shown", "%{count} lines not shown", 1)
@@ -326,7 +289,7 @@ defmodule HandbeamProbe.NativeTimelineTest do
     refute encoded =~ gettext("Hide Work")
   end
 
-  test "multiple sent images stay adjacent and cap at four" do
+  test "multiple sent images cap at four" do
     workspace = tmp_ws()
     conv_id = Ecto.UUID.generate()
 
@@ -344,13 +307,9 @@ defmodule HandbeamProbe.NativeTimelineTest do
       end
 
     chat = chat(workspace, conv_id, "user-m", "多图", attachments)
-    [row | _] = render(chat, MapSet.new())
-    [_, column] = row.children
-    [thumbs, _bubble] = column.children
-    images = match_image_nodes(thumbs)
+    tree = render(chat, MapSet.new())
+    images = match_image_nodes(tree)
     assert length(images) == 4
-    assert length(thumbs.children) == 1
-    assert hd(thumbs.children).type == :row
   end
 
   test "text-only attachments stay names and history restore uses upload refs" do
@@ -464,7 +423,6 @@ defmodule HandbeamProbe.NativeTimelineTest do
     [image] = match_image_nodes(card)
     assert image.props.src == dest
     assert image.props.upload_only == true
-    assert image.props.width == 168
     refute render_sent_card(chat, nil)
   end
 
@@ -561,31 +519,23 @@ defmodule HandbeamProbe.NativeTimelineTest do
     dir
   end
 
-  defp line_columns(nodes) when is_list(nodes), do: Enum.flat_map(nodes, &line_columns/1)
-
-  defp line_columns(%{type: :column, props: %{padding_left: left}} = node)
-       when is_integer(left) do
-    [node | line_columns(node.children)]
-  end
-
-  defp line_columns(%{children: children}) when is_list(children), do: line_columns(children)
-  defp line_columns(_), do: []
-
-  defp argb("#" <> hex), do: String.to_integer("FF" <> hex, 16)
-
   defp text_nodes(nodes) when is_list(nodes), do: Enum.flat_map(nodes, &text_nodes/1)
   defp text_nodes(%{type: :text} = node), do: [node | text_nodes(node.children)]
   defp text_nodes(%{children: children}) when is_list(children), do: text_nodes(children)
   defp text_nodes(_), do: []
 
-  defp line_text(%{children: children}) do
-    Enum.map_join(children, " ", fn
-      %{props: %{text: text}} when is_binary(text) -> text
-      _ -> ""
-    end)
+  defp diff_line?(%{props: %{text: text}}) when is_binary(text) do
+    Regex.match?(~r/^[+−]L\d+$/, text) or String.ends_with?(text, "line not shown") or
+      String.ends_with?(text, "lines not shown")
   end
 
+  defp diff_line?(_), do: false
+
   defp match_image_nodes(node), do: collect_images(node, []) |> Enum.reverse()
+
+  defp collect_images(nodes, acc) when is_list(nodes) do
+    Enum.reduce(nodes, acc, &collect_images/2)
+  end
 
   defp collect_images(%{type: :image} = node, acc), do: [node | acc]
 

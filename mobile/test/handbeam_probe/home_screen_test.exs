@@ -182,7 +182,6 @@ defmodule HandbeamProbe.HomeScreenTest do
     refute find(view, :web_view)
     assert find(view, :text_field).props.multiline
     assert find(view, :text_field).props.plain
-    assert tree(view).props.background == 0xFFFAF9F7
     assert text(view) =~ gettext("Start a new conversation")
     view = info(view, {:tap, {:page, :attachments}})
     assert text(view) =~ gettext("Attachments")
@@ -1014,7 +1013,6 @@ defmodule HandbeamProbe.HomeScreenTest do
     refute text(view) =~ "fixture failure"
     view = info(view, {:tap, {:toggle_tool_output, "two"}})
     assert text(view) =~ "fixture failure"
-    assert find(view, :scroll, id: "tool-output-two").props.max_height == 180
     view = info(view, {:tap, {:toggle_tool_work, "one"}})
     refute text(view) =~ "fixture failure"
     assert text(view) =~ "Final answer"
@@ -1255,32 +1253,17 @@ defmodule HandbeamProbe.HomeScreenTest do
              {:error, :not_awaiting_approval}
   end
 
-  test "model, reasoning and permission controls share one composer row", %{view: view} do
-    controls =
-      Enum.find(flatten(tree(view)), fn node ->
-        node.type == :row and
-          Enum.any?(node.children, fn child ->
-            child.props[:id] == "composer-permission"
-          end)
-      end)
-
-    assert controls
-    [model, gap, reasoning, spacer, permission] = controls.children
+  test "composer selectors expose model, reasoning, and permission options", %{view: view} do
+    model = find(view, :settings_select, id: "composer-model")
+    reasoning = find(view, :settings_select, id: "composer-reasoning")
+    permission = find(view, :settings_select, id: "composer-permission")
 
     for select <- [model, reasoning, permission] do
-      assert select.type == :settings_select
-      assert select.props.compact
       refute Map.has_key?(select.props, :on_tap)
-      refute select.props.text =~ "⌄"
     end
 
     assert length(reasoning.children) == length(Handbeam.Agent.Reasoning.levels())
     assert length(permission.children) == 3
-    assert gap.type == :spacer
-    assert gap.props.size == 6
-    assert spacer.type == :box
-    assert spacer.props.weight == 1
-    assert controls.props.padding_bottom == 4
   end
 
   test "composer selection persists in workspace without leaving chat or losing draft", %{

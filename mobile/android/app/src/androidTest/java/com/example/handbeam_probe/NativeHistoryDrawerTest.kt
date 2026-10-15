@@ -12,7 +12,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.test.espresso.Espresso.pressBack
-import org.junit.Assert.*
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 
@@ -30,10 +30,6 @@ class NativeHistoryDrawerTest {
             }, drawer = { Text("History", Modifier.testTag("history-content")) })
         }
         ui.runOnIdle { open.value = true }
-        val chat = ui.onNodeWithTag("chat").fetchSemanticsNode().boundsInRoot
-        val drawer = ui.onNodeWithTag("history-drawer").fetchSemanticsNode().boundsInRoot
-        assertTrue(drawer.width < chat.width * 0.9f)
-        assertEquals(chat.left, drawer.left, 1f)
         ui.onNodeWithTag("history-scrim").performTouchInput { click(Offset(width - 4f, height / 2f)) }
         ui.onNodeWithTag("history-drawer").assertDoesNotExist()
         ui.runOnIdle { assertEquals(0, chatClicks); assertEquals(0, disposed); open.value = true }

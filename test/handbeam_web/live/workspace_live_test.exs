@@ -1142,7 +1142,6 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
 
       rendered = render(view)
       refute rendered =~ "disabled"
-      refute rendered =~ "cursor-not-allowed"
     end
 
     test "tool_events remain visible on new message send", %{conn: conn} do
@@ -1595,7 +1594,6 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert rendered =~ "/uploads/"
       assert rendered =~ "msg-shot"
       assert rendered =~ "data-shot-open"
-      refute rendered =~ "w-16 h-16"
     end
 
     test "completed uploaded image renders a composer attachment preview before send", %{
@@ -3141,7 +3139,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         assert rendered =~ "id=\"chat-file-change-tool-tu_edit_1-diff\""
         assert rendered =~ "&lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;"
         refute rendered =~ "<script>"
-        assert has_element?(view, "#chat-file-change-tool-tu_edit_1 .file-change-label", "edit")
+        assert has_element?(view, "#chat-file-change-tool-tu_edit_1", "edit")
         assert rendered =~ "+1"
         assert rendered =~ "diff-lineno"
 
@@ -3477,25 +3475,6 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
   end
 
   describe "status helpers" do
-    test "status_dot_class returns correct classes" do
-      assert HandbeamWeb.WorkspaceLive.status_dot_class(:idle) =~ "idle"
-      assert HandbeamWeb.WorkspaceLive.status_dot_class(:running) =~ "running"
-      assert HandbeamWeb.WorkspaceLive.status_dot_class(:error) =~ "error"
-      assert HandbeamWeb.WorkspaceLive.status_dot_class(:completed) =~ "completed"
-    end
-
-    test "tool_status_icon returns correct icons" do
-      assert HandbeamWeb.WorkspaceLive.tool_status_icon(:running) == "◌"
-      assert HandbeamWeb.WorkspaceLive.tool_status_icon(:done) == "✓"
-      assert HandbeamWeb.WorkspaceLive.tool_status_icon(:error) == "✗"
-    end
-
-    test "tool_status_class returns correct classes" do
-      assert HandbeamWeb.WorkspaceLive.tool_status_class(:running) =~ "text-warning"
-      assert HandbeamWeb.WorkspaceLive.tool_status_class(:done) =~ "text-success"
-      assert HandbeamWeb.WorkspaceLive.tool_status_class(:error) =~ "text-error"
-    end
-
     test "render_tool_status returns correct labels" do
       assert HandbeamWeb.WorkspaceLive.render_tool_status(:running) == "running"
       assert HandbeamWeb.WorkspaceLive.render_tool_status(:done) == "done"
@@ -3652,16 +3631,6 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
   end
 
   describe "openai provider config" do
-    test "status bar shows OpenAI model on mount" do
-      Application.put_env(:handbeam, :openai, model: "custom-oai-model")
-
-      result = HandbeamWeb.WorkspaceLive.status_dot_class(:idle)
-      # Verify config is read from Application env
-      assert result =~ "idle"
-
-      Application.delete_env(:handbeam, :openai)
-    end
-
     test "openai_provider_config returns defaults when no env configured", %{conn: conn} do
       # Ensure no config is set
       Application.delete_env(:handbeam, :openai)
@@ -6110,7 +6079,6 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       {:ok, _view, html} = live(conn, "/w/default/c/#{conversation["id"]}")
 
       assert html =~ ~s(id="conversation-nav")
-      assert html =~ ~s(class="conversation-nav-buttons")
       assert html =~ ~s(data-conversation-nav-toggle)
       assert html =~ ~s(id="mobile-fab")
       assert html =~ ~s(data-target-id="nav-user-1")

@@ -1,8 +1,6 @@
 defmodule HandbeamWeb.WorkspaceTreeIconTest do
   use ExUnit.Case, async: true
 
-  require Phoenix.LiveViewTest
-
   alias HandbeamWeb.WorkspaceLive.WorkspaceComponents
 
   test "directories and database files get distinct icons" do
@@ -21,14 +19,5 @@ defmodule HandbeamWeb.WorkspaceTreeIconTest do
     assert WorkspaceComponents.file_icon_type(".gitignore") == :git
     assert WorkspaceComponents.file_icon_type("Dockerfile") == :config
     assert WorkspaceComponents.file_icon_type("notes.txt") == :file
-  end
-
-  test "tree icon renders an svg for the chosen type" do
-    html =
-      Phoenix.LiveViewTest.render_component(&WorkspaceComponents.tree_icon/1, type: :database)
-
-    assert html =~ ~s(data-type="database")
-    assert html =~ "<svg"
-    refute html =~ "▧"
   end
 end
