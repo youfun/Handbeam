@@ -177,6 +177,67 @@ defmodule Handbeam.PubSub.SessionTest do
       assert meta.status == :active
       assert meta.created_at != nil
     end
+
+    test "recovery snapshot returns only current controls and pending messages" do
+      sid = "test-#{System.unique_integer([:positive])}"
+      run_id = "run-current"
+      {:ok, _pid} = Session.start_link(session_id: sid)
+      {:ok, queue} = Handbeam.Agent.CandidateQueue.start_link(session_id: sid, owner: self())
+      :ok = Session.attach_run(sid, self(), queue, run_id: run_id)
+
+      Session.broadcast_event(sid, :run_start, %{run_id: run_id})
+
+      Session.broadcast_event(sid, :tool_start, %{
+        run_id: run_id,
+        tool: "read",
+        tool_use_id: "completed"
+      })
+
+      Session.broadcast_event(sid, :tool_end, %{
+        run_id: run_id,
+        tool: "read",
+        tool_use_id: "completed",
+        output: String.duplicate("large historical output", 1_000)
+      })
+
+      Session.broadcast_event(sid, :provider_items, %{
+        run_id: run_id,
+        items: [String.duplicate("provider history", 1_000)]
+      })
+
+      Session.broadcast_event(sid, :tool_start, %{
+        run_id: run_id,
+        tool: "bash",
+        tool_use_id: "active"
+      })
+
+      Session.broadcast_event(sid, :tool_approval_requested, %{
+        run_id: run_id,
+        action_requests: [%{tool_call_id: "approval", tool_name: "edit"}]
+      })
+
+      Session.broadcast_event(sid, :candidate_message_injected, %{
+        run_id: run_id,
+        message_id: "queued",
+        content: "next instruction",
+        deliver_as: :steer
+      })
+
+      snapshot = Session.recovery_snapshot(sid)
+
+      refute Map.has_key?(snapshot, :events)
+
+      assert Enum.map(snapshot.control_events, & &1.kind) == [
+               :run_start,
+               :tool_start,
+               :tool_approval_requested
+             ]
+
+      assert Enum.map(snapshot.pending_events, & &1.kind) == [:candidate_message_injected]
+      refute inspect(snapshot) =~ "large historical output"
+      refute inspect(snapshot) =~ "provider history"
+      assert Enum.at(snapshot.control_events, 1).payload.tool_use_id == "active"
+    end
   end
 
   describe "update_meta/3" do

@@ -615,7 +615,7 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
         pending =
           Handbeam.Agent.PendingMessages.replay(
             socket.assigns.pending_messages || %{},
-            snapshot.control_events,
+            snapshot.pending_events,
             if(Map.get(socket.assigns, :session_epoch) == snapshot.epoch,
               do: Map.get(socket.assigns, :session_seq, 0),
               else: 0
@@ -647,7 +647,6 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
         socket =
           if running? do
             snapshot.control_events
-            |> restoration_events(meta[:run_id])
             |> Enum.reject(&(&1.kind in [:message_delta, :thinking_delta]))
             |> Enum.reduce(socket, &handle_agent_event/2)
           else
@@ -679,72 +678,6 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
     end
   catch
     :exit, _ -> []
-  end
-
-  defp restoration_events(events, run_id) do
-    events
-    |> Enum.filter(&(payload_value(&1.payload, :run_id) == run_id))
-    |> Enum.sort_by(& &1.seq)
-    |> Enum.reduce(empty_restoration(), &reduce_restoration_event/2)
-    |> restoration_event_list()
-  end
-
-  defp empty_restoration do
-    %{
-      run_start: nil,
-      run_resumed: nil,
-      turn_start: nil,
-      usage_updated: nil,
-      active_tools: %{},
-      pending_approval: nil
-    }
-  end
-
-  defp reduce_restoration_event(%{kind: :run_start} = event, _state),
-    do: %{empty_restoration() | run_start: event}
-
-  defp reduce_restoration_event(%{kind: :run_resumed} = event, state),
-    do: %{state | run_resumed: event, pending_approval: nil}
-
-  defp reduce_restoration_event(%{kind: :turn_start} = event, state),
-    do: %{state | turn_start: event}
-
-  defp reduce_restoration_event(%{kind: :usage_updated} = event, state),
-    do: %{state | usage_updated: event}
-
-  defp reduce_restoration_event(%{kind: :tool_start} = event, state) do
-    put_in(state, [:active_tools, restoration_tool_id(event)], event)
-  end
-
-  defp reduce_restoration_event(%{kind: :tool_end} = event, state) do
-    update_in(state.active_tools, &Map.delete(&1, restoration_tool_id(event)))
-  end
-
-  defp reduce_restoration_event(%{kind: :tool_approval_requested} = event, state),
-    do: %{state | pending_approval: event}
-
-  defp reduce_restoration_event(_event, state), do: state
-
-  defp restoration_tool_id(event) do
-    payload_value(event.payload, :tool_use_id) ||
-      payload_value(event.payload, :tool) ||
-      payload_value(event.payload, :name) ||
-      event.seq
-  end
-
-  defp restoration_event_list(state) do
-    [
-      state.run_start,
-      state.run_resumed,
-      state.turn_start,
-      state.usage_updated,
-      Map.values(state.active_tools),
-      state.pending_approval
-    ]
-    |> List.flatten()
-    |> Enum.reject(&is_nil/1)
-    |> Enum.uniq_by(& &1.seq)
-    |> Enum.sort_by(& &1.seq)
   end
 
   def maybe_skip_message_delta_events(events, true), do: events

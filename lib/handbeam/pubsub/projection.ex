@@ -41,7 +41,7 @@ defmodule Handbeam.PubSub.Projection do
   @doc "Read snapshot before durable history; callers commit neither on history failure."
   def recover(id, count \\ 100) do
     if Session.whereis(id) do
-      snapshot = Session.snapshot(id)
+      snapshot = Session.recovery_snapshot(id)
       with {:ok, page} <- history(id, count), do: {:ok, %{snapshot: snapshot, history: page}}
     else
       {:error, :session_unavailable}

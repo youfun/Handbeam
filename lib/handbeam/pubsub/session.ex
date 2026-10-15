@@ -124,6 +124,11 @@ defmodule Handbeam.PubSub.Session do
     GenServer.call(via_tuple(session_id), :snapshot)
   end
 
+  @doc "Return the compact checkpoint needed to restore a connected client."
+  def recovery_snapshot(session_id) do
+    GenServer.call(via_tuple(session_id), :recovery_snapshot)
+  end
+
   @doc "Append an event to the snapshot."
   def append_event(session_id, %AgentEvent{} = event) do
     GenServer.cast(via_tuple(session_id), {:append, event})
@@ -238,6 +243,18 @@ defmodule Handbeam.PubSub.Session do
        epoch: state.epoch,
        events: state.events,
        control_events: state.control_events,
+       meta: state.meta,
+       extension_state: state.extension_state
+     }, state}
+  end
+
+  def handle_call(:recovery_snapshot, _from, state) do
+    {:reply,
+     %{
+       last_seq: state.seq,
+       epoch: state.epoch,
+       control_events: recovery_events(state.control_events, state.meta.run_id),
+       pending_events: pending_recovery_events(state.control_events),
        meta: state.meta,
        extension_state: state.extension_state
      }, state}
@@ -669,6 +686,79 @@ defmodule Handbeam.PubSub.Session do
 
   defp append_control(events, event),
     do: Enum.take([event | events], @max_snapshot_events)
+
+  defp recovery_events(events, run_id) do
+    events
+    |> Enum.filter(&(event_run_id(&1) == run_id))
+    |> Enum.sort_by(& &1.seq)
+    |> Enum.reduce(empty_recovery(), &reduce_recovery_event/2)
+    |> recovery_event_list()
+  end
+
+  defp pending_recovery_events(events) do
+    events
+    |> Enum.filter(&(&1.kind in [:candidate_message_injected, :candidate_message_deleted]))
+    |> Enum.sort_by(& &1.seq)
+  end
+
+  defp empty_recovery do
+    %{
+      run_start: nil,
+      run_resumed: nil,
+      turn_start: nil,
+      usage_updated: nil,
+      active_tools: %{},
+      pending_approval: nil
+    }
+  end
+
+  defp reduce_recovery_event(%{kind: :run_start} = event, _state),
+    do: %{empty_recovery() | run_start: event}
+
+  defp reduce_recovery_event(%{kind: :run_resumed} = event, state),
+    do: %{state | run_resumed: event, pending_approval: nil}
+
+  defp reduce_recovery_event(%{kind: :turn_start} = event, state),
+    do: %{state | turn_start: event}
+
+  defp reduce_recovery_event(%{kind: :usage_updated} = event, state),
+    do: %{state | usage_updated: event}
+
+  defp reduce_recovery_event(%{kind: :tool_start} = event, state) do
+    put_in(state, [:active_tools, recovery_tool_id(event)], event)
+  end
+
+  defp reduce_recovery_event(%{kind: :tool_end} = event, state) do
+    update_in(state.active_tools, &Map.delete(&1, recovery_tool_id(event)))
+  end
+
+  defp reduce_recovery_event(%{kind: :tool_approval_requested} = event, state),
+    do: %{state | pending_approval: event}
+
+  defp reduce_recovery_event(_event, state), do: state
+
+  defp recovery_event_list(state) do
+    [
+      state.run_start,
+      state.run_resumed,
+      state.turn_start,
+      state.usage_updated,
+      Map.values(state.active_tools),
+      state.pending_approval
+    ]
+    |> List.flatten()
+    |> Enum.reject(&is_nil/1)
+  end
+
+  defp event_run_id(event),
+    do: Handbeam.Utils.SafeMap.get_any(event.payload, :run_id, "run_id")
+
+  defp recovery_tool_id(event) do
+    Handbeam.Utils.SafeMap.get_any(event.payload, :tool_use_id, "tool_use_id") ||
+      Handbeam.Utils.SafeMap.get_any(event.payload, :tool, "tool") ||
+      Handbeam.Utils.SafeMap.get_any(event.payload, :name, "name") ||
+      event.seq
+  end
 
   # Read registry metadata, never call Runner from Session init: Runner may be
   # waiting for this Session. Only a still-live, identified run is restored.
