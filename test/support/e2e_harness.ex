@@ -31,6 +31,7 @@ defmodule Handbeam.TestSupport.E2EHarness do
     System.put_env("HANDBEAM_WORKSPACES_FILE", Path.join(home, ".handbeam/workspaces.json"))
 
     ExUnit.Callbacks.on_exit(fn ->
+      stop_runtime!()
       restore_env("HOME", old.home)
       restore_env("HANDBEAM_MODELS_FILE", old.models)
       restore_env("HANDBEAM_GLOBAL_SETTINGS_FILE", old.settings)
@@ -105,6 +106,38 @@ defmodule Handbeam.TestSupport.E2EHarness do
     if Session.whereis(id), do: Session.snapshot(id)
     _ = Handbeam.SessionSupervisor.stop_session(id)
     :ok
+  end
+
+  def stop_runtime! do
+    for id <- registered_ids(Handbeam.AgentRunSupervisorRegistry) do
+      Handbeam.AgentRunSupervisor.stop_run(id)
+    end
+
+    for pid <- Task.Supervisor.children(Handbeam.AgentRunTaskSupervisor) do
+      Task.Supervisor.terminate_child(Handbeam.AgentRunTaskSupervisor, pid)
+    end
+
+    for {_, pid, _, _} <- Handbeam.SessionSupervisor.which_sessions() do
+      GenServer.call(pid, :snapshot)
+      DynamicSupervisor.terminate_child(Handbeam.SessionSupervisor, pid)
+    end
+
+    # Drain lifecycle consumers before switching HOME or deleting its persisted files.
+    GenServer.call(Handbeam.Runtime.TaskTracker, :snapshot)
+    :ok = ConversationTranscriptStore.Journal.invalidate(Handbeam.ConversationStore.index_path())
+    home = Handbeam.Home.path()
+
+    for path <- registered_ids(ExFff.Registry),
+        path == home or String.starts_with?(path, home <> "/"),
+        {pid, _} <- Registry.lookup(ExFff.Registry, path) do
+      GenServer.stop(pid)
+    end
+
+    :ok
+  end
+
+  defp registered_ids(registry) do
+    Registry.select(registry, [{{:"$1", :_, :_}, [], [:"$1"]}])
   end
 
   defp restore_env(key, nil), do: System.delete_env(key)

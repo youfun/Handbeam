@@ -70,9 +70,9 @@ defmodule HandbeamProbe.RuntimeCleanup do
       Task.Supervisor.terminate_child(Handbeam.AgentRunTaskSupervisor, pid)
     end
 
-    for id <- registered_ids(Handbeam.SessionRegistry) do
-      Handbeam.PubSub.Session.snapshot(id)
-      Handbeam.SessionSupervisor.stop_session(id)
+    for {_, pid, _, _} <- Handbeam.SessionSupervisor.which_sessions() do
+      GenServer.call(pid, :snapshot)
+      DynamicSupervisor.terminate_child(Handbeam.SessionSupervisor, pid)
     end
 
     # An ordinary call drains lifecycle messages already forwarded by Session.

@@ -24,9 +24,7 @@ defmodule HandbeamWeb.Feature.WorkspaceFeatureTest do
     safe_rm_test_rune!(home_dir)
 
     on_exit(fn ->
-      for conversation <- Handbeam.ConversationStore.list(include_timeline?: false) do
-        E2EHarness.cancel!(conversation["id"])
-      end
+      E2EHarness.stop_runtime!()
 
       if old_home, do: System.put_env("HOME", old_home), else: System.delete_env("HOME")
 

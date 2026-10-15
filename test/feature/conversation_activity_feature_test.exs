@@ -26,11 +26,7 @@ defmodule HandbeamWeb.Feature.ConversationActivityTest do
     id = active["id"]
 
     on_exit(fn ->
-      Coordinator.cancel(id)
-      Handbeam.AgentRunSupervisor.stop_run(id)
-      if Session.whereis(id), do: Session.snapshot(id)
-      Handbeam.SessionSupervisor.stop_session(id)
-      Handbeam.Runtime.TaskTracker.snapshot()
+      Handbeam.TestSupport.E2EHarness.stop_runtime!()
       if old_home, do: System.put_env("HOME", old_home), else: System.delete_env("HOME")
       File.rm_rf!(home)
     end)
