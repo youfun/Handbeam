@@ -579,10 +579,23 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
         <div class="workspace-group">
           <button
             phx-click="toggle_archive"
-            class="w-full text-left px-3 py-1.5 flex items-center gap-1.5 text-xs text-tertiary hover:bg-surface-hover transition-colors rounded"
+            class="workspace-header w-full text-left px-2 py-1.5 flex items-center gap-1.5 text-xs text-tertiary hover:bg-surface-hover transition-colors rounded"
+            aria-expanded={to_string(@show_archive)}
           >
-            <span class={["workspace-chevron", if(@show_archive, do: "expanded", else: "")]}>
-              {if(@show_archive, do: "▾", else: "▸")}
+            <span class="workspace-icon" aria-hidden="true">
+              <svg
+                width="20"
+                height="22"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <rect x="3" y="3" width="18" height="4" rx="1" />
+                <path d="M5 7v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7M10 11h4" />
+              </svg>
             </span>
             <span>{gettext("已存档")}</span>
             <span class="ml-auto tabular-nums text-[0.6rem] lowercase">
