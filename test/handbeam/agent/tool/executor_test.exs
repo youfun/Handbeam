@@ -110,7 +110,10 @@ defmodule Handbeam.Agent.Tool.ExecutorTest do
 
     test "workspace yolo mode reaches tools as unrestricted path access" do
       root =
-        Path.join(System.tmp_dir!(), "handbeam-executor-yolo-#{System.unique_integer([:positive])}")
+        Path.join(
+          System.tmp_dir!(),
+          "handbeam-executor-yolo-#{System.unique_integer([:positive])}"
+        )
 
       workspace = Path.join(root, "workspace")
       outside = Path.join(root, "outside.txt")
