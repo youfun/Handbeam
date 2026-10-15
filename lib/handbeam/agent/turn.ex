@@ -13,8 +13,7 @@ defmodule Handbeam.Agent.Turn do
     Message,
     ModelContext,
     Reasoning,
-    State,
-    ToolResultProjection
+    State
   }
 
   alias Handbeam.Agent.Middleware
@@ -822,14 +821,6 @@ defmodule Handbeam.Agent.Turn do
   end
 
   defp do_provider_completion(state, opts, outbound_messages, provider_config) do
-    suffix_from = context_suffix_from(state)
-    kept = ToolResultProjection.retained(outbound_messages, suffix_from)
-
-    stored =
-      ToolResultProjection.persist(kept, state.config.working_directory)
-
-    outbound_messages = ToolResultProjection.project(outbound_messages, stored, suffix_from)
-
     provider = state.config.provider
     {provider_config, tool_defs} = completion_tool_defs(state, opts, provider_config)
 
@@ -896,17 +887,6 @@ defmodule Handbeam.Agent.Turn do
 
     dispatch_provider_result(provider_result, completion, streamed_text, provider_t0)
   end
-
-  # An installed model context is the prefix the model already accepted.
-  # Its length is the visible-list index of messages appended after
-  # `context_base_count`. The boundary assumes the `{:context, ...}` hook
-  # transform does not prepend or drop messages: an extension that changes
-  # the prefix length can shift the boundary and spill results the model
-  # chose to keep.
-  defp context_suffix_from(%State{model_context: context}) when is_list(context),
-    do: length(context)
-
-  defp context_suffix_from(%State{}), do: 0
 
   # Appends a finished tool-result batch, freezing the budget trailer into
   # each result once. Rewriting the trailer on every request would change
