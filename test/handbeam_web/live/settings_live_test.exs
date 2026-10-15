@@ -329,6 +329,94 @@ defmodule HandbeamWeb.SettingsLiveTest do
       assert html =~ "Security"
     end
 
+    test "Workspace Memory tab renders isolated memories and supports filters and search", %{
+      conn: conn
+    } do
+      {:ok, workspace} = Handbeam.WorkspaceStore.ensure_default!()
+      workspace_id = workspace["id"]
+
+      {:ok, long_term} =
+        Handbeam.Memory.MemoryStore.learn("Current workspace durable rule", :rule,
+          short_term: false,
+          metadata: %{scope: "workspace", workspace_id: workspace_id}
+        )
+
+      {:ok, short_term} =
+        Handbeam.Memory.MemoryStore.learn("Current workspace searchable pattern", :pattern,
+          short_term: true,
+          metadata: %{scope: "workspace", workspace_id: workspace_id}
+        )
+
+      {:ok, _other_workspace} =
+        Handbeam.Memory.MemoryStore.learn("Other workspace must stay private", :fact,
+          short_term: false,
+          metadata: %{scope: "workspace", workspace_id: "other-workspace"}
+        )
+
+      {:ok, global} =
+        Handbeam.Memory.MemoryStore.learn("Shared global preference", :preference,
+          short_term: false,
+          metadata: %{scope: "global"}
+        )
+
+      expired_at =
+        DateTime.utc_now() |> DateTime.add(-60, :second) |> DateTime.truncate(:second)
+
+      {:ok, expired} =
+        Handbeam.Repo.insert(%Handbeam.Memory.Engram{
+          content: "Expired workspace context",
+          kind: :context,
+          short_term: true,
+          expires_at: expired_at,
+          metadata: %{scope: "workspace", workspace_id: workspace_id}
+        })
+
+      path =
+        "/settings?tab=workspace_memory&workspace_id=#{workspace_id}&conversation_id=conv_memory"
+
+      {:ok, view, html} = live(conn, path)
+      assert html =~ "Workspace Memory"
+      assert html =~ ~s(href="/w/#{workspace_id}/c/conv_memory")
+
+      memory = find_live_child(view, "settings-workspace-memory")
+      assert has_element?(memory, "#memory-engram-#{long_term.id}")
+      assert has_element?(memory, "#memory-engram-#{short_term.id}")
+      refute render(memory) =~ "Other workspace must stay private"
+      refute has_element?(memory, "#memory-engram-#{global.id}")
+
+      render_click(element(memory, "#memory-kind-rule"))
+      assert has_element?(memory, "#memory-engram-#{long_term.id}")
+      refute has_element?(memory, "#memory-engram-#{short_term.id}")
+
+      render_click(element(memory, "#memory-kind-all"))
+      render_click(element(memory, "#memory-lifecycle-short_term"))
+      assert has_element?(memory, "#memory-engram-#{short_term.id}")
+      refute has_element?(memory, "#memory-engram-#{long_term.id}")
+
+      render_change(element(memory, "#memory-filter-form"), %{
+        "filters" => %{"query" => "##{long_term.id}", "scope" => "workspace"}
+      })
+
+      refute has_element?(memory, "#memory-engram-#{long_term.id}")
+      render_click(element(memory, "#memory-lifecycle-active"))
+      assert has_element?(memory, "#memory-engram-#{long_term.id}")
+
+      render_change(element(memory, "#memory-filter-form"), %{
+        "filters" => %{"query" => "Shared global", "scope" => "both"}
+      })
+
+      assert has_element?(memory, "#memory-engram-#{global.id}")
+      refute render(memory) =~ "Other workspace must stay private"
+
+      render_change(element(memory, "#memory-filter-form"), %{
+        "filters" => %{"query" => "", "scope" => "workspace"}
+      })
+
+      render_click(element(memory, "#memory-lifecycle-expired"))
+      assert has_element?(memory, "#memory-engram-#{expired.id}")
+      assert render(memory) =~ "Expired workspace context"
+    end
+
     test "uses URL query param to set initial tab", %{conn: conn} do
       {:ok, _view, html} = live(conn, "/settings?tab=available_models")
 

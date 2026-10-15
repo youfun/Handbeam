@@ -201,6 +201,125 @@ defmodule Handbeam.Memory.MemoryStoreTest do
     end
   end
 
+  describe "list_engrams/1 and count_summary/2 — settings queries" do
+    test "isolates workspace memories and includes globals only for requested scopes" do
+      {:ok, workspace_a} =
+        MemoryStore.learn("Workspace A private memory", :fact,
+          short_term: false,
+          metadata: %{scope: "workspace", workspace_id: "workspace-a"}
+        )
+
+      {:ok, workspace_b} =
+        MemoryStore.learn("Workspace B private memory", :rule,
+          short_term: false,
+          metadata: %{scope: "workspace", workspace_id: "workspace-b"}
+        )
+
+      {:ok, global} =
+        MemoryStore.learn("Shared global memory", :preference,
+          short_term: false,
+          metadata: %{scope: "global"}
+        )
+
+      workspace_results =
+        MemoryStore.list_engrams(workspace_id: "workspace-a", scope: :workspace)
+
+      assert Enum.map(workspace_results, & &1.id) == [workspace_a.id]
+      refute Enum.any?(workspace_results, &(&1.id == workspace_b.id))
+      refute Enum.any?(workspace_results, &(&1.id == global.id))
+
+      both_ids =
+        MemoryStore.list_engrams(workspace_id: "workspace-a", scope: :both)
+        |> Enum.map(& &1.id)
+
+      assert workspace_a.id in both_ids
+      assert global.id in both_ids
+      refute workspace_b.id in both_ids
+
+      assert [global_result] = MemoryStore.list_engrams(scope: :global)
+      assert global_result.id == global.id
+    end
+
+    test "filters active, long-term, short-term, and expired memories" do
+      {:ok, long_term} =
+        MemoryStore.learn("Long-lived setting", :rule,
+          short_term: false,
+          metadata: %{scope: "workspace", workspace_id: "lifecycle-workspace"}
+        )
+
+      {:ok, short_term} =
+        MemoryStore.learn("Temporary setting", :pattern,
+          short_term: true,
+          metadata: %{scope: "workspace", workspace_id: "lifecycle-workspace"}
+        )
+
+      expired_at =
+        DateTime.utc_now() |> DateTime.add(-60, :second) |> DateTime.truncate(:second)
+
+      {:ok, expired} =
+        Handbeam.Repo.insert(%Engram{
+          content: "Expired setting",
+          kind: :fact,
+          short_term: true,
+          expires_at: expired_at,
+          metadata: %{scope: "workspace", workspace_id: "lifecycle-workspace"}
+        })
+
+      opts = [workspace_id: "lifecycle-workspace", scope: :workspace]
+
+      assert Enum.map(MemoryStore.list_engrams(opts ++ [lifecycle: :active]), & &1.id) == [
+               long_term.id,
+               short_term.id
+             ]
+
+      assert Enum.map(MemoryStore.list_engrams(opts ++ [lifecycle: :long_term]), & &1.id) == [
+               long_term.id
+             ]
+
+      assert Enum.map(MemoryStore.list_engrams(opts ++ [lifecycle: :short_term]), & &1.id) == [
+               short_term.id
+             ]
+
+      assert Enum.map(MemoryStore.list_engrams(opts ++ [lifecycle: :expired]), & &1.id) == [
+               expired.id
+             ]
+
+      summary = MemoryStore.count_summary("lifecycle-workspace", scope: :workspace)
+      assert summary.active == 2
+      assert summary.long_term == 1
+      assert summary.short_term == 1
+      assert summary.expired == 1
+      assert summary.by_kind.rule == 1
+      assert summary.by_kind.pattern == 1
+      assert summary.by_kind.fact == 0
+    end
+
+    test "searches by content substring and exact plain or hash-prefixed ID" do
+      {:ok, matching} =
+        MemoryStore.learn("Phoenix release workflow", :pattern,
+          short_term: false,
+          metadata: %{scope: "workspace", workspace_id: "search-workspace"}
+        )
+
+      {:ok, _other} =
+        MemoryStore.learn("Unrelated editor preference", :preference,
+          short_term: false,
+          metadata: %{scope: "workspace", workspace_id: "search-workspace"}
+        )
+
+      opts = [workspace_id: "search-workspace", scope: :workspace]
+
+      assert [result] = MemoryStore.list_engrams(opts ++ [query: "release WORKFLOW"])
+      assert result.id == matching.id
+
+      assert [result] = MemoryStore.list_engrams(opts ++ [query: "##{matching.id}"])
+      assert result.id == matching.id
+
+      assert [result] = MemoryStore.list_engrams(opts ++ [query: Integer.to_string(matching.id)])
+      assert result.id == matching.id
+    end
+  end
+
   describe "cleanup_expired/0 — expired engram deletion" do
     test "delete expired short-term engrams" do
       # Create an expired engram manually (truncate microseconds for SQLite3 compat)

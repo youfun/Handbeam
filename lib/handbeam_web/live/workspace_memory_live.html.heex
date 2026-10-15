@@ -1,0 +1,228 @@
+<div id="workspace-memory" class="workspace-memory settings-content-wrap h-full overflow-y-auto">
+  <style>
+    .workspace-memory { --memory-accent: #2563eb; font: 14px/1.5 system-ui, sans-serif; color: var(--sig-text-primary, #202124); }
+    .workspace-memory * { box-sizing: border-box; }
+    .workspace-memory .memory-shell { max-width: 1080px; margin: 0 auto; padding: 28px 24px 48px; }
+    .workspace-memory .memory-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 20px; }
+    .workspace-memory .memory-title { margin: 0; font-size: 22px; line-height: 1.25; font-weight: 650; letter-spacing: -.01em; }
+    .workspace-memory .memory-context { margin-top: 6px; color: var(--sig-text-secondary, #62666b); font-size: 12px; }
+    .workspace-memory .memory-path { margin-left: 5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; }
+    .workspace-memory .memory-workspace-select { min-width: 190px; max-width: 280px; }
+    .workspace-memory .memory-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 18px; }
+    .workspace-memory .memory-stat { text-align: left; border: 1px solid var(--sig-border-subtle, #d9dce0); border-radius: 10px; padding: 13px 14px; background: var(--sig-bg-elevated, #fff); color: inherit; cursor: pointer; transition: border-color .15s, box-shadow .15s, background .15s; }
+    .workspace-memory .memory-stat:hover { border-color: var(--sig-border-default, #b7bbc1); }
+    .workspace-memory .memory-stat.active { border-color: var(--memory-accent); box-shadow: 0 0 0 1px var(--memory-accent); background: color-mix(in srgb, var(--memory-accent) 5%, var(--sig-bg-elevated, #fff)); }
+    .workspace-memory .memory-stat-label { display: block; color: var(--sig-text-secondary, #62666b); font-size: 12px; }
+    .workspace-memory .memory-stat-value { display: block; margin-top: 4px; font-size: 23px; font-weight: 650; line-height: 1; font-variant-numeric: tabular-nums; }
+    .workspace-memory .memory-filters { border: 1px solid var(--sig-border-subtle, #d9dce0); border-radius: 10px; padding: 12px; background: var(--sig-bg-elevated, #fff); margin-bottom: 16px; }
+    .workspace-memory .memory-filter-row { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(170px, auto); gap: 10px; }
+    .workspace-memory .memory-search-wrap { position: relative; }
+    .workspace-memory .memory-search-icon { position: absolute; left: 11px; top: 50%; transform: translateY(-50%); color: var(--sig-text-tertiary, #8a8f98); pointer-events: none; }
+    .workspace-memory .memory-search { width: 100%; padding-left: 32px; }
+    .workspace-memory .memory-kinds { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 11px; }
+    .workspace-memory .memory-chip { border: 1px solid var(--sig-border-subtle, #d9dce0); border-radius: 999px; padding: 4px 10px; background: transparent; color: var(--sig-text-secondary, #62666b); font-size: 12px; cursor: pointer; }
+    .workspace-memory .memory-chip:hover { color: var(--sig-text-primary, #202124); background: var(--sig-bg-hover, #f4f5f6); }
+    .workspace-memory .memory-chip.active { border-color: color-mix(in srgb, var(--memory-accent) 45%, transparent); background: color-mix(in srgb, var(--memory-accent) 10%, transparent); color: var(--memory-accent); font-weight: 600; }
+    .workspace-memory .memory-chip-count { margin-left: 4px; opacity: .72; font-variant-numeric: tabular-nums; }
+    .workspace-memory .memory-list { display: grid; gap: 11px; }
+    .workspace-memory .memory-card { border: 1px solid var(--sig-border-subtle, #d9dce0); border-radius: 10px; padding: 15px 16px 13px; background: var(--sig-bg-elevated, #fff); }
+    .workspace-memory .memory-card.expired { opacity: .6; }
+    .workspace-memory .memory-card-header { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+    .workspace-memory .memory-id { font: 650 12px/1 ui-monospace, SFMono-Regular, Menlo, monospace; padding: 5px 7px; border-radius: 5px; background: var(--sig-bg-muted, #f1f3f5); color: var(--sig-text-primary, #202124); }
+    .workspace-memory .memory-badge { display: inline-flex; align-items: center; border: 1px solid var(--sig-border-subtle, #d9dce0); border-radius: 999px; padding: 2px 7px; color: var(--sig-text-secondary, #62666b); font-size: 11px; line-height: 1.35; }
+    .workspace-memory .memory-kind { color: #6d4aff; border-color: color-mix(in srgb, #6d4aff 30%, transparent); background: color-mix(in srgb, #6d4aff 8%, transparent); }
+    .workspace-memory .memory-global { color: #087f5b; border-color: color-mix(in srgb, #087f5b 30%, transparent); background: color-mix(in srgb, #087f5b 8%, transparent); }
+    .workspace-memory .memory-date { margin-left: auto; color: var(--sig-text-tertiary, #8a8f98); font-size: 11px; font-variant-numeric: tabular-nums; }
+    .workspace-memory .memory-content { margin: 13px 0 14px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--sig-text-primary, #202124); line-height: 1.62; }
+    .workspace-memory .memory-footer { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding-top: 10px; border-top: 1px solid var(--sig-border-subtle, #e5e7eb); }
+    .workspace-memory .memory-links { display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+    .workspace-memory .memory-link { border: 0; padding: 2px 0; background: transparent; color: var(--memory-accent); font-size: 11px; cursor: pointer; }
+    .workspace-memory .memory-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
+    .workspace-memory .memory-action { border: 0; padding: 3px 5px; background: transparent; color: var(--sig-text-secondary, #62666b); font-size: 11px; cursor: pointer; }
+    .workspace-memory .memory-action:hover { color: var(--sig-text-primary, #202124); }
+    .workspace-memory .memory-action[data-copied="true"] { color: #087f5b; }
+    .workspace-memory .memory-empty { padding: 44px 20px; border: 1px dashed var(--sig-border-default, #b7bbc1); border-radius: 10px; text-align: center; color: var(--sig-text-secondary, #62666b); background: var(--sig-bg-elevated, #fff); }
+    @media (max-width: 760px) {
+      .workspace-memory .memory-shell { padding: 20px 14px 36px; }
+      .workspace-memory .memory-heading { flex-direction: column; }
+      .workspace-memory .memory-workspace-select { width: 100%; max-width: none; }
+      .workspace-memory .memory-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .workspace-memory .memory-filter-row { grid-template-columns: 1fr; }
+      .workspace-memory .memory-footer { align-items: flex-start; flex-direction: column; }
+      .workspace-memory .memory-actions { justify-content: flex-start; }
+    }
+  </style>
+
+  <div class="memory-shell">
+    <div class="memory-heading">
+      <div>
+        <h1 class="memory-title">{gettext("工作区记忆")}</h1>
+        <div :if={@workspace} class="memory-context">
+          {gettext("当前工作区：")}<strong>{@workspace["name"]}</strong>
+          <span class="memory-path">{@workspace["path"]}</span>
+        </div>
+        <div :if={!@workspace} class="memory-context">{gettext("仅查看全局记忆")}</div>
+      </div>
+
+      <form
+        id="memory-workspace-form"
+        phx-change="select_workspace"
+        class="memory-workspace-select"
+      >
+        <label class="sr-only" for="memory-workspace">{gettext("选择工作区")}</label>
+        <select id="memory-workspace" name="workspace[id]" class="settings-input">
+          <option
+            :for={workspace <- @workspaces}
+            value={workspace["id"]}
+            selected={@workspace_id == workspace["id"]}
+          >
+            {workspace["name"]}
+          </option>
+          <option value="global" selected={is_nil(@workspace_id)}>{gettext("全局记忆")}</option>
+        </select>
+      </form>
+    </div>
+
+    <div class="memory-stats" role="group" aria-label={gettext("按生命周期筛选")}>
+      <button
+        :for={{lifecycle, label, count} <- lifecycle_cards(@summary)}
+        id={"memory-lifecycle-#{lifecycle}"}
+        type="button"
+        phx-click="set_lifecycle"
+        phx-value-lifecycle={lifecycle}
+        class={["memory-stat", @lifecycle_filter == lifecycle && "active"]}
+        aria-pressed={to_string(@lifecycle_filter == lifecycle)}
+      >
+        <span class="memory-stat-label">{label}</span>
+        <span class="memory-stat-value">{count}</span>
+      </button>
+    </div>
+
+    <div class="memory-filters">
+      <form id="memory-filter-form" phx-change="filter">
+        <div class="memory-filter-row">
+          <div class="memory-search-wrap">
+            <span class="memory-search-icon" aria-hidden="true">⌕</span>
+            <label class="sr-only" for="memory-search">{gettext("搜索记忆")}</label>
+            <input
+              id="memory-search"
+              class="settings-input memory-search"
+              type="search"
+              name="filters[query]"
+              value={@search_query}
+              placeholder={gettext("搜索内容或 #ID…")}
+              phx-debounce="250"
+            />
+          </div>
+          <div>
+            <label class="sr-only" for="memory-scope">{gettext("记忆范围")}</label>
+            <select
+              id="memory-scope"
+              class="settings-input"
+              name="filters[scope]"
+              disabled={is_nil(@workspace_id)}
+            >
+              <option value="workspace" selected={@scope_filter == :workspace}>
+                {gettext("当前工作区")}
+              </option>
+              <option value="both" selected={@scope_filter == :both}>
+                {gettext("包含全局记忆")}
+              </option>
+              <option value="global" selected={@scope_filter == :global}>
+                {gettext("仅全局记忆")}
+              </option>
+            </select>
+            <input
+              :if={is_nil(@workspace_id)}
+              type="hidden"
+              name="filters[scope]"
+              value="global"
+            />
+          </div>
+        </div>
+      </form>
+
+      <div class="memory-kinds" role="group" aria-label={gettext("按记忆类型筛选")}>
+        <button
+          :for={kind <- kind_filters()}
+          id={"memory-kind-#{kind}"}
+          type="button"
+          phx-click="set_kind"
+          phx-value-kind={kind}
+          class={["memory-chip", @kind_filter == kind && "active"]}
+          aria-pressed={to_string(@kind_filter == kind)}
+        >
+          <%= if kind == :all do %>
+            {kind_label(kind)}
+          <% else %>
+            {kind} · {kind_label(kind)}
+          <% end %>
+          <span class="memory-chip-count">{kind_count(@summary, kind)}</span>
+        </button>
+      </div>
+    </div>
+
+    <div :if={@memories == []} id="memory-empty" class="memory-empty">
+      <div class="text-xl mb-1" aria-hidden="true">◌</div>
+      <div>{gettext("没有符合当前筛选条件的记忆")}</div>
+    </div>
+
+    <div :if={@memories != []} id="memory-list" class="memory-list">
+      <article
+        :for={engram <- @memories}
+        id={"memory-engram-#{engram.id}"}
+        class={["memory-card settings-card", expired?(engram, @now) && "expired"]}
+      >
+        <header class="memory-card-header">
+          <span class="memory-id">#{engram.id}</span>
+          <span class="memory-badge memory-kind">{engram.kind} · {kind_label(engram.kind)}</span>
+          <span class="memory-badge">{lifecycle_text(engram, @now)}</span>
+          <span :if={global?(engram)} class="memory-badge memory-global">{gettext("全局")}</span>
+          <time
+            class="memory-date"
+            datetime={format_iso(engram.updated_at || engram.inserted_at)}
+          >
+            {format_date(engram.updated_at || engram.inserted_at)}
+          </time>
+        </header>
+
+        <div class="memory-content">{engram.content}</div>
+
+        <footer class="memory-footer">
+          <div class="memory-links">
+            <button
+              :for={association <- associations(engram)}
+              type="button"
+              class="memory-link"
+              phx-click="locate"
+              phx-value-id={association.id}
+              title={gettext("定位关联记忆 #%{id}", id: association.id)}
+            >
+              {association.direction} {association.kind} #{association.id}
+            </button>
+          </div>
+          <div class="memory-actions">
+            <button
+              id={"memory-copy-id-#{engram.id}"}
+              type="button"
+              class="memory-action"
+              phx-hook="CopyText"
+              data-copy={"##{engram.id}"}
+            >
+              {gettext("复制 #ID")}
+            </button>
+            <button
+              id={"memory-copy-content-#{engram.id}"}
+              type="button"
+              class="memory-action"
+              phx-hook="CopyText"
+              data-copy={engram.content}
+            >
+              {gettext("复制内容")}
+            </button>
+          </div>
+        </footer>
+      </article>
+    </div>
+  </div>
+</div>

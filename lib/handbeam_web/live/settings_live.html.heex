@@ -201,6 +201,14 @@
         </div>
       </div>
 
+      <!-- Workspace Memory Tab — nested LiveView via live_render -->
+      <div :if={@active_tab == :workspace_memory} class="flex-1 overflow-hidden">
+        {live_render(@socket, HandbeamWeb.WorkspaceMemoryLive,
+          id: "settings-workspace-memory",
+          session: %{"workspace_id" => @workspace["id"]}
+        )}
+      </div>
+
       <!-- Available Models Tab — nested LiveView via live_render -->
       <div :if={@active_tab == :available_models} class="flex-1 overflow-hidden">
         {live_render(@socket, HandbeamWeb.AvailableModelsLive,

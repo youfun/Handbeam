@@ -26,6 +26,7 @@ defmodule HandbeamWeb.SettingsLive do
   @tabs [
     %{id: :model_ai, label_key: "Model / AI"},
     %{id: :workspace_models, label_key: "Workspace Models"},
+    %{id: :workspace_memory, label_key: "Workspace Memory"},
     %{id: :available_models, label_key: "Available Models"},
     %{id: :local_webgpu, label_key: "Local WebGPU"},
     %{id: :mcp, label_key: "MCP"},
@@ -336,6 +337,7 @@ defmodule HandbeamWeb.SettingsLive do
 
   def tab_label(:model_ai), do: gettext("Model / AI")
   def tab_label(:workspace_models), do: gettext("Workspace Models")
+  def tab_label(:workspace_memory), do: gettext("Workspace Memory")
   def tab_label(:available_models), do: gettext("Available Models")
   def tab_label(:local_webgpu), do: gettext("Local WebGPU")
   def tab_label(:mcp), do: gettext("MCP")
@@ -348,6 +350,7 @@ defmodule HandbeamWeb.SettingsLive do
 
   def tab_icon(:model_ai), do: "🧠"
   def tab_icon(:workspace_models), do: "▦"
+  def tab_icon(:workspace_memory), do: "◉"
   def tab_icon(:available_models), do: "🔧"
   def tab_icon(:ui), do: "🎨"
   def tab_icon(:coming_soon), do: "…"

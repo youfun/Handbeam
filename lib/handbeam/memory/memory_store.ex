@@ -16,6 +16,8 @@ defmodule Handbeam.Memory.MemoryStore do
                        ~w(handbeam the and for with this that from are use not you should what when how why can does have into will but was were been they them their there then than your our who which where all about would could we do to of in on at is it be or as if so an by 这个 那个 什么 怎么 为什么 可以 需要 已经 我们 你们 一下 现在 然后 没有 是否 问题 一个)
                      )
   @recall_token_limit 16
+  @engram_kinds [:preference, :rule, :pattern, :fact, :context]
+  @lifecycle_filters [:active, :long_term, :short_term, :expired, :all]
   # Underscore, hyphen, slash, dot, colon, and other punctuation (including CJK).
   @recall_separators ~r/[\p{P}]+/u
   @han_grapheme ~r/^\p{Han}$/u
@@ -105,6 +107,77 @@ defmodule Handbeam.Memory.MemoryStore do
       metadata: Keyword.get(opts, :metadata, %{})
     })
     |> Repo.insert()
+  end
+
+  @doc """
+  List engrams for the memory settings page.
+
+  The query is always scope-aware. Workspace scope without a valid
+  `:workspace_id` returns no records, so callers cannot accidentally expose
+  memories from another workspace.
+
+  ## Options
+
+    * `:workspace_id` — workspace used by `:workspace` and `:both` scopes
+    * `:scope` — `:workspace`, `:global`, or `:both` (default `:workspace`)
+    * `:lifecycle` — `:active`, `:long_term`, `:short_term`, `:expired`, or `:all`
+    * `:kind` — one of the five engram kinds
+    * `:query` — a content substring, or an exact numeric ID such as `#48`
+  """
+  @spec list_engrams(keyword()) :: [Engram.t()]
+  def list_engrams(opts \\ []) do
+    now = DateTime.utc_now()
+
+    Engram
+    |> apply_list_scope_filter(opts)
+    |> apply_list_query(Keyword.get(opts, :query))
+    |> apply_lifecycle_filter(Keyword.get(opts, :lifecycle, :active), now)
+    |> apply_kind_filter(Keyword.get(opts, :kind))
+    |> order_by([e], asc: e.short_term, desc: e.updated_at, desc: e.id)
+    |> Repo.all()
+    |> Repo.preload([:source_synapses, :target_synapses])
+  end
+
+  @doc """
+  Count memories visible to a workspace for the settings page.
+
+  Lifecycle totals use the requested scope, query, and optional kind while
+  ignoring the selected lifecycle. `:by_kind` additionally applies the
+  requested lifecycle, which lets the UI keep kind chips in sync with the
+  active lifecycle card.
+  """
+  @spec count_summary(String.t() | nil, keyword()) :: %{
+          active: non_neg_integer(),
+          long_term: non_neg_integer(),
+          short_term: non_neg_integer(),
+          expired: non_neg_integer(),
+          by_kind: %{atom() => non_neg_integer()}
+        }
+  def count_summary(workspace_id, opts \\ []) do
+    now = DateTime.utc_now()
+    opts = Keyword.put(opts, :workspace_id, workspace_id)
+
+    base_query =
+      Engram
+      |> apply_list_scope_filter(opts)
+      |> apply_list_query(Keyword.get(opts, :query))
+      |> apply_kind_filter(Keyword.get(opts, :kind))
+
+    kind_counts =
+      base_query
+      |> apply_lifecycle_filter(Keyword.get(opts, :lifecycle, :active), now)
+      |> group_by([e], e.kind)
+      |> select([e], {e.kind, count(e.id)})
+      |> Repo.all()
+      |> Map.new()
+
+    %{
+      active: count_lifecycle(base_query, :active, now),
+      long_term: count_lifecycle(base_query, :long_term, now),
+      short_term: count_lifecycle(base_query, :short_term, now),
+      expired: count_lifecycle(base_query, :expired, now),
+      by_kind: Map.new(@engram_kinds, &{&1, Map.get(kind_counts, &1, 0)})
+    }
   end
 
   @doc """
@@ -295,6 +368,113 @@ defmodule Handbeam.Memory.MemoryStore do
     do: -DateTime.to_unix(updated_at, :microsecond)
 
   defp recall_updated_desc(_engram), do: 0
+
+  defp count_lifecycle(query, lifecycle, now) do
+    query
+    |> apply_lifecycle_filter(lifecycle, now)
+    |> Repo.aggregate(:count, :id)
+  end
+
+  defp apply_list_scope_filter(query, opts) do
+    workspace_id = Keyword.get(opts, :workspace_id)
+
+    case normalize_scope(Keyword.get(opts, :scope, :workspace)) do
+      :workspace when is_binary(workspace_id) and workspace_id != "" ->
+        where_workspace(query, workspace_id)
+
+      :global ->
+        where_global(query)
+
+      :both when is_binary(workspace_id) and workspace_id != "" ->
+        where_workspace_or_global(query, workspace_id)
+
+      :both ->
+        where_global(query)
+
+      _other ->
+        where(query, [e], e.id < 0)
+    end
+  end
+
+  defp apply_list_query(query, value) when is_binary(value) do
+    value = String.trim(value)
+
+    cond do
+      value == "" ->
+        query
+
+      match = Regex.run(~r/^#?(\d+)$/, value) ->
+        [_, id] = match
+        where(query, [e], e.id == ^String.to_integer(id))
+
+      true ->
+        where(query, [e], fragment("instr(lower(?), lower(?)) > 0", e.content, ^value))
+    end
+  end
+
+  defp apply_list_query(query, _value), do: query
+
+  defp apply_kind_filter(query, nil), do: query
+  defp apply_kind_filter(query, :all), do: query
+  defp apply_kind_filter(query, "all"), do: query
+
+  defp apply_kind_filter(query, kind) do
+    case normalize_kind(kind) do
+      nil -> where(query, [e], e.id < 0)
+      normalized -> where(query, [e], e.kind == ^normalized)
+    end
+  end
+
+  defp apply_lifecycle_filter(query, lifecycle, now) do
+    case normalize_lifecycle(lifecycle) do
+      :active ->
+        where(
+          query,
+          [e],
+          e.short_term == false or
+            (e.short_term == true and not is_nil(e.expires_at) and e.expires_at > ^now)
+        )
+
+      :long_term ->
+        where(query, [e], e.short_term == false)
+
+      :short_term ->
+        where(
+          query,
+          [e],
+          e.short_term == true and not is_nil(e.expires_at) and e.expires_at > ^now
+        )
+
+      :expired ->
+        where(
+          query,
+          [e],
+          e.short_term == true and not is_nil(e.expires_at) and e.expires_at <= ^now
+        )
+
+      :all ->
+        query
+
+      nil ->
+        where(query, [e], e.id < 0)
+    end
+  end
+
+  defp normalize_kind(kind) when kind in @engram_kinds, do: kind
+
+  defp normalize_kind(kind) when is_binary(kind) do
+    Enum.find(@engram_kinds, &(Atom.to_string(&1) == kind))
+  end
+
+  defp normalize_kind(_kind), do: nil
+
+  defp normalize_lifecycle(lifecycle) when lifecycle in @lifecycle_filters, do: lifecycle
+
+  defp normalize_lifecycle(lifecycle) when is_binary(lifecycle) do
+    Enum.find(@lifecycle_filters, &(Atom.to_string(&1) == lifecycle))
+  end
+
+  defp normalize_lifecycle(_lifecycle), do: nil
 
   # ── Scope / Privacy Filtering ──
 
