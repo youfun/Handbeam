@@ -1852,7 +1852,70 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert rendered =~ "tool-work-collapsed"
     end
 
-    test "a deleted one-shot stays in the fixed dock without treating recurring tools as cards",
+    test "one-shot controls persist changes and cards follow the current conversation", %{
+      conn: conn
+    } do
+      {:ok, conversation} = Handbeam.ConversationStore.create("default", title: "Scheduled check")
+
+      {:ok, schedule} =
+        Handbeam.Schedule.Store.create(%{
+          workspace_id: "default",
+          conversation_id: conversation["id"],
+          name: "检查编译",
+          instruction: "汇报编译结果",
+          time_zone: "Asia/Shanghai",
+          model: "fake/model",
+          rule: %{
+            "kind" => "once",
+            "label" => "一小时后，只一次",
+            "at" =>
+              Handbeam.Schedule.now() |> DateTime.add(3600, :second) |> DateTime.to_iso8601()
+          }
+        })
+
+      {:ok, view, _html} = live(conn, "/w/default/c/#{conversation["id"]}")
+      card = "#once-dock-#{schedule.id}"
+      assert has_element?(view, "#{card} [role='switch'][aria-checked='true']")
+
+      view |> element("#{card} [role='switch']") |> render_click()
+      assert has_element?(view, "#{card} [role='switch'][aria-checked='false']")
+      assert {:ok, %{status: "paused"}} = Handbeam.Schedule.Store.get(schedule.id)
+
+      view |> element("#{card} [role='switch']") |> render_click()
+      assert has_element?(view, "#{card} [role='switch'][aria-checked='true']")
+      assert {:ok, %{status: "active"}} = Handbeam.Schedule.Store.get(schedule.id)
+
+      create_default_conversation(view)
+      refute has_element?(view, "#once-schedule-dock")
+      send(view.pid, {:schedule_changed, conversation["id"]})
+      refute has_element?(view, "#once-schedule-dock")
+
+      render_patch(view, "/w/default/c/#{conversation["id"]}")
+      assert has_element?(view, card)
+      assert has_element?(view, "#{card} button[phx-click='schedule_delete'][aria-label] svg")
+      view |> element("#{card} [phx-click='schedule_delete']") |> render_click()
+      refute has_element?(view, card)
+      assert {:error, :not_found} = Handbeam.Schedule.Store.get(schedule.id)
+
+      {:ok, pending} =
+        schedule
+        |> Map.from_struct()
+        |> Handbeam.Schedule.Store.create()
+
+      send(view.pid, {:schedule_changed, conversation["id"]})
+      assert has_element?(view, "#once-dock-#{pending.id}")
+      assert {:ok, claim} = Handbeam.Schedule.Store.claim(pending, pending.next_run_at)
+      send(view.pid, {:schedule_changed, conversation["id"]})
+      refute has_element?(view, "#once-schedule-dock")
+
+      assert {:ok, _} = Handbeam.Schedule.Store.finish_run(claim.run, "completed")
+      send(view.pid, {:schedule_changed, conversation["id"]})
+      refute has_element?(view, "#once-schedule-dock")
+      {:ok, refreshed, _html} = live(conn, "/w/default/c/#{conversation["id"]}")
+      refute has_element?(refreshed, "#once-schedule-dock")
+    end
+
+    test "deleted one-shots and recurring tools do not leave cards in the composer dock",
          %{
            conn: conn
          } do
@@ -1887,9 +1950,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
 
       {:ok, view, _html} = live(conn, "/w/default/c/#{conversation["id"]}")
 
-      assert has_element?(view, "#once-card-old-once-tool", "很早以前的检查")
-      assert has_element?(view, "#once-card-old-once-tool", "即使消息很多也保留删除态")
-      assert has_element?(view, "#once-card-old-once-tool", "已删除")
+      refute has_element?(view, "#once-schedule-dock")
 
       send(
         view.pid,
@@ -1920,9 +1981,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
          )}
       )
 
-      assert has_element?(view, "#once-card-tool-once-deleted", "检查编译")
-      assert has_element?(view, "#once-card-tool-once-deleted", "汇报测试和打包结果")
-      assert has_element?(view, "#once-card-tool-once-deleted", "已删除")
+      refute has_element?(view, "#once-schedule-dock")
       refute has_element?(view, "#once-card-tool-once-deleted [phx-click='schedule_delete']")
 
       send(
@@ -1957,6 +2016,15 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       )
 
       refute has_element?(view, "#once-card-tool-recurring-deleted")
+
+      create_default_conversation(view)
+      refute has_element?(view, "#once-schedule-dock")
+
+      render_patch(view, "/w/default/c/#{conversation["id"]}")
+      refute has_element?(view, "#once-schedule-dock")
+
+      render_click(view, "new_free_conversation")
+      refute has_element?(view, "#once-schedule-dock")
     end
 
     test "tool_end event with error shows error status", %{conn: conn} do

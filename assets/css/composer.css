@@ -88,6 +88,72 @@
   background: var(--sig-bg-elevated);
 }
 
+.schedule-switch {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  width: 36px;
+  height: 20px;
+  padding: 2px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--sig-border-emphasis);
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.schedule-switch-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--sig-text-inverse);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 15%);
+  transition: transform 0.15s ease;
+}
+
+.schedule-switch[aria-checked="true"] {
+  background: var(--sig-accent);
+}
+
+.schedule-switch[aria-checked="true"] .schedule-switch-thumb {
+  transform: translateX(16px);
+}
+
+.schedule-switch:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.schedule-delete {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--sig-radius-md);
+  background: transparent;
+  color: var(--sig-text-secondary);
+  cursor: pointer;
+}
+
+.schedule-delete svg {
+  width: 16px;
+  height: 16px;
+}
+
+.schedule-delete:hover {
+  color: var(--sig-error);
+  background: var(--sig-error-bg);
+}
+
+.schedule-switch:focus-visible,
+.schedule-delete:focus-visible {
+  outline: 2px solid var(--sig-accent);
+  outline-offset: 3px;
+}
+
 .composer-turn-controls {
   display: flex;
   align-items: center;

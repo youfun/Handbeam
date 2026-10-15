@@ -15,12 +15,16 @@ defmodule HandbeamWeb.WorkspaceLive.Schedules do
 
     socket
     |> Phoenix.Component.assign(:user_time_zone, tz)
+    |> reset()
+  end
+
+  def reset(socket) do
+    socket
     |> Phoenix.Component.assign(:show_schedules, false)
     |> Phoenix.Component.assign(:schedule_request, "")
     |> Phoenix.Component.assign(:schedule_error, nil)
     |> Phoenix.Component.assign(:schedules, [])
     |> Phoenix.Component.assign(:schedule_runs, %{})
-    |> Phoenix.Component.assign(:schedule_once_entries, [])
   end
 
   def toggle(socket) do
@@ -43,14 +47,13 @@ defmodule HandbeamWeb.WorkspaceLive.Schedules do
           {entry.id, Store.recent_runs(entry.id, 20)}
         end)
 
-      once_entries = load_once_entries(id)
-
       socket
       |> Phoenix.Component.assign(:schedules, schedules)
       |> Phoenix.Component.assign(:schedule_runs, runs)
-      |> Phoenix.Component.assign(:schedule_once_entries, once_entries)
     else
       socket
+      |> Phoenix.Component.assign(:schedules, [])
+      |> Phoenix.Component.assign(:schedule_runs, %{})
     end
   end
 
@@ -222,11 +225,10 @@ defmodule HandbeamWeb.WorkspaceLive.Schedules do
 
   attr :schedules, :list, default: []
   attr :runs, :map, default: %{}
-  attr :timeline, :list, default: []
 
   def composer_once_cards(assigns) do
     assigns =
-      assign(assigns, :cards, dock_cards(assigns.schedules, assigns.runs, assigns.timeline))
+      assign(assigns, :cards, dock_cards(assigns.schedules, assigns.runs))
 
     ~H"""
     <div :if={@cards != []} id="once-schedule-dock" class="once-schedule-dock">
@@ -247,25 +249,41 @@ defmodule HandbeamWeb.WorkspaceLive.Schedules do
         <div class="text-sm font-medium">{@card.name}</div>
         <div class="flex items-center gap-2">
           <button
-            :if={@card.enabled}
+            :if={@card.switch}
             type="button"
+            role="switch"
+            aria-checked={to_string(@card.switch == :on)}
+            aria-label={gettext("定时任务")}
+            title={if(@card.switch == :on, do: gettext("暂停"), else: gettext("恢复"))}
+            disabled={!@card.enabled}
             phx-click={@card.event}
             phx-value-id={@card.id}
-            class="text-xs"
+            class="schedule-switch"
           >
-            {if(@card.switch == :on, do: gettext("开"), else: gettext("关"))}
+            <span class="schedule-switch-thumb" aria-hidden="true"></span>
           </button>
-          <span :if={!@card.enabled and @card.switch} class="text-xs text-secondary">
-            {if(@card.switch == :on, do: gettext("开"), else: gettext("关"))}
-          </span>
           <button
             :if={@card.id}
             type="button"
             phx-click="schedule_delete"
             phx-value-id={@card.id}
-            class="text-xs"
+            class="schedule-delete"
+            aria-label={gettext("Delete")}
+            title={gettext("Delete")}
           >
-            {gettext("删除")}
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.5"
+              aria-hidden="true"
+            >
+              <path
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"
+              />
+            </svg>
           </button>
         </div>
       </div>
@@ -288,57 +306,7 @@ defmodule HandbeamWeb.WorkspaceLive.Schedules do
     """
   end
 
-  def once_props(entry, schedules, runs_by_id, _zone) do
-    with true <- tool_name(entry) == "schedule",
-         true <- tool_action(entry) == "create",
-         true <- once_tool?(entry),
-         id when is_binary(id) <- schedule_id(entry) do
-      schedules = schedules || []
-
-      case Enum.find(schedules, &(&1.id == id)) do
-        nil ->
-          deleted = Presentation.deleted()
-
-          %{
-            dom_id: "once-card-#{entry["id"]}",
-            countdown_id: "once-countdown-#{entry["id"]}",
-            id: nil,
-            name: tool_text(entry, "name", gettext("定时任务")),
-            instruction: tool_text(entry, "instruction", ""),
-            event: nil,
-            countdown_at: nil,
-            due_lines: [],
-            switch: nil,
-            enabled: false,
-            lines: deleted.lines
-          }
-
-        schedule ->
-          runs = Map.get(runs_by_id || %{}, schedule.id, [])
-
-          view =
-            Presentation.once(schedule, runs, Handbeam.Schedule.now()) || Presentation.deleted()
-
-          %{
-            dom_id: "once-card-#{entry["id"]}",
-            countdown_id: "once-countdown-#{entry["id"]}",
-            id: schedule.id,
-            name: schedule.name,
-            instruction: schedule.instruction,
-            event: event_name(view.action),
-            countdown_at: Map.get(view, :countdown_at),
-            due_lines: Map.get(view, :due_lines, []),
-            switch: view.switch,
-            enabled: view.enabled,
-            lines: view.lines
-          }
-      end
-    else
-      _ -> nil
-    end
-  end
-
-  defp dock_cards(schedules, runs, timeline) when is_list(schedules) and is_list(timeline) do
+  defp dock_cards(schedules, runs) when is_list(schedules) do
     now = Handbeam.Schedule.now()
 
     current =
@@ -346,95 +314,37 @@ defmodule HandbeamWeb.WorkspaceLive.Schedules do
         if Rule.once?(entry.rule) do
           view = Presentation.once(entry, Map.get(runs || %{}, entry.id, []), now)
 
-          [
-            %{
-              dom_id: "once-dock-#{entry.id}",
-              countdown_id: "once-countdown-dock-#{entry.id}",
-              id: entry.id,
-              name: entry.name,
-              instruction: entry.instruction,
-              event: event_name(view.action),
-              countdown_at: Map.get(view, :countdown_at),
-              due_lines: Map.get(view, :due_lines, []),
-              switch: view.switch,
-              enabled: view.enabled,
-              lines: view.lines
-            }
-          ]
+          if view.enabled do
+            [
+              %{
+                dom_id: "once-dock-#{entry.id}",
+                countdown_id: "once-countdown-dock-#{entry.id}",
+                id: entry.id,
+                name: entry.name,
+                instruction: entry.instruction,
+                event: event_name(view.action),
+                countdown_at: Map.get(view, :countdown_at),
+                due_lines: Map.get(view, :due_lines, []),
+                switch: view.switch,
+                enabled: view.enabled,
+                lines: view.lines
+              }
+            ]
+          else
+            []
+          end
         else
           []
         end
       end)
 
-    deleted =
-      timeline
-      |> Enum.flat_map(fn entry ->
-        case once_props(entry, schedules, runs, nil) do
-          %{id: nil} = card -> [card]
-          _ -> []
-        end
-      end)
-      |> Enum.uniq_by(& &1.dom_id)
-
-    current ++ deleted
+    current
   end
 
-  defp dock_cards(_schedules, _runs, _timeline), do: []
+  defp dock_cards(_schedules, _runs), do: []
 
   defp event_name(:pause), do: "schedule_pause"
   defp event_name(:resume), do: "schedule_resume"
-  defp event_name(_action), do: nil
-
-  defp tool_name(entry), do: to_string(entry["tool_name"] || "")
-
-  defp tool_action(entry) do
-    input = entry["input"] || %{}
-    to_string(Handbeam.Utils.SafeMap.get(input, "action") || "")
-  end
-
-  defp once_tool?(entry) do
-    input = entry["input"] || %{}
-    rule = Handbeam.Utils.SafeMap.get(input, "rule") || %{}
-    Handbeam.Utils.SafeMap.get_any(rule, ["kind", :kind]) in ["once", :once]
-  end
-
-  defp tool_text(entry, key, fallback) do
-    value = entry |> Map.get("input", %{}) |> Handbeam.Utils.SafeMap.get(key)
-    if is_binary(value) and value != "", do: value, else: fallback
-  end
-
-  defp schedule_id(entry) do
-    case entry["output"] do
-      %{"id" => id} when is_binary(id) ->
-        id
-
-      output when is_binary(output) ->
-        decoded_schedule_id(output)
-
-      _ ->
-        nil
-    end
-  end
-
-  defp decoded_schedule_id(output) do
-    case Handbeam.JSON.decode(output) do
-      {:ok, %{"id" => id}} when is_binary(id) -> id
-      _ -> nil
-    end
-  end
-
-  defp load_once_entries(conversation_id) do
-    case Handbeam.ConversationTranscriptStore.list(conversation_id) do
-      {:ok, entries} ->
-        Enum.filter(entries, fn entry ->
-          tool_name(entry) == "schedule" and tool_action(entry) == "create" and
-            once_tool?(entry) and is_binary(schedule_id(entry))
-        end)
-
-      {:error, _reason} ->
-        []
-    end
-  end
 
   defp once_view(entry, runs) do
     Presentation.once(entry, runs, Handbeam.Schedule.now())

@@ -8,6 +8,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
 
   alias HandbeamWeb.WorkspaceLive.ConversationState
   alias HandbeamWeb.WorkspaceLive.SessionMemory
+  alias HandbeamWeb.WorkspaceLive.Schedules
 
   @free_key :free
 
@@ -17,9 +18,20 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
         socket.assigns[:browser_capture_token]
       end
 
-    socket
-    |> assign(:current_conversation_id, conversation_id)
-    |> assign(:browser_capture_token, token)
+    changed? = socket.assigns[:current_conversation_id] != conversation_id
+
+    socket =
+      socket
+      |> assign(:current_conversation_id, conversation_id)
+      |> assign(:browser_capture_token, token)
+
+    if changed? do
+      socket
+      |> Schedules.reset()
+      |> Schedules.reload()
+    else
+      socket
+    end
   end
 
   def assign_current(socket, ws, conversation_id) do
