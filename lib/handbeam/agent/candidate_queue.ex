@@ -33,7 +33,7 @@ defmodule Handbeam.Agent.CandidateQueue do
   def seal(server), do: GenServer.call(server, :seal)
   def take_pending_or_seal(server), do: GenServer.call(server, :take_pending_or_seal)
   def has_pending?(server), do: GenServer.call(server, :has_pending?)
-  def get_messages(server), do: GenServer.call(server, :get_messages)
+  def get_messages(server, timeout \\ 5_000), do: GenServer.call(server, :get_messages, timeout)
 
   def delete_message(server, message_id),
     do: GenServer.call(server, {:delete_message, message_id})

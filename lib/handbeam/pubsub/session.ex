@@ -22,6 +22,7 @@ defmodule Handbeam.PubSub.Session do
 
   @max_snapshot_events 500
   @throttle_default_ms 50
+  @pending_queue_timeout_ms 100
 
   # Disk-save throttle window for bursty events (e.g. :message_delta).
   # Structural events (run_start, tool_start/end, run_end) always force-save.
@@ -342,7 +343,7 @@ defmodule Handbeam.PubSub.Session do
 
         queue_pid ->
           try do
-            Handbeam.Agent.CandidateQueue.get_messages(queue_pid)
+            Handbeam.Agent.CandidateQueue.get_messages(queue_pid, @pending_queue_timeout_ms)
             |> Enum.map(fn %{message: msg, metadata: meta} ->
               %{
                 id: msg.id,

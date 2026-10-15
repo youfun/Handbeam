@@ -219,6 +219,29 @@ defmodule Handbeam.PubSub.SessionTest do
       assert meta.queue_pid == queue
     end
 
+    test "an unresponsive running queue does not block pending message recovery" do
+      sid = "test-#{System.unique_integer([:positive])}"
+      {:ok, _pid} = Session.start_link(session_id: sid)
+
+      queue =
+        spawn(fn ->
+          receive do
+            _message ->
+              receive do
+                :stop -> :ok
+              end
+          end
+        end)
+
+      on_exit(fn -> send(queue, :stop) end)
+      :ok = Session.attach_run(sid, self(), queue)
+
+      started_at = System.monotonic_time(:millisecond)
+      assert Session.get_pending_messages(sid) == []
+      assert System.monotonic_time(:millisecond) - started_at < 1_000
+      assert Session.snapshot(sid).meta.running? == true
+    end
+
     test "enqueues steer messages into the running queue" do
       sid = "test-#{System.unique_integer([:positive])}"
       {:ok, _pid} = Session.start_link(session_id: sid)

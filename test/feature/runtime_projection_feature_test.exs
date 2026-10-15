@@ -90,6 +90,24 @@ defmodule HandbeamWeb.Feature.RuntimeProjectionFeatureTest do
   end
 
   test "streaming deltas do not evict active approval or tool controls on reconnect", ctx do
+    for index <- 1..5 do
+      tool_use_id = "completed-#{index}"
+
+      Session.broadcast_event(ctx.id, :tool_start, %{
+        run_id: ctx.run_id,
+        tool: "read",
+        tool_use_id: tool_use_id,
+        input: %{}
+      })
+
+      Session.broadcast_event(ctx.id, :tool_end, %{
+        run_id: ctx.run_id,
+        tool: "read",
+        tool_use_id: tool_use_id,
+        output: "done"
+      })
+    end
+
     Session.broadcast_event(ctx.id, :tool_start, %{
       run_id: ctx.run_id,
       tool: "read",
@@ -112,6 +130,13 @@ defmodule HandbeamWeb.Feature.RuntimeProjectionFeatureTest do
       assigns = :sys.get_state(view.pid).socket.assigns
       assert assigns.pending_approval != nil
       assert assigns.tools_active["read"] == :running
+      assert Enum.any?(assigns.timeline, &(&1["tool_use_id"] == "in-flight"))
+
+      refute Enum.any?(
+               assigns.timeline,
+               &String.starts_with?(&1["tool_use_id"] || "", "completed-")
+             )
+
       assert assigns.session_seq == snapshot.last_seq
       Phoenix.LiveViewTest.render(view)
     end)
