@@ -282,10 +282,7 @@ defmodule HandbeamProbe.NativeTimeline do
     row(
       [
         text(entry["work_summary"] || "", text_size: 13, text_color: color(:muted)),
-        text(if(entry["work_collapsed"], do: "›", else: "⌄"),
-          text_size: 13,
-          text_color: color(:hint)
-        ),
+        chevron(entry["work_collapsed"] != true),
         outcome(
           entry["work_failed"],
           gettext("%{count} failed", count: entry["work_failed"]),
@@ -300,9 +297,21 @@ defmodule HandbeamProbe.NativeTimeline do
       fill_width: false,
       padding_top: 2,
       padding_bottom: 2,
-      align: "baseline",
+      align: "center",
       on_tap: {self(), {:toggle_tool_work, entry["work_group_id"]}},
       id: inspect({:toggle_tool_work, entry["work_group_id"]})
+    )
+  end
+
+  defp chevron(expanded?) do
+    node(:icon,
+      name: if(expanded?, do: "chevron_down", else: "chevron_right"),
+      text: "",
+      width: 12,
+      height: 12,
+      text_size: 12,
+      padding: 0,
+      text_color: color(:hint)
     )
   end
 
@@ -346,6 +355,7 @@ defmodule HandbeamProbe.NativeTimeline do
         [
           row(
             [
+              chevron(entry["file_diff_open"] == true),
               text(activity_line(entry),
                 text_size: 13,
                 text_color: color(:muted),
@@ -356,14 +366,14 @@ defmodule HandbeamProbe.NativeTimeline do
               count_text(entry["work_removed"], "−", :danger)
             ],
             fill_width: false,
-            align: "baseline",
+            align: "center",
             on_tap: {self(), {:toggle_file_diff, entry["id"]}},
             id: inspect({:toggle_file_diff, entry["id"]})
           ),
           if(path != "", do: copy_path_button(path))
         ],
         fill_width: false,
-        align: "baseline"
+        align: "center"
       ),
       if(entry["file_diff_open"] == true, do: diff_view(entry))
     ])
