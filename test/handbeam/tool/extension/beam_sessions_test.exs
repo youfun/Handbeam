@@ -13,8 +13,23 @@ defmodule Handbeam.Tool.Extension.BeamSessionsTest do
 
   describe "ext__beam__sessions" do
     test "lists active sessions including the test session" do
+      id = "beam-listing-#{Ecto.UUID.generate()}"
+      workspace = File.cwd!()
+
+      {:ok, pid} =
+        Handbeam.PubSub.Session.start_or_get(
+          session_id: id,
+          model: "listing-fixture",
+          workspace_path: workspace,
+          session_store_enabled?: false
+        )
+
+      on_exit(fn -> DynamicSupervisor.terminate_child(Handbeam.SessionSupervisor, pid) end)
+
       {:ok, output} = Handbeam.Tool.Extension.Beam.Sessions.execute(%{}, build_context())
-      assert output =~ "session" or output =~ "No active"
+      assert output =~ id
+      assert output =~ "Model:     listing-fixture"
+      assert output =~ "Workspace: #{workspace}"
     end
 
     test "has proper tool metadata" do
