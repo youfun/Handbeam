@@ -27,8 +27,7 @@ defmodule Handbeam.Repo.Migrations.CreateSchedules do
     create table(:schedule_runs, primary_key: false) do
       add :id, :string, primary_key: true
 
-      add :schedule_id, references(:schedules, type: :string, on_delete: :delete_all),
-        null: false
+      add :schedule_id, references(:schedules, type: :string, on_delete: :delete_all), null: false
 
       add :slot_at, :utc_datetime
       add :kind, :string, null: false

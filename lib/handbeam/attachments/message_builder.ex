@@ -132,8 +132,7 @@ defmodule Handbeam.Attachments.MessageBuilder do
       id: Handbeam.Utils.SafeMap.get_any(map, :id, "id"),
       kind: Handbeam.Utils.SafeMap.get_any(map, :kind, "kind"),
       mime_type: Handbeam.Utils.SafeMap.get_any(map, :mime_type, "mime_type"),
-      filename:
-        Handbeam.Utils.SafeMap.get_any(map, :filename, "filename") || map[:display_name],
+      filename: Handbeam.Utils.SafeMap.get_any(map, :filename, "filename") || map[:display_name],
       size_bytes: size,
       storage_path: path,
       relative_path: relative,

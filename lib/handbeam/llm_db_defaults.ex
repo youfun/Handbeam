@@ -231,7 +231,9 @@ defmodule Handbeam.LlmDbDefaults do
 
   defp put_aliases(index, model) do
     Enum.reduce(model.aliases || [], index, fn alias_id, index ->
-      if is_binary(alias_id) and alias_id != "", do: Map.put_new(index, alias_id, model), else: index
+      if is_binary(alias_id) and alias_id != "",
+        do: Map.put_new(index, alias_id, model),
+        else: index
     end)
   end
 

@@ -928,7 +928,9 @@ defmodule Handbeam.ConversationStoreTest do
     test "touch: false keeps updated_at so opening a chat does not reorder it" do
       {:ok, conv} = ConversationStore.create("ws_um", title: "Stay put")
       id = conv["id"]
-      {:ok, _} = ConversationStore.update_meta(id, updated_at: "2020-01-01T00:00:00Z", touch: false)
+
+      {:ok, _} =
+        ConversationStore.update_meta(id, updated_at: "2020-01-01T00:00:00Z", touch: false)
 
       {:ok, updated} =
         ConversationStore.update_meta(id,

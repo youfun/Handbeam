@@ -68,7 +68,12 @@ defmodule Handbeam.Schedule.Notice do
   defp persist(conversation_id, entry) do
     case ConversationTranscriptStore.append(conversation_id, entry) do
       {:ok, saved} ->
-        Phoenix.PubSub.broadcast(Handbeam.PubSub, @topic, {:schedule_notice, conversation_id, saved})
+        Phoenix.PubSub.broadcast(
+          Handbeam.PubSub,
+          @topic,
+          {:schedule_notice, conversation_id, saved}
+        )
+
         :ok
 
       {:error, _reason} ->

@@ -167,9 +167,7 @@ defmodule Handbeam.Agent.PendingMessages do
     id = item_id(item)
 
     deliver_as =
-      normalize_deliver_as(
-        Handbeam.Utils.SafeMap.get_any(item, :deliver_as, "deliver_as")
-      )
+      normalize_deliver_as(Handbeam.Utils.SafeMap.get_any(item, :deliver_as, "deliver_as"))
 
     if id == "" or deliver_as not in [:steer, :follow_up] do
       []
