@@ -78,13 +78,22 @@ defmodule Handbeam.Threads do
   end
 
   def read(input, context) do
-    with :ok <- validate(input, ~w(thread start_message end_message max_chars cursor)),
+    with :ok <-
+           validate(input, ~w(thread start_message end_message max_chars include_tools cursor)),
+         true <- is_boolean(Map.get(input, "include_tools", false)),
          {:ok, _} <- authorize(context, input["thread"]),
          {:ok, first} <- integer(input, "start_message", 0, 0, 1_000_000),
          {:ok, last} <- integer(input, "end_message", 1_000_000, first, 1_000_000),
          {:ok, max} <- integer(input, "max_chars", 8000, 1, 16_000),
          {:ok, entries} <- ConversationTranscriptStore.list(input["thread"]) do
-      messages = entries |> Enum.map(&project_message/1) |> Enum.slice(first..last)
+      include_tools? = Map.get(input, "include_tools", false)
+
+      messages =
+        entries
+        |> Enum.reject(&(not include_tools? and tool_entry?(&1)))
+        |> Enum.map(&project_message/1)
+        |> Enum.slice(first..last)
+
       binding = binding("read", context, input, messages)
 
       with {:ok, offset} <- position(input["cursor"], binding) do
@@ -97,6 +106,9 @@ defmodule Handbeam.Threads do
            next_cursor: cursor(remaining, binding, offset + consumed)
          }}
       end
+    else
+      false -> {:error, :invalid_input}
+      error -> error
     end
   end
 
@@ -139,16 +151,68 @@ defmodule Handbeam.Threads do
   end
 
   def project_message(entry) do
-    content = entry["content"]
-
-    %{
+    base = %{
       "id" => entry["id"],
       "role" => entry["role"],
-      "content" => if(is_binary(content), do: Handbeam.Log.Redactor.redact(content), else: ""),
+      "content" => project_content(entry),
       "created_at" => entry["created_at"],
       "handoff_id" => entry["handoff_id"] || get_in(entry, ["origin", "handoff_id"]),
       "consumption" => entry["consumption"]
     }
+
+    if tool_entry?(entry) do
+      base
+      |> Map.put("tool_name", entry["tool_name"])
+      |> Map.put("tool_status", entry["tool_status"])
+    else
+      base
+    end
+  end
+
+  defp tool_entry?(entry),
+    do: entry["role"] == "tool" or entry["content_type"] == "tool"
+
+  defp project_content(%{"content" => content}) when is_binary(content) and content != "" do
+    Handbeam.Log.Redactor.redact(content)
+  end
+
+  defp project_content(entry) do
+    if tool_entry?(entry) do
+      tool_name = entry["tool_name"] || "tool"
+      status = entry["tool_status"] || "done"
+      header = "[tool #{tool_name} (#{status})]"
+
+      input_part =
+        case entry["input"] do
+          input when is_map(input) and map_size(input) > 0 ->
+            "input: " <> Handbeam.JSON.encode!(Handbeam.Log.Redactor.redact(input))
+
+          input when is_binary(input) and input != "" ->
+            "input: " <> input
+
+          _ ->
+            nil
+        end
+
+      output_part =
+        cond do
+          is_binary(entry["output"]) and entry["output"] != "" ->
+            entry["output"]
+
+          is_binary(entry["tool_error"]) and entry["tool_error"] != "" ->
+            "error: " <> entry["tool_error"]
+
+          true ->
+            nil
+        end
+
+      [header, input_part, output_part]
+      |> Enum.reject(&is_nil/1)
+      |> Enum.join("\n")
+      |> Handbeam.Log.Redactor.redact()
+    else
+      ""
+    end
   end
 
   def validate(input, keys) when is_map(input) do
@@ -203,7 +267,7 @@ defmodule Handbeam.Threads do
 
   defp updated_since?(_, _), do: false
 
-  defp position(nil, _binding), do: {:ok, 0}
+  defp position(cursor, _binding) when cursor in [nil, ""], do: {:ok, 0}
 
   defp position(token, binding) when is_binary(token) and byte_size(token) <= 2048 do
     case Phoenix.Token.verify(HandbeamWeb.Endpoint, "thread-page", token, max_age: 3600) do

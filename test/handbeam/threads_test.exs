@@ -52,6 +52,11 @@ defmodule Handbeam.ThreadsTest do
     input = %{"limit" => 1}
     assert {:ok, %{threads: [a], next_cursor: cursor}} = Threads.find(input, c.context)
 
+    assert {:ok, %{threads: [^a], next_cursor: empty_cursor}} =
+             Threads.find(Map.put(input, "cursor", ""), c.context)
+
+    assert is_binary(empty_cursor)
+
     assert {:ok, %{threads: [b], next_cursor: nil}} =
              Threads.find(Map.put(input, "cursor", cursor), c.context)
 
@@ -79,7 +84,10 @@ defmodule Handbeam.ThreadsTest do
 
     input = %{"thread" => c.target, "max_chars" => 2}
     {:ok, p1} = Threads.read(input, c.context)
-    {:ok, p2} = Threads.read(Map.put(input, "cursor", p1.next_cursor), c.context)
+    {:ok, p1_empty} = Threads.read(Map.put(input, "cursor", ""), c.context)
+    assert p1_empty.messages == p1.messages
+    assert p1_empty.truncated == p1.truncated
+    {:ok, p2} = Threads.read(Map.put(input, "cursor", p1_empty.next_cursor), c.context)
     {:ok, p3} = Threads.read(Map.put(input, "cursor", p2.next_cursor), c.context)
     assert Enum.map_join(p1.messages ++ p2.messages ++ p3.messages, & &1["content"]) == body
     assert Enum.map(p1.messages ++ p2.messages ++ p3.messages, & &1["offset"]) == [0, 2, 4]
@@ -98,6 +106,52 @@ defmodule Handbeam.ThreadsTest do
 
     assert {:error, :stale_or_invalid_cursor} =
              Threads.read(Map.put(input, "cursor", fresh.next_cursor), c.context)
+  end
+
+  test "reads text messages by default and includes tool summaries/outputs when opted in", c do
+    {:ok, _} =
+      ConversationTranscriptStore.append(c.target, %{
+        "id" => "user-1",
+        "role" => "user",
+        "content" => "Read app.ex"
+      })
+
+    {:ok, _} =
+      ConversationTranscriptStore.append(c.target, %{
+        "id" => "tool-call-1",
+        "role" => "tool",
+        "content_type" => "tool",
+        "tool_name" => "read",
+        "tool_status" => "done",
+        "input" => %{"file_path" => "lib/app.ex", "api_key" => "top-secret"},
+        "output" => "1: defmodule App\nAuthorization: Bearer sub-token-value"
+      })
+
+    {:ok, _} =
+      ConversationTranscriptStore.append(c.target, %{
+        "id" => "assistant-1",
+        "role" => "assistant",
+        "content" => "Done"
+      })
+
+    assert {:ok, %{messages: text_only}} = Threads.read(%{"thread" => c.target}, c.context)
+    assert Enum.map(text_only, & &1["id"]) == ["user-1", "assistant-1"]
+
+    assert {:ok, %{messages: [_, msg, _]}} =
+             Threads.read(%{"thread" => c.target, "include_tools" => true}, c.context)
+
+    assert msg["id"] == "tool-call-1"
+    assert msg["role"] == "tool"
+    assert msg["tool_name"] == "read"
+    assert msg["tool_status"] == "done"
+    assert msg["content"] =~ "[tool read (done)]"
+    assert msg["content"] =~ ~s("file_path":"lib/app.ex")
+    assert msg["content"] =~ "1: defmodule App"
+    refute msg["content"] =~ "top-secret"
+    refute msg["content"] =~ "sub-token-value"
+
+    assert {:error, :invalid_input} =
+             Threads.read(%{"thread" => c.target, "include_tools" => "yes"}, c.context)
   end
 
   test "historical status is idle without inventing success", c do
