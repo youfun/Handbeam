@@ -5,8 +5,6 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceComponents do
 
   alias HandbeamWeb.FileChangeCard
 
-  import HandbeamWeb.WorkspaceLive.ViewComponents
-
   attr :entries, :map, required: true
   attr :expanded, :any, required: true
   attr :active_file, :string, default: nil
@@ -72,7 +70,8 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceComponents do
             type="button"
             class={[
               "workspace-file-row file",
-              if(@active_file == Path.join(@workspace_root, entry.relative_path),
+              if(
+                @active_file == entry.relative_path,
                 do: "active",
                 else: ""
               )
@@ -105,7 +104,9 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceComponents do
     """
   end
 
-  attr :active_file, :any, required: true
+  attr :active_file, :string, required: true
+  attr :editor_files, :list, default: []
+  attr :file_preview, :any, default: nil
   attr :chat_scope, :any, required: true
   attr :current_workspace_id, :any, required: true
   attr :expanded_file_changes, :any, required: true
@@ -273,18 +274,61 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceComponents do
         <div
           :if={@active_file}
           id="editor-content"
-          class="workspace-file-preview flex-1 min-h-0 overflow-auto p-4 font-mono text-sm border-t"
+          class="workspace-file-preview flex-1 min-h-0 flex flex-col border-t"
         >
-          <div id="file-preview">
-            <div>
-              <div class="text-xs text-tertiary mb-2 truncate">{@active_file}</div>
-              <div
-                :if={@file_preview_error}
-                class="p-4 bg-error-subtle border-l-4 border-l-error rounded text-sm text-error"
+          <div
+            id="editor-tabs"
+            phx-hook="FileTabs"
+            class="workspace-editor-tabs"
+            role="tablist"
+            aria-label={gettext("Open files")}
+          >
+            <div :for={file <- @editor_files} class="workspace-editor-tab-wrapper">
+              <% path = editor_file_path(file) %>
+              <% relative_path = Path.relative_to(path, @workspace_root) %>
+              <button
+                type="button"
+                class={[
+                  "workspace-editor-tab",
+                  if(@active_file == path, do: "active", else: "")
+                ]}
+                role="tab"
+                aria-controls="file-preview"
+                aria-selected={to_string(@active_file == path)}
+                tabindex={if(@active_file == path, do: "0", else: "-1")}
+                data-relative-path={relative_path}
+                phx-click="select_editor_file"
+                phx-value-path={relative_path}
+                title={relative_path}
               >
-                <span class="font-semibold">Error: </span>{@file_preview_error}
+                <.tree_icon type={icon_type(%{kind: :file, name: Path.basename(path)})} />
+                <span class="workspace-editor-tab-label">{editor_file_label(file, @editor_files)}</span>
+              </button>
+              <button
+                type="button"
+                class="workspace-editor-tab-close"
+                data-close-tab={relative_path}
+                phx-click="close_editor_file"
+                phx-value-path={relative_path}
+                aria-label={gettext("Close %{name}", name: Path.basename(path))}
+                title={gettext("Close")}
+              >
+                ×
+              </button>
+            </div>
+          </div>
+          <div class="workspace-file-preview-scroll flex-1 min-h-0 overflow-auto p-4">
+            <div id="file-preview" role="tabpanel" aria-label={@active_file} tabindex="0">
+              <div :if={@file_preview_error} class="workspace-preview-error">
+                <span class="font-semibold">{gettext("Unable to preview file")}: </span>
+                {preview_error_message(@file_preview_error)}
               </div>
-              <pre :if={!@file_preview_error} class="text-primary"><code>{render_file_preview(@active_file, @workspace_root)}</code></pre>
+              <.file_preview
+                :if={!@file_preview_error && is_map(@file_preview)}
+                preview={@file_preview}
+                workspace_id={@current_workspace_id}
+                file_manager={@file_manager}
+              />
             </div>
           </div>
         </div>
@@ -338,6 +382,144 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceComponents do
     </div>
     """
   end
+
+  attr :preview, :any, required: true
+  attr :workspace_id, :string, required: true
+  attr :file_manager, :atom, default: nil
+
+  def file_preview(assigns) do
+    assigns =
+      assign(
+        assigns,
+        :preview_id,
+        "file-preview-" <> Base.url_encode64(assigns.preview.relative_path, padding: false)
+      )
+
+    ~H"""
+    <div class="workspace-file-preview-body">
+      <div class="workspace-file-path truncate" title={@preview.relative_path}>
+        {@preview.relative_path}
+      </div>
+      <div :if={@preview.truncated?} class="workspace-preview-truncated">
+        {gettext("Preview truncated at 128 KiB")}
+      </div>
+      <div
+        :if={@preview.kind == :image}
+        id={@preview_id <> "-image"}
+        class="workspace-preview-image"
+        phx-hook="FileImage"
+      >
+        <img
+          src={"/workspace-files/#{URI.encode(@workspace_id)}/#{encode_file_path(@preview.relative_path)}?v=#{@preview.revision}"}
+          alt={@preview.name}
+        />
+        <span data-preview-image-error role="status" hidden>
+          {gettext("Unable to display this image. It may be invalid or exceed the 25 MiB limit.")}
+        </span>
+        <span>{preview_format_bytes(@preview.size)}</span>
+        <button
+          :if={@file_manager}
+          type="button"
+          phx-click="reveal_in_file_manager"
+          phx-value-path={@preview.relative_path}
+        >
+          {gettext("Reveal in file manager")}
+        </button>
+      </div>
+      <div :if={@preview.kind == :external} class="workspace-preview-meta">
+        <strong>{@preview.name}</strong>
+        <span>{preview_format_bytes(@preview.size)}</span>
+        <span>{@preview.mime}</span>
+        <span>{gettext("This file format is not rendered in the workspace yet.")}</span>
+        <button
+          :if={@file_manager}
+          type="button"
+          phx-click="reveal_in_file_manager"
+          phx-value-path={@preview.relative_path}
+        >
+          {gettext("Reveal in file manager")}
+        </button>
+      </div>
+      <div :if={@preview.kind in [:code, :markdown]}>
+        <div
+          id={@preview_id}
+          class="workspace-code-preview"
+          phx-hook="FilePreview"
+          data-language={@preview.language}
+          data-kind={Atom.to_string(@preview.kind)}
+          data-relative-path={@preview.relative_path}
+          data-workspace-id={@workspace_id}
+          data-digest={Base.encode16(:crypto.hash(:sha256, @preview.content || ""))}
+        >
+          <div class="workspace-preview-toolbar">
+            <button
+              :if={@preview.kind == :markdown}
+              type="button"
+              data-preview-mode="rendered"
+              aria-pressed="true"
+            >
+              {gettext("Rendered")}
+            </button>
+            <button
+              :if={@preview.kind == :markdown}
+              type="button"
+              data-preview-mode="source"
+              aria-pressed="false"
+            >
+              {gettext("Source")}
+            </button>
+            <button type="button" data-preview-wrap aria-pressed="false">{gettext("Wrap lines")}</button>
+          </div>
+          <div data-preview-source hidden>{@preview.content}</div>
+          <div
+            id={@preview_id <> "-rendered"}
+            class="workspace-markdown-target markdown-body"
+            data-preview-target="rendered"
+            phx-update="ignore"
+            hidden
+          >
+          </div>
+          <pre id={@preview_id <> "-source"} phx-update="ignore" class="workspace-code-surface"><span data-preview-line-numbers aria-hidden="true"></span><code data-preview-target="source">{@preview.content}</code></pre>
+        </div>
+      </div>
+    </div>
+    """
+  end
+
+  defp editor_file_path(file), do: Handbeam.Utils.SafeMap.get(file, "path", "")
+
+  defp editor_file_label(file, files) do
+    path = editor_file_path(file)
+    parts = Path.split(path)
+    paths = Enum.map(files, &(editor_file_path(&1) |> Path.split()))
+
+    Enum.find_value(1..length(parts), path, fn depth ->
+      suffix = Enum.take(parts, -depth)
+      if Enum.count(paths, &(Enum.take(&1, -depth) == suffix)) == 1, do: Path.join(suffix)
+    end)
+  end
+
+  defp encode_file_path(path) do
+    path
+    |> String.split("/")
+    |> Enum.map_join("/", fn segment -> URI.encode(segment, &URI.char_unreserved?/1) end)
+  end
+
+  defp preview_error_message(reason) when is_binary(reason), do: reason
+  defp preview_error_message(:enoent), do: gettext("The file no longer exists.")
+  defp preview_error_message(:eacces), do: gettext("Permission denied.")
+  defp preview_error_message(:symlink), do: gettext("Symlinks cannot be previewed.")
+  defp preview_error_message(_reason), do: gettext("This file cannot be previewed.")
+
+  defp preview_format_bytes(bytes) when is_integer(bytes) and bytes < 1024, do: "#{bytes} B"
+
+  defp preview_format_bytes(bytes) when is_integer(bytes) and bytes < 1_048_576,
+    do: "#{Float.round(bytes / 1024, 1)} KB"
+
+  defp preview_format_bytes(bytes) when is_integer(bytes),
+    do: "#{Float.round(bytes / 1_048_576, 2)} MB"
+
+  defp preview_format_bytes(_), do: "—"
 
   defp file_manager_reveal_label(:finder), do: gettext("Reveal in Finder")
   defp file_manager_reveal_label(:explorer), do: gettext("Show in File Explorer")

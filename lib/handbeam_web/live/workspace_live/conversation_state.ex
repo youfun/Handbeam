@@ -67,9 +67,18 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
     selected_model = conversation_selected_model(socket, conv, available_models)
     token_usage = load_conversation_token_usage(conv_id)
     running_for_conversation? = running_for_conversation?(socket, conv_id)
-    active_file = conv_value(conv, "active_file", nil)
     workspace_root = Map.get(socket.assigns, :workspace_root, Handbeam.Workspace.root())
-    file_preview_error = load_file_error(active_file, workspace_root)
+    {editor_files, active_file} = normalize_editor_state(socket, conv, workspace_root)
+
+    socket =
+      socket
+      |> assign(:editor_files, editor_files)
+      |> assign(:active_file, active_file)
+      |> assign(
+        :editor_state_key,
+        {editor_state_key(conv, workspace_root), editor_files, active_file}
+      )
+      |> refresh_file_preview(workspace_root, Keyword.get(opts, :refresh_preview?, false))
 
     status_overrides =
       %{model: model_display_name(selected_model, available_models, opts)}
@@ -92,12 +101,6 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
         else: socket
 
     socket
-    |> assign(
-      :editor_files,
-      conv_value(conv, "editor_files", []) |> Enum.map(&normalize_editor_file/1)
-    )
-    |> assign(:active_file, active_file)
-    |> assign(:file_preview_error, file_preview_error)
     |> assign(:selected_model, selected_model)
     |> sync_reasoning_for_conversation(conv, selected_model, opts)
     |> maybe_update_status(status_overrides, opts)
@@ -149,31 +152,95 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
     socket
   end
 
-  def select_file(socket, path, workspace_root, opts \\ []) do
-    conv = current_conv_map(socket)
+  def select_file(socket, path, workspace_root, _opts \\ []) do
+    open_editor_file(socket, path, workspace_root, :user)
+  end
 
-    socket =
-      case validate_within(path, workspace_root) do
-        :ok ->
-          abs_path = Path.expand(path)
-          _ = Handbeam.Search.touch(workspace_root, abs_path)
+  def select_editor_file(socket, path, workspace_root, _opts \\ []) do
+    with true <- editor_available?(socket),
+         true <- is_binary(path) and Path.type(path) == :relative,
+         {:ok, relative} <- relative_editor_path(path, workspace_root),
+         true <- Enum.any?(socket.assigns.editor_files, &(file_path_value(&1) == relative)) do
+      socket
+      |> assign(:active_file, relative)
+      |> refresh_file_preview(workspace_root, true)
+      |> sync_conv_to()
+    else
+      _ -> socket
+    end
+  end
 
-          conv
-          |> put_conversation_value("active_file", abs_path)
-          |> put_conversation_value(
-            "file_preview_error",
-            load_file_error(abs_path, workspace_root)
-          )
-          |> then(&update_conv(socket, &1))
+  def open_editor_file(socket, path, workspace_root, source) do
+    if editor_available?(socket) do
+      case resolve_editor_file(path, workspace_root) do
+        {:ok, relative} ->
+          files = socket.assigns.editor_files
+          active = socket.assigns.active_file
+
+          exists? = Enum.any?(files, &(file_path_value(&1) == relative))
+
+          if not exists? and length(files) >= 20 do
+            if source == :user,
+              do:
+                Phoenix.LiveView.put_flash(
+                  socket,
+                  :error,
+                  "You can open up to 20 files. Close a tab first."
+                ),
+              else: socket
+          else
+            files = if exists?, do: files, else: files ++ [%{path: relative, name: relative}]
+            active = if source == :user or is_nil(active), do: relative, else: active
+
+            if source == :user,
+              do: Handbeam.Search.touch(workspace_root, Path.expand(relative, workspace_root))
+
+            socket
+            |> assign(:editor_files, files)
+            |> assign(:active_file, active)
+            |> refresh_file_preview(workspace_root, active == relative)
+            |> sync_conv_to()
+          end
 
         {:error, reason} ->
-          conv
-          |> put_conversation_value("active_file", nil)
-          |> put_conversation_value("file_preview_error", reason)
-          |> then(&update_conv(socket, &1))
-      end
+          if source == :user do
+            Phoenix.LiveView.put_flash(socket, :error, error_text(reason))
+          else
+            case relative_editor_path(path, workspace_root) do
+              {:ok, relative} when relative == socket.assigns.active_file ->
+                refresh_file_preview(socket, workspace_root, true)
 
-    sync_conv_state(socket, opts)
+              _ ->
+                socket
+            end
+          end
+      end
+    else
+      socket
+    end
+  end
+
+  def close_file(socket, path, workspace_root, _opts \\ []) do
+    with true <- editor_available?(socket),
+         {:ok, relative} <- relative_editor_path(path, workspace_root),
+         files = socket.assigns.editor_files,
+         index when is_integer(index) <-
+           Enum.find_index(files, &(file_path_value(&1) == relative)) do
+      remaining = List.delete_at(files, index)
+
+      active =
+        if socket.assigns.active_file == relative,
+          do: file_path_value(Enum.at(remaining, index) || List.last(remaining)),
+          else: socket.assigns.active_file
+
+      socket
+      |> assign(:editor_files, remaining)
+      |> assign(:active_file, active)
+      |> refresh_file_preview(workspace_root)
+      |> sync_conv_to()
+    else
+      _ -> socket
+    end
   end
 
   def current_conv_map(socket) do
@@ -181,8 +248,19 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
     ws_id = conversation_bucket(socket)
     convs = Map.get(socket.assigns.conversations_by_workspace, ws_id, [])
 
-    Enum.find(convs, &(conversation_id(&1) == conv_id)) ||
-      load_or_build_current_conversation(conv_id, ws_id)
+    conv = Enum.find(convs, &(conversation_id(&1) == conv_id))
+
+    cond do
+      is_nil(conv) ->
+        load_or_build_current_conversation(conv_id, ws_id)
+
+      conv_value(conv, "editor_files", :not_loaded) == :not_loaded ->
+        # Sidebar summaries omit editor state; missing fields are not empty tabs.
+        load_current_conversation_from_store(socket) || conv
+
+      true ->
+        conv
+    end
   end
 
   def load_current_conversation_from_store(socket) do
@@ -299,7 +377,6 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
     conversation
     |> put_conversation_value("editor_files", socket.assigns.editor_files)
     |> put_conversation_value("active_file", socket.assigns.active_file)
-    |> put_conversation_value("file_preview_error", socket.assigns.file_preview_error)
     |> put_conversation_value("selected_model", socket.assigns.selected_model)
     |> put_conversation_value("selected_reasoning_level", socket.assigns.selected_reasoning_level)
   end
@@ -354,7 +431,6 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
       "timeline" => [],
       "editor_files" => [],
       "active_file" => nil,
-      "file_preview_error" => nil,
       "created_at" => now,
       "updated_at" => now
     }
@@ -367,8 +443,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
       _ =
         Handbeam.ConversationStore.save_files(conv_id, %{
           "editor_files" => socket.assigns.editor_files,
-          "active_file" => socket.assigns.active_file,
-          "file_preview_error" => socket.assigns.file_preview_error
+          "active_file" => socket.assigns.active_file
         })
 
       _ =
@@ -453,17 +528,140 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
   defp load_or_build_current_conversation(_conv_id, ws_id),
     do: build_memory_conversation(ws_id, 1)
 
-  defp validate_within(path, workspace_root) do
-    Handbeam.Security.PathValidator.validate_within_workspace(Path.expand(path), workspace_root)
+  defp editor_available?(socket) do
+    Map.get(socket.assigns, :chat_scope) != :free and
+      is_binary(Map.get(socket.assigns, :current_conversation_id))
   end
 
-  defp load_file_error(path, workspace_root) do
-    HandbeamWeb.WorkspaceHelper.file_preview_error(path, workspace_root)
+  defp editor_state_key(conv, root) do
+    {conversation_id(conv), root, conv_value(conv, "editor_files", []),
+     conv_value(conv, "active_file", nil)}
   end
 
-  defp normalize_editor_file(%{path: _, name: _} = file), do: file
-  defp normalize_editor_file(%{"path" => path, "name" => name}), do: %{path: path, name: name}
-  defp normalize_editor_file(file), do: file
+  defp normalize_editor_state(socket, conv, root) do
+    editor_files = Map.get(socket.assigns, :editor_files, [])
+    active_file = Map.get(socket.assigns, :active_file)
+
+    cond do
+      not editor_available?(socket) ->
+        {[], nil}
+
+      Map.get(socket.assigns, :editor_state_key) ==
+          {editor_state_key(conv, root), editor_files, active_file} ->
+        {editor_files, active_file}
+
+      true ->
+        normalize_stored_editor_state(conv, root)
+    end
+  end
+
+  defp normalize_stored_editor_state(conv, root) do
+    files =
+      (conv_value(conv, "editor_files", []) || [])
+      |> Enum.flat_map(fn file ->
+        case normalize_stored_path(file_path_value(file), root) do
+          {:ok, relative} -> [%{path: relative, name: relative}]
+          _ -> []
+        end
+      end)
+      |> Enum.uniq_by(& &1.path)
+      |> Enum.take(20)
+
+    active =
+      case normalize_stored_path(conv_value(conv, "active_file", nil), root) do
+        {:ok, relative} -> relative
+        _ -> nil
+      end
+
+    cond do
+      is_nil(active) -> {files, nil}
+      Enum.any?(files, &(&1.path == active)) -> {files, active}
+      true -> {Enum.take(files, 19) ++ [%{path: active, name: active}], active}
+    end
+  end
+
+  defp relative_editor_path(path, root) when is_binary(path) and is_binary(root) do
+    absolute = Path.expand(path, root)
+    relative = Path.relative_to(absolute, Path.expand(root))
+
+    if path != "" and not String.contains?(path, <<0>>) and
+         ".." not in Path.split(path) and Path.type(relative) == :relative and relative != "." do
+      {:ok, relative}
+    else
+      {:error, :invalid_path}
+    end
+  end
+
+  defp relative_editor_path(_, _), do: {:error, :invalid_path}
+
+  defp resolve_editor_file(path, root) do
+    with {:ok, relative} <- relative_editor_path(path, root),
+         :ok <- Handbeam.Security.PathValidator.reject_resolved(Path.expand(relative, root)),
+         {:ok, _absolute} <- Handbeam.WorkspaceFiles.resolve(root, relative, :file) do
+      {:ok, relative}
+    end
+  end
+
+  defp normalize_stored_path(path, root) when is_binary(path) do
+    if Path.type(path) == :relative do
+      with {:ok, relative} <- relative_editor_path(path, root),
+           :ok <- Handbeam.Security.PathValidator.reject_resolved(Path.expand(relative, root)) do
+        case Handbeam.WorkspaceFiles.resolve(root, relative, :file) do
+          {:ok, _} -> {:ok, relative}
+          {:error, :enoent} -> {:ok, relative}
+          error -> error
+        end
+      end
+    else
+      {:error, :invalid_path}
+    end
+  end
+
+  defp normalize_stored_path(_path, _root), do: {:error, :invalid_path}
+
+  def refresh_file_preview(socket, root, force? \\ false) do
+    active = Map.get(socket.assigns, :active_file)
+    key = {root, active}
+
+    if force? or Map.get(socket.assigns, :file_preview_key) != key or
+         (is_binary(active) and is_nil(Map.get(socket.assigns, :file_preview))) do
+      preview = load_file_preview(active, root)
+
+      socket
+      |> assign(:file_preview_key, key)
+      |> assign(:file_preview, preview)
+      |> assign(:file_preview_error, preview_error(preview))
+    else
+      socket
+    end
+  end
+
+  defp load_file_preview(nil, _workspace_root), do: nil
+
+  defp load_file_preview(path, workspace_root)
+       when is_binary(path) and is_binary(workspace_root) do
+    with {:ok, relative} <- resolve_editor_file(path, workspace_root),
+         {:ok, preview} <- Handbeam.WorkspaceFiles.preview(workspace_root, relative) do
+      preview
+    else
+      {:error, reason} -> {:error, error_text(reason)}
+    end
+  end
+
+  defp load_file_preview(_, _), do: {:error, "Invalid file path"}
+
+  defp error_text(reason) when is_binary(reason), do: reason
+  defp error_text(:enoent), do: "File no longer exists"
+  defp error_text(:symlink), do: "Symbolic links cannot be previewed"
+  defp error_text(:invalid_path), do: "Invalid file path"
+  defp error_text(reason), do: "Unable to preview file: #{inspect(reason)}"
+
+  defp preview_error({:error, reason}), do: error_text(reason)
+  defp preview_error(_), do: nil
+
+  defp file_path_value(nil), do: nil
+  defp file_path_value(file) when is_map(file), do: conv_value(file, "path", nil)
+  defp file_path_value(_), do: nil
 
   defp deduplicate_entries(entries) do
     Enum.uniq_by(entries, &conv_value(&1, "id", nil))

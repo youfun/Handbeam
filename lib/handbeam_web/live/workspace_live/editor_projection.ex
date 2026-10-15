@@ -5,6 +5,7 @@ defmodule HandbeamWeb.WorkspaceLive.EditorProjection do
   import Phoenix.LiveView, only: [stream: 4, stream_insert: 3]
 
   alias HandbeamWeb.ChangeHelper
+  alias HandbeamWeb.WorkspaceLive.ConversationState
 
   def apply_revert_result(socket, change, result, workspace_root) do
     {status, result} = normalize_revert_result(result)
@@ -40,20 +41,7 @@ defmodule HandbeamWeb.WorkspaceLive.EditorProjection do
 
   def maybe_add_diff_file(socket, file_path, diff_lines, workspace_root)
       when is_binary(file_path) and is_list(diff_lines) and diff_lines != [] do
-    case Handbeam.Security.PathValidator.validate_within_workspace(
-           Path.expand(file_path),
-           workspace_root
-         ) do
-      :ok ->
-        abs_path = Path.expand(file_path)
-
-        if File.exists?(abs_path),
-          do: add_editor_file(socket, abs_path, workspace_root),
-          else: socket
-
-      {:error, _reason} ->
-        socket
-    end
+    ConversationState.open_editor_file(socket, file_path, workspace_root, :agent)
   end
 
   def maybe_add_diff_file(socket, _file_path, _diff_lines, _workspace_root), do: socket
@@ -61,25 +49,6 @@ defmodule HandbeamWeb.WorkspaceLive.EditorProjection do
   defp normalize_revert_result({:ok, result}), do: {"reverted", result}
   defp normalize_revert_result({:conflict, result}), do: {"conflict", result}
   defp normalize_revert_result({:error, result}), do: {"error", result}
-
-  defp add_editor_file(socket, abs_path, workspace_root) do
-    existing = socket.assigns.editor_files
-
-    if Enum.any?(existing, &(HandbeamWeb.WorkspaceHelper.file_value(&1, "path", nil) == abs_path)) do
-      socket
-    else
-      relative = Path.relative_to(abs_path, workspace_root)
-      socket = assign(socket, :editor_files, existing ++ [%{path: abs_path, name: relative}])
-
-      if socket.assigns.active_file == nil do
-        socket
-        |> assign(:active_file, abs_path)
-        |> assign(:file_preview_error, load_file_error(abs_path, workspace_root))
-      else
-        socket
-      end
-    end
-  end
 
   defp update_timeline_change_status(socket, change_id, status) do
     timeline =
@@ -159,16 +128,15 @@ defmodule HandbeamWeb.WorkspaceLive.EditorProjection do
 
   defp refresh_active_file_preview(socket, file_path, workspace_root)
        when is_binary(file_path) do
-    if socket.assigns.active_file == Path.expand(file_path) do
-      assign(socket, :file_preview_error, load_file_error(file_path, workspace_root))
+    active = socket.assigns.active_file
+
+    if is_binary(active) and
+         Path.expand(active, workspace_root) == Path.expand(file_path, workspace_root) do
+      ConversationState.refresh_file_preview(socket, workspace_root, true)
     else
       socket
     end
   end
 
   defp refresh_active_file_preview(socket, _file_path, _workspace_root), do: socket
-
-  defp load_file_error(path, workspace_root) do
-    HandbeamWeb.WorkspaceHelper.file_preview_error(path, workspace_root)
-  end
 end

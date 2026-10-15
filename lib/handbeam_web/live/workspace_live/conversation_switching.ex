@@ -880,6 +880,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
     |> assign(:tools_active, %{})
     |> assign(:editor_files, [])
     |> assign(:active_file, nil)
+    |> assign(:file_preview, nil)
     |> assign(:file_preview_error, nil)
     |> assign(:revert_confirm_change_id, nil)
     |> assign(:revert_message, nil)

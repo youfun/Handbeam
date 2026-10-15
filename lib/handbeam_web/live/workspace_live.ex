@@ -618,30 +618,39 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   @impl true
   def handle_event("select_workspace_file", %{"path" => relative_path}, socket) do
-    case WorkspaceFiles.resolve(
-           ConversationState.current_workspace_path(socket),
-           relative_path,
-           :file
-         ) do
-      {:ok, path} ->
-        socket =
-          ConversationState.select_file(
-            socket,
-            path,
-            ConversationState.current_workspace_path(socket),
-            ModelSelection.state_opts()
-          )
-
-        {:noreply, socket}
-
-      {:error, _reason} ->
-        {:noreply, socket}
-    end
+    {:noreply,
+     ConversationState.select_file(
+       socket,
+       relative_path,
+       ConversationState.current_workspace_path(socket),
+       ModelSelection.state_opts()
+     )}
   end
 
   @impl true
   def handle_event("toggle_workspace_directory", %{"path" => relative_path}, socket) do
     {:noreply, WorkspaceNavigation.toggle_directory(socket, relative_path)}
+  end
+
+  @impl true
+  def handle_event("select_editor_file", %{"path" => relative_path}, socket)
+      when is_binary(relative_path) do
+    {:noreply,
+     ConversationState.select_editor_file(
+       socket,
+       relative_path,
+       ConversationState.current_workspace_path(socket),
+       ModelSelection.state_opts()
+     )}
+  end
+
+  @impl true
+  def handle_event("close_editor_file", %{"path" => relative_path}, socket)
+      when is_binary(relative_path) do
+    root = ConversationState.current_workspace_path(socket)
+
+    {:noreply,
+     ConversationState.close_file(socket, relative_path, root, ModelSelection.state_opts())}
   end
 
   @impl true

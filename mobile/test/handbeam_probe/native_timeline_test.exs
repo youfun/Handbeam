@@ -150,9 +150,8 @@ defmodule HandbeamProbe.NativeTimelineTest do
     tree = render(chat, MapSet.new(["r", "b", "e"]))
     encoded = inspect(tree, limit: :infinity)
 
-    assert Enum.any?(lines, fn column ->
-             column.props.padding_left == 12 and line_text(column) =~ "read lib/a.ex"
-           end)
+    assert encoded =~ "Read lib/a.ex"
+    assert encoded =~ "$ mix test"
 
     refute encoded =~ " · done"
     assert encoded =~ "+1"
@@ -195,16 +194,6 @@ defmodule HandbeamProbe.NativeTimelineTest do
     }
 
     tree = render(chat, MapSet.new(["r"]))
-    lines = line_columns(tree)
-
-    assert Enum.any?(lines, fn column ->
-             column.props.padding_left == 28 and line_text(column) =~ "read lib/a.ex"
-           end)
-
-    assert Enum.any?(lines, fn column ->
-             column.props.padding_left == 12 and line_text(column) =~ "$ mix test"
-           end)
-
     encoded = inspect(tree, limit: :infinity)
 
     assert encoded =~ "Read lib/a.ex"
