@@ -2,8 +2,10 @@ defmodule HandbeamWeb.Feature.RuntimeProjectionFeatureTest do
   use HandbeamWeb.FeatureCase, async: false
 
   alias Handbeam.Agent.Coordinator
+  alias Handbeam.ConversationTranscriptStore
   alias Handbeam.PubSub.Session
   alias Handbeam.TestSupport.E2EHarness
+  alias HandbeamWeb.WorkspaceLive.RuntimeProjection
 
   defmodule UnavailableHistory do
     def page(_id, _opts), do: {:error, :unavailable}
@@ -30,6 +32,48 @@ defmodule HandbeamWeb.Feature.RuntimeProjectionFeatureTest do
     {:ok, %{run_id: run_id}} = Coordinator.add_message(id, "stream once", opts)
     assert_receive {:projected_stream, provider}, 5_000
     %{id: id, run_id: run_id, provider: provider}
+  end
+
+  test "completed assistant stays final when an active run is restored", ctx do
+    assistant =
+      ctx.id
+      |> E2EHarness.transcript()
+      |> Enum.find(&(&1["role"] == "assistant"))
+
+    assert assistant["status"] == "streaming"
+
+    {:ok, _entry} =
+      ConversationTranscriptStore.update(ctx.id, assistant["id"], %{"status" => "completed"})
+
+    {:ok, _entry} =
+      ConversationTranscriptStore.append(ctx.id, %{
+        "id" => "tool-after-completed-assistant",
+        "content_type" => "tool",
+        "role" => "tool",
+        "run_id" => ctx.run_id,
+        "tool_name" => "read",
+        "tool_status" => "done"
+      })
+
+    completed_assistant = Map.put(assistant, "status", "completed")
+    assert RuntimeProjection.assistant_final?(completed_assistant, true, assistant["id"])
+    refute RuntimeProjection.assistant_streaming?(completed_assistant, true, assistant["id"])
+
+    ctx.conn
+    |> visit("/w/default/c/#{ctx.id}")
+    |> unwrap(fn view ->
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.running
+      assert assigns.current_assistant_entry_id == nil
+
+      rendered = Phoenix.LiveViewTest.render(view)
+      assert rendered =~ ~s(data-entry-id="#{assistant["id"]}")
+      assert rendered =~ ~s(data-final="true")
+      assert rendered =~ ~s(data-streaming="false")
+      rendered
+    end)
+
+    send(ctx.provider, :finish)
   end
 
   test "session restart recovers a lower seq without losing the active run", ctx do

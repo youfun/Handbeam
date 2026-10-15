@@ -188,9 +188,10 @@ defmodule HandbeamWeb.WorkspaceLive.ViewComponents do
   end
 
   def assistant_message_streaming?(entry, running, current_assistant_entry_id) do
-    running && Map.get(entry, "id") == current_assistant_entry_id &&
-      !truthy?(Map.get(entry, "final"))
+    HandbeamWeb.WorkspaceLive.RuntimeProjection.assistant_streaming?(
+      entry,
+      running,
+      current_assistant_entry_id
+    )
   end
-
-  defp truthy?(value), do: value in [true, "true", 1, "1"]
 end

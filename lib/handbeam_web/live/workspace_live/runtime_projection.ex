@@ -191,10 +191,27 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
 
   def assistant_final?(entry, running, current_id) do
     cond do
+      settled_assistant?(entry) -> true
       Map.has_key?(entry, "final") -> truthy?(Map.get(entry, "final"))
-      running && Map.get(entry, "id") == current_id && !truthy?(Map.get(entry, "final")) -> false
+      running && Map.get(entry, "id") == current_id -> false
       true -> true
     end
+  end
+
+  def assistant_streaming?(entry, running, current_id) do
+    running && Map.get(entry, "id") == current_id &&
+      !assistant_final?(entry, running, current_id)
+  end
+
+  defp settled_assistant?(entry) do
+    Map.get(entry, "status", Map.get(entry, :status)) in [
+      "completed",
+      :completed,
+      "cancelled",
+      :cancelled,
+      "error",
+      :error
+    ]
   end
 
   defp update_assistant(socket, ""), do: socket
@@ -639,7 +656,7 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
           |> assign(:tools_active, %{})
           |> assign(
             :current_assistant_entry_id,
-            last_assistant_message_id(socket.assigns.timeline)
+            streaming_assistant_message_id(socket.assigns.timeline, meta[:run_id])
           )
 
         # Durable text is already in history. Replay only active-run control state,
@@ -693,13 +710,16 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
     end)
   end
 
-  def last_assistant_message_id(timeline) do
+  def streaming_assistant_message_id(timeline, run_id) do
     timeline
     |> Enum.reverse()
     |> Enum.find_value(fn entry ->
       content_type = Map.get(entry, "content_type", Map.get(entry, :content_type))
+      status = Map.get(entry, "status", Map.get(entry, :status))
+      entry_run_id = Map.get(entry, "run_id", Map.get(entry, :run_id))
 
-      if content_type == "assistant_msg" do
+      if content_type == "assistant_msg" and status in ["streaming", :streaming] and
+           entry_run_id == run_id do
         Map.get(entry, "id", Map.get(entry, :id))
       end
     end)
