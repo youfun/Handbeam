@@ -168,6 +168,16 @@ defmodule Handbeam.Agent.RunnerTest do
     def stream(messages, tool_defs, config, _on_chunk), do: complete(messages, tool_defs, config)
   end
 
+  defmodule OverloadedProvider do
+    @behaviour Handbeam.Agent.Provider
+
+    @impl true
+    def complete(_messages, _tool_defs, _config), do: {:error, :server_is_overloaded}
+
+    @impl true
+    def stream(messages, tool_defs, config, _on_chunk), do: complete(messages, tool_defs, config)
+  end
+
   defmodule StreamingProvider do
     @behaviour Handbeam.Agent.Provider
 
@@ -339,6 +349,46 @@ defmodule Handbeam.Agent.RunnerTest do
              Handbeam.ConversationStore.load_messages(sid)
 
     assert content =~ "runner crash"
+  end
+
+  test "provider return errors are recorded with gateway context" do
+    previous = Application.get_env(:error_tracker, :enabled)
+    Application.put_env(:error_tracker, :enabled, true)
+
+    on_exit(fn ->
+      if is_nil(previous),
+        do: Application.delete_env(:error_tracker, :enabled),
+        else: Application.put_env(:error_tracker, :enabled, previous)
+    end)
+
+    sid = "runner-overloaded-#{System.unique_integer([:positive])}"
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
+
+    assert {:ok, %{action: :started}} =
+             Coordinator.add_message(
+               sid,
+               "overload",
+               opts(
+                 provider: OverloadedProvider,
+                 provider_config: %{
+                   provider: "test-gateway",
+                   base_url: "https://gateway.test/v1"
+                 }
+               )
+             )
+
+    assert_eventually(fn ->
+      assert [%ErrorTracker.Error{reason: reason}] = Handbeam.Repo.all(ErrorTracker.Error)
+      assert reason =~ "server_is_overloaded"
+
+      assert [%ErrorTracker.Occurrence{context: context}] =
+               Handbeam.Repo.all(ErrorTracker.Occurrence)
+
+      assert context["failure_class"] == "provider_overloaded"
+      assert context["gateway_host"] == "gateway.test"
+      assert context["provider"] == "test-gateway"
+      assert context["conversation_id"] == sid
+    end)
   end
 
   test "assistant persistence failure ends the run as error, never completed" do

@@ -8,7 +8,7 @@ defmodule Handbeam.Agent.Tool.Executor do
   Supports parallel execution via Task.async_stream.
   """
 
-  alias Handbeam.Agent.{Message, ModelContext, State}
+  alias Handbeam.Agent.{ErrorReporter, Message, ModelContext, State}
   alias Handbeam.Agent.Tool.{Result, ResultContract}
   alias Handbeam.Extension.HookPipeline
   alias Handbeam.Utils.SafeMap
@@ -111,6 +111,8 @@ defmodule Handbeam.Agent.Tool.Executor do
                 timeout_for(call, tool_fns, state)
               )
 
+            report_tool_error(call, block, context)
+
             emit_nested(
               opts,
               :tool_end,
@@ -199,6 +201,8 @@ defmodule Handbeam.Agent.Tool.Executor do
     # Reassemble in original order (pre-strip blocks with details intact)
     ui_blocks =
       reassemble_ordered(tool_calls, sequential, seq_results, concurrent, par_results)
+
+    Enum.zip_with(tool_calls, ui_blocks, &report_tool_error(&1, &2, context))
 
     # Strip details for LLM-friendly message
     results = Enum.map(ui_blocks, &strip_details/1)
@@ -736,6 +740,30 @@ defmodule Handbeam.Agent.Tool.Executor do
       {:ok, block[:content], details}
     end
   end
+
+  defp report_tool_error(call, %{is_error: true, content: reason}, context) do
+    run_opts = context[:thread_run_opts] || []
+
+    ErrorReporter.report(
+      reason,
+      %{
+        "source" => "agent_tool",
+        "conversation_id" => context[:conversation_id],
+        "parent_conversation_id" => get_in(context, [:delegation_parent, :conversation_id]),
+        "run_id" => context[:run_id],
+        "workspace_id" => context[:workspace_id],
+        "model" => run_opts[:model],
+        "tool" => SafeMap.get_any(call, :name, "name"),
+        "tool_call_id" => SafeMap.get_any(call, :id, "id"),
+        "parent_tool_call_id" => context[:parent_tool_call_id]
+      },
+      failure_class: :tool_error,
+      provider: run_opts[:provider],
+      provider_config: run_opts[:provider_config]
+    )
+  end
+
+  defp report_tool_error(_call, _block, _context), do: :ok
 
   defp build_context(%State{} = state, opts) do
     state

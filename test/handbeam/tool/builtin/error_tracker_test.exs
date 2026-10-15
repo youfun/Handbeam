@@ -35,6 +35,17 @@ defmodule Handbeam.Tool.Builtin.ErrorTrackerTest do
         %{"source" => "agent_runner", "conversation_id" => "debugger-conversation"}
       )
 
+    _automatic_child =
+      ErrorTracker.report(
+        RuntimeError.exception("debugger child failure"),
+        [{__MODULE__, :debugger_child_failure, 0, [file: __ENV__.file, line: __ENV__.line]}],
+        %{
+          "source" => "agent_runner",
+          "conversation_id" => "debugger-child",
+          "parent_conversation_id" => "debugger-conversation"
+        }
+      )
+
     context = %{source: :schedule, conversation_id: "debugger-conversation"}
     assert {:ok, encoded} = ErrorTrackerTool.execute(%{"action" => "list"}, context)
 

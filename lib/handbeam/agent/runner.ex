@@ -10,6 +10,7 @@ defmodule Handbeam.Agent.Runner do
 
   require Logger
 
+  alias Handbeam.Agent.ErrorReporter
   alias Handbeam.PubSub.Session
 
   @default_inactivity_timeout_ms 300_000
@@ -108,6 +109,10 @@ defmodule Handbeam.Agent.Runner do
        {:continue, :start_task}}
     else
       {:error, reason} ->
+        report_error({:inbound_persist_failed, reason}, state,
+          failure_class: :inbound_persist_failed
+        )
+
         {:stop, {:inbound_persist_failed, reason}}
     end
   end
@@ -366,6 +371,10 @@ defmodule Handbeam.Agent.Runner do
       %Handbeam.Agent.State{status: :halted} = halted ->
         finish_terminal(state, halted, :halted)
 
+      %Handbeam.Agent.State{status: :error, error: reason} = errored ->
+        report_error(reason || :agent_error, state)
+        finish_terminal(state, errored, :error)
+
       %Handbeam.Agent.State{status: status} = result ->
         finish_terminal(state, result, status)
 
@@ -403,6 +412,7 @@ defmodule Handbeam.Agent.Runner do
 
   def handle_info({:run_deadline, deadline}, %{deadline: deadline} = state)
       when state.status in [:running, :awaiting_approval] do
+    report_error(:run_timeout, state, failure_class: :run_timeout)
     cleanup_os_processes(state)
     shutdown_run_task(state.task)
 
@@ -428,6 +438,11 @@ defmodule Handbeam.Agent.Runner do
 
   def handle_info({:run_inactivity, deadline}, %{deadline: deadline, status: :running} = state) do
     timeout_ms = timeout_ms(state)
+
+    report_error({:run_inactivity_timeout, timeout_ms}, state,
+      failure_class: :run_inactivity_timeout
+    )
+
     cleanup_os_processes(state)
     shutdown_run_task(state.task)
 
@@ -459,6 +474,7 @@ defmodule Handbeam.Agent.Runner do
 
   @doc false
   def abort_unreplayable(state, reason) do
+    report_error(reason, state, failure_class: :run_tree_exit)
     shutdown_run_task(state.task)
     Handbeam.Agent.CandidateQueue.seal(state.queue_pid)
 
@@ -594,7 +610,7 @@ defmodule Handbeam.Agent.Runner do
   end
 
   defp finish_error(state, reason) do
-    report_exception(reason, state)
+    report_error(reason, state)
     message = inspect(reason)
     Handbeam.Agent.CandidateQueue.seal(state.queue_pid)
 
@@ -614,24 +630,30 @@ defmodule Handbeam.Agent.Runner do
     {:noreply, %{state | status: :error, error: reason, task: nil}}
   end
 
-  defp report_exception({%_{} = exception, stacktrace}, state) when is_list(stacktrace) do
-    ErrorTracker.report(exception, stacktrace, %{
-      "source" => "agent_runner",
-      "conversation_id" => state.conversation_id,
-      "run_id" => state.opts[:run_id],
-      "workspace_id" => state.opts[:workspace_id],
-      "workspace_path" => state.opts[:workspace_path],
-      "model" => state.opts[:model]
-    })
-
-    :ok
-  rescue
-    _ -> :ok
-  catch
-    _, _ -> :ok
+  defp report_error(reason, state, opts \\ []) do
+    ErrorReporter.report(
+      reason,
+      %{
+        "source" => "agent_runner",
+        "conversation_id" => state.conversation_id,
+        "parent_conversation_id" => parent_conversation_id(state.opts),
+        "run_id" => state.opts[:run_id],
+        "workspace_id" => state.opts[:workspace_id],
+        "workspace_path" => state.opts[:workspace_path],
+        "model" => state.opts[:model]
+      },
+      Keyword.merge(
+        [provider: state.opts[:provider], provider_config: state.opts[:provider_config]],
+        opts
+      )
+    )
   end
 
-  defp report_exception(_reason, _state), do: :ok
+  defp parent_conversation_id(opts) do
+    opts
+    |> Keyword.get(:context, %{})
+    |> get_in([:delegation_parent, :conversation_id])
+  end
 
   defp stop_run_supervisor(state) do
     close_scope(state)

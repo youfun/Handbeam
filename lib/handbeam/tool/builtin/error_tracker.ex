@@ -169,9 +169,11 @@ defmodule Handbeam.Tool.Builtin.ErrorTracker do
       |> Repo.one()
 
     conversation_id = field(context, "conversation_id")
+    occurrence_conversation_id = field(occurrence_context || %{}, "conversation_id")
+    parent_conversation_id = field(occurrence_context || %{}, "parent_conversation_id")
 
     field(context, "source") in [:schedule, "schedule"] and is_binary(conversation_id) and
-      field(occurrence_context || %{}, "conversation_id") == conversation_id
+      conversation_id in [occurrence_conversation_id, parent_conversation_id]
   end
 
   defp bounded_integer(value, _default, max) when is_integer(value),

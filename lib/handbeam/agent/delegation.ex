@@ -24,7 +24,7 @@ defmodule Handbeam.Agent.Delegation do
 
   require Logger
 
-  alias Handbeam.Agent.{Coordinator, Delegation.Policy}
+  alias Handbeam.Agent.{Coordinator, Delegation.Policy, ErrorReporter}
   alias Handbeam.Agent.Subagent.{Profile, Worktree}
   alias Handbeam.ConversationStore
   alias Handbeam.PubSub.Session
@@ -516,7 +516,7 @@ defmodule Handbeam.Agent.Delegation do
     end
   end
 
-  def handle_info({:DOWN, ref, :process, _pid, _reason}, state) do
+  def handle_info({:DOWN, ref, :process, _pid, reason}, state) do
     jobs =
       Enum.reduce(state.jobs, %{}, fn {id, job}, acc ->
         job =
@@ -524,8 +524,12 @@ defmodule Handbeam.Agent.Delegation do
             ref in [job.parent_ref, job.caller_ref] ->
               close(job, :parent_closed)
 
+            ref == job.runner_ref and job.status in [:running, :awaiting_approval] ->
+              report_child_stopped(job, state.sessions[id], reason)
+              close(%{job | error: {:child_stopped, reason}}, :child_stopped)
+
             ref == job.runner_ref ->
-              close(job, :child_stopped)
+              job
 
             ref == job.starter_ref ->
               reply_start(job, {:error, "Subagent failed to start"})
@@ -551,6 +555,27 @@ defmodule Handbeam.Agent.Delegation do
   end
 
   def handle_info(_message, state), do: {:noreply, state}
+
+  defp report_child_stopped(job, session, reason) do
+    child_opts = (session && session.child_opts) || []
+
+    ErrorReporter.report(
+      {:child_stopped, reason},
+      %{
+        "source" => "delegation",
+        "conversation_id" => job.parent_id,
+        "run_id" => job.parent_run_id,
+        "child_conversation_id" => job.id,
+        "child_run_id" => job.run_id,
+        "subagent_type" => job.profile.name,
+        "subagent_mode" => job.mode,
+        "model" => child_opts[:model]
+      },
+      failure_class: :subagent_stopped,
+      provider: child_opts[:provider],
+      provider_config: child_opts[:provider_config]
+    )
+  end
 
   # ── Starting runs ──────────────────────────────────────────────────────
 
