@@ -1018,24 +1018,24 @@ msgstr[0] "%{count} 个操作"
 msgstr[1] "%{count} 个操作"
 
 #: lib/handbeam_web/live/workspace_live/browser_panel.ex:85
-#, elixir-autogen, elixir-format, fuzzy
+#, elixir-autogen, elixir-format
 msgid "%{count} marked"
-msgstr "%{count} 条命令"
+msgstr "已标注 %{count} 处"
 
 #: lib/handbeam_web/live/settings/model_ai_panel.ex:442
 #, elixir-autogen, elixir-format
 msgid "%{level} (Unavailable)"
-msgstr ""
+msgstr "%{level}（不可用）"
 
 #: lib/handbeam_web/live/settings/model_ai_panel.ex:439
 #, elixir-autogen, elixir-format
 msgid "%{model} (Unavailable)"
-msgstr ""
+msgstr "%{model}（不可用）"
 
 #: lib/handbeam_web/live/settings_live.html.heex:284
 #, elixir-autogen, elixir-format
 msgid "A ready result proves API access and one tiny compute dispatch only. It is not model compatibility or performance evidence, especially on software or virtual GPUs."
-msgstr ""
+msgstr "就绪结果仅表示 API 可访问，且已完成一次微小的计算调度，不能证明模型兼容性或性能，尤其是在软件或虚拟 GPU 上。"
 
 #: lib/handbeam_web/live/git_settings_live.html.heex:64
 #, elixir-autogen, elixir-format
@@ -1102,7 +1102,7 @@ msgstr "认证方式"
 #: lib/handbeam_web/live/workspace_live/browser_panel.ex:38
 #, elixir-autogen, elixir-format
 msgid "Back"
-msgstr ""
+msgstr "后退"
 
 #: lib/handbeam_web/live/mcp_settings_live.html.heex:184
 #, elixir-autogen, elixir-format
@@ -1112,47 +1112,47 @@ msgstr "Bearer 令牌"
 #: lib/handbeam_web/live/workspace_live/workspace_components.ex:165
 #, elixir-autogen, elixir-format
 msgid "Browser"
-msgstr ""
+msgstr "浏览器"
 
 #: lib/handbeam_web/live/workspace_live/chat_components.ex:938
 #, elixir-autogen, elixir-format
 msgid "CLI"
-msgstr ""
+msgstr "命令行"
 
 #: lib/handbeam_web/live/workspace_live/overlay_components.ex:387
 #, elixir-autogen, elixir-format
 msgid "CLI approval required"
-msgstr ""
+msgstr "命令行工具需要授权"
 
 #: lib/handbeam_web/live/workspace_live/message_submission.ex:762
 #, elixir-autogen, elixir-format
 msgid "CLI asked a question. The turn stopped."
-msgstr ""
+msgstr "命令行工具提出了问题，本轮已停止。"
 
 #: lib/handbeam_web/live/workspace_live/message_submission.ex:759
 #, elixir-autogen, elixir-format
 msgid "CLI asked for permission. The turn stopped."
-msgstr ""
+msgstr "命令行工具请求授权，本轮已停止。"
 
 #: lib/handbeam_web/live/workspace_live/message_submission.ex:756
 #, elixir-autogen, elixir-format
 msgid "CLI is not available on this host."
-msgstr ""
+msgstr "此主机上无法使用命令行工具。"
 
 #: lib/handbeam_web/live/workspace_live/chat_components.ex:985
 #, elixir-autogen, elixir-format
 msgid "CLI model"
-msgstr ""
+msgstr "命令行模型"
 
 #: lib/handbeam_web/live/workspace_live/message_submission.ex:765
 #, elixir-autogen, elixir-format
 msgid "CLI turn failed: %{reason}"
-msgstr ""
+msgstr "命令行工具本轮执行失败：%{reason}"
 
 #: lib/handbeam_web/live/workspace_live/message_submission.ex:622
 #, elixir-autogen, elixir-format
 msgid "CLI turn stopped."
-msgstr ""
+msgstr "命令行工具本轮执行已停止。"
 
 #: lib/handbeam_web/live/workspace_live/workspace_components.ex:144
 #, elixir-autogen, elixir-format
@@ -1162,7 +1162,7 @@ msgstr "变更"
 #: lib/handbeam_web/live/settings_live.html.heex:226
 #, elixir-autogen, elixir-format
 msgid "Checks the browser boundaries needed by a future local model setting. It does not download or run a model."
-msgstr ""
+msgstr "检查未来本地模型设置所需的浏览器能力边界，不会下载或运行模型。"
 
 #: lib/handbeam_web/live/settings_live.html.heex:317
 #, elixir-autogen, elixir-format
@@ -1172,7 +1172,7 @@ msgstr "选择界面语言。"
 #: lib/handbeam_web/live/workspace_live/browser_panel.ex:94
 #, elixir-autogen, elixir-format
 msgid "Clear"
-msgstr ""
+msgstr "清空"
 
 #: lib/handbeam_web/live/git_settings_live.html.heex:22
 #, elixir-autogen, elixir-format
@@ -1249,9 +1249,9 @@ msgid "Could not resend because the run is no longer accepting input."
 msgstr "当前运行已不再接受输入，无法重发。"
 
 #: lib/handbeam_web/live/settings_live.ex:136
-#, elixir-autogen, elixir-format, fuzzy
+#, elixir-autogen, elixir-format
 msgid "Could not save language preference."
-msgstr "无法保存主题偏好。"
+msgstr "无法保存语言偏好。"
 
 #: lib/handbeam_web/live/settings_live.ex:118
 #, elixir-autogen, elixir-format
@@ -1304,7 +1304,7 @@ msgstr "拒绝"
 #: lib/handbeam_web/live/workspace_live/browser_panel.ex:82
 #, elixir-autogen, elixir-format
 msgid "Design"
-msgstr ""
+msgstr "设计"
 
 #: lib/handbeam_web/live/mcp_settings_live.html.heex:59
 #: lib/handbeam_web/live/mcp_settings_live.html.heex:229
@@ -1386,7 +1386,7 @@ msgstr "文件"
 #: lib/handbeam_web/live/workspace_live/browser_panel.ex:46
 #, elixir-autogen, elixir-format
 msgid "Forward"
-msgstr ""
+msgstr "前进"
 
 #: lib/handbeam_web/live/git_settings_live.html.heex:20
 #: lib/handbeam_web/live/settings_live.ex:343
@@ -1397,12 +1397,12 @@ msgstr "Git"
 #: lib/handbeam_web/live/workspace_live/browser_panel.ex:66
 #, elixir-autogen, elixir-format
 msgid "Go"
-msgstr ""
+msgstr "前往"
 
 #: lib/handbeam_web/workspace_helper.ex:653
 #, elixir-autogen, elixir-format
 msgid "Grep"
-msgstr ""
+msgstr "搜索内容"
 
 #: lib/handbeam_web/live/git_settings_live.html.heex:150
 #, elixir-autogen, elixir-format
@@ -1412,12 +1412,12 @@ msgstr "HTTPS 地址"
 #: lib/handbeam_web/live/workspace_live/chat_components.ex:942
 #, elixir-autogen, elixir-format
 msgid "Handbeam"
-msgstr ""
+msgstr "Handbeam"
 
 #: lib/handbeam_web/live/workspace_live/chat_components.ex:939
 #, elixir-autogen, elixir-format
 msgid "Handbeam owns the turn unless a CLI is selected"
-msgstr ""
+msgstr "未选择命令行工具时，由 Handbeam 执行本轮任务"
 
 #: lib/handbeam_web/live/mcp_settings_live.html.heex:208
 #, elixir-autogen, elixir-format
@@ -1457,7 +1457,7 @@ msgstr "审批通过后插入"
 #: lib/handbeam_web/live/workspace_live/browser_panel.ex:142
 #, elixir-autogen, elixir-format
 msgid "Install agent-browser to use the browser"
-msgstr ""
+msgstr "请安装 agent-browser 以使用浏览器"
 
 #: lib/handbeam_web/live/mcp_settings_live.html.heex:215
 #, elixir-autogen, elixir-format
@@ -1492,17 +1492,17 @@ msgstr "限制此工作区可以使用的模型。"
 #: lib/handbeam_web/workspace_helper.ex:662
 #, elixir-autogen, elixir-format
 msgid "List"
-msgstr ""
+msgstr "列出"
 
 #: lib/handbeam_web/live/settings_live.ex:341
 #, elixir-autogen, elixir-format
 msgid "Local WebGPU"
-msgstr ""
+msgstr "本地 WebGPU"
 
 #: lib/handbeam_web/live/settings_live.html.heex:224
 #, elixir-autogen, elixir-format
 msgid "Local WebGPU capability probe"
-msgstr ""
+msgstr "本地 WebGPU 能力检测"
 
 #: lib/handbeam_web/live/settings_live.ex:342
 #, elixir-autogen, elixir-format
@@ -1523,14 +1523,14 @@ msgstr "记忆模型"
 #: lib/handbeam_web/live/settings/model_ai_panel.ex:275
 #, elixir-autogen, elixir-format
 msgid "Model default"
-msgstr ""
+msgstr "模型默认值"
 
 #: lib/handbeam_web/live/available_models_live.ex:115
 #: lib/handbeam_web/live/available_models_live.ex:125
 #: lib/handbeam_web/live/available_models_live.ex:134
 #, elixir-autogen, elixir-format
 msgid "Model discovery failed"
-msgstr ""
+msgstr "模型发现失败"
 
 #: lib/handbeam_web/live/git_settings_live.html.heex:37
 #: lib/handbeam_web/live/mcp_settings_live.html.heex:157
@@ -1590,7 +1590,7 @@ msgstr "OAuth（凭证不在此显示）"
 #: lib/handbeam_web/live/workspace_live/browser_panel.ex:304
 #, elixir-autogen, elixir-format
 msgid "Open a conversation before sending annotations."
-msgstr ""
+msgstr "请先打开一个对话，再发送标注。"
 
 #: lib/handbeam_web/live/settings/model_ai_panel.ex:109
 #, elixir-autogen, elixir-format
@@ -1600,7 +1600,7 @@ msgstr "可选的第二个模型。设置后，Agent 可以向它征求建议，
 #: lib/handbeam_web/live/settings_live.html.heex:240
 #, elixir-autogen, elixir-format
 msgid "Overall result"
-msgstr ""
+msgstr "总体结果"
 
 #: lib/handbeam_web/live/git_settings_live.html.heex:160
 #, elixir-autogen, elixir-format
@@ -1610,7 +1610,7 @@ msgstr "密码或令牌"
 #: lib/handbeam_web/live/settings_live.html.heex:280
 #, elixir-autogen, elixir-format
 msgid "Probe is running…"
-msgstr ""
+msgstr "检测进行中…"
 
 #: lib/handbeam_web/live/workspace_live/chat_components.ex:565
 #, elixir-autogen, elixir-format
@@ -1623,29 +1623,29 @@ msgid "Ran %{details}"
 msgstr "已运行 %{details}"
 
 #: lib/handbeam_web/workspace_helper.ex:665
-#, elixir-autogen, elixir-format, fuzzy
+#, elixir-autogen, elixir-format
 msgid "Read"
 msgstr "读取"
 
 #: lib/handbeam_web/live/settings_live.html.heex:249
 #, elixir-autogen, elixir-format
 msgid "Reading browser capabilities…"
-msgstr ""
+msgstr "正在读取浏览器能力…"
 
 #: lib/handbeam_web/live/settings/model_ai_panel.ex:142
 #, elixir-autogen, elixir-format
 msgid "Reasoning level used by the advisor model."
-msgstr ""
+msgstr "顾问模型使用的思考等级。"
 
 #: lib/handbeam_web/live/settings/model_ai_panel.ex:265
 #, elixir-autogen, elixir-format
 msgid "Reasoning level used for memory processing."
-msgstr ""
+msgstr "处理记忆时使用的思考等级。"
 
 #: lib/handbeam_web/live/workspace_live/browser_panel.ex:54
 #, elixir-autogen, elixir-format
 msgid "Reload"
-msgstr ""
+msgstr "重新加载"
 
 #: lib/handbeam_web/live/workspace_live/chat_components.ex:587
 #, elixir-autogen, elixir-format
@@ -1660,7 +1660,7 @@ msgstr "已重发，但未能从历史中移除上一份。"
 #: lib/handbeam_web/live/settings_live.html.heex:244
 #, elixir-autogen, elixir-format
 msgid "Run probe"
-msgstr ""
+msgstr "开始检测"
 
 #: lib/handbeam_web/live/settings_live.ex:301
 #, elixir-autogen, elixir-format
@@ -1692,17 +1692,17 @@ msgstr "保存身份"
 #: lib/handbeam_web/workspace_helper.ex:659
 #, elixir-autogen, elixir-format
 msgid "Searched"
-msgstr ""
+msgstr "已搜索"
 
 #: lib/handbeam_web/workspace_helper.ex:656
 #, elixir-autogen, elixir-format
 msgid "Searched files"
-msgstr ""
+msgstr "已搜索文件"
 
 #: lib/handbeam_web/live/workspace_live/message_submission.ex:550
 #, elixir-autogen, elixir-format
 msgid "Select a CLI model before sending."
-msgstr ""
+msgstr "请先选择命令行模型，再发送消息。"
 
 #: lib/handbeam_web/live/mcp_settings_live.html.heex:253
 #, elixir-autogen, elixir-format
@@ -1712,7 +1712,7 @@ msgstr "指定工作区"
 #: lib/handbeam_web/live/workspace_live/browser_panel.ex:106
 #, elixir-autogen, elixir-format
 msgid "Send to composer"
-msgstr ""
+msgstr "发送到输入框"
 
 #: lib/handbeam_web/live/workspace_live/message_submission.ex:232
 #, elixir-autogen, elixir-format
@@ -1722,7 +1722,7 @@ msgstr "已发送给子 Agent %{ref}。"
 #: lib/handbeam_web/live/settings_live.html.heex:279
 #, elixir-autogen, elixir-format
 msgid "Structured result"
-msgstr ""
+msgstr "结构化结果"
 
 #: lib/handbeam_web/live/workspace_live/message_submission.ex:233
 #, elixir-autogen, elixir-format
@@ -1732,7 +1732,7 @@ msgstr "子 Agent %{ref} 正在回复后续消息。"
 #: lib/handbeam_web/live/available_models_live.ex:102
 #, elixir-autogen, elixir-format
 msgid "Subscription authorization failed"
-msgstr ""
+msgstr "订阅授权失败"
 
 #: lib/handbeam_web/live/workspace_live/workspace_components.ex:88
 #, elixir-autogen, elixir-format
@@ -1771,18 +1771,18 @@ msgstr "主题"
 #: lib/handbeam_web/live/settings/model_ai_panel.ex:263
 #, elixir-autogen, elixir-format
 msgid "Think level"
-msgstr ""
+msgstr "思考等级"
 
 #: lib/handbeam_web/live/workspace_live/message_submission.ex:751
 #: lib/handbeam_web/live/workspace_live/message_submission.ex:754
 #, elixir-autogen, elixir-format
 msgid "This CLI cannot list models."
-msgstr ""
+msgstr "此命令行工具无法列出模型。"
 
 #: lib/handbeam_web/live/workspace_live/message_submission.ex:753
 #, elixir-autogen, elixir-format
 msgid "This CLI has no selectable models."
-msgstr ""
+msgstr "此命令行工具没有可选模型。"
 
 #: lib/handbeam_web/live/settings_live.ex:332
 #: lib/handbeam_web/live/workspace_live.ex:1821
@@ -1845,7 +1845,7 @@ msgstr "已使用 %{details}"
 #: lib/handbeam_web/live/settings/model_ai_panel.ex:229
 #, elixir-autogen, elixir-format
 msgid "Used for both observing conversations and consolidating memories."
-msgstr ""
+msgstr "用于观察对话和整合记忆。"
 
 #: lib/handbeam_web/live/settings/model_ai_panel.ex:42
 #, elixir-autogen, elixir-format
@@ -1865,7 +1865,7 @@ msgstr "用户名"
 #: lib/handbeam_web/live/settings_live.html.heex:273
 #, elixir-autogen, elixir-format
 msgid "Waiting for probe…"
-msgstr ""
+msgstr "等待检测…"
 
 #: lib/handbeam_web/live/workspace_live/chat_components.ex:568
 #, elixir-autogen, elixir-format
@@ -2043,9 +2043,9 @@ msgstr ""
 #: lib/handbeam_web/live/workspace_live/schedules.ex:171
 #: lib/handbeam_web/live/workspace_live/schedules.ex:179
 #: lib/handbeam_web/live/workspace_live/schedules.ex:268
-#, elixir-autogen, elixir-format, fuzzy
+#, elixir-autogen, elixir-format
 msgid "删除"
-msgstr "删除模型"
+msgstr "删除"
 
 #: lib/handbeam_web/live/available_models_live.html.heex:179
 #, elixir-autogen, elixir-format
@@ -2123,9 +2123,9 @@ msgid "在这个对话里用一句话说何时、做什么。改频率、时间�
 msgstr ""
 
 #: lib/handbeam_web/live/workspace_memory_live.html.heex:212
-#, elixir-autogen, elixir-format, fuzzy
+#, elixir-autogen, elixir-format
 msgid "复制 #ID"
-msgstr "复制 ID"
+msgstr "复制 #ID"
 
 #: lib/handbeam_web/live/workspace_live/sidebar_components.ex:1074
 #, elixir-autogen, elixir-format
@@ -2235,14 +2235,14 @@ msgid "归档"
 msgstr "归档"
 
 #: lib/handbeam_web/live/workspace_memory_live.html.heex:126
-#, elixir-autogen, elixir-format, fuzzy
+#, elixir-autogen, elixir-format
 msgid "当前工作区"
-msgstr "当前工作区模型"
+msgstr "当前工作区"
 
 #: lib/handbeam_web/live/workspace_memory_live.html.heex:61
-#, elixir-autogen, elixir-format, fuzzy
+#, elixir-autogen, elixir-format
 msgid "当前工作区："
-msgstr "当前工作区模型"
+msgstr "当前工作区："
 
 #: lib/handbeam_web/live/workspace_live/chat_components.ex:412
 #, elixir-autogen, elixir-format
@@ -2359,9 +2359,9 @@ msgid "有效记忆"
 msgstr ""
 
 #: lib/handbeam_web/live/workspace_live/chat_components.ex:521
-#, elixir-autogen, elixir-format, fuzzy
+#, elixir-autogen, elixir-format
 msgid "查看图片 %{name}"
-msgstr "移除 %{name}"
+msgstr "查看图片 %{name}"
 
 #: lib/handbeam_web/live/workspace_memory_live.ex:101
 #, elixir-autogen, elixir-format
@@ -2502,9 +2502,9 @@ msgid "重命名失败"
 msgstr "重命名失败"
 
 #: lib/handbeam_web/live/workspace_live/chat_components.ex:288
-#, elixir-autogen, elixir-format, fuzzy
+#, elixir-autogen, elixir-format
 msgid "重命名工作区"
-msgstr "重命名"
+msgstr "重命名工作区"
 
 #: lib/handbeam_web/live/workspace_live/sidebar_components.ex:213
 #, elixir-autogen, elixir-format

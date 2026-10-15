@@ -152,11 +152,7 @@
           class={["memory-chip", @kind_filter == kind && "active"]}
           aria-pressed={to_string(@kind_filter == kind)}
         >
-          <%= if kind == :all do %>
-            {kind_label(kind)}
-          <% else %>
-            {kind} · {kind_label(kind)}
-          <% end %>
+          {kind_label(kind)}
           <span class="memory-chip-count">{kind_count(@summary, kind)}</span>
         </button>
       </div>
@@ -175,7 +171,7 @@
       >
         <header class="memory-card-header">
           <span class="memory-id">#{engram.id}</span>
-          <span class="memory-badge memory-kind">{engram.kind} · {kind_label(engram.kind)}</span>
+          <span class="memory-badge memory-kind">{kind_label(engram.kind)}</span>
           <span class="memory-badge">{lifecycle_text(engram, @now)}</span>
           <span :if={global?(engram)} class="memory-badge memory-global">{gettext("全局")}</span>
           <time

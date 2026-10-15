@@ -166,6 +166,33 @@ defmodule HandbeamWeb.SettingsLiveTest do
       assert saved.om_reasoning == "low"
     end
 
+    test "Chinese model settings translate advisor and memory labels and reasoning options", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, "/settings?locale=zh_CN")
+
+      render_change(view, "update_field", %{"advisor_model" => "stepfun/step-router-v1"})
+      render_change(view, "update_field", %{"om_enabled" => "true"})
+      render_change(view, "update_field", %{"om_model" => "stepfun/step-router-v1"})
+
+      html = render(view)
+      assert html =~ "思考等级"
+      assert html =~ "记忆模型"
+      assert html =~ "顾问模型使用的思考等级。"
+      assert html =~ "处理记忆时使用的思考等级。"
+      assert html =~ "用于观察对话和整合记忆。"
+      refute html =~ "Think level"
+      refute html =~ "Reasoning level used"
+
+      for field <- ["advisor_reasoning", "om_reasoning"] do
+        assert has_element?(view, ~s(select[name="#{field}"] option[value=""]), "模型默认值")
+        assert has_element?(view, ~s(select[name="#{field}"] option[value="medium"]), "中")
+        assert has_element?(view, ~s(select[name="#{field}"] option[value="high"]), "高")
+        refute has_element?(view, ~s(select[name="#{field}"]), "Medium")
+        refute has_element?(view, ~s(select[name="#{field}"]), "High")
+      end
+    end
+
     test "keeps configured advisor and memory models visible when the catalog is temporarily missing them",
          %{conn: conn} do
       assert :ok =
@@ -451,6 +478,38 @@ defmodule HandbeamWeb.SettingsLiveTest do
       render_click(element(memory, "#memory-lifecycle-expired"))
       assert has_element?(memory, "#memory-engram-#{expired.id}")
       assert render(memory) =~ "Expired workspace context"
+    end
+
+    test "Chinese memory browser shows localized kinds and workspace scope", %{conn: conn} do
+      {:ok, workspace} = Handbeam.WorkspaceStore.ensure_default!()
+
+      {:ok, memory} =
+        Handbeam.Memory.MemoryStore.learn("Chinese memory display regression", :fact,
+          short_term: false,
+          metadata: %{scope: "workspace", workspace_id: workspace["id"]}
+        )
+
+      {:ok, view, _html} =
+        live(conn, "/settings?tab=workspace_memory&locale=zh_CN")
+
+      child = find_live_child(view, "settings-workspace-memory")
+      assert has_element?(child, ".memory-context", "当前工作区：")
+      assert has_element?(child, "#memory-scope option[value=workspace]", "当前工作区")
+      refute render(child) =~ "当前工作区模型"
+
+      for {kind, label} <- [
+            preference: "偏好",
+            rule: "规则",
+            pattern: "模式",
+            fact: "事实",
+            context: "上下文"
+          ] do
+        assert has_element?(child, "#memory-kind-#{kind}", label)
+        refute has_element?(child, "#memory-kind-#{kind}", "#{kind} ·")
+      end
+
+      assert has_element?(child, "#memory-engram-#{memory.id} .memory-kind", "事实")
+      refute has_element?(child, "#memory-engram-#{memory.id} .memory-kind", "fact")
     end
 
     test "uses URL query param to set initial tab", %{conn: conn} do

@@ -441,6 +441,11 @@ defmodule HandbeamWeb.Live.Settings.ModelAIPanel do
   defp unavailable_reasoning_label(reasoning),
     do: gettext("%{level} (Unavailable)", level: reasoning_label(reasoning))
 
-  defp reasoning_label("xhigh"), do: "X-High"
-  defp reasoning_label(level), do: String.capitalize(level)
+  defp reasoning_label("off"), do: gettext("Off")
+  defp reasoning_label("minimal"), do: gettext("Minimal")
+  defp reasoning_label("low"), do: gettext("Low")
+  defp reasoning_label("medium"), do: gettext("Medium")
+  defp reasoning_label("high"), do: gettext("High")
+  defp reasoning_label("xhigh"), do: gettext("X-High")
+  defp reasoning_label(level), do: level
 end
