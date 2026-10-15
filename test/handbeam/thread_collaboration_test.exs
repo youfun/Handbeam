@@ -173,6 +173,49 @@ defmodule Handbeam.ThreadCollaborationTest do
     assert Enum.count(child_entries, &(&1["important"] == true)) == 1
   end
 
+  test "current model is the explicit spelling of inherited model", c do
+    input = %{
+      "title" => "Audit",
+      "message" => "Use the caller model",
+      "request_id" => "current-model",
+      "model" => "current"
+    }
+
+    assert {:ok, receipt} = Collaboration.create(input, c.context)
+    assert receipt.model == "current"
+    assert receipt.mode == "read_only"
+    assert_receive {:held, _, config}, 2000
+    assert config.model == "fake-model"
+
+    assert {:ok, ^receipt} =
+             Collaboration.create(Map.delete(input, "model"), c.context)
+
+    assert {:ok, meta} = ConversationStore.get_metadata(receipt.thread)
+    refute get_in(meta, ["collaboration", "provider"])
+    refute get_in(meta, ["collaboration", "model"])
+  end
+
+  test "provider-filled safe defaults still inherit the current model", c do
+    input = %{
+      "title" => "Audit",
+      "message" => "Use the caller model",
+      "request_id" => "provider-defaults",
+      "mode" => "read_only",
+      "approval" => "auto_review",
+      "model" => ""
+    }
+
+    assert {:ok, receipt} = Collaboration.create(input, c.context)
+    assert_receive {:held, _, config}, 2000
+    assert config.model == "fake-model"
+
+    assert {:ok, meta} = ConversationStore.get_metadata(receipt.thread)
+    assert get_in(meta, ["collaboration", "read_only"])
+    refute get_in(meta, ["collaboration", "approval"])
+    refute get_in(meta, ["collaboration", "provider"])
+    refute get_in(meta, ["collaboration", "model"])
+  end
+
   test "inbound persistence failure is uncertain, retained and never dispatched twice", c do
     path = ConversationStore.messages_path(c.target)
     File.rm!(path)
@@ -389,7 +432,7 @@ defmodule Handbeam.ThreadCollaborationTest do
              )
   end
 
-  test "a selected model resolves its own provider config", c do
+  test "a selected catalog model resolves its own provider config", c do
     File.write!(System.get_env("HANDBEAM_MODELS_FILE"), catalog())
     previous = Application.get_env(:handbeam, :test_provider)
     Application.put_env(:handbeam, :test_provider, %{module: __MODULE__.CaptureProvider})
@@ -412,13 +455,13 @@ defmodule Handbeam.ThreadCollaborationTest do
                  "title" => "Other",
                  "message" => "Nope",
                  "request_id" => "missing-model",
-                 "provider" => "other",
-                 "model" => "missing"
+                 "model" => "other/missing"
                },
                c.context
              )
 
-    assert message =~ "not allowed"
+    assert message =~ "not available"
+    assert message =~ "list_models"
     assert length(ConversationStore.list_metadata("ws")) == before
 
     assert {:error, :invalid_input} =
@@ -438,8 +481,7 @@ defmodule Handbeam.ThreadCollaborationTest do
           "title" => "Other",
           "message" => "Use other",
           "request_id" => "other",
-          "provider" => "other",
-          "model" => "other-model",
+          "model" => "other/other-model",
           "mode" => "write"
         },
         c.context

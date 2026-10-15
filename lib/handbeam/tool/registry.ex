@@ -186,6 +186,7 @@ defmodule Handbeam.Tool.Registry do
       Handbeam.Tool.Builtin.Task,
       Handbeam.Tool.Builtin.TaskStatus,
       Handbeam.Tool.Builtin.ToolSearch,
+      Handbeam.Tool.Builtin.ListModels,
       Handbeam.Tool.Builtin.ReadContext,
       Handbeam.Tool.Builtin.EditContext,
       Handbeam.Tool.Builtin.WebFetch,

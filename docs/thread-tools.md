@@ -21,6 +21,9 @@ persistent thread tools, and its run-scoped authorization and cleanup remain int
   range) invalidate the cursor. Restart rather than silently skipping/repeating.
 - `get_thread_status`: idle/running/awaiting_approval and available last result.
   No Session is required. Idle is not proof of successful completion.
+- `list_models`: bounded, paginated id/name search over models allowed by the
+  current workspace. It is only needed to select a model other than the current
+  thread model; the full catalog is never added to the prompt.
 
 ## Handoffs and delegation
 
@@ -33,11 +36,11 @@ cannot delegate further or message arbitrary peers. `reply_to_parent_thread`
 takes no target.
 
 `send_thread_message` always uses Coordinator; running conversations default to
-`steer`, with `follow_up` only by explicit input. New runs inherit the caller's
-provider/model unless `create_thread` passes `provider` and `model`. That pair
-must be a workspace-allowed catalog entry. The child resolves that provider's
-config itself; it does not copy the caller's provider module or provider config.
-Later wakes of a pinned child keep that pair.
+`steer`, with `follow_up` only by explicit input. `create_thread` inherits the
+caller's current model when `model` is omitted or is `current`. To select another
+model, use the complete workspace-allowed id returned by `list_models`. The child
+resolves that model's provider config itself; it does not copy the caller's
+provider module or provider config. Later wakes of a pinned child keep that model.
 
 `create_thread` defaults to a persistent read-only child in the same shared
 directory, **not an isolated checkout or sandbox**. `mode: write` removes the

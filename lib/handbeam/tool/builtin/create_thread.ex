@@ -6,7 +6,7 @@ defmodule Handbeam.Tool.Builtin.CreateThread do
     module: Handbeam.Threads.Collaboration,
     action: :create,
     description:
-      "Delegate a persistent task in this workspace. Shared directory is NOT an isolated checkout. mode read_only (default) can only read; mode write may edit this workspace. Write does not raise a separate approval: approval defaults to auto_review (smart review) and may be yolo. yolo skips prompts for that child only and does not change workspace settings; sensitive-path denies still apply. Optional provider and model must be a workspace-allowed catalog pair; omit both to inherit this turn. A selected model resolves its own provider config. May incur provider charges. Reuse request_id on retry; a different mode, approval, or model under the same request_id conflicts.",
+      "Delegate a persistent task in this workspace. Shared directory is NOT an isolated checkout. mode read_only (default) can only read; mode write may edit this workspace. Write does not raise a separate approval: approval defaults to auto_review (smart review) and may be yolo. yolo skips prompts for that child only and does not change workspace settings; sensitive-path denies still apply. Omit model or pass current to inherit this thread's current model. To use another model, call list_models and pass its complete id. May incur provider charges. Reuse request_id on retry; a different mode, approval, or model under the same request_id conflicts.",
     schema: %{
       type: "object",
       additionalProperties: false,
@@ -15,15 +15,11 @@ defmodule Handbeam.Tool.Builtin.CreateThread do
         title: %{type: "string", maxLength: 200},
         message: %{type: "string", maxLength: 8000},
         request_id: %{type: "string", maxLength: 128},
-        provider: %{
-          type: "string",
-          maxLength: 128,
-          description: "Catalog provider id. Required together with model. Omit both to inherit."
-        },
         model: %{
           type: "string",
-          maxLength: 128,
-          description: "Catalog model id for that provider, not a provider/model composite."
+          maxLength: 256,
+          description:
+            "current to inherit this thread's current model, or a complete id returned by list_models. Omit to inherit."
         },
         mode: %{
           type: "string",

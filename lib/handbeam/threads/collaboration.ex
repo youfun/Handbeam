@@ -9,7 +9,7 @@ defmodule Handbeam.Threads.Collaboration do
   """
   alias Handbeam.{ConversationStore, ConversationTranscriptStore, Threads}
 
-  @read_tools ~w(read file_search grep code_search find_thread read_thread get_thread_status reply_to_parent_thread send_thread_message)
+  @read_tools ~w(read file_search grep code_search list_models find_thread read_thread get_thread_status reply_to_parent_thread send_thread_message)
 
   def completed(id, result, opts) do
     status = if is_map(result), do: Map.get(result, :status, :error), else: :error
@@ -103,7 +103,7 @@ defmodule Handbeam.Threads.Collaboration do
 
   def create(input, context) do
     with :ok <-
-           Threads.validate(input, ~w(title message request_id provider model mode approval)),
+           Threads.validate(input, ~w(title message request_id model mode approval)),
          {:ok, source} <- Threads.identity(context),
          {:ok, title} <- Threads.text(input, "title", nil, 200),
          {:ok, key} <- Threads.text(input, "request_id", nil, 128),
@@ -124,8 +124,13 @@ defmodule Handbeam.Threads.Collaboration do
                  read_only,
                  approval,
                  pinned
-               ) do
-          deliver(input, context, source, target, false)
+               ),
+             {:ok, receipt} <- deliver(input, context, source, target, false) do
+          {:ok,
+           Map.merge(receipt, %{
+             model: selection || "current",
+             mode: if(read_only, do: "read_only", else: "write")
+           })}
         end
       end)
     else
@@ -139,7 +144,7 @@ defmodule Handbeam.Threads.Collaboration do
     approval = Map.get(input, "approval")
 
     cond do
-      mode == "read_only" and is_nil(approval) -> {:ok, true, nil}
+      mode == "read_only" and approval in [nil, "auto_review"] -> {:ok, true, nil}
       mode == "write" and approval in [nil, "auto_review"] -> {:ok, false, "auto_review"}
       mode == "write" and approval == "yolo" -> {:ok, false, "yolo"}
       true -> {:error, :invalid_input}
@@ -147,31 +152,38 @@ defmodule Handbeam.Threads.Collaboration do
   end
 
   defp model_selection(input) do
-    provider = Map.get(input, "provider")
     model = Map.get(input, "model")
 
     cond do
-      is_nil(provider) and is_nil(model) -> {:ok, nil}
-      catalog_id?(provider) and catalog_id?(model) -> {:ok, {provider, model}}
+      model in [nil, "", "current"] -> {:ok, nil}
+      catalog_ref?(model) -> {:ok, model}
       true -> {:error, :invalid_input}
     end
   end
 
-  defp catalog_id?(value) do
-    is_binary(value) and String.valid?(value) and value != "" and String.length(value) <= 128 and
-      not String.contains?(value, ["/", "\n", "\r", "\0"])
+  defp catalog_ref?(value) do
+    is_binary(value) and String.valid?(value) and String.length(value) <= 256 and
+      String.contains?(value, "/") and not String.contains?(value, ["\n", "\r", "\0"])
   end
 
   defp resolve_selection(nil, _context), do: {:ok, nil}
 
-  defp resolve_selection({provider, model}, context) do
+  defp resolve_selection(model_ref, context) do
     path = workspace_path(context)
 
     if is_binary(path) and path != "" do
-      case Handbeam.Agent.ModelConfig.resolve_model_for_workspace(path, "#{provider}/#{model}") do
-        {:ok, _config, model_id} -> {:ok, %{"provider" => provider, "model" => model_id}}
-        {:error, reason} when is_binary(reason) -> {:error, reason}
-        {:error, reason} -> {:error, "Model is not allowed: #{inspect(reason)}"}
+      model =
+        Enum.find(
+          Handbeam.Agent.ModelConfig.available_models_for_workspace(path),
+          &(&1.id == model_ref)
+        )
+
+      case model && Handbeam.Agent.ModelConfig.resolve_model_for_workspace(path, model_ref) do
+        {:ok, _config, model_id} ->
+          {:ok, %{"provider" => model.provider_id, "model" => model_id}}
+
+        _ ->
+          {:error, "Model #{model_ref} is not available. Call list_models to find a model id."}
       end
     else
       {:error, :missing_runtime_configuration}
