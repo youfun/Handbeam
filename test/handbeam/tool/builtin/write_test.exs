@@ -279,13 +279,13 @@ defmodule Handbeam.Tool.Builtin.WriteTest do
   describe "tilde expansion" do
     test "expands ~ in file paths" do
       tmp_name = "_sigil_tilde_test_#{System.unique_integer([:positive])}.txt"
-      tmp_path = Path.join(System.user_home!(), tmp_name)
+      tmp_path = Path.join(Handbeam.Home.path(), tmp_name)
 
       try do
         {:ok, output, _data} =
           Write.execute(
             %{"file_path" => "~/#{tmp_name}", "content" => "expanded write\n"},
-            %{working_directory: System.user_home!()}
+            %{working_directory: Handbeam.Home.path()}
           )
 
         assert output =~ "Wrote"

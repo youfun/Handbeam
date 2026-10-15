@@ -197,6 +197,7 @@ defmodule Handbeam.Tool.Registry do
       Handbeam.Tool.Builtin.ReplyToParentThread,
       Handbeam.Tool.Builtin.CreateThread,
       Handbeam.Tool.Builtin.Schedule,
+      Handbeam.Tool.Builtin.ErrorTracker,
       Handbeam.Tool.Memory.MemAssociate,
       Handbeam.Tool.Memory.MemLearn,
       Handbeam.Tool.Memory.MemRecall,

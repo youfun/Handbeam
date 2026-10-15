@@ -594,6 +594,7 @@ defmodule Handbeam.Agent.Runner do
   end
 
   defp finish_error(state, reason) do
+    report_exception(reason, state)
     message = inspect(reason)
     Handbeam.Agent.CandidateQueue.seal(state.queue_pid)
 
@@ -612,6 +613,25 @@ defmodule Handbeam.Agent.Runner do
     stop_run_supervisor(state)
     {:noreply, %{state | status: :error, error: reason, task: nil}}
   end
+
+  defp report_exception({%_{} = exception, stacktrace}, state) when is_list(stacktrace) do
+    ErrorTracker.report(exception, stacktrace, %{
+      "source" => "agent_runner",
+      "conversation_id" => state.conversation_id,
+      "run_id" => state.opts[:run_id],
+      "workspace_id" => state.opts[:workspace_id],
+      "workspace_path" => state.opts[:workspace_path],
+      "model" => state.opts[:model]
+    })
+
+    :ok
+  rescue
+    _ -> :ok
+  catch
+    _, _ -> :ok
+  end
+
+  defp report_exception(_reason, _state), do: :ok
 
   defp stop_run_supervisor(state) do
     close_scope(state)

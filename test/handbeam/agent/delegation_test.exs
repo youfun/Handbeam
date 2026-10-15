@@ -85,13 +85,36 @@ defmodule Handbeam.Agent.DelegationTest do
     }
 
     on_exit(fn ->
+      ref = Process.monitor(ack.run_pid)
       Coordinator.cancel(parent["id"])
+
+      receive do
+        {:DOWN, ^ref, :process, _, _} -> :ok
+      after
+        2_000 -> Process.demonitor(ref, [:flush])
+      end
+
       if old_home, do: System.put_env("HOME", old_home), else: System.delete_env("HOME")
-      File.rm_rf!(home)
+      remove_tree(home)
     end)
 
     %{context: context, parent: parent}
   end
+
+  defp remove_tree(path, attempts \\ 10)
+
+  defp remove_tree(path, attempts) when attempts > 0 do
+    case File.rm_rf(path) do
+      {:ok, _files} ->
+        :ok
+
+      {:error, _reason, _file} ->
+        Process.sleep(20)
+        remove_tree(path, attempts - 1)
+    end
+  end
+
+  defp remove_tree(path, 0), do: File.rm_rf!(path)
 
   defp delegate(context) do
     Task.async(fn ->

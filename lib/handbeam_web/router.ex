@@ -1,5 +1,6 @@
 defmodule HandbeamWeb.Router do
   use HandbeamWeb, :router
+  use ErrorTracker.Web, :router
 
   pipeline :browser do
     plug :accepts, ["html"]
@@ -48,6 +49,7 @@ defmodule HandbeamWeb.Router do
     live "/w/:workspace_id/c/:conversation_id", WorkspaceLive, :index
     live "/settings", SettingsLive, :index
     live "/settings/available-models", AvailableModelsLive, :index
+    error_tracker_dashboard("/errors")
 
     get "/uploads/:conversation_id/:file", UploadsController, :show
 

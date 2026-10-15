@@ -68,6 +68,7 @@ defmodule Handbeam.MixProject do
       {:phoenix_ecto, "~> 4.5"},
       {:ecto_sql, "~> 3.14"},
       {:ecto_sqlite3, ">= 0.0.0"},
+      {:error_tracker, "~> 0.9"},
       {:tz, "~> 0.28"},
       {:phoenix_html, "~> 4.1"},
       {:file_system, "~> 1.1"},

@@ -35,6 +35,7 @@ config :phoenix,
 # The app Clock must not claim rows while tests drive time themselves.
 config :handbeam, :schedule_clock, enabled: false
 config :handbeam, :schedule_dispatch, :sync
+config :error_tracker, enabled: false
 
 # Fix the test environment to use its own paths — never fall back to dev ~/.handbeam/... paths.
 fixture_models_path = Path.expand("../test/fixtures/models.json", __DIR__)
@@ -48,16 +49,15 @@ test_data_dir =
   )
 
 test_workspace_path = Path.join(test_data_dir, ".handbeam/workspace")
+System.put_env("HOME", test_data_dir)
 System.put_env("HANDBEAM_MODELS_FILE", fixture_models_path)
 System.put_env("HANDBEAM_WORKSPACES_FILE", Path.join(test_data_dir, ".handbeam/workspaces.json"))
 File.mkdir_p!(test_workspace_path)
 
 config :handbeam,
   models_file: fixture_models_path,
-  host: %{data_dir: test_data_dir},
   workspaces_file: Path.join(test_data_dir, ".handbeam/workspaces.json"),
-  workspace_root: test_workspace_path,
-  conversation_root: Path.join(test_data_dir, ".handbeam/conversations")
+  workspace_root: test_workspace_path
 
 config :phoenix_test, :endpoint, HandbeamWeb.Endpoint
 

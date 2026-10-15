@@ -391,14 +391,14 @@ defmodule Handbeam.Tool.Builtin.ReadTest do
   describe "tilde expansion" do
     test "expands ~ in file paths" do
       tmp_name = "_sigil_tilde_test_#{System.unique_integer([:positive])}.txt"
-      tmp_path = Path.join(System.user_home!(), tmp_name)
+      tmp_path = Path.join(Handbeam.Home.path(), tmp_name)
       File.write!(tmp_path, "hello from tilde\n")
 
       try do
         {:ok, output, _meta} =
           Read.execute(
             %{"file_path" => "~/#{tmp_name}"},
-            %{working_directory: System.user_home!()}
+            %{working_directory: Handbeam.Home.path()}
           )
 
         assert output =~ "hello from tilde"

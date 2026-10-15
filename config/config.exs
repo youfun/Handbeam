@@ -11,6 +11,12 @@ config :handbeam,
   ecto_repos: [Handbeam.Repo],
   generators: [timestamp_type: :utc_datetime]
 
+config :error_tracker,
+  repo: Handbeam.Repo,
+  otp_app: :handbeam,
+  filter: Handbeam.ErrorTrackerFilter,
+  enabled: true
+
 # IANA zones ship inside Tz. No network and no disk writes at runtime.
 config :elixir, :time_zone_database, Tz.TimeZoneDatabase
 
