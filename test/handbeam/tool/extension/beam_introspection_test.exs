@@ -1,8 +1,6 @@
 defmodule Handbeam.Tool.Extension.BeamIntrospectionTest do
   use Handbeam.DataCase, async: true
 
-  alias Handbeam.Agent.Tool.Executor
-
   defmodule NoResultRepo do
     def query("UPDATE example SET value = ?", ["updated"]) do
       {:ok, %{columns: nil, rows: nil, num_rows: 1}}
@@ -21,6 +19,7 @@ defmodule Handbeam.Tool.Extension.BeamIntrospectionTest do
       Handbeam.Tool.Extension.Beam.Eval,
       Handbeam.Tool.Extension.Beam.Docs,
       Handbeam.Tool.Extension.Beam.Source,
+      Handbeam.Tool.Extension.Beam.DbSchema,
       Handbeam.Tool.Extension.Beam.Sql,
       Handbeam.Tool.Extension.Beam.Schemas,
       Handbeam.Tool.Extension.Beam.SupTree,
@@ -35,13 +34,13 @@ defmodule Handbeam.Tool.Extension.BeamIntrospectionTest do
 
   describe "ext__beam__eval" do
     test "evaluates simple Elixir expression" do
-      {:ok, _output} =
+      {:ok, output} =
         Handbeam.Tool.Extension.Beam.Eval.execute(
           %{"code" => "1 + 2"},
           build_context()
         )
 
-      assert _output =~ "3"
+      assert output =~ "3"
     end
 
     test "evaluates multi-line code" do
@@ -282,7 +281,8 @@ defmodule Handbeam.Tool.Extension.BeamIntrospectionTest do
                  context
                )
 
-      assert output == "Query executed successfully. 1 row affected."
+      assert output =~ "Repo: Handbeam.Tool.Extension.BeamIntrospectionTest.NoResultRepo"
+      assert output =~ "Query completed. 1 row(s) affected."
     end
 
     test "rejects non-list parameters" do
@@ -306,6 +306,76 @@ defmodule Handbeam.Tool.Extension.BeamIntrospectionTest do
     test "has proper tool metadata" do
       assert Handbeam.Tool.Extension.Beam.Sql.name() == "ext__beam__sql"
       assert is_binary(Handbeam.Tool.Extension.Beam.Sql.description())
+      assert Handbeam.Tool.Extension.Beam.Sql.description() =~ "requires approval"
+    end
+  end
+
+  describe "ext__beam__db_schema" do
+    test "reports the configured repo and its runtime dialect" do
+      assert {:ok, output} =
+               Handbeam.Tool.Extension.Beam.DbSchema.execute(
+                 %{"operation" => "list_repos"},
+                 build_context()
+               )
+
+      assert {:ok, decoded} = Handbeam.JSON.decode(output)
+      assert [repo] = decoded["repos"]
+      assert repo["repo"] == "Handbeam.Repo"
+      assert repo["adapter"] == "Ecto.Adapters.SQLite3"
+      assert repo["dialect"] == "sqlite"
+      assert repo["parameter_style"] == "?"
+    end
+
+    test "lists SQLite tables without caller-supplied metadata SQL" do
+      assert {:ok, output} =
+               Handbeam.Tool.Extension.Beam.DbSchema.execute(
+                 %{"operation" => "list_tables"},
+                 build_context()
+               )
+
+      assert {:ok, decoded} = Handbeam.JSON.decode(output)
+      assert decoded["database"]["dialect"] == "sqlite"
+      assert Enum.any?(decoded["tables"], &(&1["name"] == "schema_migrations"))
+    end
+
+    test "describes a SQLite table with bound identifiers" do
+      assert {:ok, output} =
+               Handbeam.Tool.Extension.Beam.DbSchema.execute(
+                 %{"operation" => "describe_table", "table" => "schema_migrations"},
+                 build_context()
+               )
+
+      assert {:ok, decoded} = Handbeam.JSON.decode(output)
+      assert Enum.any?(decoded["columns"], &(&1["name"] == "version"))
+    end
+
+    test "lists SQLite indexes and foreign keys" do
+      for operation <- ["list_indexes", "list_foreign_keys"] do
+        assert {:ok, output} =
+                 Handbeam.Tool.Extension.Beam.DbSchema.execute(
+                   %{"operation" => operation, "table" => "schema_migrations"},
+                   build_context()
+                 )
+
+        assert {:ok, decoded} = Handbeam.JSON.decode(output)
+        assert decoded["operation"] == operation
+        assert decoded["database"]["dialect"] == "sqlite"
+      end
+    end
+
+    test "requires the table argument for table-specific operations" do
+      assert {:error, reason} =
+               Handbeam.Tool.Extension.Beam.DbSchema.execute(
+                 %{"operation" => "describe_table"},
+                 build_context()
+               )
+
+      assert reason =~ "table argument"
+    end
+
+    test "has proper read-only tool metadata" do
+      assert Handbeam.Tool.Extension.Beam.DbSchema.name() == "ext__beam__db_schema"
+      assert Handbeam.Tool.Extension.Beam.DbSchema.description() =~ "without writing"
     end
   end
 

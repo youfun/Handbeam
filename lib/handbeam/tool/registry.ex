@@ -256,9 +256,6 @@ defmodule Handbeam.Tool.Registry do
       :artifact_delivery_backend
     )
     |> host_gate(Host.host_script?(), Handbeam.Tool.Builtin.RunElixirScript, :host_script)
-    |> host_gate(Host.beam_eval?(), Handbeam.Tool.Extension.Beam.Docs, :beam_eval)
-    |> host_gate(Host.beam_eval?(), Handbeam.Tool.Extension.Beam.Source, :beam_eval)
-    |> host_gate(Host.beam_eval?(), Handbeam.Tool.Extension.Beam.Sql, :beam_eval)
   end
 
   defp host_gate(list, enabled, mod, source),
@@ -270,11 +267,12 @@ defmodule Handbeam.Tool.Registry do
     # P0 — safe read-only introspection
     docs: Handbeam.Tool.Extension.Beam.Docs,
     source: Handbeam.Tool.Extension.Beam.Source,
-    sql: Handbeam.Tool.Extension.Beam.Sql,
+    db_schema: Handbeam.Tool.Extension.Beam.DbSchema,
     schemas: Handbeam.Tool.Extension.Beam.Schemas,
     sup_tree: Handbeam.Tool.Extension.Beam.SupTree,
     top: Handbeam.Tool.Extension.Beam.Top,
-    # P1 — sensitive (reads process state)
+    # P1 — sensitive or mutating
+    sql: Handbeam.Tool.Extension.Beam.Sql,
     process_info: Handbeam.Tool.Extension.Beam.ProcessInfo,
     # P1 — powerful (executes code)
     eval: Handbeam.Tool.Extension.Beam.Eval,
@@ -291,15 +289,15 @@ defmodule Handbeam.Tool.Registry do
   when you want to enable BEAM-level introspection and cross-session operations.
 
   Can be called with `:safe_only` to register only read-only tools
-  (docs, source, sql, schemas, sup_tree, top, sessions, session_snapshot),
-  excluding `eval`, `process_info`, and `session_steer`.
+  (docs, source, db_schema, schemas, sup_tree, top, sessions, session_snapshot),
+  excluding `sql`, `eval`, `process_info`, and `session_steer`.
   """
   @spec register_beam_tools(atom()) :: :ok
   def register_beam_tools(level \\ :all) do
     allowed =
       case level do
         :safe_only ->
-          Map.drop(@beam_tools, [:eval, :process_info, :session_steer])
+          Map.drop(@beam_tools, [:sql, :eval, :process_info, :session_steer])
 
         :all ->
           @beam_tools

@@ -1,4 +1,4 @@
-defmodule Handbeam.Tool.Extension.BeamDbSchema.Query do
+defmodule Handbeam.Tool.Extension.Beam.DbSchema.Query do
   @moduledoc false
 
   @type operation ::
@@ -113,24 +113,33 @@ defmodule Handbeam.Tool.Extension.BeamDbSchema.Query do
   def build("postgresql", :list_foreign_keys, %{table: table} = args) do
     {:ok,
      """
-     SELECT constraint_column_usage.constraint_name AS name,
-            key_column_usage.column_name AS source_column,
-            constraint_column_usage.table_schema AS target_schema,
-            constraint_column_usage.table_name AS target_table,
-            constraint_column_usage.column_name AS target_column
-     FROM information_schema.table_constraints
-     JOIN information_schema.key_column_usage
-       ON key_column_usage.constraint_catalog = table_constraints.constraint_catalog
-      AND key_column_usage.constraint_schema = table_constraints.constraint_schema
-      AND key_column_usage.constraint_name = table_constraints.constraint_name
-     JOIN information_schema.constraint_column_usage
-       ON constraint_column_usage.constraint_catalog = table_constraints.constraint_catalog
-      AND constraint_column_usage.constraint_schema = table_constraints.constraint_schema
-      AND constraint_column_usage.constraint_name = table_constraints.constraint_name
-     WHERE table_constraints.constraint_type = 'FOREIGN KEY'
-       AND table_constraints.table_schema = COALESCE($1, 'public')
-       AND table_constraints.table_name = $2
-     ORDER BY constraint_column_usage.constraint_name, key_column_usage.ordinal_position
+     SELECT constraint_record.conname AS name,
+            source_attribute.attname AS source_column,
+            target_namespace.nspname AS target_schema,
+            target_table.relname AS target_table,
+            target_attribute.attname AS target_column,
+            key_columns.ordinality AS ordinal
+     FROM pg_catalog.pg_constraint AS constraint_record
+     JOIN pg_catalog.pg_class AS source_table
+       ON source_table.oid = constraint_record.conrelid
+     JOIN pg_catalog.pg_namespace AS source_namespace
+       ON source_namespace.oid = source_table.relnamespace
+     JOIN pg_catalog.pg_class AS target_table
+       ON target_table.oid = constraint_record.confrelid
+     JOIN pg_catalog.pg_namespace AS target_namespace
+       ON target_namespace.oid = target_table.relnamespace
+     CROSS JOIN LATERAL unnest(constraint_record.conkey, constraint_record.confkey)
+       WITH ORDINALITY AS key_columns(source_attnum, target_attnum, ordinality)
+     JOIN pg_catalog.pg_attribute AS source_attribute
+       ON source_attribute.attrelid = source_table.oid
+      AND source_attribute.attnum = key_columns.source_attnum
+     JOIN pg_catalog.pg_attribute AS target_attribute
+       ON target_attribute.attrelid = target_table.oid
+      AND target_attribute.attnum = key_columns.target_attnum
+     WHERE constraint_record.contype = 'f'
+       AND source_namespace.nspname = COALESCE($1, 'public')
+       AND source_table.relname = $2
+     ORDER BY constraint_record.conname, key_columns.ordinality
      """, [Map.get(args, :schema), table]}
   end
 

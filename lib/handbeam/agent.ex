@@ -32,8 +32,7 @@ defmodule Handbeam.Agent do
   def resume_after_tool_approval(%State{} = interrupted_state, decisions, opts) do
     # Register tools (same as run)
     working_dir = Keyword.get(opts, :working_directory)
-    tools = Keyword.get(opts, :tools, default_tools())
-    tools = maybe_append_beam_tools(tools, working_dir)
+    tools = tools_for_run(opts, working_dir)
     Enum.each(tools, &Handbeam.Tool.Registry.register/1)
 
     if Handbeam.Terminal.available?() do
@@ -101,8 +100,7 @@ defmodule Handbeam.Agent do
     # Register tools with the central registry.
     # Default: all built-in + memory tools.
     working_dir = Keyword.get(opts, :working_directory)
-    tools = Keyword.get(opts, :tools, default_tools())
-    tools = maybe_append_beam_tools(tools, working_dir)
+    tools = tools_for_run(opts, working_dir)
     Enum.each(tools, &Handbeam.Tool.Registry.register/1)
 
     if Handbeam.Terminal.available?() do
@@ -251,10 +249,18 @@ defmodule Handbeam.Agent do
   @beam_tools [
     Handbeam.Tool.Extension.Beam.Docs,
     Handbeam.Tool.Extension.Beam.Source,
+    Handbeam.Tool.Extension.Beam.DbSchema,
     Handbeam.Tool.Extension.Beam.Sql
   ]
 
   @beam_eval_tool Handbeam.Tool.Extension.Beam.Eval
+
+  defp tools_for_run(opts, working_dir) do
+    case Keyword.fetch(opts, :tools) do
+      {:ok, tools} -> tools
+      :error -> maybe_append_beam_tools(default_tools(), working_dir)
+    end
+  end
 
   defp maybe_append_beam_tools(tools, working_dir)
        when is_binary(working_dir) and working_dir != "" do

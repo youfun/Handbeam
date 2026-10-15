@@ -100,11 +100,13 @@ defmodule Handbeam.Tool.Extension.BeamSessionsTest do
 
       # Safe tools should be registered
       assert Enum.any?(list, &(&1 == "ext__beam__docs"))
+      assert Enum.any?(list, &(&1 == "ext__beam__db_schema"))
       assert Enum.any?(list, &(&1 == "ext__beam__top"))
       assert Enum.any?(list, &(&1 == "ext__beam__sessions"))
       assert Enum.any?(list, &(&1 == "ext__beam__session_snapshot"))
 
       # Dangerous tools should NOT be registered
+      refute Enum.any?(list, &(&1 == "ext__beam__sql"))
       refute Enum.any?(list, &(&1 == "ext__beam__eval"))
       refute Enum.any?(list, &(&1 == "ext__beam__process_info"))
       refute Enum.any?(list, &(&1 == "ext__beam__session_steer"))

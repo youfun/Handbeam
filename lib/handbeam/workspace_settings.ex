@@ -38,8 +38,8 @@ defmodule Handbeam.WorkspaceSettings do
       "per_tool": {},
 
       // BEAM tools can inspect a running Elixir project.
-      // docs/source/sql are auto-registered for mix projects unless auto is false.
-      // eval is powerful and is disabled by default; enable it explicitly per workspace.
+      // docs/source/db_schema are read-only. Raw SQL is approval-gated because it
+      // can mutate data or schemas. eval is disabled by default.
       "beam": {
         "auto": true,
         "eval": false

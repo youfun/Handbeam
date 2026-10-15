@@ -1,4 +1,4 @@
-defmodule Handbeam.Tool.Extension.BeamDatabase do
+defmodule Handbeam.Tool.Extension.Beam.Database do
   @moduledoc false
 
   @query_timeout 15_000
@@ -9,7 +9,7 @@ defmodule Handbeam.Tool.Extension.BeamDatabase do
           application: atom(),
           repo: module(),
           repo_name: String.t(),
-          adapter: module(),
+          adapter: module() | nil,
           adapter_name: String.t(),
           dialect: String.t(),
           parameter_style: String.t(),
@@ -29,14 +29,29 @@ defmodule Handbeam.Tool.Extension.BeamDatabase do
     |> Enum.flat_map(fn {application, repo} ->
       case repo_info(application, repo) do
         {:ok, info} -> [info]
-        :error -> []
+        {:error, _reason} -> []
       end
     end)
     |> Enum.sort_by(& &1.repo_name)
   end
 
-  @spec resolve_repo(String.t() | nil) :: {:ok, repo_info()} | {:error, String.t()}
-  def resolve_repo(repo_name) do
+  @spec resolve_repo(String.t() | nil, map()) :: {:ok, repo_info()} | {:error, String.t()}
+  def resolve_repo(repo_name, context \\ %{})
+
+  def resolve_repo(nil, context) do
+    case context_repo(context) do
+      nil -> resolve_discovered_repo(nil)
+      repo -> repo_info(:runtime_context, repo)
+    end
+  end
+
+  def resolve_repo(repo_name, _context) when is_binary(repo_name),
+    do: resolve_discovered_repo(repo_name)
+
+  def resolve_repo(repo_name, _context),
+    do: {:error, "Invalid Ecto repository #{inspect(repo_name)}"}
+
+  defp resolve_discovered_repo(repo_name) do
     repos = list_repos()
 
     case {repo_name, repos} do
@@ -50,7 +65,7 @@ defmodule Handbeam.Tool.Extension.BeamDatabase do
         names = Enum.map_join(repos, ", ", & &1.repo_name)
         {:error, "Multiple Ecto repositories are available; choose one with repo: #{names}"}
 
-      {name, repos} when is_binary(name) ->
+      {name, repos} ->
         case Enum.find(repos, &(&1.repo_name == name)) do
           nil ->
             names = Enum.map_join(repos, ", ", & &1.repo_name)
@@ -66,7 +81,14 @@ defmodule Handbeam.Tool.Extension.BeamDatabase do
           {:ok, map()} | {:error, String.t()}
   def query(repo_info, query, params) do
     try do
-      case repo_info.repo.query(query, params, timeout: @query_timeout) do
+      result =
+        if function_exported?(repo_info.repo, :query, 3) do
+          repo_info.repo.query(query, params, timeout: @query_timeout)
+        else
+          repo_info.repo.query(query, params)
+        end
+
+      case result do
         {:ok, result} -> {:ok, result}
         {:error, error} -> {:error, Exception.message(error)}
       end
@@ -77,11 +99,11 @@ defmodule Handbeam.Tool.Extension.BeamDatabase do
     end
   end
 
-  @spec result_rows(map()) :: {[map()], boolean()}
-  def result_rows(result) do
+  @spec result_rows(map(), pos_integer()) :: {[map()], boolean()}
+  def result_rows(result, limit \\ @row_limit) when is_integer(limit) and limit > 0 do
     columns = Enum.map(result.columns || [], &to_string/1)
     rows = result.rows || []
-    limited_rows = Enum.take(rows, @row_limit)
+    limited_rows = Enum.take(rows, limit)
 
     mapped =
       Enum.map(limited_rows, fn row ->
@@ -90,7 +112,7 @@ defmodule Handbeam.Tool.Extension.BeamDatabase do
         |> Map.new(fn {column, value} -> {column, json_value(value)} end)
       end)
 
-    {mapped, length(rows) > @row_limit}
+    {mapped, Enum.drop(rows, limit) != []}
   end
 
   @spec metadata(repo_info()) :: map()
@@ -133,7 +155,7 @@ defmodule Handbeam.Tool.Extension.BeamDatabase do
       end)
 
     suffix =
-      if length(rows || []) > @row_limit do
+      if Enum.drop(rows || [], @row_limit) != [] do
         ["", "Results truncated to #{@row_limit} rows."]
       else
         []
@@ -156,9 +178,12 @@ defmodule Handbeam.Tool.Extension.BeamDatabase do
   end
 
   defp repo_info(application, repo) when is_atom(repo) do
-    with {:module, _module} <- Code.ensure_loaded(repo),
-         true <- function_exported?(repo, :__adapter__, 0),
-         adapter when is_atom(adapter) <- repo.__adapter__() do
+    with {:module, _module} <- Code.ensure_loaded(repo) do
+      adapter =
+        if function_exported?(repo, :__adapter__, 0),
+          do: repo.__adapter__(),
+          else: nil
+
       {dialect, parameter_style} = dialect(adapter)
 
       {:ok,
@@ -167,27 +192,36 @@ defmodule Handbeam.Tool.Extension.BeamDatabase do
          repo: repo,
          repo_name: inspect(repo),
          adapter: adapter,
-         adapter_name: inspect(adapter),
+         adapter_name: if(is_atom(adapter), do: inspect(adapter), else: "unknown"),
          dialect: dialect,
          parameter_style: parameter_style,
          running: is_pid(Process.whereis(repo))
        }}
     else
-      _other -> :error
+      _other -> {:error, "Ecto repository module #{inspect(repo)} is not available"}
     end
   end
 
-  defp repo_info(_application, _repo), do: :error
+  defp repo_info(_application, repo),
+    do: {:error, "Invalid Ecto repository #{inspect(repo)}"}
+
+  defp context_repo(context) when is_map(context) do
+    Map.get(context, "repo") || Map.get(context, :repo)
+  end
+
+  defp context_repo(_context), do: nil
 
   defp json_value(nil), do: nil
   defp json_value(value) when is_boolean(value) or is_number(value), do: value
   defp json_value(value) when is_atom(value), do: Atom.to_string(value)
 
   defp json_value(value) when is_binary(value) do
-    if String.valid?(value) do
+    if String.valid?(value) and String.printable?(value) do
       truncate_string(value)
     else
-      encoded = value |> binary_part(0, min(byte_size(value), div(@cell_limit, 2))) |> Base.encode16()
+      encoded =
+        value |> binary_part(0, min(byte_size(value), div(@cell_limit, 2))) |> Base.encode16()
+
       suffix = if byte_size(value) > div(@cell_limit, 2), do: "…", else: ""
       "0x" <> encoded <> suffix
     end
@@ -197,6 +231,7 @@ defmodule Handbeam.Tool.Extension.BeamDatabase do
   defp json_value(%Time{} = value), do: Time.to_iso8601(value)
   defp json_value(%NaiveDateTime{} = value), do: NaiveDateTime.to_iso8601(value)
   defp json_value(%DateTime{} = value), do: DateTime.to_iso8601(value)
+  defp json_value(%Decimal{} = value), do: to_string(value)
 
   defp json_value(value) do
     value

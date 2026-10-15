@@ -258,7 +258,7 @@ defmodule Handbeam.Tool.RegistryTest do
       :ok
     end
 
-    test "registers docs/source/sql for Elixir projects by default" do
+    test "registers docs/source/db_schema/sql for Elixir projects by default" do
       workspace = tmp_workspace()
       File.write!(Path.join(workspace, "mix.exs"), "defmodule Demo.MixProject do end")
 
@@ -274,8 +274,30 @@ defmodule Handbeam.Tool.RegistryTest do
       names = Registry.list()
       assert "ext__beam__docs" in names
       assert "ext__beam__source" in names
+      assert "ext__beam__db_schema" in names
       assert "ext__beam__sql" in names
       refute "ext__beam__eval" in names
+    end
+
+    test "does not append BEAM tools to an explicit tool list" do
+      workspace = tmp_workspace()
+      File.write!(Path.join(workspace, "mix.exs"), "defmodule Demo.MixProject do end")
+
+      assert {:ok, _state} =
+               Handbeam.Agent.run("hello",
+                 tools: [Handbeam.Tool.Builtin.Read],
+                 provider: Handbeam.TestSupport.FakeProvider,
+                 provider_config: %{scenario: :simple_answer},
+                 model: "fake",
+                 working_directory: workspace,
+                 mcp: false
+               )
+
+      names = Registry.list()
+      assert "read" in names
+      refute "ext__beam__docs" in names
+      refute "ext__beam__db_schema" in names
+      refute "ext__beam__sql" in names
     end
 
     test "does not auto-register BEAM tools when tools.beam.auto is false" do
@@ -305,6 +327,7 @@ defmodule Handbeam.Tool.RegistryTest do
       names = Registry.list()
       refute "ext__beam__docs" in names
       refute "ext__beam__source" in names
+      refute "ext__beam__db_schema" in names
       refute "ext__beam__sql" in names
       refute "ext__beam__eval" in names
     end
