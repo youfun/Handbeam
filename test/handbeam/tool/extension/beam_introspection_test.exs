@@ -3,6 +3,12 @@ defmodule Handbeam.Tool.Extension.BeamIntrospectionTest do
 
   alias Handbeam.Agent.Tool.Executor
 
+  defmodule NoResultRepo do
+    def query("UPDATE example SET value = ?", ["updated"]) do
+      {:ok, %{columns: nil, rows: nil, num_rows: 1}}
+    end
+  end
+
   setup do
     # Register all beam tools before each test
     Enum.each(beam_tool_modules(), &Handbeam.Tool.Registry.register/1)
@@ -250,6 +256,41 @@ defmodule Handbeam.Tool.Extension.BeamIntrospectionTest do
         )
 
       assert output =~ "num" or output =~ "1"
+    end
+
+    test "passes parameters to the selected configured repo" do
+      {:ok, output} =
+        Handbeam.Tool.Extension.Beam.Sql.execute(
+          %{
+            "query" => "SELECT ? AS number, ? AS label",
+            "params" => [42, "bound value"],
+            "repo" => "Handbeam.Repo"
+          },
+          build_context()
+        )
+
+      assert output =~ "42"
+      assert output =~ "bound value"
+    end
+
+    test "formats successful statements without a result set" do
+      context = Map.put(build_context(), :repo, NoResultRepo)
+
+      assert {:ok, output} =
+               Handbeam.Tool.Extension.Beam.Sql.execute(
+                 %{"query" => "UPDATE example SET value = ?", "params" => ["updated"]},
+                 context
+               )
+
+      assert output == "Query executed successfully. 1 row affected."
+    end
+
+    test "rejects non-list parameters" do
+      assert {:error, "params must be an array"} =
+               Handbeam.Tool.Extension.Beam.Sql.execute(
+                 %{"query" => "SELECT 1", "params" => nil},
+                 build_context()
+               )
     end
 
     test "query is required" do

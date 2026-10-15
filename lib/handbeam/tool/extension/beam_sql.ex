@@ -36,15 +36,12 @@ defmodule Handbeam.Tool.Extension.Beam.Sql do
   end
 
   @impl true
-  def execute(%{"query" => query}, context) do
-    repo = Map.get(context, "repo") || default_repo()
+  def execute(%{"query" => query} = input, context) do
+    params = Map.get(input, "params", [])
 
-    case repo do
-      nil ->
-        {:error, "No Ecto repo configured"}
-
-      repo_mod ->
-        execute_query(repo_mod, query)
+    with {:ok, repo} <- resolve_repo(Map.get(input, "repo"), context),
+         :ok <- validate_params(params) do
+      execute_query(repo, query, params)
     end
   end
 
@@ -52,37 +49,44 @@ defmodule Handbeam.Tool.Extension.Beam.Sql do
     {:error, "query is required"}
   end
 
+  defp resolve_repo(nil, context) do
+    case Map.get(context, "repo") || Map.get(context, :repo) || default_repo() do
+      nil -> {:error, "No Ecto repo configured"}
+      repo -> {:ok, repo}
+    end
+  end
+
+  defp resolve_repo(repo_name, _context) when is_binary(repo_name) do
+    repo =
+      :handbeam
+      |> Application.get_env(:ecto_repos, [])
+      |> Enum.find(fn configured_repo ->
+        repo_name in [inspect(configured_repo), Atom.to_string(configured_repo)]
+      end)
+
+    case repo do
+      nil -> {:error, "Unknown Ecto repo: #{repo_name}"}
+      repo -> {:ok, repo}
+    end
+  end
+
+  defp resolve_repo(repo_name, _context), do: {:error, "Invalid Ecto repo: #{inspect(repo_name)}"}
+
+  defp validate_params(params) when is_list(params), do: :ok
+  defp validate_params(_params), do: {:error, "params must be an array"}
+
   defp default_repo do
-    # Try to find the primary Ecto repo from application config
     case Application.get_env(:handbeam, :ecto_repos) do
       [repo | _] -> repo
       _ -> nil
     end
   end
 
-  defp execute_query(repo, query) do
+  defp execute_query(repo, query, params) do
     try do
-      case repo.query(query, []) do
+      case repo.query(query, params) do
         {:ok, result} ->
-          output =
-            cond do
-              is_map(result) and Map.has_key?(result, :columns) ->
-                cols = result.columns
-                rows = result.rows
-                format_columns_rows(cols, rows)
-
-              is_map(result) and Map.has_key?(result, :rows) ->
-                rows = result.rows
-                format_rows(rows)
-
-              is_map(result) ->
-                "Query result: #{inspect(result)}"
-
-              true ->
-                "Query result: #{inspect(result)}"
-            end
-
-          {:ok, output}
+          {:ok, format_result(result)}
 
         {:error, error} ->
           {:error, "SQL error: #{inspect(error)}"}
@@ -92,6 +96,19 @@ defmodule Handbeam.Tool.Extension.Beam.Sql do
         {:error, "#{inspect(e.__struct__)}: #{Exception.message(e)}"}
     end
   end
+
+  defp format_result(%{columns: columns, rows: rows})
+       when is_list(columns) and is_list(rows),
+       do: format_columns_rows(columns, rows)
+
+  defp format_result(%{rows: rows}) when is_list(rows), do: format_rows(rows)
+
+  defp format_result(%{num_rows: num_rows}) when is_integer(num_rows) do
+    suffix = if num_rows == 1, do: "row", else: "rows"
+    "Query executed successfully. #{num_rows} #{suffix} affected."
+  end
+
+  defp format_result(result), do: "Query result: #{inspect(result)}"
 
   defp format_columns_rows(cols, rows) do
     formatted_rows =
