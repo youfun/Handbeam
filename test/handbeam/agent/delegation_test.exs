@@ -461,7 +461,7 @@ defmodule Handbeam.Agent.DelegationTest do
     assert Config.from_opts(opts).max_tokens == 272_000
   end
 
-  test "advisor child uses its configured reasoning level", %{context: context} do
+  test "advisor child resolves its configured provider and reasoning level", %{context: context} do
     models_path = Path.join([context.working_directory, ".handbeam", "models.json"])
     File.mkdir_p!(Path.dirname(models_path))
 
@@ -477,17 +477,17 @@ defmodule Handbeam.Agent.DelegationTest do
     File.write!(
       models_path,
       Handbeam.JSON.encode!(%{
-        "defaultProvider" => "openai",
-        "defaultModel" => "gpt-advisor",
+        "defaultProvider" => "mg",
+        "defaultModel" => "cursor/gemini-4-argon",
         "providers" => %{
-          "openai" => %{
-            "baseUrl" => "https://api.openai.com/v1",
+          "mg" => %{
+            "baseUrl" => "https://example.test",
             "api" => "openai-responses",
-            "provider" => "openai",
+            "provider" => "mg",
             "apiKey" => "test-key",
             "models" => [
               %{
-                "id" => "gpt-advisor",
+                "id" => "cursor/gemini-4-argon",
                 "reasoning" => true,
                 "reasoningLevels" => ["low", "high"]
               }
@@ -498,8 +498,8 @@ defmodule Handbeam.Agent.DelegationTest do
     )
 
     default_advisor = %{
-      provider_id: "openai",
-      model_id: "gpt-advisor",
+      provider_id: "mg",
+      model_id: "cursor/gemini-4-argon",
       reasoning: nil
     }
 
@@ -514,10 +514,12 @@ defmodule Handbeam.Agent.DelegationTest do
 
     refute Keyword.has_key?(default_opts, :reasoning_level)
     refute Map.has_key?(default_opts[:provider_config], :reasoning)
+    assert default_opts[:provider] == Handbeam.Agent.Provider.OpenAI
+    assert default_opts[:provider_config].provider == "mg"
 
     explicit_advisor = %{
-      provider_id: "openai",
-      model_id: "gpt-advisor",
+      provider_id: "mg",
+      model_id: "cursor/gemini-4-argon",
       reasoning: "high"
     }
 

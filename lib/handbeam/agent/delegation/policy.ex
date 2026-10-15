@@ -8,7 +8,7 @@ defmodule Handbeam.Agent.Delegation.Policy do
   """
 
   alias Handbeam.Agent.Subagent.Profile
-  alias Handbeam.Agent.{ModelConfig, Reasoning}
+  alias Handbeam.Agent.{Config, ModelConfig, Reasoning}
 
   @delegation_tools Profile.delegation_tools()
 
@@ -224,12 +224,19 @@ defmodule Handbeam.Agent.Delegation.Policy do
 
         reasoning_level = if is_binary(selected_reasoning), do: selected_reasoning
 
+        provider =
+          Config.resolve_provider_from_api(
+            provider_config[:api],
+            model_id,
+            provider_config[:provider]
+          )
+
         provider_config =
           if is_binary(reasoning_level),
             do: Reasoning.apply_provider_options(provider_config, entry, reasoning_level),
             else: provider_config
 
-        {:ok, model_id, provider_id, provider_config, reasoning_level}
+        {:ok, model_id, provider, provider_config, reasoning_level}
 
       {:error, reason} ->
         {:error, model_error(reason)}
