@@ -34,14 +34,25 @@ defmodule Handbeam.ConversationTranscriptStore.ConversationStore do
   end
 
   # Cancellation must read its own running tool entries after closing admission.
-  # Require the actual registered Runner caller, not just model-supplied ids.
+  # Run-end persistence executes in the Runner-owned task. Require either that
+  # exact task or the registered Runner itself, not just model-supplied ids.
   defp runtime_reader?(id, opts) do
     caller = self()
     run_id = opts[:run_id]
+    runner_pid = opts[:runner_pid]
 
-    opts[:runner_pid] == caller and is_binary(run_id) and
-      match?([{^caller, %{run_id: ^run_id}}], Registry.lookup(Handbeam.AgentRunRegistry, id))
+    is_binary(run_id) and
+      (registered_runner?(id, run_id, runner_pid, caller) or
+         Handbeam.Agent.Runner.owns_run_task?(id, run_id, runner_pid, caller))
   end
+
+  defp registered_runner?(id, run_id, runner_pid, caller),
+    do:
+      runner_pid == caller and
+        match?(
+          [{^caller, %{run_id: ^run_id}}],
+          Registry.lookup(Handbeam.AgentRunRegistry, id)
+        )
 
   @impl true
   def append(conversation_id, entry, opts) do

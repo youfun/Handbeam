@@ -34,6 +34,9 @@ defmodule Handbeam.Agent.DelegationTest do
              response_metadata: %{}
            }}
 
+        {:error, reason} ->
+          {:error, reason}
+
         :finish ->
           {:ok,
            %{
@@ -343,6 +346,24 @@ defmodule Handbeam.Agent.DelegationTest do
     assert Enum.any?(resumed_messages, &(Message.text(&1) =~ "Resume the interrupted task"))
     assert {:ok, %{child_conversation_id: ^id, delivery: :follow_up}} = Task.await(resume, 2_000)
     send(resumed_child, :finish)
+  end
+
+  test "child provider errors remain intact after internal transcript settlement", %{
+    context: context
+  } do
+    task = delegate(context)
+    assert_receive {:provider, :child, child, _, _, _}, 2_000
+    [{id, job}] = Map.to_list(:sys.get_state(Delegation).jobs)
+
+    send(child, {:error, :server_is_overloaded})
+    assert {:error, _, %{status: status}} = Task.await(task, 5_000)
+    assert status in [:error, "error"]
+
+    assert {:ok, entries} = ConversationStore.load_messages_result(id)
+    error = Enum.find(entries, &(&1["id"] == "msg-run-error-#{job.run_id}"))
+
+    assert error["content"] =~ "server_is_overloaded"
+    refute error["content"] =~ "Transcript persistence failed"
   end
 
   test "approval is blocked and cleaned rather than left awaiting a user", %{context: context} do

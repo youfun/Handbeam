@@ -69,6 +69,23 @@ defmodule Handbeam.Agent.Runner do
     end
   end
 
+  @doc false
+  def owns_run_task?(conversation_id, run_id, runner_pid, reader_pid)
+      when is_binary(conversation_id) and is_binary(run_id) and is_pid(runner_pid) and
+             is_pid(reader_pid) do
+    case Registry.lookup(Handbeam.AgentRunRegistry, conversation_id) do
+      [{^runner_pid, %{run_id: ^run_id, active?: true}}] ->
+        GenServer.call(runner_pid, {:owns_run_task?, reader_pid, run_id})
+
+      _ ->
+        false
+    end
+  catch
+    :exit, _reason -> false
+  end
+
+  def owns_run_task?(_conversation_id, _run_id, _runner_pid, _reader_pid), do: false
+
   def cancel(conversation_id) do
     call_runner(conversation_id, :cancel)
   end
@@ -253,6 +270,14 @@ defmodule Handbeam.Agent.Runner do
         error: state.error,
         interrupt_type: interrupt_type(state)
       }}, state}
+  end
+
+  def handle_call({:owns_run_task?, reader_pid, run_id}, _from, state) do
+    owned? =
+      state.status == :running and state.opts[:run_id] == run_id and
+        match?(%Task{pid: ^reader_pid}, state.task)
+
+    {:reply, owned?, state}
   end
 
   def handle_call({:persist_compaction, event}, _from, state) when is_map(event) do
