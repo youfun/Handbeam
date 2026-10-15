@@ -24,12 +24,25 @@ fi
 mkdir -p "$HOME/.handbeam"
 
 # 获取本机 LAN IP（Linux 用 ip，macOS 回退 ifconfig）
-lan_ip=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i <= NF; i++) if ($i == "src") { print $(i + 1); exit }}')
-if [[ -z "$lan_ip" ]]; then
-  lan_ip=$(ifconfig 2>/dev/null | grep -Eo 'inet (addr:)?192\.168\.[0-9.]+' | head -1 | awk '{print $2}')
+lan_ip=""
+
+if command -v ip >/dev/null 2>&1; then
+  lan_ip=$(ip -4 route get 1.1.1.1 2>/dev/null |
+    awk '{for (i = 1; i <= NF; i++) if ($i == "src") { print $(i + 1); exit }}' || true)
 fi
-if [[ -z "$lan_ip" ]]; then
-  lan_ip=$(ifconfig 2>/dev/null | grep -Eo 'inet (addr:)?10\.[0-9.]+' | head -1 | awk '{print $2}')
+
+if [[ -z "$lan_ip" ]] && command -v ifconfig >/dev/null 2>&1; then
+  lan_ip=$(ifconfig 2>/dev/null |
+    grep -Eo 'inet (addr:)?192\.168\.[0-9.]+' |
+    head -1 |
+    awk '{print $2}' || true)
+fi
+
+if [[ -z "$lan_ip" ]] && command -v ifconfig >/dev/null 2>&1; then
+  lan_ip=$(ifconfig 2>/dev/null |
+    grep -Eo 'inet (addr:)?10\.[0-9.]+' |
+    head -1 |
+    awk '{print $2}' || true)
 fi
 
 echo "🚀 Handbeam 启动中..."
