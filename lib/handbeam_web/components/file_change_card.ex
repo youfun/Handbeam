@@ -322,7 +322,7 @@ defmodule HandbeamWeb.FileChangeCard do
 
     if created?,
       do: Gettext.gettext(HandbeamWeb.Gettext, "Created"),
-      else: Gettext.gettext(HandbeamWeb.Gettext, "Edited")
+      else: "edit"
   end
 
   defp display_path(change, entry, workspace_root) do

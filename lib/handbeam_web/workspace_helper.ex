@@ -666,13 +666,13 @@ defmodule HandbeamWeb.WorkspaceHelper do
         gettext("List")
 
       name in ~w(read read_file) or String.contains?(name, "read") ->
-        gettext("Read")
+        "read"
 
       edit_tool?(name) and String.contains?(name, "write") ->
         gettext("Created")
 
       edit_tool?(name) ->
-        gettext("Edited")
+        "edit"
 
       command_tool?(name) ->
         "$"

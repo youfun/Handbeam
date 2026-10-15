@@ -15,6 +15,19 @@ defmodule HandbeamWeb.FileChangeCardTest do
     {:ok, tmp: tmp}
   end
 
+  test "edit card labels stay untranslated in Chinese and English" do
+    for locale <- ["zh_CN", "en"] do
+      Gettext.with_locale(HandbeamWeb.Gettext, locale, fn ->
+        html =
+          Phoenix.LiveViewTest.render_component(&FileChangeCard.card/1,
+            entry: %{"id" => "e1", "tool_name" => "edit", "file_path" => "lib/app.ex"}
+          )
+
+        assert html =~ ~s(<span class="file-change-label">edit</span>)
+      end)
+    end
+  end
+
   describe "relative_display_path/2" do
     test "absolute paths inside the workspace keep their directory" do
       root = "/tmp/handbeam"

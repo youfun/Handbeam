@@ -472,6 +472,21 @@ defmodule HandbeamWeb.WorkspaceHelperTest do
       refute first["work_collapsed"]
     end
 
+    test "read and edit labels stay untranslated in Chinese and English" do
+      for locale <- ["zh_CN", "en"] do
+        Gettext.with_locale(HandbeamWeb.Gettext, locale, fn ->
+          for tool <- ["read", "edit"] do
+            [entry] =
+              WorkspaceHelper.apply_tool_work_collapse([
+                %{"id" => "t1", "content_type" => "tool", "tool" => tool, "tool_status" => "done"}
+              ])
+
+            assert entry["work_verb"] == tool
+          end
+        end)
+      end
+    end
+
     test "nests reads and searches one step past edits and commands" do
       entries = [
         %{
@@ -507,13 +522,13 @@ defmodule HandbeamWeb.WorkspaceHelperTest do
       [read, grep, edit, bash] = WorkspaceHelper.apply_tool_work_collapse(entries)
 
       assert read["work_indent"] == 2
-      assert read["work_verb"] == "Read"
+      assert read["work_verb"] == "read"
       assert read["work_target"] == "lib/app.ex L1-40"
       assert grep["work_indent"] == 2
       assert grep["work_verb"] == "Grep"
       assert grep["work_target"] == "lib \"def run\""
       assert edit["work_indent"] == 1
-      assert edit["work_verb"] == "Edited"
+      assert edit["work_verb"] == "edit"
       assert edit["work_target"] == "lib/app.ex"
       assert bash["work_indent"] == 1
       assert bash["work_verb"] == "$"

@@ -2951,7 +2951,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         assert rendered =~ "id=\"chat-file-change-tool-tu_edit_1-diff\""
         assert rendered =~ "&lt;script&gt;alert(&#39;xss&#39;)&lt;/script&gt;"
         refute rendered =~ "<script>"
-        assert rendered =~ "Edited"
+        assert has_element?(view, "#chat-file-change-tool-tu_edit_1 .file-change-label", "edit")
         assert rendered =~ "+1"
         assert rendered =~ "diff-lineno"
 
@@ -4892,7 +4892,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       refute expanded =~ "Hide Work"
       assert expanded =~ "tool-work-line-tool-tu_a"
       assert expanded =~ "indent-2"
-      assert expanded =~ "Read"
+      assert has_element?(view, "#tool-work-line-tool-tu_a .tool-work-verb", "read")
       assert expanded =~ "x.ex"
       assert expanded =~ "indent-1"
       refute expanded =~ "tool-work-collapsed"
