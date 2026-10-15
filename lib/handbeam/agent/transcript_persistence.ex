@@ -569,14 +569,17 @@ defmodule Handbeam.Agent.TranscriptPersistence do
     store = Handbeam.ConversationTranscriptStore.impl(opts)
 
     if store == Handbeam.ConversationTranscriptStore.ConversationStore do
-      Handbeam.Repo.transaction(fn ->
-        with :ok <- finalize_assistant(conversation_id, "final", opts),
-             :ok <- record_terminal_usage(conversation_id, opts[:terminal_usage], opts) do
-          :ok
-        else
-          {:error, reason} -> Handbeam.Repo.rollback(reason)
-        end
-      end)
+      Handbeam.Repo.transaction(
+        fn ->
+          with :ok <- finalize_assistant(conversation_id, "final", opts),
+               :ok <- record_terminal_usage(conversation_id, opts[:terminal_usage], opts) do
+            :ok
+          else
+            {:error, reason} -> Handbeam.Repo.rollback(reason)
+          end
+        end,
+        mode: :immediate
+      )
       |> case do
         {:ok, :ok} -> :ok
         {:error, reason} -> {:error, reason}
