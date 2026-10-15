@@ -12,21 +12,73 @@ on:
   workflow_dispatch:
     inputs:
       publish_release:
-        description: Publish packages to GitHub Releases (replaces web-latest)
+        description: Publish packages to GitHub Releases (release_tag or web-latest)
         default: false
         type: boolean
+      release_tag:
+        description: Existing release tag to rebuild with this workflow (empty uses the current ref)
+        default: ""
+        type: string
   push:
     branches: [dev]
     tags:
       - "v*"
 
 concurrency:
-  group: pack-${{ github.ref }}
+  group: pack-${{ inputs.release_tag != '' && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
   cancel-in-progress: true
 
 jobs:
+  target:
+    name: Resolve package source
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.resolve.outputs.commit }}
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
+      mobile_required: ${{ steps.resolve.outputs.mobile_required }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Resolve immutable checkout and publication target
+        id: resolve
+        env:
+          REQUESTED_TAG: ${{ inputs.release_tag }}
+        run: |
+          set -euo pipefail
+          tag=""
+          source="$GITHUB_SHA"
+          if [[ -n "$REQUESTED_TAG" ]]; then
+            if [[ "$GITHUB_EVENT_NAME" != workflow_dispatch ]]; then
+              echo "release_tag is only supported for manual runs."
+              exit 1
+            fi
+            if [[ ! "$REQUESTED_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+              echo "release_tag must be an existing v<semver> tag."
+              exit 1
+            fi
+            tag="$REQUESTED_TAG"
+            source="refs/tags/$tag"
+          elif [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag="$GITHUB_REF_NAME"
+          fi
+          commit="$(git rev-parse --verify "${source}^{commit}")"
+          mobile_required=false
+          if [[ "$GITHUB_EVENT_NAME" == workflow_dispatch || -n "$tag" ]]; then
+            mobile_required=true
+          fi
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "mobile_required=$mobile_required" >> "$GITHUB_OUTPUT"
+          echo "Workflow commit: $GITHUB_SHA"
+          echo "Package commit: $commit; release tag: ${tag:-none}"
+
   checks:
     name: Quality gate
+    needs: target
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     permissions:
@@ -38,13 +90,16 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
+          ref: ${{ needs.target.outputs.commit }}
           fetch-depth: 0
 
       - name: Validate release metadata and tag
+        env:
+          RELEASE_TAG: ${{ needs.target.outputs.release_tag }}
         run: |
           bash scripts/version.sh version
-          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
-            bash scripts/version.sh check-tag "$GITHUB_REF_NAME"
+          if [[ -n "$RELEASE_TAG" ]]; then
+            bash scripts/version.sh check-tag "$RELEASE_TAG"
           fi
 
       - name: Build tools
@@ -149,7 +204,7 @@ jobs:
                 exit 0
               fi
               echo "version.properties unchanged and $tag exists, but its release is missing; retrying the release build."
-              gh workflow run pack.yml --ref "$tag" -f publish_release=true
+              gh workflow run pack.yml --ref dev -f publish_release=true -f release_tag="$tag"
               echo "release_build=dispatched" >> "$GITHUB_OUTPUT"
               exit 0
             fi
@@ -163,12 +218,13 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "$tag" -m "Handbeam $current"
           git push origin "refs/tags/$tag"
-          gh workflow run pack.yml --ref "$tag" -f publish_release=true
+          gh workflow run pack.yml --ref dev -f publish_release=true -f release_tag="$tag"
           echo "release_build=dispatched" >> "$GITHUB_OUTPUT"
           echo "Tagged $tag (was $previous_version build $previous_build)."
 
   web:
     name: ${{ matrix.label }}
+    needs: target
     runs-on: ${{ matrix.os }}
     timeout-minutes: ${{ matrix.timeout }}
     strategy:
@@ -190,6 +246,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.target.outputs.commit }}
 
       - uses: erlef/setup-beam@v1
         if: matrix.target != 'windows-arm64'
@@ -284,10 +342,16 @@ jobs:
 
   publish-web:
     name: Publish release
-    needs: [checks, web, android, ios]
+    needs: [target, checks, web, android, ios]
     if: >-
       always() &&
+      needs.target.result == 'success' &&
       needs.checks.result == 'success' &&
+      needs.web.result == 'success' &&
+      ((needs.target.outputs.mobile_required == 'true' &&
+        needs.android.result == 'success' && needs.ios.result == 'success') ||
+       (needs.target.outputs.mobile_required == 'false' &&
+        needs.android.result == 'skipped' && needs.ios.result == 'skipped')) &&
       needs.checks.outputs.release_build != 'dispatched' &&
       ((github.event_name == 'workflow_dispatch' && inputs.publish_release) ||
        (github.event_name == 'push' &&
@@ -299,9 +363,12 @@ jobs:
     env:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
+      RELEASE_TAG: ${{ needs.target.outputs.release_tag }}
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.target.outputs.commit }}
 
       - uses: actions/download-artifact@v8
         with:
@@ -316,7 +383,6 @@ jobs:
           path: dist
 
       - uses: actions/download-artifact@v8
-        continue-on-error: true
         with:
           name: handbeam-macos-app-arm64
           path: dist
@@ -326,6 +392,25 @@ jobs:
         with:
           name: handbeam-ios-ipa
           path: dist
+
+      - name: Verify complete package set
+        env:
+          MOBILE_REQUIRED: ${{ needs.target.outputs.mobile_required }}
+        run: |
+          set -euo pipefail
+          for package in handbeam-web-linux-x86_64 handbeam-web-windows-amd64 \
+            handbeam-web-windows-amd64-toolchain handbeam-web-macos-arm64 Handbeam-macos-arm64; do
+            if [[ ! -s "dist/$package.tar.gz" && ! -s "dist/$package.zip" ]]; then
+              echo "Missing package: $package"
+              exit 1
+            fi
+          done
+          if [[ "$MOBILE_REQUIRED" == true ]]; then
+            for package in Handbeam-arm64-v8a.apk Handbeam-x86_64.apk \
+              Handbeam-ios-sideload.ipa Handbeam-ios-sideload.ipa.sha256; do
+              test -s "dist/$package"
+            done
+          fi
 
       - name: Release notes
         run: |
@@ -360,7 +445,7 @@ jobs:
           } > notes.md
 
       - name: Replace moving web-latest tag
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        if: ${{ needs.target.outputs.release_tag == '' }}
         run: gh release delete web-latest --yes --cleanup-tag || true
 
       - name: Publish release
@@ -372,8 +457,8 @@ jobs:
             echo "No packages to upload"
             exit 1
           fi
-          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
-            tag="${GITHUB_REF_NAME}"
+          if [[ -n "$RELEASE_TAG" ]]; then
+            tag="$RELEASE_TAG"
           else
             tag="web-latest"
           fi
@@ -394,7 +479,8 @@ jobs:
 
   android:
     name: Android APK
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    needs: target
+    if: needs.target.outputs.mobile_required == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 90
     defaults:
@@ -403,6 +489,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.target.outputs.commit }}
 
       - uses: erlef/setup-beam@v1
         with:
@@ -497,7 +585,8 @@ jobs:
 
   ios:
     name: iOS sideload IPA
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/v')
+    needs: target
+    if: needs.target.outputs.mobile_required == 'true'
     runs-on: macos-15
     timeout-minutes: 90
     defaults:
@@ -506,6 +595,8 @@ jobs:
 
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ needs.target.outputs.commit }}
 
       - uses: erlef/setup-beam@v1
         with:
@@ -537,7 +628,8 @@ jobs:
           export SDK
           python3 -c 'import os, pathlib; sdk=os.environ["SDK"]; pathlib.Path(os.environ["RUNNER_TEMP"], "ios-cross.txt").write_text("[binaries]\nc = [\"clang\", \"-arch\", \"arm64\", \"-isysroot\", \"%s\", \"-miphoneos-version-min=17.0\"]\nar = \"ar\"\nstrip = \"strip\"\npkg-config = \"false\"\n\n[host_machine]\nsystem = \"darwin\"\ncpu_family = \"aarch64\"\ncpu = \"aarch64\"\nendian = \"little\"\n\n[properties]\nneeds_exe_wrapper = true\nsys_root = \"%s\"\n" % (sdk, sdk))'
           export PATH="$(brew --prefix lld)/bin:$PATH"
-          meson setup "$RUNNER_TEMP/ish-arm64/build-ios" --cross-file "$RUNNER_TEMP/ios-cross.txt" \
+          meson setup "$RUNNER_TEMP/ish-arm64/build-ios" "$RUNNER_TEMP/ish-arm64" \
+            --cross-file "$RUNNER_TEMP/ios-cross.txt" \
             --buildtype=release -Db_ndebug=true -Dlog= -Dlog_handler=nslog \
             -Dkernel=ish -Dengine=asbestos -Dguest_arch=arm64
           ninja -C "$RUNNER_TEMP/ish-arm64/build-ios" libish.a libish_emu.a libfakefs.a
