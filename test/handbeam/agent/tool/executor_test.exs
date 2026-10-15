@@ -330,12 +330,56 @@ defmodule Handbeam.Agent.Tool.ExecutorTest do
 
       [ui_block] = ui_blocks
       relative = ui_block[:details].spill_path
-      assert relative =~ ".handbeam/tool-results/spill-"
+      content = String.duplicate("spill-line\n", 40)
+
+      hash =
+        :crypto.hash(:sha256, content)
+        |> Base.encode16(case: :lower)
+
+      assert relative == ".handbeam/tool-results/spill-#{hash}.txt"
+
       absolute = Path.expand(relative, tmp_dir)
       assert File.exists?(absolute)
-      assert File.read!(absolute) =~ "spill-line"
+      assert File.read!(absolute) == content
       assert String.starts_with?(Path.relative_to(absolute, tmp_dir), ".handbeam/")
       assert Path.dirname(absolute) != System.tmp_dir!()
+
+      {:ok, _second_result, [second_ui_block]} =
+        Executor.execute_all_with_details(
+          [%{id: "spill-2", name: "spill_fixture", input: %{}}],
+          state
+        )
+
+      assert second_ui_block[:details].spill_path == relative
+      assert Path.wildcard(Path.join(tmp_dir, ".handbeam/tool-results/spill-*")) == [absolute]
+    end
+
+    test "does not overwrite a mismatched content-addressed spill", %{tmp_dir: tmp_dir} do
+      content = String.duplicate("spill-line\n", 40)
+
+      hash =
+        :crypto.hash(:sha256, content)
+        |> Base.encode16(case: :lower)
+
+      absolute =
+        Path.join(tmp_dir, ".handbeam/tool-results/spill-#{hash}.txt")
+
+      File.mkdir_p!(Path.dirname(absolute))
+      File.write!(absolute, "mismatched")
+
+      config = %Config{working_directory: tmp_dir}
+      state = State.init(config, "spill collision")
+
+      {:ok, result_msg, [ui_block]} =
+        Executor.execute_all_with_details(
+          [%{id: "spill-collision", name: "spill_fixture", input: %{}}],
+          state
+        )
+
+      [block] = result_msg.content
+      assert block[:content] =~ "artifact unavailable"
+      assert ui_block[:details].artifact_unavailable
+      assert File.read!(absolute) == "mismatched"
     end
   end
 

@@ -399,9 +399,9 @@ defmodule Handbeam.Agent.Tool.Executor do
   defp spill_body(%Result{content: content} = result, max_chars, working_directory) do
     head = String.slice(content, 0, min(@spill_head_chars, max_chars))
 
-    case spill_path(working_directory) do
+    case spill_path(working_directory, content) do
       {:ok, relative, absolute} ->
-        case File.write(absolute, content) do
+        case persist_spill(absolute, content) do
           :ok ->
             preview =
               head <>
@@ -436,13 +436,17 @@ defmodule Handbeam.Agent.Tool.Executor do
     }
   end
 
-  defp spill_path(working_directory)
-       when is_binary(working_directory) and working_directory != "" do
+  defp spill_path(working_directory, content)
+       when is_binary(working_directory) and working_directory != "" and is_binary(content) do
+    hash =
+      :crypto.hash(:sha256, content)
+      |> Base.encode16(case: :lower)
+
     relative =
       Path.join([
         ".handbeam",
         "tool-results",
-        "spill-#{System.unique_integer([:positive])}.txt"
+        "spill-#{hash}.txt"
       ])
 
     absolute = Path.expand(relative, working_directory)
@@ -456,7 +460,62 @@ defmodule Handbeam.Agent.Tool.Executor do
     end
   end
 
-  defp spill_path(_working_directory), do: :error
+  defp spill_path(_working_directory, _content), do: :error
+
+  defp persist_spill(absolute, content) do
+    case File.read(absolute) do
+      {:ok, ^content} ->
+        :ok
+
+      {:ok, _other} ->
+        {:error, :hash_collision}
+
+      {:error, :enoent} ->
+        publish_spill(absolute, content)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp publish_spill(absolute, content) do
+    nonce =
+      :crypto.strong_rand_bytes(8)
+      |> Base.encode16(case: :lower)
+
+    temporary = absolute <> ".#{nonce}.tmp"
+
+    case File.write(temporary, content, [:exclusive, :sync]) do
+      :ok ->
+        result = link_spill(temporary, absolute, content)
+        _ = File.rm(temporary)
+        result
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp link_spill(temporary, absolute, content) do
+    case :file.make_link(String.to_charlist(temporary), String.to_charlist(absolute)) do
+      :ok ->
+        :ok
+
+      {:error, :eexist} ->
+        verify_spill(absolute, content)
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp verify_spill(absolute, content) do
+    case File.read(absolute) do
+      {:ok, ^content} -> :ok
+      {:ok, _other} -> {:error, :hash_collision}
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
   @doc """
   Convert a ToolResult to a provider-facing tool_result_block map.
