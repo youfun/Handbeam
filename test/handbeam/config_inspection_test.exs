@@ -45,8 +45,8 @@ defmodule Handbeam.ConfigInspectionTest do
     })
 
     report = ConfigInspection.report(workspace: root)
-    # The existing normalizer drops false; inspection must not invent an override.
-    assert report.model_ai.om_enabled == %{value: true, source: :global_settings}
+    # An explicit workspace false disables OM even when the global setting is true.
+    assert report.model_ai.om_enabled == %{value: false, source: :workspace_settings}
     assert report.model_ai.om_message_tokens == %{value: 8003, source: :workspace_settings}
     assert report.model_ai.om_buffer_tokens == %{value: 10_000, source: :model_ai_defaults}
     assert report.model_ai.reasoning == %{value: "medium", source: :model_ai_defaults}

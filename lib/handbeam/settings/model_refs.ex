@@ -126,7 +126,8 @@ defmodule Handbeam.Settings.ModelRefs do
         end
       end)
 
-    %{refs: global_refs ++ workspace_refs, errors: errors}
+    refs = Enum.uniq(global_refs ++ workspace_refs)
+    %{refs: refs, errors: errors}
   end
 
   defp workspace_refs(workspace, match?) do
