@@ -9,7 +9,8 @@ import Config
 
 config :handbeam,
   ecto_repos: [Handbeam.Repo],
-  generators: [timestamp_type: :utc_datetime]
+  generators: [timestamp_type: :utc_datetime],
+  session_store: Handbeam.SessionStore.SQLite
 
 config :error_tracker,
   repo: Handbeam.Repo,

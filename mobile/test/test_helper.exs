@@ -58,66 +58,32 @@ defmodule HandbeamProbe.ScreenSettle do
   end
 end
 
-defmodule HandbeamProbe.RuntimeCleanup do
-  @moduledoc "Stops host-test producers and drains persistence before restoring the data directory."
-
-  def stop! do
-    for id <- registered_ids(Handbeam.AgentRunSupervisorRegistry) do
-      Handbeam.AgentRunSupervisor.stop_run(id)
-    end
-
-    for pid <- Task.Supervisor.children(Handbeam.AgentRunTaskSupervisor) do
-      Task.Supervisor.terminate_child(Handbeam.AgentRunTaskSupervisor, pid)
-    end
-
-    for {_, pid, _, _} <- Handbeam.SessionSupervisor.which_sessions() do
-      GenServer.call(pid, :snapshot)
-      DynamicSupervisor.terminate_child(Handbeam.SessionSupervisor, pid)
-    end
-
-    # An ordinary call drains lifecycle messages already forwarded by Session.
-    GenServer.call(Handbeam.Runtime.TaskTracker, :snapshot)
-
-    :ok =
-      Handbeam.ConversationTranscriptStore.Journal.invalidate(
-        Handbeam.ConversationStore.index_path()
-      )
-
-    home = Handbeam.Home.path()
-
-    for path <- registered_ids(ExFff.Registry),
-        path == home or String.starts_with?(path, home <> "/"),
-        {pid, _} <- Registry.lookup(ExFff.Registry, path) do
-      GenServer.stop(pid)
-    end
-
-    :ok
-  end
-
-  defp registered_ids(registry) do
-    Registry.select(registry, [{{:"$1", :_, :_}, [], [:"$1"]}])
-  end
-end
-
-unless Process.whereis(Handbeam.ExportSnapshot.Binding) do
-  {:ok, _} = Handbeam.ExportSnapshot.Binding.start_link([])
-end
-
 data_dir =
   Path.join(System.tmp_dir!(), "handbeam_probe_test_#{System.unique_integer([:positive])}")
 
 File.mkdir_p!(data_dir)
 System.put_env("MOB_DATA_DIR", data_dir)
+System.put_env("HOME", data_dir)
 Handbeam.Host.put!(%{data_dir: data_dir, shell: false, mcp: false})
+
+Application.put_env(:handbeam, Handbeam.Repo,
+  database: Path.join(data_dir, "handbeam.db"),
+  pool_size: 5
+)
 
 HandbeamProbe.App.configure_error_tracker!()
 {:ok, _} = Application.ensure_all_started(:ecto_sqlite3)
+
+Ecto.Migrator.with_repo(Handbeam.Repo, fn repo ->
+  Ecto.Migrator.run(repo, Handbeam.Paths.migrations_dir(), :up, all: true)
+end)
+
+{:ok, _} = HandbeamProbe.Repo.start_link()
+Ecto.Migrator.run(HandbeamProbe.Repo, :up, all: true)
+
 {:ok, _} = Application.ensure_all_started(:handbeam)
 Ecto.Migrator.run(Handbeam.Repo, Handbeam.Paths.migrations_dir(), :up, all: true)
 :ok = HandbeamProbe.App.ensure_task_supervisor()
 :ok = HandbeamProbe.ShareIntake.Lock.ensure_started()
 :ok = HandbeamProbe.ShareCopy.ensure_started()
 :ok = HandbeamProbe.Platform.IOS.Registry.ensure_started()
-{:ok, _} = HandbeamProbe.Repo.start_link()
-
-Ecto.Migrator.run(HandbeamProbe.Repo, :up, all: true)

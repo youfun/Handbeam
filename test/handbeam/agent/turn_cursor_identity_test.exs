@@ -1,5 +1,5 @@
 defmodule Handbeam.Agent.TurnCursorIdentityTest do
-  use ExUnit.Case, async: false
+  use Handbeam.DataCase, async: false
 
   alias Handbeam.Agent.{Config, Message, Turn}
 
@@ -20,6 +20,7 @@ defmodule Handbeam.Agent.TurnCursorIdentityTest do
 
   test "Turn passes workspace and run_id through provider_config on the product path" do
     Process.register(self(), :cursor_identity_test)
+    assert {:ok, _conversation} = Handbeam.ConversationStore.create("workspace", id: "conv-1")
 
     config =
       Config.from_opts(

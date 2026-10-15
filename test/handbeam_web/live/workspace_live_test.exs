@@ -58,7 +58,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
     original_workspaces_file = System.get_env("HANDBEAM_WORKSPACES_FILE")
 
     original_config =
-      Map.new([:host, :workspaces_file, :workspace_root, :conversation_root], fn key ->
+      Map.new([:host, :workspaces_file, :workspace_root, :conversation_artifact_root], fn key ->
         {key, Application.fetch_env(:handbeam, key)}
       end)
 
@@ -212,8 +212,8 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
 
     Application.put_env(
       :handbeam,
-      :conversation_root,
-      Path.join(home_dir, ".handbeam/conversations")
+      :conversation_artifact_root,
+      Path.join(home_dir, ".handbeam/conversation-artifacts")
     )
 
     safe_rm_test_rune!(home_dir)
@@ -269,9 +269,8 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
     end)
     |> Enum.each(&wait_for_process/1)
 
-    # Stopping producers does not drain their cast/PubSub consumers. In order:
-    # Session forwards lifecycle events, TaskTracker reads conversation metadata,
-    # and Journal may create the storage root while serving those reads.
+    # Stopping producers does not drain their cast/PubSub consumers. In order,
+    # Session forwards lifecycle events and TaskTracker reads conversation metadata.
     Registry.select(Handbeam.SessionRegistry, [{{:"$1", :_, :_}, [], [:"$1"]}])
     |> Enum.each(fn id ->
       Handbeam.PubSub.Session.snapshot(id)
@@ -279,11 +278,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
     end)
 
     GenServer.call(Handbeam.Runtime.TaskTracker, :snapshot)
-
-    :ok =
-      Handbeam.ConversationTranscriptStore.Journal.invalidate(
-        Handbeam.ConversationStore.index_path()
-      )
+    Handbeam.Runtime.TaskTracker.reset()
   end
 
   test "cleanup stops the unlinked provider task even after its Runner has exited" do
@@ -334,11 +329,6 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
 
       File.rm_rf!(System.get_env("HOME"))
       GenServer.call(Handbeam.Runtime.TaskTracker, :snapshot)
-
-      :ok =
-        Handbeam.ConversationTranscriptStore.Journal.invalidate(
-          Handbeam.ConversationStore.index_path()
-        )
 
       refute File.exists?(System.get_env("HOME"))
     after
@@ -498,15 +488,14 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       refute html =~ ~s(data-session-id="#{foreign_conversation["id"]}")
     end
 
-    test "does not render sidebar entries whose persisted item was removed", %{conn: conn} do
+    test "does not render archived conversations in the sidebar", %{conn: conn} do
       {:ok, conversation} =
-        Handbeam.ConversationStore.create("default", title: "Missing conversation")
+        Handbeam.ConversationStore.create("default", title: "Archived conversation")
 
-      File.rm_rf!(Handbeam.ConversationStore.conversation_dir(conversation["id"]))
+      {:ok, _archived} = Handbeam.ConversationStore.archive(conversation["id"])
 
       {:ok, _view, html} = live(conn, "/")
 
-      refute html =~ "Missing conversation"
       refute html =~ ~s(data-conversation-id="#{conversation["id"]}")
     end
 
@@ -873,7 +862,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       rendered = render(view)
       assert rendered =~ "history item 1"
       assert rendered =~ "live after newest page"
-      assert has_element?(view, "#ai-messages[data-history-has-more='false']")
+      refute has_element?(view, "#ai-messages[data-history-has-more='true']")
 
       send(
         view.pid,
@@ -2595,7 +2584,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
           cache_creation_input_tokens: 999
         })
 
-      meta_before = File.read!(Handbeam.ConversationStore.meta_path(conv_id))
+      assert {:ok, usage_before} = Handbeam.ConversationStore.get_token_usage(conv_id)
 
       send(
         view.pid,
@@ -2604,7 +2593,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       )
 
       refute has_element?(view, "button[phx-click='stop_run']")
-      assert File.read!(Handbeam.ConversationStore.meta_path(conv_id)) == meta_before
+      assert {:ok, ^usage_before} = Handbeam.ConversationStore.get_token_usage(conv_id)
       assert has_element?(view, "#status-input-tokens[title='33261']", "33.3K")
       assert has_element?(view, "#status-output-tokens[title='1250']", "1.3K")
       assert has_element?(view, "#status-cache-read[title='1200000']", "1.2M")
@@ -2859,13 +2848,9 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
     test "conversation store is updated during streaming chunks and finalized on run_end", %{
       conn: conn
     } do
-      # Use an isolated home so we can check conversation file writes safely.
-      isolate_conversation_home!()
-
       {:ok, view, _html} = live(conn, "/")
       conversation_id = create_default_conversation(view)
 
-      # Ensure initial file exists by triggering runtime persistence.
       Handbeam.Agent.TranscriptPersistence.handle_event(
         conversation_id,
         {:run_start, %{model: "test"}}
@@ -2877,11 +2862,6 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       )
 
       _ = render(view)
-      messages_path = Handbeam.ConversationStore.messages_path(conversation_id)
-
-      # Verify the derived item file was created under the isolated conversation home.
-      assert File.exists?(messages_path),
-             "Expected conversation messages file to exist after initial run_end"
 
       # Now send streaming chunks — display history should be durable before run_end.
       for i <- 1..20 do
@@ -2905,15 +2885,16 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
          %{status: "completed", turns: 2, usage: %{input_tokens: 10, output_tokens: 20}}}
       )
 
-      content_after_run_end = File.read!(messages_path)
+      assert {:ok, [completed]} =
+               Handbeam.ConversationTranscriptStore.list(conversation_id)
 
-      assert content_after_run_end =~ "chunk1"
-      assert content_after_run_end =~ "chunk20"
-
-      assert {:ok, conversation} = Handbeam.ConversationStore.get(conversation_id)
-      assert [completed] = conversation["timeline"]
       assert completed["content"] == expected
       assert completed["status"] == "completed"
+
+      assert {:ok, conversation} = Handbeam.ConversationStore.get(conversation_id)
+      assert [projected] = conversation["timeline"]
+      assert projected["content"] == expected
+      assert projected["status"] == "completed"
     end
   end
 

@@ -9,9 +9,14 @@ defmodule Handbeam.Agent.Tool.SavedInput do
   """
 
   alias Handbeam.Agent.OperationReceipt
+  alias Handbeam.Security.PathValidator
 
   @large_bytes 8_000
   @max_artifact_bytes 50_000_000
+  @artifact_fields %{
+    "edit" => MapSet.new(["diff", "new_string", "old_string"]),
+    "write" => MapSet.new(["content"])
+  }
 
   @spec prepare(String.t(), map(), map(), [String.t()]) ::
           {:ok, map(), String.t()} | {:error, String.t(), map()}
@@ -112,12 +117,20 @@ defmodule Handbeam.Agent.Tool.SavedInput do
   end
 
   defp store_large_fields(tool, operation_id, input, context) do
+    artifact_fields = Map.get(@artifact_fields, tool, MapSet.new())
+
     Enum.reduce_while(input, {:ok, input}, fn
       {key, value}, {:ok, acc} when is_binary(value) and byte_size(value) >= @large_bytes ->
-        case write_artifact(tool, operation_id, to_string(key), value, context) do
-          {:ok, ref} -> {:cont, {:ok, Map.put(acc, to_string(key), %{"__artifact__" => ref})}}
-          :skip -> {:cont, {:ok, acc}}
-          {:error, reason} -> {:halt, {:error, reason}}
+        key = to_string(key)
+
+        if MapSet.member?(artifact_fields, key) do
+          case write_artifact(tool, operation_id, value, context) do
+            {:ok, ref} -> {:cont, {:ok, Map.put(acc, key, %{"__artifact__" => ref})}}
+            :skip -> {:cont, {:ok, acc}}
+            {:error, reason} -> {:halt, {:error, reason}}
+          end
+        else
+          {:cont, {:ok, acc}}
         end
 
       _pair, acc ->
@@ -125,19 +138,26 @@ defmodule Handbeam.Agent.Tool.SavedInput do
     end)
   end
 
-  defp write_artifact(_tool, _operation_id, _key, value, _context)
+  defp write_artifact(_tool, _operation_id, value, _context)
        when byte_size(value) > @max_artifact_bytes,
        do: {:error, "tool input exceeds the 50MB recovery artifact limit"}
 
-  defp write_artifact(tool, operation_id, key, value, context) do
+  defp write_artifact(tool, operation_id, value, context) do
     conversation = conversation_id(context)
 
     if is_binary(conversation) do
-      path = artifact_path(tool, conversation, operation_id, key, context)
+      root = artifact_root(context)
+      directory = artifact_directory(root, tool, conversation, operation_id)
+      artifact_id = "artifact_" <> Ecto.UUID.generate()
+      path = Path.join(directory, artifact_id)
 
-      with :ok <- File.mkdir_p(Path.dirname(path)),
-           :ok <- File.write(path, value) do
-        {:ok, Path.basename(path)}
+      with :ok <- validate_artifact_path(directory, root),
+           :ok <- File.mkdir_p(directory),
+           :ok <- validate_artifact_path(directory, root),
+           :ok <- validate_artifact_path(path, directory),
+           :ok <- validate_artifact_path(path, root),
+           :ok <- write_exclusive(path, value) do
+        {:ok, artifact_id}
       else
         {:error, reason} -> {:error, "could not save tool input: #{inspect(reason)}"}
       end
@@ -193,21 +213,24 @@ defmodule Handbeam.Agent.Tool.SavedInput do
   defp materialize(tool, conversation, receipt, context) do
     Enum.reduce_while(receipt, {:ok, %{}}, fn
       {key, %{"__artifact__" => name}}, {:ok, acc} when is_binary(name) ->
-        path =
-          artifact_path(
+        root = artifact_root(context)
+
+        directory =
+          artifact_directory(
+            root,
             tool,
             conversation,
-            receipt["operation_id"] || ref_from(receipt),
-            key,
-            context
+            receipt["operation_id"] || ref_from(receipt)
           )
 
-        named = Path.join(Path.dirname(path), name)
+        path = Path.join(directory, name)
 
-        case File.read(named) do
-          {:ok, body} ->
-            {:cont, {:ok, Map.put(acc, key, body)}}
-
+        with :ok <- validate_artifact_path(directory, root),
+             :ok <- validate_artifact_path(path, directory),
+             :ok <- validate_artifact_path(path, root),
+             {:ok, body} <- File.read(path) do
+          {:cont, {:ok, Map.put(acc, key, body)}}
+        else
           {:error, reason} ->
             {:halt,
              failure(
@@ -225,16 +248,28 @@ defmodule Handbeam.Agent.Tool.SavedInput do
     end)
   end
 
-  defp artifact_path(tool, conversation, operation_id, key, context) do
-    root =
-      context[:tool_input_root] ||
-        Application.get_env(
-          :handbeam,
-          :conversation_root,
-          Path.join(Handbeam.Home.path(), ".handbeam/conversations")
-        )
+  defp artifact_root(context) do
+    context[:tool_input_root] || Handbeam.ConversationArtifacts.root()
+  end
 
-    Path.join([root, "items", conversation, "tool-inputs", tool, operation_id, key <> ".txt"])
+  defp artifact_directory(root, tool, conversation, operation_id) do
+    Path.join([root, "items", conversation, "tool-inputs", tool, operation_id])
+  end
+
+  defp validate_artifact_path(path, root), do: PathValidator.validate_under_root(path, root)
+
+  defp write_exclusive(path, value) do
+    case File.open(path, [:write, :binary, :exclusive], &IO.binwrite(&1, value)) do
+      {:ok, :ok} ->
+        :ok
+
+      {:ok, {:error, reason}} ->
+        _ = File.rm(path)
+        {:error, reason}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
 
   defp ref_from(receipt), do: receipt["operation_id"] || "missing"

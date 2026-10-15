@@ -5,7 +5,11 @@ defmodule Handbeam.Repo.Migrations.CreateSchedules do
     create table(:schedules, primary_key: false) do
       add :id, :string, primary_key: true
       add :workspace_id, :string, null: false
-      add :conversation_id, :string, null: false
+
+      add :conversation_id,
+          references(:conversations, type: :string, on_delete: :delete_all),
+          null: false
+
       add :name, :string, null: false
       add :instruction, :text, null: false
       add :rule, :map, null: false

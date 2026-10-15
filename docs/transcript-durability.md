@@ -1,96 +1,97 @@
-# Transcript durability and storage
+# Transcript durability and SQLite storage
 
-`ConversationTranscriptStore.Journal` serializes mutations to the global
-`~/.handbeam/conversations/items/<id>/messages.jsonl`. Visible assistant deltas
-are appended and synced before delivery or Session broadcast. Runner persists
-crash/cancel closure from the durable entries, scoped to the run ID, rather than
-depending on the dead task's process dictionary.
+Handbeam stores conversations, transcript entries, run usage, operation receipts,
+editor state, and reconnect snapshots in the SQLite database owned by
+`Handbeam.Repo`. The packaged host resolves it to `<data_dir>/handbeam.db` unless
+an explicit Repo database is configured. SQLite is the only canonical online
+store: old conversation/session JSON and JSONL files are neither imported nor
+used as a fallback.
 
-At application startup, `TranscriptRecovery` marks orphaned streaming replies
-and running tools as failed, retaining acknowledged text and adding one stable
-error entry per run. It skips active Runners (including approval waits) and does
-not rerun tools or redeliver old messages. Tests disable automatic startup
-recovery and invoke it against isolated histories.
+The Repo is configured centrally for WAL, `synchronous = FULL`, foreign keys,
+bounded busy waiting, and automatic checkpointing. Visible assistant deltas are
+committed before delivery or Session broadcast. A database-path-specific native
+sidecar lock prevents two Handbeam runtimes from owning the same database; a
+different database in the same directory has an independent lock.
 
-Recovery runs in a registered, supervised owner. Only that process identity (not
-`source: :recovery` or a caller-supplied bypass flag) may read internal delegated
-transcripts for orphan maintenance. The recovery API returns status, never
-transcript contents; public reads of internal conversations remain restricted.
+SQLite WAL requires a local filesystem shared by all Repo connections. Do not
+place the database on NFS, iCloud Drive, or another synchronized/network mount.
+`busy_timeout` can absorb short local writer contention but cannot make remote
+WAL/SHM locking safe.
 
-## JSONL compatibility
+## Transaction boundaries
 
-Legacy plain entries remain readable. Updates and deletions now append versioned
-records with `$handbeam_journal: 1`; consumers must use the transcript APIs to
-obtain materialized entries, not treat every physical line as a timeline item.
-Cold reads replay the journal. A bounded cache avoids replay on each mutation.
-An incomplete malformed final line is discarded before the next append; other
-corruption fails the read instead of silently discarding history.
+`ConversationTranscriptStore` remains the public transcript boundary; its
+default implementation stores stable envelope fields in indexed columns and
+entry-specific data in a JSON payload. Public maps retain string keys and ISO8601
+timestamps.
 
-Revisions from the first journal release, without transaction IDs, remain
-readable. New records carry monotonic transaction IDs. Compaction preserves
-the transaction and sequence high-water marks, including deleted entries.
-`replace_all/3` compacts immediately; incremental revisions compact after
-`max(256, live_entry_count)` updates/deletions. Snapshots use synced temporary
-files, atomic rename, and parent-directory sync.
+Message admission uses a durable reservation followed by an owner-local commit:
+
+- Runner commits a new-run inbound entry and completes its receipt before the
+  provider task starts.
+- CandidateQueue validates run identity, seal, and capacity, then commits the
+  pending inbound and receipt before adding the message to its in-memory queue.
+- Session commits a next-turn inbound, receipt, and snapshot before updating its
+  in-memory projection or broadcasting.
+
+This does not make provider, shell, network, or OS side effects exactly-once.
+If a process dies after an external effect but before its result commits, the
+effect is `unknown` and must not be replayed automatically.
+
+Terminal settlement updates unfinished assistant/tool entries for one run and
+records put-once run usage in one database transaction. Startup recovery uses
+indexed unfinished-entry queries; it marks orphaned streaming replies and
+running tools as failed, retains committed text, and adds one stable error entry
+per run. It never reruns tools or redelivers old messages. Only the registered
+`TranscriptRecovery` owner may recover internal delegated conversations.
 
 `page/2` returns chronological entries, an exclusive `before` entry-ID cursor,
-and `has_more?`; limits are 1–200. Deleted cursors return `:invalid_cursor`.
-WorkspaceLive starts at the newest 100 entries and loads earlier pages without
-replacing live messages. Sidebar metadata reads no longer load every transcript.
-Paging enforces the same internal-conversation access checks as full reads.
+and `has_more?`; limits are 1–200. A deleted cursor returns
+`:invalid_cursor`. Generic patches use revision CAS with bounded retries;
+assistant `$append` uses an atomic SQL update so concurrent deltas do not lose
+bytes.
 
-Tool entries now write only `tool_name`, `tool_status`, `tool_duration_ms`, and
-`tool_error`. Use `TranscriptEntry` to read legacy aliases. Presence of a
-canonical key wins even when its value is nil, so clearing an error cannot
-resurrect a stale legacy value. Assistant/system status fields are unchanged.
+## Health, diagnosis, and backup
 
-Do not roll back to an older plain-JSONL-only reader while journal records exist.
-Stop writers and export materialized snapshots through the new APIs first;
-never rewrite live logs from an unlocked read.
+Run a redacted explicit diagnosis against the active Repo:
 
-## Retry intent and OS ownership
+```sh
+mix handbeam.storage
+```
 
-Every mutation first writes a synced `messages.jsonl.pending` intent, then
-appends/syncs its journal record and removes/syncs the intent. An intent left
-after interruption is replayed before later operations; transaction IDs prevent
-double application of a delta, including after compaction. Failed drains retry
-every second. Host recovery also drains intents when it scans orphan histories.
-Recovery never reruns tools or redelivers an old reply.
+It runs `quick_check`, `foreign_key_check`, required table/index checks, reports
+the migration version and journal mode, and attempts a passive WAL checkpoint.
+A busy checkpoint is reported separately and does not hide the other health
+results.
 
-If an intent owns the delta, persistence reports `{:error, {:queued, reason}}`
-and clears the process-local copy before terminating the run. A failed directory
-sync after rename can leave a visible intent with uncertain power-loss durability;
-that intent still owns the bytes to avoid duplicate retries. If no intent was
-written, the same-process buffer remains available for retry.
+SQLite errors are classified as busy, full, I/O, corrupt, constraint, or
+unknown. A corrupt/not-a-database result opens the runtime storage circuit:
+new Agent admissions are rejected and Schedule Clock stops dispatching. The
+runtime does not delete the database, WAL, or SHM files and does not create an
+empty replacement.
 
-Journal holds a native `flock` resource per storage root for its lifetime.
-Metadata, index, editor files, pending intents, and transcript writes all pass
-through that owner. A second VM gets `:locked` before changing those files.
-Aliases of the same directory share its device/inode identity. The sidecar
-`.handbeam-storage.lock` is permanent: **never delete it to bypass a live lock**.
-Resource destruction or OS process exit releases ownership; there is no TTL,
-lease stealing, or manual stale-lock recovery.
+Create a consistent online backup with:
 
-Dirty-IO NIF operations hold the same resource while writing, so owner death
-cannot release the lock ahead of an independently running file writer. This is
-local POSIX-filesystem coordination, not a distributed/NFS lease or a defense
-against arbitrary processes ignoring advisory locks.
+```sh
+mix handbeam.storage --backup /path/to/handbeam-backup.db
+```
 
-Desktop builds require `make`, a C compiler, and OTP headers (`mix compile`
-builds the NIF). Android/iOS use the shared C source via the checked-in Mob
-static-NIF template. Native device builds and cold-start behavior belong in the
-queued real-host verification, not in claims based on desktop unit tests.
+The command uses `VACUUM INTO` to write a temporary snapshot, opens that snapshot
+read-only, verifies quick check, foreign keys, and migration version, then
+atomically publishes it. It refuses to overwrite an existing target. Never copy
+the live database file by itself while the runtime is active.
 
-## Limits and measurement
+Restore only while Handbeam is stopped and no process owns the target database.
+Preserve a damaged database and its `-wal`/`-shm` companions for diagnosis.
+There is no canonical JSONL copy from which newer state can be rebuilt.
 
-There is no promise to recover bytes the disk refused to write, an unacknowledged
-provider chunk, or total disk loss. Startup recovery preserves successfully
-synced text, not the original exception when even writing the exception failed.
+## Limits and verification
 
-Run `mix run --no-start scripts/benchmark_transcript_journal.exs 10000 500` for
-a local comparison against a simulated whole-snapshot rewrite baseline. On the
-development machine (macOS arm64, 2026-09-20), 10,000 entries and 500 updates took
-100461.6 ms for synced whole-snapshot replacements and 1302.7 ms for journal
-updates (77.1×). Both paths include the retry intent and OS lock. This is a
-microbenchmark, not an end-to-end throughput claim; cold replay still scales
-with history, while warm paging traverses only the requested range.
+Committed SQLite text survives a BEAM task or host process crash according to
+FULL WAL durability. Handbeam cannot recover bytes the disk refused to write,
+an unacknowledged provider chunk, an unknown external side effect, total disk
+loss, or a damaged database without a verified backup.
+
+Desktop unit/host tests do not prove Android or iOS packaging, static-NIF,
+filesystem, cold-start, force-stop, or power-loss behavior. Those claims require
+the platform-specific matrix in `docs/mobile-device-verification.md`.

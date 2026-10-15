@@ -24,7 +24,8 @@ defmodule Handbeam.Agent.Coordinator do
              is_list(opts) do
     {content, opts} = stamp_message_ids(content, opts)
 
-    with :ok <- reserve_operation(conversation_id, content, opts),
+    with :ok <- Handbeam.Storage.Health.check_write(),
+         :ok <- reserve_operation(conversation_id, content, opts),
          :ok <- validate_conversation_access(conversation_id, opts),
          :ok <- validate_required_opts(opts),
          :ok <- validate_model_policy(opts),
@@ -82,7 +83,6 @@ defmodule Handbeam.Agent.Coordinator do
 
     case enqueue_candidate(id, content, candidate_opts) do
       {:ok, ack} ->
-        Handbeam.Agent.OperationReceipt.complete({:message, id}, opts[:request_id], ack)
         maybe_resume_stall(id)
         {:ok, ack}
 
@@ -166,7 +166,8 @@ defmodule Handbeam.Agent.Coordinator do
       when is_binary(conversation_id) and
              (is_binary(content) or is_struct(content, Handbeam.Agent.Message)) and
              is_list(opts) do
-    with :ok <- validate_conversation_access(conversation_id, opts),
+    with :ok <- Handbeam.Storage.Health.check_write(),
+         :ok <- validate_conversation_access(conversation_id, opts),
          :ok <- validate_required_opts(opts),
          :ok <- validate_model_policy(opts),
          :ok <- validate_advisor_policy(opts),
@@ -185,12 +186,6 @@ defmodule Handbeam.Agent.Coordinator do
             run_id: Keyword.fetch!(run_opts, :run_id),
             run_pid: runner_pid || pid
           }
-
-          Handbeam.Agent.OperationReceipt.complete(
-            {:message, conversation_id},
-            Keyword.get(opts, :request_id),
-            ack
-          )
 
           {:ok, ack}
 
@@ -246,9 +241,7 @@ defmodule Handbeam.Agent.Coordinator do
   @spec delete_pending_message(String.t(), String.t()) :: :ok | {:error, term()}
   def delete_pending_message(conversation_id, message_id)
       when is_binary(conversation_id) and is_binary(message_id) do
-    with {:ok, _info} <- Session.delete_pending_message(conversation_id, message_id) do
-      Handbeam.ConversationTranscriptStore.delete(conversation_id, message_id)
-    end
+    with {:ok, _info} <- Session.delete_pending_message(conversation_id, message_id), do: :ok
   end
 
   @spec resume(String.t(), [map()], keyword()) :: :ok | {:error, term()}

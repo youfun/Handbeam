@@ -68,6 +68,14 @@ defmodule Handbeam.Agent.ErrorReporterTest do
     refute recorded =~ "query-secret"
   end
 
+  test "does not recursively persist SQLite storage failures" do
+    context = %{"source" => "agent_runner", "conversation_id" => "conversation-1"}
+
+    assert :ok = ErrorReporter.report("database or disk is full", context)
+    assert Repo.aggregate(Error, :count) == 0
+    assert Repo.aggregate(Occurrence, :count) == 0
+  end
+
   test "separates tool reason categories while grouping dynamic details" do
     context = %{"source" => "agent_tool", "tool" => "read_thread"}
 

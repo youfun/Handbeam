@@ -1,22 +1,16 @@
 defmodule Handbeam.Extension.SessionStoreTest do
-  use ExUnit.Case, async: false
+  use Handbeam.DataCase, async: false
 
   alias Handbeam.Extension.SessionStore
 
   describe "put/4 and get/4" do
     setup do
       session_id = "ext-test-#{System.unique_integer([:positive])}"
-      dir = Path.join(System.tmp_dir!(), "sigil_ext_session_test_#{session_id}")
+      {:ok, _conversation} = Handbeam.ConversationStore.create("default", id: session_id)
 
-      on_exit(fn ->
-        File.rm_rf(dir)
-      end)
-
-      # Start a Session process with a test store dir
       {:ok, _pid} =
         Handbeam.PubSub.Session.start_link(
           session_id: session_id,
-          session_store_dir: dir,
           session_store_enabled?: true
         )
 
@@ -34,7 +28,7 @@ defmodule Handbeam.Extension.SessionStoreTest do
         end
       end)
 
-      %{session_id: session_id, dir: dir}
+      %{session_id: session_id}
     end
 
     test "stores and retrieves extension state", %{session_id: sid} do
@@ -64,16 +58,11 @@ defmodule Handbeam.Extension.SessionStoreTest do
   describe "get_all/2" do
     setup do
       session_id = "ext-all-#{System.unique_integer([:positive])}"
-      dir = Path.join(System.tmp_dir!(), "sigil_ext_session_all_#{session_id}")
-
-      on_exit(fn ->
-        File.rm_rf(dir)
-      end)
+      {:ok, _conversation} = Handbeam.ConversationStore.create("default", id: session_id)
 
       {:ok, _pid} =
         Handbeam.PubSub.Session.start_link(
           session_id: session_id,
-          session_store_dir: dir,
           session_store_enabled?: true
         )
 
@@ -111,16 +100,11 @@ defmodule Handbeam.Extension.SessionStoreTest do
   describe "delete/3" do
     setup do
       session_id = "ext-del-#{System.unique_integer([:positive])}"
-      dir = Path.join(System.tmp_dir!(), "sigil_ext_session_del_#{session_id}")
-
-      on_exit(fn ->
-        File.rm_rf(dir)
-      end)
+      {:ok, _conversation} = Handbeam.ConversationStore.create("default", id: session_id)
 
       {:ok, _pid} =
         Handbeam.PubSub.Session.start_link(
           session_id: session_id,
-          session_store_dir: dir,
           session_store_enabled?: true
         )
 

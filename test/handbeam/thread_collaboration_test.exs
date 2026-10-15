@@ -1,7 +1,11 @@
 defmodule Handbeam.ThreadCollaborationTest do
-  use ExUnit.Case, async: false
+  use Handbeam.DataCase, async: false
   alias Handbeam.{ConversationStore, ConversationTranscriptStore, Threads}
   alias Handbeam.Threads.Collaboration
+
+  defmodule FailingInboundStore do
+    def append(_conversation_id, _entry, _opts), do: {:error, :eisdir}
+  end
 
   defmodule CaptureProvider do
     @behaviour Handbeam.Agent.Provider
@@ -217,14 +221,14 @@ defmodule Handbeam.ThreadCollaborationTest do
   end
 
   test "inbound persistence failure is uncertain, retained and never dispatched twice", c do
-    path = ConversationStore.messages_path(c.target)
-    File.rm!(path)
-    File.mkdir!(path)
+    context = %{
+      c.context
+      | thread_run_opts: Keyword.put(c.opts, :transcript_store, FailingInboundStore)
+    }
+
     input = %{"thread" => c.target, "message" => "Must survive", "request_id" => "fail"}
-    assert {:ok, %{delivery: "delivery_unknown"}} = Collaboration.send_message(input, c.context)
-    File.rmdir!(path)
-    File.write!(path, "")
-    assert {:ok, %{delivery: "delivery_unknown"}} = Collaboration.send_message(input, c.context)
+    assert {:ok, %{delivery: "delivery_unknown"}} = Collaboration.send_message(input, context)
+    assert {:ok, %{delivery: "delivery_unknown"}} = Collaboration.send_message(input, context)
     refute_receive {:held, _, _}, 100
     assert {:ok, []} = ConversationTranscriptStore.list(c.target)
   end

@@ -1,11 +1,11 @@
 defmodule Handbeam.Agent.Tool.RecoveryTest do
   @moduledoc """
   Recovery boundary failures that cannot be exercised inside one Agent run:
-  persisted input IDs must not collide across VM restarts, and retry_of must
+  operation IDs must not collide across VM restarts, and retry_of must
   retain the original body while rejecting unavailable artifacts.
   """
 
-  use ExUnit.Case, async: false
+  use Handbeam.DataCase, async: false
 
   alias Handbeam.Agent.OperationReceipt
   alias Handbeam.Agent.Tool.{FileCommit, Result, ResultContract}
@@ -17,9 +17,9 @@ defmodule Handbeam.Agent.Tool.RecoveryTest do
     home = Path.join(root, "home")
     File.mkdir_p!(home)
     previous_home = System.get_env("HOME")
-    previous_root = Application.get_env(:handbeam, :conversation_root)
+    previous_root = Application.get_env(:handbeam, :conversation_artifact_root)
     System.put_env("HOME", home)
-    Application.put_env(:handbeam, :conversation_root, root)
+    Application.put_env(:handbeam, :conversation_artifact_root, root)
 
     on_exit(fn ->
       if previous_home,
@@ -27,8 +27,8 @@ defmodule Handbeam.Agent.Tool.RecoveryTest do
         else: System.delete_env("HOME")
 
       if previous_root,
-        do: Application.put_env(:handbeam, :conversation_root, previous_root),
-        else: Application.delete_env(:handbeam, :conversation_root)
+        do: Application.put_env(:handbeam, :conversation_artifact_root, previous_root),
+        else: Application.delete_env(:handbeam, :conversation_artifact_root)
 
       File.rm_rf(root)
     end)
@@ -36,11 +36,11 @@ defmodule Handbeam.Agent.Tool.RecoveryTest do
     %{root: root, workspace: Path.join(root, "workspace")}
   end
 
-  test "saved input IDs stay distinct across VM restarts", %{root: root} do
+  test "saved input operation IDs stay distinct across VM restarts", %{root: root} do
     script = """
     [root, body] = System.argv()
-    Application.put_env(:handbeam, :conversation_root, root)
-    context = %{conversation_id: "restart"}
+    Application.put_env(:handbeam, :conversation_artifact_root, root)
+    context = %{}
     {:ok, _, id} = Handbeam.Agent.Tool.SavedInput.prepare(
       "write", %{"file_path" => "note.txt", "content" => body}, context, ["file_path"]
     )
@@ -63,11 +63,7 @@ defmodule Handbeam.Agent.Tool.RecoveryTest do
 
     assert [before_id, after_id] = ids
     refute before_id == after_id
-
-    for {id, body} <- Enum.zip(ids, ["before restart", "after restart"]) do
-      assert {:ok, %{"receipt" => %{"content" => ^body}}} =
-               OperationReceipt.lookup({:tool_input, "restart"}, id)
-    end
+    assert Enum.all?(ids, &String.starts_with?(&1, "op_"))
   end
 
   test "retry_of reuses a large write without sending the body again", %{workspace: workspace} do
@@ -101,17 +97,17 @@ defmodule Handbeam.Agent.Tool.RecoveryTest do
     assert {:error, _reason, details} =
              Write.execute(%{"file_path" => "blocked", "content" => body}, context)
 
-    artifact =
+    artifact_dir =
       Path.join([
         root,
         "items",
         "conv-missing-artifact",
         "tool-inputs",
         "write",
-        details.operation_id,
-        "content.txt"
+        details.operation_id
       ])
 
+    assert [artifact] = Path.wildcard(Path.join(artifact_dir, "artifact_*"))
     File.rm!(artifact)
 
     assert {:error, reason, retry_details} =
@@ -155,6 +151,61 @@ defmodule Handbeam.Agent.Tool.RecoveryTest do
     assert {:ok, _text, meta} = Edit.execute(retry, context)
     assert meta.side_effect == :committed
     assert File.read!(Path.join(workspace, "edit.txt")) == replacement <> "\n"
+  end
+
+  test "only declared fields use opaque recovery artifacts", %{root: root, workspace: workspace} do
+    File.mkdir_p!(workspace)
+    artifact_root = Path.join(root, "field-artifacts")
+    body = String.duplicate("saved-body\n", 2_000)
+    injected = String.duplicate("attacker-controlled\n", 1_000)
+    malicious_key = "../../../../../escaped"
+
+    context = %{
+      working_directory: workspace,
+      conversation_id: "conv-artifact-fields",
+      tool_input_root: artifact_root
+    }
+
+    assert {:ok, _text, _details} =
+             Write.execute(
+               %{"file_path" => "inside.txt", "content" => body, malicious_key => injected},
+               context
+             )
+
+    artifact_files =
+      artifact_root
+      |> Path.join("**/*")
+      |> Path.wildcard(match_dot: true)
+      |> Enum.filter(&File.regular?/1)
+
+    assert [artifact] = artifact_files
+    assert String.starts_with?(Path.basename(artifact), "artifact_")
+    refute Path.basename(artifact) =~ "content"
+    refute File.exists?(Path.join(artifact_root, "escaped.txt"))
+    assert File.read!(artifact) == body
+  end
+
+  test "saved input rejects a symlinked artifact ancestor", %{root: root, workspace: workspace} do
+    File.mkdir_p!(workspace)
+    artifact_root = Path.join(root, "symlinked-artifacts")
+    outside = Path.join(root, "artifact-escape")
+    File.mkdir_p!(artifact_root)
+    File.mkdir_p!(outside)
+    File.ln_s!(outside, Path.join(artifact_root, "items"))
+    body = String.duplicate("saved-body\n", 2_000)
+
+    context = %{
+      working_directory: workspace,
+      conversation_id: "conv-artifact-symlink",
+      tool_input_root: artifact_root
+    }
+
+    assert {:error, _reason, details} =
+             Write.execute(%{"file_path" => "inside.txt", "content" => body}, context)
+
+    assert details.code == :artifact_unavailable
+    assert File.ls!(outside) == []
+    refute File.exists?(Path.join(workspace, "inside.txt"))
   end
 
   test "file commit reconciles a matching target and refuses a mismatch", %{workspace: workspace} do

@@ -88,14 +88,7 @@ defmodule Handbeam.Agent.Subagent.Worktree do
   end
 
   defp recoverable_ids(workspace) do
-    root =
-      Application.get_env(
-        :handbeam,
-        :conversation_root,
-        Path.join(Handbeam.Home.path(), ".handbeam/conversations")
-      )
-
-    root
+    Handbeam.ConversationArtifacts.root()
     |> Path.join("items/*/subagents/*.json")
     |> Path.wildcard()
     |> Enum.flat_map(fn path ->

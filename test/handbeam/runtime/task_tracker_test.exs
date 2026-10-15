@@ -1,5 +1,5 @@
 defmodule Handbeam.Runtime.TaskTrackerTest do
-  use ExUnit.Case, async: false
+  use Handbeam.DataCase, async: false
 
   alias Handbeam.PubSub.Session
   alias Handbeam.Runtime.NotifyAdapter

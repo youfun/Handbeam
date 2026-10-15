@@ -9,7 +9,7 @@
 - [mobile/AGENTS.md](../mobile/AGENTS.md)
 - 本仓库锁定的 Mob 工具文档：`mobile/deps/mob_dev/README.md`、`mix help`（在 `mobile/` 下）
 - [transcript-durability.md](transcript-durability.md)
-- 源码测试：`test/handbeam/storage_nif_test.exs`、`storage_lock_integration_test.exs`、`transcript_journal_test.exs`
+- 源码测试：`test/handbeam/storage_nif_test.exs`、`test/handbeam/storage_lock_test.exs`、`test/handbeam/conversation_transcript_store_test.exs`、`test/handbeam/e2e/transcript_durability_test.exs`
 
 > **模拟器 / ARC / 桌面 Mix / 浏览器设备模拟不能替代真机签收。** 它们只可作为预检。分别报告 Android 实体机与 iOS 实体 iPhone。预检结果必须标明环境，不得写成“Android/iOS 全通过”。
 
@@ -18,7 +18,7 @@
 - Android 实体 ARM64 手机、iOS 实体 iPhone **分别出结论**。
 - 原生页面是 Compose / SwiftUI，不是 WorkspaceLive。Web 的历史分页、线程交接卡片、模型继承行为不得直接当作原生功能要求。
 - 不做公网部署、TLS/proxy 部署验证，不发布商店、不 push/merge。安装覆盖、强制退出、故障注入只在用户确认的测试设备和可丢弃数据中执行。
-- 先确认现有安装是否有真实数据；不要卸载、清数据或导入真实凭据来“修好”测试。旧版本不能直接读取新 Journal，升级前保留可恢复备份，禁止盲目降级。
+- 先确认现有安装是否有真实数据；不要卸载、清数据或导入真实凭据来“修好”测试。SQLite 全量切换需要明确授权后 clear-data/卸载重装；升级前用受支持命令建立并校验备份，禁止盲目降级。
 - 默认先用受控 Provider / 直接 runtime 探针，不消耗模型费用。真实模型用例需确认测试账号、模型及费用上限；未获授权标记未执行。
 - 一台设备只由一个线程操作。不得为连接方便开放公网 Dist、关闭认证或放宽路径权限。
 - 功能证据优先：设备上 `Mob.Test` 的限定状态、Runner/Session、transcript API、产物内容。截图只证明外观，必须打开检查后附报告。不要输出完整 assigns、环境、API key、cookie、真实对话或私人路径。
@@ -136,11 +136,11 @@ J1/J2 建议先用 runtime 工具调用和受控阻塞/释放信号验证，再�
 
 ## 5. 存储专项：此次真机验收重点
 
-参照 [transcript-durability.md](transcript-durability.md)、`test/handbeam/storage_nif_test.exs`、`storage_lock_integration_test.exs` 和 `transcript_journal_test.exs`，在设备上移植最小探针。不要原样运行会 spawn 桌面 elixir 的测试。每个故障用独立 fixture，不改真实全局 HOME、不停止带有用户任务的 owner。
+参照 [transcript-durability.md](transcript-durability.md)、`test/handbeam/storage_lock_test.exs`、`test/handbeam/conversation_transcript_store_test.exs` 和 `test/handbeam/e2e/transcript_durability_test.exs`，在设备上移植最小探针。不要原样运行会 spawn 桌面 elixir 的测试。每个故障用独立 fixture，不改真实全局 HOME、不停止带有用户任务的 owner。
 
 1. **静态 NIF 实际 IO**：测试目录取得 `:handbeam_storage.lock/1`，第二次 lock 得 `:locked`；执行 append_sync/replace_sync/remove_sync 并读回精确内容；close 后写入得 `:closed`，重新获取成功。不得删除锁文件绕过竞争。
-2. **Journal/compaction/page**：通过 Journal/Store API 构造 205 条不同 ID 的 Unicode entry，并进行至少 300 次更新/删除以触发压缩；保留独立期望列表。冷启动重读后内容、顺序、删除结果一致；用 transcript `page/2` 穷尽分页，无漏项/重复，删除 cursor 返回 invalid_cursor。不要把物理 JSONL 行数当消息数。
-3. **WAL 恢复**：以源码测试协议在独立 fixture 中构造已同步 pending intent，恢复后恰好一次应用；再重启，ID、内容、txid 语义不重复。压缩前后均测。记录明确故障点；手工造 pending 是确定性注入，不能冒称真实断电时序。
+2. **SQLite transcript/page**：通过 Store API 构造 205 条不同 ID 的 Unicode entry，并进行至少 300 次原子追加/更新/删除；保留独立期望列表。冷启动重读后内容、顺序、revision、删除结果一致；用 transcript `page/2` 穷尽分页，无漏项/重复，删除 cursor 返回 invalid_cursor。
+3. **WAL/恢复/备份**：构造 streaming assistant 与 running tool 后强杀宿主，冷启动只收口对应 run 且不重放工具；重复启动保持幂等。并行写入期间执行受支持的在线备份，副本通过 quick/FK/schema 校验。记录明确故障点；模拟强杀不能冒称断电或闪存损坏测试。
 4. **进程退出恢复**：受控 Provider 先输出已持久化的已知前缀，再阻塞；工具另写一次计数标记。在确认已 sync 后终止测试应用进程，冷启动核对保留文本、孤儿 run 的 assistant/tool error 收尾与稳定错误 ID。再次重启不重复错误、不重跑工具、不重新投递。记录是 force-stop、调试器 terminate 还是实际 crash，不能混称断电测试。
 5. **授权与 active run**：同进程 recovery 跳过 running/awaiting_approval；internal orphan 仅可信 recovery owner 可维护。公共 read/page 仍 not_found，closed scope 不重获执行权。不允许用 `internal: true` 等伪造开关绕过授权。
 6. **锁释放边界**：owner 退出后资源释放且不遗留写入；全应用退出后冷启动可重新取得锁。两个 Elixir 进程不是两个 OS 实例；真机无法启动共享目录的第二 VM 时，跨实例互斥明确 NOT_RUN，并单列桌面覆盖，不能借用作真机结论。

@@ -145,12 +145,15 @@ defmodule Handbeam.Agent.Runner do
   # exclusive RunSupervisor start is the accept gate and the user entry exists
   # before handle_continue starts the provider task.
   defp accept_inbound(conversation_id, content, opts) do
+    receipt = %{action: :started, run_id: Keyword.fetch!(opts, :run_id)}
+
     if Keyword.get(opts, :persist_inbound?, true) do
       inbound_opts = Keyword.put(opts, :deliver_as, :new_run)
 
-      case Handbeam.Agent.TranscriptPersistence.append_inbound(
+      case Handbeam.Agent.TranscriptPersistence.accept_inbound(
              conversation_id,
              content,
+             receipt,
              inbound_opts
            ) do
         {:ok, entry} ->
@@ -164,7 +167,14 @@ defmodule Handbeam.Agent.Runner do
           {:error, reason}
       end
     else
-      {:ok, content, opts}
+      case Handbeam.Agent.OperationReceipt.complete(
+             {:message, conversation_id},
+             opts[:request_id],
+             receipt
+           ) do
+        :ok -> {:ok, content, opts}
+        {:error, reason} -> {:error, reason}
+      end
     end
   end
 
@@ -802,9 +812,7 @@ defmodule Handbeam.Agent.Runner do
         :ok
 
       {:error, reason} ->
-        dir = Handbeam.ConversationStore.storage_dir()
-
-        raise "Transcript persistence failed: #{inspect(reason)} dir=#{dir} exists=#{File.exists?(Path.join([dir, "items", conversation_id, "meta.json"]))}"
+        raise "Transcript persistence failed: #{inspect(reason)} conversation=#{conversation_id}"
     end
 
     # 3. User callback (if any)

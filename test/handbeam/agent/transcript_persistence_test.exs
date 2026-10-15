@@ -1,5 +1,5 @@
 defmodule Handbeam.Agent.TranscriptPersistenceTest do
-  use ExUnit.Case, async: false
+  use Handbeam.DataCase, async: false
 
   alias Handbeam.Agent.TranscriptPersistence
 

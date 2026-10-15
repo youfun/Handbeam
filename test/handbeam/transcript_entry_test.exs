@@ -35,7 +35,7 @@ defmodule Handbeam.TranscriptEntryTest do
     assert TranscriptEntry.duration_ms(entry) == nil
   end
 
-  test "falls back to the legacy bare names for old messages.jsonl entries" do
+  test "falls back to the legacy bare names for old durable entries" do
     entry = %{"tool" => "bash", "status" => "error", "duration_ms" => 7, "error" => "exit 1"}
 
     assert TranscriptEntry.tool_name(entry) == "bash"

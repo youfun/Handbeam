@@ -81,14 +81,27 @@ defmodule Handbeam.Agent.CandidateQueue do
   def handle_call({:enqueue, message, deliver_as, opts}, _from, state) do
     item = normalize_message(message, deliver_as, opts)
     queue = Map.fetch!(state, deliver_as)
+    receipt = %{action: :enqueued, run_id: opts[:run_id]}
 
     # Seal/capacity checks and persistence share the queue's acceptance gate.
     # A rejected candidate must not appear as an accepted inbound transcript.
     result =
       if Keyword.get(opts, :persist_candidate?, false) do
-        Handbeam.Agent.TranscriptPersistence.append_inbound(state.session_id, item.message, opts)
+        Handbeam.Agent.TranscriptPersistence.accept_inbound(
+          state.session_id,
+          item.message,
+          receipt,
+          opts
+        )
       else
-        {:ok, nil}
+        case Handbeam.Agent.OperationReceipt.complete(
+               {:message, state.session_id},
+               opts[:request_id],
+               receipt
+             ) do
+          :ok -> {:ok, nil}
+          {:error, reason} -> {:error, reason}
+        end
       end
 
     case result do
@@ -150,14 +163,20 @@ defmodule Handbeam.Agent.CandidateQueue do
     deleted_count = length(deleted_steer) + length(deleted_follow_up)
 
     if deleted_count > 0 do
-      new_state = %{
-        state
-        | steer: :queue.from_list(new_steer_list),
-          follow_up: :queue.from_list(new_follow_up_list),
-          size: max(0, state.size - deleted_count)
-      }
+      case Handbeam.ConversationTranscriptStore.delete(state.session_id, message_id) do
+        :ok ->
+          new_state = %{
+            state
+            | steer: :queue.from_list(new_steer_list),
+              follow_up: :queue.from_list(new_follow_up_list),
+              size: max(0, state.size - deleted_count)
+          }
 
-      {:reply, {:ok, deleted_count}, new_state}
+          {:reply, {:ok, deleted_count}, new_state}
+
+        {:error, reason} ->
+          {:reply, {:error, reason}, state}
+      end
     else
       {:reply, {:error, :not_found}, state}
     end

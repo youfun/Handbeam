@@ -1,5 +1,5 @@
 defmodule Handbeam.ConversationTitleGeneratorTest do
-  use ExUnit.Case, async: false
+  use Handbeam.DataCase, async: false
 
   alias Handbeam.ConversationTitleGenerator
   alias Handbeam.Agent.Message

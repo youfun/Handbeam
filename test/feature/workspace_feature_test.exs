@@ -226,11 +226,7 @@ defmodule HandbeamWeb.Feature.WorkspaceFeatureTest do
         )
         |> click_button("button[phx-click='toggle_conversation_menu']", "More actions")
 
-      [conv] =
-        Handbeam.ConversationStore.storage_path()
-        |> File.read!()
-        |> Jason.decode!()
-        |> Map.fetch!("conversations")
+      [conv] = Handbeam.ConversationStore.list(include_timeline?: false)
 
       assert_has(session, ".conversation-menu-item[data-copy='#{conv["id"]}']", "Copy ID")
     end

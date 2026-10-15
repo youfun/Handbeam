@@ -1895,8 +1895,6 @@ defmodule HandbeamWeb.WorkspaceLive do
     dev_log(
       "[WorkspaceLive] boot default_workspace=#{inspect(default_ws)} " <>
         "workspaces_file=#{Handbeam.WorkspaceStore.storage_path()} " <>
-        "conversation_storage_dir=#{Handbeam.ConversationStore.storage_dir()} " <>
-        "conversation_index=#{Handbeam.ConversationStore.index_path()} " <>
         "workspaces=#{inspect(Enum.map(workspaces, &Map.take(&1, ["id", "name", "path", "default"])))} " <>
         "conversation_counts=#{inspect(Map.new(conversations_by_ws, fn {id, convs} -> {id, length(convs)} end))}"
     )

@@ -25,7 +25,7 @@ defmodule Handbeam.Tool.Builtin.EditTest do
     - Huge file performance (@tag :slow)
   """
 
-  use ExUnit.Case, async: false
+  use Handbeam.DataCase, async: false
 
   alias Handbeam.Tool.Builtin.Edit
 

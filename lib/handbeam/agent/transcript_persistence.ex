@@ -15,10 +15,18 @@ defmodule Handbeam.Agent.TranscriptPersistence do
           {:ok, map()} | {:error, term()}
   def append_inbound(conversation_id, content, opts)
       when is_binary(conversation_id) and is_list(opts) do
-    append_inbound(conversation_id, content, opts, 3)
+    append_inbound(conversation_id, content, opts, nil, 3)
   end
 
-  defp append_inbound(conversation_id, content, opts, attempts) do
+  @doc "Persist an accepted inbound message and complete its operation receipt together."
+  @spec accept_inbound(String.t(), String.t() | Handbeam.Agent.Message.t(), map(), keyword()) ::
+          {:ok, map()} | {:error, term()}
+  def accept_inbound(conversation_id, content, receipt, opts)
+      when is_binary(conversation_id) and is_map(receipt) and is_list(opts) do
+    append_inbound(conversation_id, content, opts, receipt, 3)
+  end
+
+  defp append_inbound(conversation_id, content, opts, receipt, attempts) do
     transcript_id = Keyword.get(opts, :transcript_id) || unique_id("msg-user")
 
     entry =
@@ -42,7 +50,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
       })
       |> put_inbound_delivery(opts)
 
-    case Handbeam.ConversationTranscriptStore.append(conversation_id, entry, opts) do
+    case persist_inbound(conversation_id, entry, receipt, opts) do
       {:error, :duplicate_id} when attempts > 1 ->
         id = unique_id("msg-user")
 
@@ -52,10 +60,40 @@ defmodule Handbeam.Agent.TranscriptPersistence do
           |> Keyword.put(:message_id, id)
           |> Keyword.put(:inbound_id, id)
 
-        append_inbound(conversation_id, replace_message_id(content, id), opts, attempts - 1)
+        append_inbound(
+          conversation_id,
+          replace_message_id(content, id),
+          opts,
+          receipt,
+          attempts - 1
+        )
 
       other ->
         other
+    end
+  end
+
+  defp persist_inbound(conversation_id, entry, nil, opts) do
+    Handbeam.ConversationTranscriptStore.append(conversation_id, entry, opts)
+  end
+
+  defp persist_inbound(conversation_id, entry, receipt, opts) do
+    store = Handbeam.ConversationTranscriptStore.impl(opts)
+    request_id = Keyword.get(opts, :request_id)
+
+    if function_exported?(store, :append_with_receipt, 5) do
+      store.append_with_receipt(conversation_id, entry, request_id, receipt, opts)
+    else
+      with {:ok, persisted} <-
+             Handbeam.ConversationTranscriptStore.append(conversation_id, entry, opts),
+           :ok <-
+             Handbeam.Agent.OperationReceipt.complete(
+               {:message, conversation_id},
+               request_id,
+               receipt
+             ) do
+        {:ok, persisted}
+      end
     end
   end
 
@@ -226,23 +264,23 @@ defmodule Handbeam.Agent.TranscriptPersistence do
 
   def handle_event(conversation_id, {:run_end, payload}, opts) when is_binary(conversation_id) do
     flush!(conversation_id, opts)
-    record_terminal_usage(conversation_id, payload, opts)
     record_stop_notice(conversation_id, payload, opts)
 
     run_error = payload_value(payload, :error)
+    terminal_opts = Keyword.put(opts, :terminal_usage, terminal_usage(payload))
 
     result =
       cond do
         cancelled_run?(payload) ->
-          settle_unfinished(conversation_id, "cancelled", nil, opts)
+          settle_unfinished(conversation_id, "cancelled", nil, terminal_opts)
 
         not is_nil(run_error) ->
           with :ok <- persist_run_error(conversation_id, run_error, opts) do
-            settle_unfinished(conversation_id, "error", run_error, opts)
+            settle_unfinished(conversation_id, "error", run_error, terminal_opts)
           end
 
         true ->
-          finalize_assistant(conversation_id, "final", opts)
+          finalize_successful_run(conversation_id, terminal_opts)
       end
 
     with :ok <- result do
@@ -293,17 +331,12 @@ defmodule Handbeam.Agent.TranscriptPersistence do
         {:error, :missing_run_id}
 
       true ->
-        case Handbeam.ConversationTranscriptStore.list(conversation_id, opts) do
-          {:ok, entries} ->
-            patch_running_tools_cancelled(conversation_id, entries, run_id, opts)
+        store = Handbeam.ConversationTranscriptStore.impl(opts)
 
-          {:error, reason} ->
-            Logger.error(
-              "[TranscriptPersistence] cancel_running_tools list failed conversation=#{conversation_id} " <>
-                "reason=#{inspect(reason)}"
-            )
-
-            {:error, reason}
+        if function_exported?(store, :cancel_running_tools, 3) do
+          store.cancel_running_tools(conversation_id, run_id, opts)
+        else
+          cancel_running_tools_with_store(conversation_id, run_id, opts)
         end
     end
   end
@@ -381,6 +414,21 @@ defmodule Handbeam.Agent.TranscriptPersistence do
     case errors do
       [] -> :ok
       _ -> {:error, {:cancel_running_tools, Enum.reverse(errors)}}
+    end
+  end
+
+  defp cancel_running_tools_with_store(conversation_id, run_id, opts) do
+    case Handbeam.ConversationTranscriptStore.list(conversation_id, opts) do
+      {:ok, entries} ->
+        patch_running_tools_cancelled(conversation_id, entries, run_id, opts)
+
+      {:error, reason} ->
+        Logger.error(
+          "[TranscriptPersistence] cancel_running_tools list failed conversation=#{conversation_id} " <>
+            "reason=#{inspect(reason)}"
+        )
+
+        {:error, reason}
     end
   end
 
@@ -480,21 +528,28 @@ defmodule Handbeam.Agent.TranscriptPersistence do
     end
   end
 
-  defp record_terminal_usage(conversation_id, payload, opts) do
+  defp terminal_usage(payload) do
     status = payload_value(payload, :status)
+
+    if Handbeam.PubSub.AgentEvent.terminal_status?(status) do
+      case payload_value(payload, :usage) do
+        usage when is_map(usage) -> usage
+        _ -> %{}
+      end
+    end
+  end
+
+  defp record_terminal_usage(conversation_id, usage, opts) do
     run_id = opts[:run_id]
 
     cond do
-      not Handbeam.PubSub.AgentEvent.terminal_status?(status) ->
+      is_nil(usage) ->
         :ok
 
       not is_binary(run_id) or run_id == "" ->
         :ok
 
       true ->
-        usage = payload_value(payload, :usage)
-        usage = if is_map(usage), do: usage, else: %{}
-
         case Handbeam.ConversationStore.record_run_usage(conversation_id, run_id, usage) do
           :ok ->
             :ok
@@ -505,8 +560,31 @@ defmodule Handbeam.Agent.TranscriptPersistence do
                 "run_id=#{run_id} reason=#{inspect(reason)}"
             )
 
-            :ok
+            {:error, reason}
         end
+    end
+  end
+
+  defp finalize_successful_run(conversation_id, opts) do
+    store = Handbeam.ConversationTranscriptStore.impl(opts)
+
+    if store == Handbeam.ConversationTranscriptStore.ConversationStore do
+      Handbeam.Repo.transaction(fn ->
+        with :ok <- finalize_assistant(conversation_id, "final", opts),
+             :ok <- record_terminal_usage(conversation_id, opts[:terminal_usage], opts) do
+          :ok
+        else
+          {:error, reason} -> Handbeam.Repo.rollback(reason)
+        end
+      end)
+      |> case do
+        {:ok, :ok} -> :ok
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      with :ok <- finalize_assistant(conversation_id, "final", opts),
+           :ok <- record_terminal_usage(conversation_id, opts[:terminal_usage], opts),
+           do: :ok
     end
   end
 
@@ -514,6 +592,16 @@ defmodule Handbeam.Agent.TranscriptPersistence do
   defp blank?(_value), do: false
 
   defp settle_unfinished(conversation_id, status, error, opts) do
+    store = Handbeam.ConversationTranscriptStore.impl(opts)
+
+    if function_exported?(store, :settle_run, 5) do
+      store.settle_run(conversation_id, opts[:run_id], status, error, opts)
+    else
+      settle_unfinished_with_store(conversation_id, status, error, opts)
+    end
+  end
+
+  defp settle_unfinished_with_store(conversation_id, status, error, opts) do
     with {:ok, entries} <- Handbeam.ConversationTranscriptStore.list(conversation_id, opts) do
       entries
       |> Enum.filter(&(Map.get(&1, "run_id") == opts[:run_id]))

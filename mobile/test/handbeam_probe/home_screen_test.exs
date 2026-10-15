@@ -111,6 +111,8 @@ defmodule HandbeamProbe.HomeScreenTest do
   end
 
   setup do
+    Handbeam.Repo.delete_all(Handbeam.Storage.Conversation)
+
     dir = Path.join(System.tmp_dir!(), "native_chat_#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     host = Application.get_env(:handbeam, :host)

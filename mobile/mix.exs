@@ -33,7 +33,9 @@ defmodule HandbeamProbe.MixProject do
     [
       {:mob, "== 0.7.39"},
       {:mob_dev, "~> 0.6", only: :dev, runtime: false},
-      {:handbeam, path: ".."},
+      # The native host configures its private data directory and runs root
+      # migrations before starting the shared runtime explicitly.
+      {:handbeam, path: "..", runtime: false},
       # Phone Git backend (libgit2 NIF). Root Mix uses the host Git CLI and
       # must not depend on this package.
       {:ex_git, github: "youfun/ex-git", tag: "v0.0.4"},

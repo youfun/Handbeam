@@ -1,22 +1,16 @@
 defmodule Handbeam.Extension.MessageTest do
-  use ExUnit.Case, async: false
+  use Handbeam.DataCase, async: false
 
   alias Handbeam.Extension.Message, as: ExtMessage
 
   describe "inject/4" do
     setup do
       session_id = "ext-msg-#{System.unique_integer([:positive])}"
-      dir = Path.join(System.tmp_dir!(), "sigil_ext_msg_test_#{session_id}")
+      {:ok, _conversation} = Handbeam.ConversationStore.create("default", id: session_id)
 
-      on_exit(fn ->
-        File.rm_rf(dir)
-      end)
-
-      # Start session
       {:ok, _pid} =
         Handbeam.PubSub.Session.start_link(
           session_id: session_id,
-          session_store_dir: dir,
           session_store_enabled?: true
         )
 

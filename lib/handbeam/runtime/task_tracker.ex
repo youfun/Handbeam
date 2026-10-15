@@ -76,7 +76,7 @@ defmodule Handbeam.Runtime.TaskTracker do
   end
 
   def handle_info({:run_lifecycle, conversation_id, _kind, _payload} = event, state) do
-    if Handbeam.ConversationStore.internal?(conversation_id) do
+    if internal_or_unavailable?(conversation_id) do
       {:noreply, state}
     else
       handle_lifecycle(event, state)
@@ -255,6 +255,10 @@ defmodule Handbeam.Runtime.TaskTracker do
       {:ok, conversation} -> conversation["title"]
       _ -> nil
     end
+  rescue
+    _error -> nil
+  catch
+    :exit, _reason -> nil
   end
 
   defp workspace_id(conversation_id) do
@@ -262,5 +266,17 @@ defmodule Handbeam.Runtime.TaskTracker do
       {:ok, conversation} -> conversation["workspace_id"]
       _ -> nil
     end
+  rescue
+    _error -> nil
+  catch
+    :exit, _reason -> nil
+  end
+
+  defp internal_or_unavailable?(conversation_id) do
+    Handbeam.ConversationStore.internal?(conversation_id)
+  rescue
+    _error -> true
+  catch
+    :exit, _reason -> true
   end
 end

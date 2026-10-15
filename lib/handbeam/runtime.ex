@@ -8,7 +8,6 @@ defmodule Handbeam.Runtime do
   """
 
   alias Handbeam.Agent.Runner
-  alias Handbeam.PubSub.Session
 
   @spec configure_notify_adapter() :: :ok
   def configure_notify_adapter do
@@ -25,39 +24,8 @@ defmodule Handbeam.Runtime do
     :ok
   end
 
-  @spec mark_interrupted_runs() :: :ok
-  def mark_interrupted_runs do
-    Enum.each(stale_running_ids(), fn {id, run_id} ->
-      Session.broadcast_event(id, :run_end, %{status: "interrupted", turns: 0, run_id: run_id})
-      Session.mark_run_finished(id, run_id)
-    end)
-
-    :ok
-  end
-
   defp running_conversation_ids do
     Registry.select(Handbeam.AgentRunRegistry, [{{:"$1", :"$2", :_}, [], [:"$1"]}])
-  catch
-    :error, :badarg -> []
-  end
-
-  defp stale_running_ids do
-    case Process.whereis(Handbeam.SessionRegistry) do
-      nil ->
-        []
-
-      _pid ->
-        Registry.select(Handbeam.SessionRegistry, [{{:"$1", :"$2", :_}, [], [:"$1"]}])
-        |> Enum.flat_map(fn id ->
-          case Session.snapshot(id) do
-            %{meta: %{running?: true, agent_pid: pid, run_id: run_id}} when is_binary(run_id) ->
-              if is_pid(pid) and Process.alive?(pid), do: [], else: [{id, run_id}]
-
-            _ ->
-              []
-          end
-        end)
-    end
   catch
     :error, :badarg -> []
   end

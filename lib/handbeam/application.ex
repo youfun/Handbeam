@@ -17,6 +17,8 @@ defmodule Handbeam.Application do
     children =
       [
         HandbeamWeb.Telemetry,
+        Handbeam.Storage.Health,
+        Handbeam.StorageLock,
         Handbeam.Repo,
         {Ecto.Migrator,
          repos: Application.fetch_env!(:handbeam, :ecto_repos), skip: skip_migrations?()},
@@ -26,7 +28,6 @@ defmodule Handbeam.Application do
         {Registry, keys: :unique, name: Handbeam.AgentRunRegistry},
         {Registry, keys: :unique, name: Handbeam.AgentRunSupervisorRegistry},
         {Registry, keys: :unique, name: Handbeam.AgentRunQueueRegistry},
-        Handbeam.ConversationTranscriptStore.Journal,
         {Registry, keys: :unique, name: Handbeam.CursorSessionRegistry},
         Handbeam.Agent.Auth.Epoch,
         Handbeam.Agent.Provider.Cursor.Supervisor,

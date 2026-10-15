@@ -15,7 +15,12 @@ defmodule HandbeamProbe.NativeChat do
   def load(conversation, opts \\ []) do
     id = conversation["id"]
     snapshot = Keyword.get_lazy(opts, :snapshot, fn -> Projection.snapshot(id) end)
-    events = Enum.sort_by(Map.get(snapshot, :control_events, snapshot.events), & &1.seq)
+
+    events =
+      snapshot
+      |> Map.get(:control_events, Map.get(snapshot, :events, []))
+      |> Enum.sort_by(& &1.seq)
+
     {workspace_id, workspace_path} = bind_workspace(conversation)
     page = Keyword.get_lazy(opts, :history_page, fn -> history_page(id, 100) end)
     history_loaded? = is_map(page)
@@ -50,7 +55,7 @@ defmodule HandbeamProbe.NativeChat do
       Enum.filter(events, &(event_payload(&1.payload)["run_id"] == snapshot.meta[:run_id]))
 
     state = if state.running, do: Enum.reduce(active_events, state, &approval/2), else: state
-    latest_event = Enum.max_by(snapshot.events, & &1.seq, fn -> nil end)
+    latest_event = snapshot |> Map.get(:events, []) |> Enum.max_by(& &1.seq, fn -> nil end)
 
     %{
       state
@@ -68,19 +73,19 @@ defmodule HandbeamProbe.NativeChat do
   # History can open while Session is absent. The first stamped event must
   # establish a real checkpoint and restore controls, not just adopt its epoch.
   def project(
-        %{topic: "session:" <> id, epoch: epoch},
+        %{topic: "session:" <> id, epoch: epoch} = event,
         %{conversation: %{"id" => id}, epoch: nil} = state,
         _opts
       )
       when is_binary(epoch),
-      do: recover(state)
+      do: recover(state, event)
 
   def project(
-        %{topic: "session:" <> id},
+        %{topic: "session:" <> id} = event,
         %{conversation: %{"id" => id}, history_loaded?: false} = state,
         _opts
       ),
-      do: recover(state)
+      do: recover(state, event)
 
   def project(event, state, opts) do
     case Projection.classify(
@@ -94,7 +99,7 @@ defmodule HandbeamProbe.NativeChat do
 
         if event.kind == :message_delta and Map.has_key?(payload, "transcript_id") and
              Projection.text_patch(state.entries, payload) == :recover do
-          recover(state)
+          recover(state, event)
         else
           state =
             event
@@ -107,7 +112,7 @@ defmodule HandbeamProbe.NativeChat do
         end
 
       :recover ->
-        recover(state)
+        recover(state, event)
 
       :ignore ->
         state
@@ -335,18 +340,37 @@ defmodule HandbeamProbe.NativeChat do
     end
   end
 
-  defp recover(state) do
+  defp recover(state, event \\ nil) do
     case Projection.recover(state.conversation["id"], length(state.entries)) do
       {:ok, %{snapshot: snapshot, history: history}} ->
         recovered = load(state.conversation, snapshot: snapshot, history_page: history)
         last_seq = if state.epoch == snapshot.epoch, do: state.seq, else: 0
-        pending = PendingMessages.replay(state.pending, snapshot.control_events, last_seq)
-        %{recovered | pending: Map.merge(pending, recovered.pending)} |> reconcile_pending()
+
+        pending =
+          PendingMessages.replay(state.pending, Map.get(snapshot, :pending_events, []), last_seq)
+
+        %{recovered | pending: Map.merge(pending, recovered.pending)}
+        |> restore_ephemeral_state(event, snapshot)
+        |> reconcile_pending()
 
       {:error, _} ->
         state
     end
   end
+
+  defp restore_ephemeral_state(
+         state,
+         %{kind: :thinking_delta, seq: seq, epoch: epoch, payload: payload},
+         %{last_seq: seq, epoch: epoch, meta: meta}
+       ) do
+    payload = event_payload(payload)
+
+    if state.running and payload["run_id"] == meta[:run_id],
+      do: %{state | thinking: true},
+      else: state
+  end
+
+  defp restore_ephemeral_state(state, _event, _snapshot), do: state
 
   def open_tool_action(conversation_id, :browser, id) do
     if Handbeam.Browser.WebViewSession.snapshot_state(id).conversation_id == conversation_id,
@@ -558,7 +582,7 @@ defmodule HandbeamProbe.NativeChat do
   Single decode point for Session event payloads read by the native UI.
 
   Live `Handbeam.PubSub.Session` events carry atom keys; events restored from
-  `Handbeam.SessionStore.File` carry the JSON string keys. Every map key is
+  `Handbeam.SessionStore` carry JSON string keys. Every map key is
   stringified (recursively) so consumers read one shape (`"action_requests"`,
   `"tool_call_id"`, …) and never fall back between the two.
   """

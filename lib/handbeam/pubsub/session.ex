@@ -198,7 +198,9 @@ defmodule Handbeam.PubSub.Session do
     session_id = Keyword.fetch!(opts, :session_id)
     model = Keyword.get(opts, :model, "unknown")
 
-    loaded = load_snapshot(session_id, opts)
+    session_store = session_store(opts)
+    store_opts = store_opts(opts)
+    loaded = load_snapshot(session_id, session_store, store_opts)
 
     state = %{
       session_id: session_id,
@@ -227,7 +229,8 @@ defmodule Handbeam.PubSub.Session do
       next_turn_messages: load_messages(Map.get(loaded, "next_turn_messages", [])),
       extension_state: Map.get(loaded, "extension_state", %{}),
       last_throttle: 0,
-      store_opts: store_opts(opts),
+      session_store: session_store,
+      store_opts: store_opts,
       recorder_opts: recorder_opts(opts)
     }
 
@@ -288,11 +291,14 @@ defmodule Handbeam.PubSub.Session do
         {content, opts} = stamp_queue_ids(content, opts)
         opts = Keyword.put(opts, :run_id, state.meta.run_id)
         message = normalize_message(content, opts)
+        receipt = %{action: :enqueued, run_id: state.meta.run_id}
+        new_state = %{state | next_turn_messages: state.next_turn_messages ++ [message]}
 
         with true <- opts[:expected_run_id] in [nil, state.meta.run_id],
-             :ok <- persist_next_turn(state.session_id, content, opts) do
-          new_state = %{state | next_turn_messages: state.next_turn_messages ++ [message]}
-          new_state = maybe_save(new_state)
+             {:ok, snapshot_saved?} <-
+               persist_next_turn(state.session_id, content, receipt, opts, new_state) do
+          new_state =
+            if snapshot_saved?, do: mark_snapshot_saved(new_state), else: maybe_save(new_state)
 
           broadcast_event(state.session_id, :candidate_message_injected, %{
             message_id: message.id,
@@ -392,9 +398,21 @@ defmodule Handbeam.PubSub.Session do
     case Enum.split_with(state.next_turn_messages, &(&1.id == message_id)) do
       {[_deleted], remaining} ->
         new_state = %{state | next_turn_messages: remaining}
-        new_state = maybe_save(new_state)
-        broadcast_event(state.session_id, :candidate_message_deleted, %{message_id: message_id})
-        {:reply, {:ok, %{deliver_as: :next_turn}}, new_state}
+
+        case delete_next_turn(state.session_id, message_id, new_state) do
+          {:ok, snapshot_saved?} ->
+            new_state =
+              if snapshot_saved?, do: mark_snapshot_saved(new_state), else: maybe_save(new_state)
+
+            broadcast_event(state.session_id, :candidate_message_deleted, %{
+              message_id: message_id
+            })
+
+            {:reply, {:ok, %{deliver_as: :next_turn}}, new_state}
+
+          {:error, reason} ->
+            {:reply, {:error, reason}, state}
+        end
 
       {[], _} ->
         case state.queue_pid do
@@ -574,9 +592,9 @@ defmodule Handbeam.PubSub.Session do
   defp message_text(content) when is_binary(content), do: content
   defp message_text(content), do: inspect(content)
 
-  defp load_snapshot(session_id, opts) do
+  defp load_snapshot(session_id, store, opts) do
     if session_store_enabled?(opts) do
-      case Handbeam.SessionStore.File.load(session_id, opts) do
+      case store.load(session_id, opts) do
         {:ok, snapshot} -> snapshot
         {:error, _reason} -> %{}
       end
@@ -635,14 +653,74 @@ defmodule Handbeam.PubSub.Session do
   defp maybe_existing_atom(value), do: value
 
   # Core broadcast/append/persist pipeline shared by call and cast paths.
-  defp persist_next_turn(id, content, opts) do
+  defp persist_next_turn(id, content, receipt, opts, state) do
+    if sqlite_accept_transaction?(opts, state) do
+      Handbeam.Repo.transaction(fn ->
+        with :ok <- persist_next_turn_inbound(id, content, receipt, opts),
+             :ok <- state.session_store.save(id, session_snapshot(state), state.store_opts) do
+          :ok
+        else
+          {:error, reason} -> Handbeam.Repo.rollback(reason)
+        end
+      end)
+      |> case do
+        {:ok, :ok} ->
+          Handbeam.ConversationStore.broadcast_title_updated(id)
+          {:ok, true}
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    else
+      case persist_next_turn_inbound(id, content, receipt, opts) do
+        :ok -> {:ok, false}
+        {:error, reason} -> {:error, reason}
+      end
+    end
+  end
+
+  defp persist_next_turn_inbound(id, content, receipt, opts) do
     if opts[:persist_candidate?] do
-      case Handbeam.Agent.TranscriptPersistence.append_inbound(id, content, opts) do
+      case Handbeam.Agent.TranscriptPersistence.accept_inbound(id, content, receipt, opts) do
         {:ok, _} -> :ok
         error -> error
       end
     else
-      :ok
+      Handbeam.Agent.OperationReceipt.complete({:message, id}, opts[:request_id], receipt)
+    end
+  end
+
+  defp sqlite_accept_transaction?(opts, state) do
+    opts[:persist_candidate?] == true and session_store_enabled?(state.store_opts) and
+      state.session_store == Handbeam.SessionStore.SQLite and
+      Handbeam.ConversationTranscriptStore.impl(opts) ==
+        Handbeam.ConversationTranscriptStore.ConversationStore
+  end
+
+  defp mark_snapshot_saved(state) do
+    %{state | last_throttle: System.monotonic_time(:millisecond)}
+  end
+
+  defp delete_next_turn(id, message_id, state) do
+    if state.session_store == Handbeam.SessionStore.SQLite and
+         session_store_enabled?(state.store_opts) do
+      Handbeam.Repo.transaction(fn ->
+        with :ok <- Handbeam.ConversationTranscriptStore.delete(id, message_id),
+             :ok <- state.session_store.save(id, session_snapshot(state), state.store_opts) do
+          :ok
+        else
+          {:error, reason} -> Handbeam.Repo.rollback(reason)
+        end
+      end)
+      |> case do
+        {:ok, :ok} -> {:ok, true}
+        {:error, reason} -> {:error, reason}
+      end
+    else
+      case Handbeam.ConversationTranscriptStore.delete(id, message_id) do
+        :ok -> {:ok, false}
+        {:error, reason} -> {:error, reason}
+      end
     end
   end
 
@@ -827,7 +905,7 @@ defmodule Handbeam.PubSub.Session do
 
   defp maybe_save(state) do
     if session_store_enabled?(state.store_opts) do
-      Handbeam.SessionStore.File.save(state.session_id, session_snapshot(state), state.store_opts)
+      state.session_store.save(state.session_id, session_snapshot(state), state.store_opts)
     end
 
     %{state | last_throttle: System.monotonic_time(:millisecond)}
@@ -881,9 +959,22 @@ defmodule Handbeam.PubSub.Session do
     )
   end
 
+  defp session_store(opts) do
+    Keyword.get(opts, :session_store) ||
+      Application.get_env(:handbeam, :session_store, Handbeam.SessionStore.SQLite)
+  end
+
   defp store_opts(opts) do
     opts
-    |> Keyword.take([:session_store_dir, :session_store_enabled?])
+    |> Keyword.get(:session_store_opts, [])
+    |> Keyword.put_new(
+      :session_store_enabled?,
+      Keyword.get(
+        opts,
+        :session_store_enabled?,
+        Application.get_env(:handbeam, :session_store_enabled?, true)
+      )
+    )
   end
 
   defp recorder_opts(opts) do

@@ -199,11 +199,7 @@ defmodule Handbeam.ChangeSnapshot do
   end
 
   defp snapshot_root do
-    Application.get_env(
-      :handbeam,
-      :conversation_root,
-      Path.join(Handbeam.Home.path(), ".handbeam/conversations")
-    )
+    Handbeam.ConversationArtifacts.root()
   end
 
   defp conversation_id(context),

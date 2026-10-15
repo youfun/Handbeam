@@ -1,5 +1,5 @@
 defmodule Handbeam.Jobs.RunnerIntegrationTest do
-  use ExUnit.Case, async: false
+  use Handbeam.DataCase, async: false
 
   @moduletag :unix_jobs
 
@@ -54,11 +54,6 @@ defmodule Handbeam.Jobs.RunnerIntegrationTest do
       Handbeam.PubSub.Session.snapshot(conversation["id"])
       :ok = Handbeam.SessionSupervisor.stop_session(conversation["id"])
       GenServer.call(Handbeam.Runtime.TaskTracker, :snapshot)
-
-      :ok =
-        Handbeam.ConversationTranscriptStore.Journal.invalidate(
-          Handbeam.ConversationStore.index_path()
-        )
 
       if old_home, do: System.put_env("HOME", old_home), else: System.delete_env("HOME")
 

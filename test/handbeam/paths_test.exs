@@ -62,11 +62,8 @@ defmodule Handbeam.PathsTest do
     refute "ext__beam__sql" in names
   end
 
-  test "session events observations and auth resolve under Host.data_dir" do
+  test "event observations and auth artifacts resolve under Host.data_dir" do
     Handbeam.Host.put!(%{data_dir: "/tmp/mob-data"})
-
-    assert Handbeam.SessionStore.File.session_path("s1") ==
-             "/tmp/mob-data/.handbeam/sessions/s1.json"
 
     assert Handbeam.EventRecorder.event_path("s1") ==
              "/tmp/mob-data/.handbeam/events/s1.jsonl"

@@ -13,7 +13,7 @@ defmodule Handbeam.Tool.Builtin.WriteTest do
     - Output metadata (bytes, lines)
   """
 
-  use ExUnit.Case, async: false
+  use Handbeam.DataCase, async: false
 
   alias Handbeam.Tool.Builtin.Write
 

@@ -1,5 +1,5 @@
 defmodule Handbeam.Agent.DelegationTest do
-  use ExUnit.Case, async: false
+  use Handbeam.DataCase, async: false
 
   alias Handbeam.Agent.{Config, Coordinator, Delegation, Message, State}
   alias Handbeam.Agent.Delegation.Policy
@@ -98,6 +98,7 @@ defmodule Handbeam.Agent.DelegationTest do
         2_000 -> Process.demonitor(ref, [:flush])
       end
 
+      sync_runtime_observers()
       if old_home, do: System.put_env("HOME", old_home), else: System.delete_env("HOME")
       remove_tree(home)
     end)
@@ -119,6 +120,14 @@ defmodule Handbeam.Agent.DelegationTest do
   end
 
   defp remove_tree(path, 0), do: File.rm_rf!(path)
+
+  defp sync_runtime_observers do
+    for name <- [Handbeam.Runtime.TaskTracker, Handbeam.Schedule.Recorder],
+        pid = Process.whereis(name),
+        is_pid(pid) do
+      :sys.get_state(pid)
+    end
+  end
 
   defp delegate(context) do
     Task.async(fn ->
@@ -270,7 +279,10 @@ defmodule Handbeam.Agent.DelegationTest do
              )
 
     assert :ok = Handbeam.Agent.TranscriptRecovery.recover(id)
-    assert {:ok, entries} = Handbeam.ConversationStore.load_messages_result(id)
+
+    assert {:ok, entries} =
+             Handbeam.ConversationTranscriptStore.list(id, access_context: context)
+
     assert Enum.find(entries, &(&1["id"] == "running-tool"))["tool_status"] == "running"
 
     assert :ok = Coordinator.cancel(id)
@@ -295,7 +307,10 @@ defmodule Handbeam.Agent.DelegationTest do
 
     send(child, :crash)
     assert {:error, _, _} = Task.await(task, 5_000)
-    assert {:ok, entries} = Handbeam.ConversationStore.load_messages_result(id)
+
+    assert {:ok, entries} =
+             Handbeam.ConversationTranscriptStore.list(id, access_context: context)
+
     reply = Enum.find(entries, &(&1["id"] == "unfinished-reply"))
     assert reply["status"] == "error"
     assert reply["content"] == "durable before crash"
@@ -313,7 +328,8 @@ defmodule Handbeam.Agent.DelegationTest do
                "status" => "completed"
              })
 
-    child_entries = ConversationStore.load_messages(id)
+    {:ok, child_entries} =
+      Handbeam.ConversationTranscriptStore.list(id, access_context: context)
 
     child_messages =
       Handbeam.Attachments.History.to_messages(child_entries, context.working_directory, id)
@@ -359,7 +375,9 @@ defmodule Handbeam.Agent.DelegationTest do
     assert {:error, _, %{status: status}} = Task.await(task, 5_000)
     assert status in [:error, "error"]
 
-    assert {:ok, entries} = ConversationStore.load_messages_result(id)
+    assert {:ok, entries} =
+             Handbeam.ConversationTranscriptStore.list(id, access_context: context)
+
     error = Enum.find(entries, &(&1["id"] == "msg-run-error-#{job.run_id}"))
 
     assert error["content"] =~ "server_is_overloaded"

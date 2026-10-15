@@ -5,6 +5,10 @@ defmodule HandbeamWeb.WorkspaceLive.EditorStateTest do
   alias HandbeamWeb.WorkspaceLive.ConversationState
   alias HandbeamWeb.WorkspaceLive.EditorProjection
 
+  setup tags do
+    Handbeam.DataCase.setup_sandbox(tags)
+  end
+
   setup do
     root = Path.join(System.tmp_dir!(), "editor-state-#{System.unique_integer([:positive])}")
     File.mkdir_p!(root)
@@ -62,7 +66,7 @@ defmodule HandbeamWeb.WorkspaceLive.EditorStateTest do
     stored = ConversationStore.load_files(socket.assigns.current_conversation_id)
     assert stored["active_file"] == "a.ex"
     assert Enum.map(stored["editor_files"], & &1["path"]) == ["a.ex", "b.ex"]
-    refute Map.has_key?(stored, "file_preview_error")
+    assert stored["file_preview_error"] == nil
   end
 
   test "closing a deleted active tab chooses right then left then nil", %{

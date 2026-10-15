@@ -65,13 +65,15 @@ defmodule Handbeam.Schedule.Clock do
   def handle_info(_message, state), do: {:noreply, state}
 
   defp dispatch_due(now) do
-    Enum.each(Store.due(now), fn entry ->
-      if Handbeam.Schedule.Rule.once?(entry.rule) do
-        dispatch_once(entry, now)
-      else
-        claim_and_handoff(entry, now)
-      end
-    end)
+    if Handbeam.Storage.Health.writable?() do
+      Enum.each(Store.due(now), fn entry ->
+        if Handbeam.Schedule.Rule.once?(entry.rule) do
+          dispatch_once(entry, now)
+        else
+          claim_and_handoff(entry, now)
+        end
+      end)
+    end
   end
 
   defp dispatch_once(entry, now) do
@@ -151,7 +153,7 @@ defmodule Handbeam.Schedule.Clock do
   end
 
   defp schedule(state) do
-    if enabled?() and tables_ready?() do
+    if enabled?() and Handbeam.Storage.Health.writable?() and tables_ready?() do
       %{state | timer: Process.send_after(self(), :tick, delay())}
     else
       %{state | timer: nil}

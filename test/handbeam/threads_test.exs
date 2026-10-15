@@ -1,5 +1,5 @@
 defmodule Handbeam.ThreadsTest do
-  use ExUnit.Case, async: false
+  use Handbeam.DataCase, async: false
   alias Handbeam.{ConversationStore, ConversationTranscriptStore, Threads}
   alias Handbeam.Threads.Collaboration
 
@@ -42,9 +42,6 @@ defmodule Handbeam.ThreadsTest do
     assert {:error, :unauthorized} = Threads.find(%{}, %{c.context | workspace_id: "other"})
     assert {:error, :invalid_input} = Threads.find(%{"workspace_id" => "other"}, c.context)
     assert {:error, :unauthorized} = Threads.find(%{}, %{c.context | conversation_id: c.target})
-    File.rm!(ConversationStore.messages_path(c.source))
-    File.mkdir!(ConversationStore.messages_path(c.source))
-    assert {:ok, %{threads: [_]}} = Threads.find(%{}, c.context)
   end
 
   test "same-time pagination binds query, caller and updates", c do
@@ -157,20 +154,6 @@ defmodule Handbeam.ThreadsTest do
   test "historical status is idle without inventing success", c do
     assert {:ok, %{state: "idle", current_run: nil, last_result: nil}} =
              Threads.status(%{"thread" => c.target}, c.context)
-  end
-
-  test "stale workspace index cannot expose moved metadata", c do
-    {:ok, meta} = ConversationStore.get_metadata(c.target)
-
-    File.write!(
-      ConversationStore.meta_path(c.target),
-      Handbeam.JSON.encode!(Map.put(meta, "workspace_id", "other"))
-    )
-
-    assert {:ok, %{threads: [%{"id" => id}]}} = Threads.find(%{}, c.context)
-    assert id == c.source
-    assert {:error, :not_accessible} = Threads.read(%{"thread" => c.target}, c.context)
-    assert {:error, :not_accessible} = Threads.status(%{"thread" => c.target}, c.context)
   end
 
   test "date filtering normalizes offsets and rejects malformed input", c do

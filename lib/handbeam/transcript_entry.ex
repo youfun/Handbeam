@@ -7,7 +7,7 @@ defmodule Handbeam.TranscriptEntry do
   `duration_ms`, `error`) remain readable for durable legacy records. Readers
   must not spell that fallback themselves.
 
-  Durable `messages.jsonl` entries normally have string keys, while transient
+  Durable transcript projections normally have string keys, while transient
   LiveView projections and tests can have atom keys. Nothing here writes.
   """
 

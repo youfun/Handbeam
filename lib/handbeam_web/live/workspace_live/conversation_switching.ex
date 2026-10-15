@@ -591,8 +591,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
   defp persisted_conversation?(conversation) do
     conversation
     |> ConversationState.conversation_id()
-    |> Handbeam.ConversationStore.meta_path()
-    |> File.regular?()
+    |> Handbeam.ConversationStore.exists?()
   end
 
   def ensure_active_conversation(socket, workspace_id) do

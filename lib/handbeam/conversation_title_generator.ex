@@ -93,13 +93,6 @@ defmodule Handbeam.ConversationTitleGenerator do
       {:error, :not_found} ->
         Logger.debug("[TitleGenerator] Conversation not found: #{conversation_id}")
         :skip
-
-      _ ->
-        Logger.debug(
-          "[TitleGenerator] Unexpected get() result, starting async generation conv_id=#{conversation_id}"
-        )
-
-        start_async_generate(conversation_id, first_user_message, provider_config)
     end
   end
 

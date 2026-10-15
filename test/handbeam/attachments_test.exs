@@ -1,5 +1,5 @@
 defmodule Handbeam.AttachmentsTest do
-  use ExUnit.Case, async: false
+  use Handbeam.DataCase, async: false
 
   alias Handbeam.Attachments
   alias Handbeam.Attachments.{Access, History, Imported, MessageBuilder, Type}
@@ -9,8 +9,8 @@ defmodule Handbeam.AttachmentsTest do
     dir = Path.join(System.tmp_dir!(), "att_#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
 
-    # `ConversationStore.create/1` writes `~/.handbeam/conversations/`; point the
-    # Handbeam home at the tmp dir so the test never touches the real HOME.
+    # Attachment artifacts use the host data directory; keep them isolated from
+    # the real Handbeam home.
     previous_host = Application.get_env(:handbeam, :host)
     Handbeam.Host.put!(Map.put(previous_host || %{}, :data_dir, dir))
 

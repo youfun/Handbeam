@@ -14,7 +14,7 @@ defmodule Handbeam.Agent.Tool.ExecutorTest do
     - Details preservation in tool_result blocks
   """
 
-  use ExUnit.Case, async: true
+  use Handbeam.DataCase, async: false
   import ExUnit.CaptureLog, only: [with_log: 1]
   alias Handbeam.Agent.{Config, State}
   alias Handbeam.Agent.Tool.{Executor, Result}

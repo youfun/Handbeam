@@ -3,7 +3,7 @@ defmodule HandbeamProbe.Bridge.Payload do
   Key normalisation for data that crosses from `sigil` into the native UI
   with two possible key types: live `Handbeam.PubSub.Session` event payloads and
   in-memory tool results carry atom keys, while the same data restored from
-  `Handbeam.SessionStore.File` / the persisted transcript carries JSON string
+  `Handbeam.SessionStore` / the persisted transcript carries JSON string
   keys.
 
   `string_keys/1` maps everything to the persisted (string-keyed) shape once,

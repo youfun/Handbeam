@@ -54,7 +54,6 @@ defmodule HandbeamProbe.App do
     _ = Code.ensure_loaded(:handbeam_ios)
     HandbeamProbe.Platform.IOS.Registry.ensure_started()
     Handbeam.Runtime.configure_notify_adapter()
-    Handbeam.Runtime.mark_interrupted_runs()
 
     unless Process.whereis(:mob_screen) do
       Mob.Screen.start_root(HandbeamProbe.HomeScreen)

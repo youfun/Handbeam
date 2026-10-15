@@ -2,74 +2,42 @@ defmodule Handbeam.Agent.OperationReceipt do
   @moduledoc """
   Durable reservation and receipt for one user operation.
 
-  Storage follows the transcript journal: append-only JSONL under the
-  conversation storage root, rewritten atomically on each mutation. A crash
-  remnant is the last unterminated line and is ignored. Pending reservations
-  recovered after restart stay `:unknown` and are not replayed.
+  Receipts are stored in `Handbeam.Repo`. `request_id` is an operation id, not
+  a conversation or run id. The same id and fingerprint returns the stored
+  receipt. The same id with different content is `:idempotency_conflict`.
+  Concurrent reserves of a new id accept one writer; any replay of a pending
+  reservation changes it to `unknown` so a possibly completed side effect is
+  never run automatically again.
 
-  `request_id` is an operation id, not a conversation or run id. Callers that
-  omit it keep the previous path and are not safe to retry. The same id and
-  fingerprint returns the stored receipt. The same id with different content
-  is `:idempotency_conflict`. Concurrent reserves of a new id accept one
-  writer; the other sees the reservation.
-
-  This is not exactly-once. A local timeout does not prove the remote side
-  did not act.
+  This is not exactly-once. A local timeout does not prove the remote side did
+  not act.
   """
 
-  @version 1
+  import Ecto.Query
+
+  alias Handbeam.Repo
+  alias Handbeam.Storage.OperationReceipt, as: StoredReceipt
 
   def reserve(scope, request_id, fingerprint, opts \\ [])
 
   def reserve(_scope, request_id, _fingerprint, _opts) when request_id in [nil, ""], do: :ok
 
-  def reserve(scope, request_id, fingerprint, opts) when is_binary(request_id) do
-    path = path(scope, opts)
+  def reserve(scope, request_id, fingerprint, _opts) when is_binary(request_id) do
+    key = key(scope, request_id)
 
-    with_lock(path, fn ->
-      case read_records(path) do
-        {:error, :corrupt} ->
-          {:error, :delivery_unknown}
-
-        {:ok, records} ->
-          case Map.get(records, request_id) do
-            %{"fingerprint" => ^fingerprint, "status" => "completed", "receipt" => receipt} ->
-              {:replay, receipt}
-
-            %{"fingerprint" => ^fingerprint, "status" => "reserved"} ->
-              updated = %{Map.get(records, request_id) | "status" => "unknown"}
-              write_records(path, Map.put(records, request_id, updated))
-              {:unknown, :delivery_unknown}
-
-            %{"fingerprint" => ^fingerprint, "status" => "unknown"} ->
-              {:unknown, :delivery_unknown}
-
-            %{"fingerprint" => other} when other != fingerprint ->
-              {:error, :idempotency_conflict}
-
-            nil ->
-              record = %{
-                "request_id" => request_id,
-                "fingerprint" => fingerprint,
-                "status" => "reserved",
-                "receipt" => nil
-              }
-
-              write_records(path, Map.put(records, request_id, record))
-              :ok
-          end
-      end
-    end)
+    case fetch(key) do
+      nil -> insert_reservation(key, fingerprint)
+      receipt -> reserve_existing(receipt, fingerprint, false)
+    end
   end
 
   def complete(scope, request_id, receipt, opts \\ [])
 
   def complete(_scope, request_id, _receipt, _opts) when request_id in [nil, ""], do: :ok
 
-  def complete(scope, request_id, receipt, opts) when is_binary(request_id) do
-    mutate(scope, request_id, opts, fn record ->
-      %{record | "status" => "completed", "receipt" => receipt}
-    end)
+  def complete(scope, request_id, receipt, _opts)
+      when is_binary(request_id) and is_map(receipt) do
+    mutate(scope, request_id, "completed", receipt)
   end
 
   @doc """
@@ -83,51 +51,47 @@ defmodule Handbeam.Agent.OperationReceipt do
   def release_reserved(_scope, request_id, _fingerprint, _opts) when request_id in [nil, ""],
     do: :ok
 
-  def release_reserved(scope, request_id, fingerprint, opts) when is_binary(request_id) do
-    path = path(scope, opts)
+  def release_reserved(scope, request_id, fingerprint, _opts) when is_binary(request_id) do
+    key = key(scope, request_id)
 
-    with_lock(path, fn ->
-      case read_records(path) do
-        {:error, :corrupt} ->
-          {:error, :delivery_unknown}
+    Repo.transaction(fn ->
+      case fetch(key) do
+        %StoredReceipt{fingerprint: ^fingerprint, status: "reserved"} ->
+          case receipt_write_fault() do
+            :ok ->
+              case Repo.delete_all(reserved_query(key, fingerprint)) do
+                {1, _} -> :ok
+                {0, _} -> release_failure(key, fingerprint)
+              end
 
-        {:ok, records} ->
-          case Map.get(records, request_id) do
-            %{"fingerprint" => ^fingerprint, "status" => "reserved"} ->
-              write_records_result(path, Map.delete(records, request_id))
-
-            %{"fingerprint" => other} when other != fingerprint ->
-              {:error, :idempotency_conflict}
-
-            _ ->
-              {:error, :not_reserved}
+            {:error, _reason} = error ->
+              error
           end
+
+        %StoredReceipt{fingerprint: other} when other != fingerprint ->
+          {:error, :idempotency_conflict}
+
+        _ ->
+          {:error, :not_reserved}
       end
     end)
+    |> transaction_result()
   end
 
   def mark_unknown(scope, request_id, opts \\ [])
 
   def mark_unknown(_scope, request_id, _opts) when request_id in [nil, ""], do: :ok
 
-  def mark_unknown(scope, request_id, opts) when is_binary(request_id) do
-    mutate(scope, request_id, opts, fn record ->
-      %{record | "status" => "unknown", "receipt" => nil}
-    end)
+  def mark_unknown(scope, request_id, _opts) when is_binary(request_id) do
+    mutate(scope, request_id, "unknown", nil)
   end
 
   def lookup(scope, request_id, opts \\ []) when is_binary(request_id) do
-    path = path(scope, opts)
+    _ = opts
 
-    case read_records(path) do
-      {:error, :corrupt} ->
-        {:error, :corrupt}
-
-      {:ok, records} ->
-        case Map.get(records, request_id) do
-          nil -> :error
-          record -> {:ok, record}
-        end
+    case scope |> key(request_id) |> fetch() do
+      nil -> :error
+      receipt -> {:ok, public_record(receipt)}
     end
   end
 
@@ -135,76 +99,156 @@ defmodule Handbeam.Agent.OperationReceipt do
     :crypto.hash(:sha256, :erlang.term_to_binary(term)) |> Base.encode16(case: :lower)
   end
 
-  defp mutate(scope, request_id, opts, fun) do
-    path = path(scope, opts)
+  defp insert_reservation(key, fingerprint) do
+    ensure_write!()
 
-    with_lock(path, fn ->
-      case read_records(path) do
-        {:error, :corrupt} ->
-          {:error, :corrupt}
+    Repo.transaction(fn ->
+      now = DateTime.utc_now()
 
-        {:ok, records} ->
-          case Map.get(records, request_id) do
-            nil ->
-              :ok
+      attrs =
+        key
+        |> Map.merge(%{
+          fingerprint: fingerprint,
+          status: "reserved",
+          receipt: nil,
+          inserted_at: now,
+          updated_at: now
+        })
 
-            record ->
-              write_records(path, Map.put(records, request_id, fun.(record)))
-              :ok
-          end
+      case Repo.insert_all(StoredReceipt, [attrs],
+             on_conflict: :nothing,
+             conflict_target: [:scope_kind, :scope_id, :request_id]
+           ) do
+        {1, _} -> :ok
+        {0, _} -> key |> fetch() |> reserve_existing(fingerprint, true)
       end
     end)
+    |> transaction_result()
   end
 
-  defp with_lock(path, fun) do
-    key = {__MODULE__, path}
-
-    :global.trans({key, self()}, fn ->
-      fun.()
-    end)
+  defp reserve_existing(
+         %StoredReceipt{fingerprint: fingerprint, status: "completed"} = receipt,
+         fingerprint,
+         _fault_checked?
+       ) do
+    {:replay, receipt.receipt}
   end
 
-  defp path({kind, conversation_id}, opts) do
-    root =
-      Keyword.get(
-        opts,
-        :root,
-        Application.get_env(
-          :handbeam,
-          :conversation_root,
-          Path.join(Handbeam.Home.path(), ".handbeam/conversations")
-        )
+  defp reserve_existing(
+         %StoredReceipt{fingerprint: fingerprint, status: "unknown"},
+         fingerprint,
+         _fault_checked?
+       ) do
+    {:unknown, :delivery_unknown}
+  end
+
+  defp reserve_existing(
+         %StoredReceipt{fingerprint: fingerprint, status: "reserved"} = receipt,
+         fingerprint,
+         fault_checked?
+       ) do
+    unless fault_checked?, do: ensure_write!()
+
+    query =
+      from(row in StoredReceipt,
+        where:
+          row.scope_kind == ^receipt.scope_kind and row.scope_id == ^receipt.scope_id and
+            row.request_id == ^receipt.request_id and row.fingerprint == ^fingerprint and
+            row.status == "reserved"
       )
 
-    Path.join([root, "items", conversation_id, "operations-#{kind}.jsonl"])
+    case Repo.update_all(query,
+           set: [status: "unknown", receipt: nil, updated_at: DateTime.utc_now()]
+         ) do
+      {1, _} -> {:unknown, :delivery_unknown}
+      {0, _} -> receipt |> record_key() |> fetch() |> reserve_after_race(fingerprint)
+    end
   end
 
-  defp drop_truncated_tail(content) do
-    if String.ends_with?(content, "\n"),
-      do: content,
-      else: content |> String.split("\n") |> Enum.drop(-1) |> Enum.join("\n")
+  defp reserve_existing(%StoredReceipt{fingerprint: other}, fingerprint, _fault_checked?)
+       when other != fingerprint,
+       do: {:error, :idempotency_conflict}
+
+  defp reserve_after_race(nil, _fingerprint), do: {:error, :delivery_unknown}
+
+  defp reserve_after_race(receipt, fingerprint),
+    do: reserve_existing(receipt, fingerprint, true)
+
+  defp mutate(scope, request_id, status, receipt) do
+    key = key(scope, request_id)
+
+    case fetch(key) do
+      nil ->
+        :ok
+
+      _stored ->
+        case receipt_write_fault() do
+          :ok ->
+            key
+            |> key_query()
+            |> Repo.update_all(
+              set: [status: status, receipt: receipt, updated_at: DateTime.utc_now()]
+            )
+
+            :ok
+
+          {:error, _reason} = error ->
+            error
+        end
+    end
   end
 
-  defp read_records(path) do
-    case File.read(path) do
-      {:ok, content} ->
-        lines = content |> drop_truncated_tail() |> String.split("\n", trim: true)
+  defp release_failure(key, fingerprint) do
+    case fetch(key) do
+      %StoredReceipt{fingerprint: other} when other != fingerprint ->
+        {:error, :idempotency_conflict}
 
-        Enum.reduce_while(lines, {:ok, %{}}, fn line, {:ok, acc} ->
-          case Handbeam.JSON.decode(line) do
-            {:ok, %{"request_id" => id} = record} when is_binary(id) ->
-              {:cont, {:ok, Map.put(acc, id, record)}}
+      _ ->
+        {:error, :not_reserved}
+    end
+  end
 
-            _ ->
-              {:halt, {:error, :corrupt}}
-          end
-        end)
+  defp fetch(key), do: Repo.one(key_query(key))
 
-      {:error, :enoent} ->
-        {:ok, %{}}
+  defp key_query(%{scope_kind: scope_kind, scope_id: scope_id, request_id: request_id}) do
+    from(receipt in StoredReceipt,
+      where:
+        receipt.scope_kind == ^scope_kind and receipt.scope_id == ^scope_id and
+          receipt.request_id == ^request_id
+    )
+  end
 
-      {:error, _} ->
-        {:error, :corrupt}
+  defp reserved_query(key, fingerprint) do
+    from(receipt in key_query(key),
+      where: receipt.fingerprint == ^fingerprint and receipt.status == "reserved"
+    )
+  end
+
+  defp key({kind, scope_id}, request_id) when is_binary(scope_id) do
+    %{scope_kind: to_string(kind), scope_id: scope_id, request_id: request_id}
+  end
+
+  defp record_key(receipt) do
+    %{
+      scope_kind: receipt.scope_kind,
+      scope_id: receipt.scope_id,
+      request_id: receipt.request_id
+    }
+  end
+
+  defp public_record(receipt) do
+    %{
+      "request_id" => receipt.request_id,
+      "fingerprint" => receipt.fingerprint,
+      "status" => receipt.status,
+      "receipt" => receipt.receipt
+    }
+  end
+
+  defp ensure_write! do
+    case receipt_write_fault() do
+      :ok -> :ok
+      {:error, reason} -> raise "operation receipt write failed: #{inspect(reason)}"
     end
   end
 
@@ -221,43 +265,6 @@ defmodule Handbeam.Agent.OperationReceipt do
     end
   end
 
-  defp write_records(path, records) do
-    case write_records_result(path, records) do
-      :ok -> :ok
-      {:error, reason} -> raise "operation receipt write failed: #{inspect(reason)}"
-    end
-  end
-
-  defp write_records_result(path, records) do
-    with :ok <- receipt_write_fault(),
-         :ok <- mkdir_result(Path.dirname(path)) do
-      body =
-        Enum.map_join(Map.values(records), "\n", fn record ->
-          record
-          |> Map.put("$handbeam_operation", @version)
-          |> Handbeam.JSON.encode!()
-        end)
-
-      tmp = path <> "." <> Integer.to_string(System.unique_integer([:positive])) <> ".tmp"
-
-      with :ok <- file_result(File.write(tmp, body <> "\n")),
-           :ok <- file_result(File.rename(tmp, path)) do
-        :ok
-      else
-        {:error, _reason} = error ->
-          File.rm(tmp)
-          error
-      end
-    end
-  end
-
-  defp mkdir_result(dir) do
-    case File.mkdir_p(dir) do
-      :ok -> :ok
-      {:error, reason} -> {:error, reason}
-    end
-  end
-
-  defp file_result(:ok), do: :ok
-  defp file_result({:error, reason}), do: {:error, reason}
+  defp transaction_result({:ok, result}), do: result
+  defp transaction_result({:error, reason}), do: {:error, reason}
 end

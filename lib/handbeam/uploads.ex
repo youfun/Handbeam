@@ -121,11 +121,13 @@ defmodule Handbeam.Uploads do
   @doc """
   Upload directory for a workspace-independent chat.
 
-  Files stay under `~/.handbeam/conversations/<id>/uploads`, not a project root.
+  Upload artifacts have their own filesystem owner and are not stored beside
+  canonical conversation records.
   """
   @spec free_upload_dir(String.t()) :: String.t()
   def free_upload_dir(conversation_id) when is_binary(conversation_id) do
-    Path.join(Handbeam.ConversationStore.conversation_dir(conversation_id), "uploads")
+    data_dir = Handbeam.Host.get(:data_dir) || Handbeam.Home.expand("~/.handbeam")
+    Path.join([data_dir, "artifacts", "uploads", conversation_id])
   end
 
   @spec ensure_free_upload_dir!(String.t()) :: String.t()

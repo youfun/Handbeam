@@ -586,6 +586,8 @@ defmodule Handbeam.Agent.Delegation do
       id: id,
       seq: System.unique_integer([:monotonic, :positive]),
       parent_id: context.conversation_id,
+      parent_run_id: context.run_id,
+      parent_runner_pid: context.runner_pid,
       workspace: context.working_directory,
       workspace_id: context[:workspace_id],
       profile: profile,
@@ -830,7 +832,16 @@ defmodule Handbeam.Agent.Delegation do
   end
 
   defp child_history(session) do
-    case ConversationStore.load_messages_result(session.id) do
+    access_context = %{
+      conversation_id: session.parent_id,
+      run_id: session.parent_run_id,
+      runner_pid: session.parent_runner_pid,
+      workspace_id: session.workspace_id
+    }
+
+    case Handbeam.ConversationTranscriptStore.list(session.id,
+           access_context: access_context
+         ) do
       {:error, reason} ->
         {:error, reason}
 
@@ -868,14 +879,13 @@ defmodule Handbeam.Agent.Delegation do
   end
 
   defp descriptor_path(%{parent_id: parent, id: id}) when is_binary(parent) and is_binary(id) do
-    root =
-      Application.get_env(
-        :handbeam,
-        :conversation_root,
-        Path.join(Handbeam.Home.path(), ".handbeam/conversations")
-      )
-
-    Path.join([root, "items", parent, "subagents", id <> ".json"])
+    Path.join([
+      Handbeam.ConversationArtifacts.root(),
+      "items",
+      parent,
+      "subagents",
+      id <> ".json"
+    ])
   end
 
   defp descriptor_path(_session), do: nil

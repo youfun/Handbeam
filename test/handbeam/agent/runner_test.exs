@@ -1,14 +1,11 @@
 defmodule Handbeam.Agent.RunnerTest do
-  use ExUnit.Case, async: false
+  use Handbeam.DataCase, async: false
 
   alias Handbeam.Agent.Coordinator
   alias Handbeam.Agent.TranscriptPersistence
   alias Handbeam.PubSub.Session
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Handbeam.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(Handbeam.Repo, {:shared, self()})
-
     old_home = System.get_env("HOME")
     home_dir = Path.join(System.tmp_dir!(), "sigil_runner_home_#{Ecto.UUID.generate()}")
     File.mkdir_p!(home_dir)
@@ -17,6 +14,9 @@ defmodule Handbeam.Agent.RunnerTest do
     Handbeam.Host.put!(%{data_dir: home_dir})
 
     on_exit(fn ->
+      drain_runtime_tasks()
+      sync_runtime_observers()
+
       if old_home, do: System.put_env("HOME", old_home), else: System.delete_env("HOME")
 
       if previous_host,
@@ -27,6 +27,38 @@ defmodule Handbeam.Agent.RunnerTest do
     end)
 
     :ok
+  end
+
+  defp drain_runtime_tasks do
+    deadline = System.monotonic_time(:millisecond) + 2_000
+    await_runtime_tasks(deadline)
+  end
+
+  defp await_runtime_tasks(deadline) do
+    tasks = Task.Supervisor.children(Handbeam.AgentRunTaskSupervisor)
+
+    if tasks != [] and System.monotonic_time(:millisecond) < deadline do
+      refs = Enum.map(tasks, &Process.monitor/1)
+      timeout = max(deadline - System.monotonic_time(:millisecond), 0)
+
+      Enum.each(refs, fn ref ->
+        receive do
+          {:DOWN, ^ref, :process, _pid, _reason} -> :ok
+        after
+          timeout -> Process.demonitor(ref, [:flush])
+        end
+      end)
+
+      await_runtime_tasks(deadline)
+    end
+  end
+
+  defp sync_runtime_observers do
+    for name <- [Handbeam.Runtime.TaskTracker, Handbeam.Schedule.Recorder],
+        pid = Process.whereis(name),
+        is_pid(pid) do
+      :sys.get_state(pid)
+    end
   end
 
   defmodule FailingAssistantStore do

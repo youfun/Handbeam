@@ -2,6 +2,7 @@ defmodule Handbeam.Agent.ErrorReporter do
   @moduledoc false
 
   alias Handbeam.Log.Redactor
+  alias Handbeam.Storage.{ErrorClassifier, Health}
 
   defmodule AgentRunError do
     @moduledoc false
@@ -40,22 +41,30 @@ defmodule Handbeam.Agent.ErrorReporter do
 
   @spec report(term(), map(), keyword()) :: :ok
   def report(reason, context, opts \\ []) when is_map(context) and is_list(opts) do
-    provider_config = Keyword.get(opts, :provider_config) || %{}
-    failure_class = failure_class(reason, Keyword.get(opts, :failure_class))
-    reason_category = reason_category(reason, safe_reason(reason, provider_config))
+    if reportable?(reason) do
+      provider_config = Keyword.get(opts, :provider_config) || %{}
+      failure_class = failure_class(reason, Keyword.get(opts, :failure_class))
+      reason_category = reason_category(reason, safe_reason(reason, provider_config))
 
-    context =
-      context
-      |> Map.put("failure_class", Atom.to_string(failure_class))
-      |> Map.put("reason_category", reason_category)
-      |> put_provider_context(provider_config, Keyword.get(opts, :provider))
+      context =
+        context
+        |> Map.put("failure_class", Atom.to_string(failure_class))
+        |> Map.put("reason_category", reason_category)
+        |> put_provider_context(provider_config, Keyword.get(opts, :provider))
 
-    do_report(reason, failure_class, context, provider_config)
+      do_report(reason, failure_class, context, provider_config)
+    end
+
     :ok
   rescue
     _ -> :ok
   catch
     _, _ -> :ok
+  end
+
+  defp reportable?(reason) do
+    Health.writable?() and
+      ErrorClassifier.classify(reason) not in [:busy, :full, :ioerr, :corrupt]
   end
 
   defp do_report({%_{} = exception, stacktrace}, failure_class, context, provider_config)

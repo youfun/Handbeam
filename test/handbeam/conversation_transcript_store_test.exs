@@ -1,311 +1,148 @@
 defmodule Handbeam.ConversationTranscriptStoreTest do
-  use ExUnit.Case, async: false
+  use Handbeam.DataCase, async: false
 
-  alias Handbeam.ConversationTranscriptStore
-  alias Handbeam.ConversationTranscriptStore.Journal
+  alias Handbeam.{ConversationStore, ConversationTranscriptStore}
 
   setup do
-    old_home = System.get_env("HOME")
-
-    home_dir =
-      Path.join(
-        System.tmp_dir!(),
-        "sigil_conversation_transcript_home_#{System.unique_integer([:positive])}"
-      )
-
-    System.put_env("HOME", home_dir)
-
-    on_exit(fn ->
-      if old_home, do: System.put_env("HOME", old_home), else: System.delete_env("HOME")
-      if File.exists?(home_dir), do: File.rm_rf!(home_dir)
-    end)
-
-    :ok
+    id = "transcript-#{System.unique_integer([:positive])}"
+    {:ok, conversation} = ConversationStore.create("default", id: id)
+    %{id: conversation["id"]}
   end
 
-  test "append, list, and update transcript entries" do
-    {:ok, conversation} = Handbeam.ConversationStore.create("default", id: "transcript-store")
-    conversation_id = conversation["id"]
-
-    assert {:ok, user} =
-             ConversationTranscriptStore.append(conversation_id, %{
-               "id" => "msg-user-1",
+  test "append, list, and deep patch preserve envelope and payload fields", %{id: id} do
+    assert {:ok, first} =
+             ConversationTranscriptStore.append(id, %{
+               "id" => "user",
                "role" => "user",
                "content" => "hello",
-               "direction" => "inbound",
-               "channel" => "sns"
+               "created_at" => "2026-10-15T12:57:08Z",
+               "raw_content" => [%{"type" => "text", "text" => "hello"}]
              })
 
-    assert user["sequence"] == 1
+    assert first["sequence"] == 1
+    assert first["revision"] == 1
+    assert first["created_at"] == "2026-10-15T12:57:08Z"
 
-    assert {:ok, assistant} =
-             ConversationTranscriptStore.append(conversation_id, %{
-               "id" => "msg-assistant-1",
+    assert {:ok, _} =
+             ConversationTranscriptStore.append(id, %{
+               "id" => "assistant",
                "role" => "assistant",
                "content" => "hi",
-               "direction" => "outbound",
-               "channel" => "sns"
+               "status" => "streaming",
+               "details" => %{"a" => 1}
              })
 
-    assert assistant["sequence"] == 2
-
     assert {:ok, updated} =
-             ConversationTranscriptStore.update(conversation_id, "msg-assistant-1", %{
+             ConversationTranscriptStore.update(id, "assistant", %{
                "content" => %{"$append" => " there"},
-               "status" => "streaming"
+               "status" => "final",
+               "details" => %{"b" => 2}
              })
 
     assert updated["content"] == "hi there"
+    assert updated["status"] == "final"
+    assert updated["details"] == %{"a" => 1, "b" => 2}
+    assert updated["revision"] == 2
 
-    assert {:ok, entries} = ConversationTranscriptStore.list(conversation_id)
-    assert Enum.map(entries, & &1["id"]) == ["msg-user-1", "msg-assistant-1"]
+    assert {:ok, entries} = ConversationTranscriptStore.list(id)
+    assert Enum.map(entries, & &1["id"]) == ["user", "assistant"]
   end
 
-  test "only a newly appended user message advances conversation activity" do
-    {:ok, conversation} =
-      Handbeam.ConversationStore.create("default", id: "transcript-user-activity")
-
-    conversation_id = conversation["id"]
-    old_activity = "2000-01-01T00:00:00Z"
-
+  test "explicit canonical nil clears a legacy tool error", %{id: id} do
     assert {:ok, _} =
-             Handbeam.ConversationStore.update_meta(conversation_id,
-               updated_at: old_activity,
-               touch: false
-             )
-
-    assert {:ok, assistant} =
-             ConversationTranscriptStore.append(conversation_id, %{
-               "id" => "assistant",
-               "role" => "assistant",
-               "content" => "reply"
+             ConversationTranscriptStore.append(id, %{
+               "id" => "tool",
+               "content_type" => "tool",
+               "status" => "error",
+               "error" => "legacy",
+               "tool_status" => "running"
              })
 
-    assert {:ok, _} =
-             ConversationTranscriptStore.update(conversation_id, assistant["id"], %{
-               "content" => %{"$append" => " continued"}
-             })
-
-    assert {:ok, meta_after_assistant} = Handbeam.ConversationStore.get(conversation_id)
-    assert meta_after_assistant["updated_at"] == old_activity
-
-    assert {:ok, _user} =
-             ConversationTranscriptStore.append(conversation_id, %{
-               "id" => "user",
-               "role" => "user",
-               "content" => "new question"
-             })
-
-    assert {:ok, meta_after_user} = Handbeam.ConversationStore.get(conversation_id)
-    assert meta_after_user["updated_at"] > old_activity
+    assert {:ok, updated} = ConversationTranscriptStore.update(id, "tool", %{"tool_error" => nil})
+    assert Map.has_key?(updated, "tool_error")
+    assert updated["tool_error"] == nil
+    assert Handbeam.TranscriptEntry.error(updated) == nil
   end
 
-  test "delete removes only its target and is idempotent" do
-    {:ok, conversation} = Handbeam.ConversationStore.create("default", id: "transcript-delete")
-    id = conversation["id"]
-    {:ok, first} = ConversationTranscriptStore.append(id, %{"id" => "first", "content" => "one"})
-    {:ok, _} = ConversationTranscriptStore.append(id, %{"id" => "remove", "content" => "two"})
-    {:ok, last} = ConversationTranscriptStore.append(id, %{"id" => "last", "content" => "three"})
-
-    assert :ok = ConversationTranscriptStore.delete(id, "remove")
-    assert {:ok, [^first, ^last]} = ConversationTranscriptStore.list(id)
-    assert :ok = ConversationTranscriptStore.delete(id, "remove")
-    assert {:ok, [^first, ^last]} = ConversationTranscriptStore.list(id)
+  test "duplicate ids fail without consuming a sequence", %{id: id} do
+    assert {:ok, %{"sequence" => 1}} = ConversationTranscriptStore.append(id, %{"id" => "same"})
+    assert {:error, :duplicate_id} = ConversationTranscriptStore.append(id, %{"id" => "same"})
+    assert {:ok, %{"sequence" => 2}} = ConversationTranscriptStore.append(id, %{"id" => "next"})
   end
 
-  test "serializes concurrent appends, updates, and deletes without losing entries" do
-    {:ok, conversation} =
-      Handbeam.ConversationStore.create("default", id: "transcript-concurrent")
-
-    conversation_id = conversation["id"]
-
-    assert {:ok, _entry} =
-             ConversationTranscriptStore.append(conversation_id, %{
-               "id" => "streamed",
-               "role" => "assistant",
-               "content" => ""
-             })
-
-    parent = self()
-
-    for index <- 1..10 do
-      assert {:ok, _} =
-               ConversationTranscriptStore.append(conversation_id, %{"id" => "remove-#{index}"})
+  test "pagination is bounded, chronological, and rejects a deleted cursor", %{id: id} do
+    for index <- 1..6 do
+      assert {:ok, _} = ConversationTranscriptStore.append(id, %{"id" => "entry-#{index}"})
     end
 
+    assert {:ok, %{entries: newest, before: "entry-4", has_more?: true}} =
+             ConversationTranscriptStore.page(id, limit: 3)
+
+    assert Enum.map(newest, & &1["id"]) == ~w(entry-4 entry-5 entry-6)
+
+    assert {:ok, %{entries: oldest, before: nil, has_more?: false}} =
+             ConversationTranscriptStore.page(id, limit: 3, before: "entry-4")
+
+    assert Enum.map(oldest, & &1["id"]) == ~w(entry-1 entry-2 entry-3)
+    assert :ok = ConversationTranscriptStore.delete(id, "entry-4")
+    assert {:error, :invalid_cursor} = ConversationTranscriptStore.page(id, before: "entry-4")
+  end
+
+  test "replace_all rebuilds sequence and next append position", %{id: id} do
+    assert {:ok, _} = ConversationTranscriptStore.append(id, %{"id" => "old"})
+
+    assert :ok =
+             ConversationTranscriptStore.replace_all(id, [
+               %{"id" => "new-a", "sequence" => 99},
+               %{"id" => "new-b", "sequence" => 100}
+             ])
+
+    assert {:ok, [%{"id" => "new-a", "sequence" => 1}, %{"id" => "new-b", "sequence" => 2}]} =
+             ConversationTranscriptStore.list(id)
+
+    assert {:ok, %{"sequence" => 3}} = ConversationTranscriptStore.append(id, %{"id" => "new-c"})
+  end
+
+  test "concurrent appends allocate unique monotonic sequences", %{id: id} do
     tasks =
-      for index <- 1..50 do
+      for index <- 1..40 do
         Task.async(fn ->
-          send(parent, {:ready, self()})
-
-          receive do
-            :go ->
-              cond do
-                index > 40 ->
-                  ConversationTranscriptStore.delete(conversation_id, "remove-#{index - 40}")
-
-                rem(index, 2) == 0 ->
-                  ConversationTranscriptStore.append(conversation_id, %{
-                    "id" => "appended-#{index}",
-                    "role" => "user",
-                    "content" => Integer.to_string(index)
-                  })
-
-                true ->
-                  ConversationTranscriptStore.update(conversation_id, "streamed", %{
-                    "content" => %{"$append" => "x"}
-                  })
-              end
-          end
+          ConversationTranscriptStore.append(id, %{"id" => "entry-#{index}", "content" => index})
         end)
       end
 
-    Enum.each(tasks, fn task ->
-      assert_receive {:ready, task_pid} when task_pid == task.pid
-    end)
-
-    Enum.each(tasks, &send(&1.pid, :go))
-
-    Enum.each(tasks, fn task ->
-      result = Task.await(task, 5_000)
-      assert result == :ok or match?({:ok, _}, result)
-    end)
-
-    assert {:ok, entries} = ConversationTranscriptStore.list(conversation_id)
-    assert length(entries) == 21
-    assert Enum.find(entries, &(&1["id"] == "streamed"))["content"] == String.duplicate("x", 20)
-
-    assert Enum.sort(Enum.map(entries, & &1["id"])) ==
-             Enum.sort(["streamed" | Enum.map(2..40//2, &"appended-#{&1}")])
-  end
-
-  test "replays legacy entries and journal revisions after owner restart" do
-    {:ok, conversation} = Handbeam.ConversationStore.create("default", id: "transcript-replay")
-    id = conversation["id"]
-    path = Handbeam.ConversationStore.messages_path(id)
-
-    File.write!(
-      path,
-      Jason.encode!(%{"id" => "legacy", "content" => "a", "sequence" => 7}) <> "\n"
-    )
-
-    assert {:ok, _} =
-             ConversationTranscriptStore.update(id, "legacy", %{"content" => %{"$append" => "b"}})
-
-    assert {:ok, appended} =
-             ConversationTranscriptStore.append(id, %{"id" => "new", "content" => "c"})
-
-    assert appended["sequence"] == 8
-
-    restart_journal()
-
+    assert Enum.all?(Enum.map(tasks, &Task.await(&1, 5_000)), &match?({:ok, _}, &1))
     assert {:ok, entries} = ConversationTranscriptStore.list(id)
-    assert Enum.map(entries, &{&1["id"], &1["content"]}) == [{"legacy", "ab"}, {"new", "c"}]
+    assert Enum.map(entries, & &1["sequence"]) == Enum.to_list(1..40)
+    assert MapSet.size(MapSet.new(entries, & &1["id"])) == 40
   end
 
-  test "ignores only a partial trailing crash record and reports non-tail corruption" do
-    {:ok, conversation} = Handbeam.ConversationStore.create("default", id: "transcript-partial")
-    id = conversation["id"]
-    path = Handbeam.ConversationStore.messages_path(id)
-    File.write!(path, Jason.encode!(%{"id" => "ok"}) <> "\n{\"partial\":")
+  test "concurrent CAS append patches do not lose bytes", %{id: id} do
+    assert {:ok, _} = ConversationTranscriptStore.append(id, %{"id" => "stream", "content" => ""})
 
-    assert {:ok, [%{"id" => "ok"}]} = ConversationTranscriptStore.list(id)
+    tasks =
+      for _ <- 1..20 do
+        Task.async(fn ->
+          ConversationTranscriptStore.update(id, "stream", %{"content" => %{"$append" => "x"}})
+        end)
+      end
 
-    assert {:ok, _} = ConversationTranscriptStore.append(id, %{"id" => "after"})
-    restart_journal()
+    assert Enum.all?(Enum.map(tasks, &Task.await(&1, 5_000)), &match?({:ok, _}, &1))
 
-    assert {:ok, entries} = ConversationTranscriptStore.list(id)
-    assert Enum.map(entries, & &1["id"]) == ["ok", "after"]
-
-    File.write!(path, "broken\n" <> Jason.encode!(%{"id" => "hidden"}) <> "\n")
-    Journal.invalidate(path)
-    assert {:error, {:corrupt_journal, 1}} = ConversationTranscriptStore.list(id)
-  end
-
-  test "preserves a valid final unterminated record when appending" do
-    {:ok, conversation} = Handbeam.ConversationStore.create("default", id: "unterminated")
-    id = conversation["id"]
-    path = Handbeam.ConversationStore.messages_path(id)
-    File.write!(path, Jason.encode!(%{"id" => "first", "sequence" => 4}))
-
-    assert {:ok, %{"sequence" => 5}} =
-             ConversationTranscriptStore.append(id, %{"id" => "second"})
-
-    restart_journal()
-    assert {:ok, entries} = ConversationTranscriptStore.list(id)
-    assert Enum.map(entries, & &1["id"]) == ["first", "second"]
-  end
-
-  test "rejects unknown journal record versions" do
-    {:ok, conversation} = Handbeam.ConversationStore.create("default", id: "unknown-version")
-    id = conversation["id"]
-    path = Handbeam.ConversationStore.messages_path(id)
-
-    File.write!(
-      path,
-      Jason.encode!(%{"$handbeam_journal" => 99, "op" => "delete", "id" => "x"}) <> "\n"
-    )
-
-    Journal.invalidate(path)
-
-    assert {:error, {:corrupt_journal, 1, {:unsupported_version, 99}}} =
+    assert {:ok, [%{"content" => content, "revision" => 21}]} =
              ConversationTranscriptStore.list(id)
+
+    assert content == String.duplicate("x", 20)
   end
 
-  test "invalid update payload fails the read without killing the journal owner" do
-    {:ok, conversation} = Handbeam.ConversationStore.create("default")
-    id = conversation["id"]
-    {:ok, _} = ConversationTranscriptStore.append(id, %{"id" => "existing"})
-    path = Handbeam.ConversationStore.messages_path(id)
-    owner = Process.whereis(Journal)
-    File.write!(path, Jason.encode!(%{"id" => "existing"}) <> "\n")
+  test "delete is idempotent and missing conversations map to not_found", %{id: id} do
+    assert {:ok, _} = ConversationTranscriptStore.append(id, %{"id" => "remove"})
+    assert :ok = ConversationTranscriptStore.delete(id, "remove")
+    assert :ok = ConversationTranscriptStore.delete(id, "remove")
+    assert {:ok, []} = ConversationTranscriptStore.list(id)
 
-    File.write!(
-      path,
-      Jason.encode!(%{
-        "$handbeam_journal" => 1,
-        "op" => "update",
-        "id" => "existing",
-        "patch" => "invalid"
-      }) <> "\n",
-      [:append]
-    )
-
-    assert {:error, {:corrupt_journal, 2, _reason}} = ConversationTranscriptStore.list(id)
-    assert Process.whereis(Journal) == owner
-  end
-
-  test "cache notices atomic same-size replacement" do
-    {:ok, conversation} = Handbeam.ConversationStore.create("default", id: "same-size-replace")
-    id = conversation["id"]
-    path = Handbeam.ConversationStore.messages_path(id)
-    first = Jason.encode!(%{"id" => "one"}) <> "\n"
-    second = Jason.encode!(%{"id" => "two"}) <> "\n"
-    assert byte_size(first) == byte_size(second)
-    File.write!(path, first)
-    Journal.invalidate(path)
-    assert {:ok, [%{"id" => "one"}]} = ConversationTranscriptStore.list(id)
-
-    replacement = path <> ".replacement"
-    File.write!(replacement, second)
-    File.rename!(replacement, path)
-
-    assert {:ok, [%{"id" => "two"}]} = ConversationTranscriptStore.list(id)
-  end
-
-  test "returns storage read failures instead of treating them as empty" do
-    {:ok, conversation} =
-      Handbeam.ConversationStore.create("default", id: "transcript-read-error")
-
-    path = Handbeam.ConversationStore.messages_path(conversation["id"])
-    File.rm!(path)
-    File.mkdir!(path)
-
-    assert {:error, :eisdir} = ConversationTranscriptStore.list(conversation["id"])
-  end
-
-  defp restart_journal do
-    :ok = Supervisor.terminate_child(Handbeam.Supervisor, Journal)
-    {:ok, _pid} = Supervisor.restart_child(Handbeam.Supervisor, Journal)
+    assert {:error, :not_found} = ConversationTranscriptStore.list("missing")
+    assert {:error, :not_found} = ConversationTranscriptStore.append("missing", %{"id" => "x"})
+    assert {:error, :not_found} = ConversationTranscriptStore.replace_all("missing", [])
   end
 end

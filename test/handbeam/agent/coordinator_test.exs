@@ -1,13 +1,10 @@
 defmodule Handbeam.Agent.CoordinatorTest do
-  use ExUnit.Case, async: false
+  use Handbeam.DataCase, async: false
 
   alias Handbeam.Agent.Coordinator
   alias Handbeam.PubSub.Session
 
   setup do
-    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Handbeam.Repo)
-    Ecto.Adapters.SQL.Sandbox.mode(Handbeam.Repo, {:shared, self()})
-
     old_home = System.get_env("HOME")
 
     home_dir = Path.join(System.tmp_dir!(), "sigil_coord_home_#{Ecto.UUID.generate()}")
@@ -18,6 +15,9 @@ defmodule Handbeam.Agent.CoordinatorTest do
     Handbeam.Host.put!(%{data_dir: home_dir})
 
     on_exit(fn ->
+      drain_runtime_tasks()
+      sync_runtime_observers()
+
       if old_home, do: System.put_env("HOME", old_home), else: System.delete_env("HOME")
 
       if previous_host,
@@ -100,6 +100,10 @@ defmodule Handbeam.Agent.CoordinatorTest do
     def stream(messages, tool_defs, config, _on_chunk), do: complete(messages, tool_defs, config)
   end
 
+  defmodule FailingInboundStore do
+    def append(_conversation_id, _entry, _opts), do: {:error, :eisdir}
+  end
+
   defp tmp_no_policy_workspace do
     dir =
       Path.join(
@@ -144,6 +148,38 @@ defmodule Handbeam.Agent.CoordinatorTest do
     end)
   end
 
+  defp drain_runtime_tasks do
+    deadline = System.monotonic_time(:millisecond) + 2_000
+    await_runtime_tasks(deadline)
+  end
+
+  defp await_runtime_tasks(deadline) do
+    tasks = Task.Supervisor.children(Handbeam.AgentRunTaskSupervisor)
+
+    if tasks != [] and System.monotonic_time(:millisecond) < deadline do
+      refs = Enum.map(tasks, &Process.monitor/1)
+      timeout = max(deadline - System.monotonic_time(:millisecond), 0)
+
+      Enum.each(refs, fn ref ->
+        receive do
+          {:DOWN, ^ref, :process, _pid, _reason} -> :ok
+        after
+          timeout -> Process.demonitor(ref, [:flush])
+        end
+      end)
+
+      await_runtime_tasks(deadline)
+    end
+  end
+
+  defp sync_runtime_observers do
+    for name <- [Handbeam.Runtime.TaskTracker, Handbeam.Schedule.Recorder],
+        pid = Process.whereis(name),
+        is_pid(pid) do
+      :sys.get_state(pid)
+    end
+  end
+
   defp idle_message(sid, request_id) do
     Coordinator.add_message(
       sid,
@@ -173,20 +209,13 @@ defmodule Handbeam.Agent.CoordinatorTest do
       sid = "coord-write-failure-#{entry_point}-#{System.unique_integer([:positive])}"
       {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
 
-      messages_path =
-        Path.join([
-          System.get_env("HOME"),
-          ".handbeam",
-          "conversations",
-          "items",
-          sid,
-          "messages.jsonl"
-        ])
+      assert {:error, :eisdir} =
+               apply(Coordinator, entry_point, [
+                 sid,
+                 "not accepted",
+                 opts(transcript_store: FailingInboundStore)
+               ])
 
-      File.rm!(messages_path)
-      File.mkdir!(messages_path)
-
-      assert {:error, :eisdir} = apply(Coordinator, entry_point, [sid, "not accepted", opts()])
       assert {:error, :not_found} = Handbeam.Agent.Runner.status(sid)
       assert %{meta: %{running?: false}, events: []} = Session.snapshot(sid)
     end
@@ -199,22 +228,13 @@ defmodule Handbeam.Agent.CoordinatorTest do
     queue = start_supervised!({Handbeam.Agent.CandidateQueue, session_id: sid, owner: self()})
     :ok = Session.attach_run(sid, self(), queue)
 
-    messages_path =
-      Path.join([
-        System.get_env("HOME"),
-        ".handbeam",
-        "conversations",
-        "items",
-        sid,
-        "messages.jsonl"
-      ])
-
-    File.rm!(messages_path)
-    File.mkdir!(messages_path)
-
     for delivery <- [:steer, :follow_up] do
       assert {:error, :eisdir} =
-               Coordinator.add_message(sid, "not queued", opts(deliver_as: delivery))
+               Coordinator.add_message(
+                 sid,
+                 "not queued",
+                 opts(deliver_as: delivery, transcript_store: FailingInboundStore)
+               )
     end
 
     assert [] = Handbeam.Agent.CandidateQueue.get_messages(queue)

@@ -1,95 +1,119 @@
 defmodule Handbeam.Agent.OperationReceiptTest do
-  use ExUnit.Case, async: false
+  use Handbeam.DataCase, async: false
 
   alias Handbeam.Agent.OperationReceipt
 
-  setup do
-    root = Path.join(System.tmp_dir!(), "receipt-#{System.unique_integer([:positive])}")
-    File.mkdir_p!(Path.join(root, "items/conv-receipt"))
-    on_exit(fn -> File.rm_rf!(root) end)
-    %{opts: [root: root]}
-  end
-
-  test "same id replays, different content conflicts, pending stays unknown", %{opts: opts} do
-    scope = {:message, "conv-receipt"}
+  test "same id replays, different content conflicts, and a pending operation becomes unknown" do
+    scope = {:message, unique_id("conversation")}
     fingerprint = OperationReceipt.fingerprint({"hello", :new_run})
 
-    assert :ok = OperationReceipt.reserve(scope, "op-1", fingerprint, opts)
-    assert :ok = OperationReceipt.complete(scope, "op-1", %{action: :started}, opts)
+    assert :ok = OperationReceipt.reserve(scope, "op-1", fingerprint)
+    assert :ok = OperationReceipt.complete(scope, "op-1", %{action: :started})
 
     assert {:replay, %{"action" => "started"}} =
-             OperationReceipt.reserve(scope, "op-1", fingerprint, opts)
+             OperationReceipt.reserve(scope, "op-1", fingerprint)
 
     assert {:error, :idempotency_conflict} =
              OperationReceipt.reserve(
                scope,
                "op-1",
-               OperationReceipt.fingerprint("other"),
-               opts
+               OperationReceipt.fingerprint("other")
              )
 
-    assert :ok = OperationReceipt.reserve(scope, "op-2", fingerprint, opts)
+    assert :ok = OperationReceipt.reserve(scope, "op-2", fingerprint)
 
     assert {:unknown, :delivery_unknown} =
-             OperationReceipt.reserve(scope, "op-2", fingerprint, opts)
+             OperationReceipt.reserve(scope, "op-2", fingerprint)
 
-    assert {:ok, %{"status" => "completed"}} = OperationReceipt.lookup(scope, "op-1", opts)
-    assert {:ok, %{"status" => "unknown"}} = OperationReceipt.lookup(scope, "op-2", opts)
+    assert {:ok, %{"status" => "completed"}} = OperationReceipt.lookup(scope, "op-1")
+    assert {:ok, %{"status" => "unknown"}} = OperationReceipt.lookup(scope, "op-2")
   end
 
-  test "release frees a matching reservation and leaves every other row", %{opts: opts} do
-    scope = {:message, "conv-receipt"}
+  test "scope kind and id both isolate request ids" do
+    conversation_id = unique_id("conversation")
+    fingerprint = OperationReceipt.fingerprint("same request")
+
+    assert :ok = OperationReceipt.reserve({:message, conversation_id}, "op-1", fingerprint)
+    assert :ok = OperationReceipt.reserve({:tool_effect, conversation_id}, "op-1", fingerprint)
+
+    assert :ok =
+             OperationReceipt.reserve(
+               {:message, conversation_id <> "-other"},
+               "op-1",
+               fingerprint
+             )
+  end
+
+  test "release frees a matching reservation and leaves every other row" do
+    scope = {:message, unique_id("conversation")}
     fingerprint = OperationReceipt.fingerprint({"hello", :new_run})
 
-    assert :ok = OperationReceipt.reserve(scope, "op-rel", fingerprint, opts)
-    assert :ok = OperationReceipt.release_reserved(scope, "op-rel", fingerprint, opts)
-    assert :error = OperationReceipt.lookup(scope, "op-rel", opts)
-    assert :ok = OperationReceipt.reserve(scope, "op-rel", fingerprint, opts)
-    assert :ok = OperationReceipt.complete(scope, "op-rel", %{action: :started}, opts)
+    assert :ok = OperationReceipt.reserve(scope, "op-rel", fingerprint)
+    assert :ok = OperationReceipt.release_reserved(scope, "op-rel", fingerprint)
+    assert :error = OperationReceipt.lookup(scope, "op-rel")
+    assert :ok = OperationReceipt.reserve(scope, "op-rel", fingerprint)
+    assert :ok = OperationReceipt.complete(scope, "op-rel", %{action: :started})
 
     assert {:error, :not_reserved} =
-             OperationReceipt.release_reserved(scope, "op-rel", fingerprint, opts)
+             OperationReceipt.release_reserved(scope, "op-rel", fingerprint)
 
-    assert :ok = OperationReceipt.reserve(scope, "op-held", fingerprint, opts)
+    assert :ok = OperationReceipt.reserve(scope, "op-held", fingerprint)
 
     assert {:error, :idempotency_conflict} =
              OperationReceipt.release_reserved(
                scope,
                "op-held",
-               OperationReceipt.fingerprint("other"),
-               opts
+               OperationReceipt.fingerprint("other")
              )
 
-    assert {:ok, %{"status" => "reserved"}} = OperationReceipt.lookup(scope, "op-held", opts)
+    assert {:ok, %{"status" => "reserved"}} = OperationReceipt.lookup(scope, "op-held")
   end
 
-  test "a failed rewrite keeps the reservation", %{opts: opts} do
-    scope = {:message, "conv-receipt"}
+  test "a failed release keeps the reservation" do
+    scope = {:message, unique_id("conversation")}
     fingerprint = OperationReceipt.fingerprint({"hello", :new_run})
-    assert :ok = OperationReceipt.reserve(scope, "op-fault", fingerprint, opts)
+    assert :ok = OperationReceipt.reserve(scope, "op-fault", fingerprint)
 
     on_exit(fn -> Application.delete_env(:handbeam, :operation_receipt_write_fault) end)
 
     Application.put_env(:handbeam, :operation_receipt_write_fault, fn -> {:error, :injected} end)
 
     assert {:error, :injected} =
-             OperationReceipt.release_reserved(scope, "op-fault", fingerprint, opts)
+             OperationReceipt.release_reserved(scope, "op-fault", fingerprint)
 
-    assert {:ok, %{"status" => "reserved"}} = OperationReceipt.lookup(scope, "op-fault", opts)
+    assert {:ok, %{"status" => "reserved"}} = OperationReceipt.lookup(scope, "op-fault")
   end
 
-  test "concurrent reserves of a new id accept one writer", %{opts: opts} do
-    scope = {:message, "conv-receipt"}
+  test "accepted inbound and receipt completion roll back together" do
+    conversation_id = unique_id("conversation")
+    scope = {:message, conversation_id}
+    fingerprint = OperationReceipt.fingerprint({"hello", nil})
+    assert {:ok, _} = Handbeam.ConversationStore.create("default", id: conversation_id)
+    assert :ok = OperationReceipt.reserve(scope, "op-atomic", fingerprint)
+
+    on_exit(fn -> Application.delete_env(:handbeam, :operation_receipt_write_fault) end)
+    Application.put_env(:handbeam, :operation_receipt_write_fault, fn -> {:error, :injected} end)
+
+    assert {:error, :injected} =
+             Handbeam.Agent.TranscriptPersistence.accept_inbound(
+               conversation_id,
+               "hello",
+               %{action: :started, run_id: "run-1"},
+               request_id: "op-atomic",
+               run_id: "run-1"
+             )
+
+    assert {:ok, []} = Handbeam.ConversationTranscriptStore.list(conversation_id)
+    assert {:ok, %{"status" => "reserved"}} = OperationReceipt.lookup(scope, "op-atomic")
+  end
+
+  test "concurrent reserves of a new id accept one writer" do
+    scope = {:message, unique_id("conversation")}
     fingerprint = OperationReceipt.fingerprint({"race", :new_run})
-    parent = self()
 
     tasks =
       for _ <- 1..8 do
-        Task.async(fn ->
-          result = OperationReceipt.reserve(scope, "race-1", fingerprint, opts)
-          send(parent, {:reserved, result})
-          result
-        end)
+        Task.async(fn -> OperationReceipt.reserve(scope, "race-1", fingerprint) end)
       end
 
     results = Enum.map(tasks, &Task.await/1)
@@ -97,22 +121,25 @@ defmodule Handbeam.Agent.OperationReceiptTest do
     assert Enum.all?(results -- [:ok], &(&1 == {:unknown, :delivery_unknown}))
   end
 
-  test "a truncated tail is ignored and a reserved id stays unknown after reread", %{opts: opts} do
-    scope = {:message, "conv-receipt"}
-    fingerprint = OperationReceipt.fingerprint("partial")
-    assert :ok = OperationReceipt.reserve(scope, "partial-1", fingerprint, opts)
+  test "mark_unknown clears a completed receipt" do
+    scope = {:message, unique_id("conversation")}
+    fingerprint = OperationReceipt.fingerprint("completed")
 
-    path = Path.join([opts[:root], "items", "conv-receipt", "operations-message.jsonl"])
-    File.write!(path, File.read!(path) <> "{\"request_id\":\"torn\"")
+    assert :ok = OperationReceipt.reserve(scope, "op-unknown", fingerprint)
+    assert :ok = OperationReceipt.complete(scope, "op-unknown", %{"action" => "started"})
+    assert :ok = OperationReceipt.mark_unknown(scope, "op-unknown")
 
-    assert {:unknown, :delivery_unknown} =
-             OperationReceipt.reserve(scope, "partial-1", fingerprint, opts)
-
-    assert :error = OperationReceipt.lookup(scope, "torn", opts)
+    assert {:ok, %{"status" => "unknown", "receipt" => nil}} =
+             OperationReceipt.lookup(scope, "op-unknown")
   end
 
-  test "missing request id does not reserve", %{opts: opts} do
-    assert :ok = OperationReceipt.reserve({:message, "conv"}, nil, "fp", opts)
-    assert :error = OperationReceipt.lookup({:message, "conv"}, "missing", opts)
+  test "missing request id does not reserve" do
+    scope = {:message, unique_id("conversation")}
+
+    assert :ok = OperationReceipt.reserve(scope, nil, "fp")
+    assert :error = OperationReceipt.lookup(scope, "missing")
   end
+
+  defp unique_id(prefix),
+    do: prefix <> "-" <> Integer.to_string(System.unique_integer([:positive]))
 end
