@@ -626,7 +626,28 @@ jobs:
           git -C "$RUNNER_TEMP/ish-arm64" submodule update --init --depth 1
           SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
           export SDK
-          python3 -c 'import os, pathlib; sdk=os.environ["SDK"]; pathlib.Path(os.environ["RUNNER_TEMP"], "ios-cross.txt").write_text("[binaries]\nc = [\"clang\", \"-arch\", \"arm64\", \"-isysroot\", \"%s\", \"-miphoneos-version-min=17.0\"]\nar = \"ar\"\nstrip = \"strip\"\npkg-config = \"false\"\n\n[host_machine]\nsystem = \"darwin\"\ncpu_family = \"aarch64\"\ncpu = \"aarch64\"\nendian = \"little\"\n\n[properties]\nneeds_exe_wrapper = true\nsys_root = \"%s\"\n" % (sdk, sdk))'
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          sdk = os.environ["SDK"]
+          Path(os.environ["RUNNER_TEMP"], "ios-cross.txt").write_text(f"""[binaries]
+          c = ['clang', '-arch', 'arm64', '-isysroot', '{sdk}', '-miphoneos-version-min=17.0']
+          ar = 'ar'
+          strip = 'strip'
+          pkg-config = 'false'
+
+          [host_machine]
+          system = 'darwin'
+          cpu_family = 'aarch64'
+          cpu = 'aarch64'
+          endian = 'little'
+
+          [properties]
+          needs_exe_wrapper = true
+          sys_root = '{sdk}'
+          """)
+          PY
           export PATH="$(brew --prefix lld)/bin:$PATH"
           meson setup "$RUNNER_TEMP/ish-arm64/build-ios" "$RUNNER_TEMP/ish-arm64" \
             --cross-file "$RUNNER_TEMP/ios-cross.txt" \
