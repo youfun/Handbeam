@@ -80,12 +80,12 @@ defmodule Handbeam.MixProject do
       {:mint, "~> 1.11"},
       {:castore, "~> 1.0"},
       {:floki, "~> 0.38.4"},
-      {:llm_db, "~> 2026.9"},
+      {:llm_db, "~> 2026.10.5"},
       {:telemetry_metrics, "~> 1.0"},
       {:telemetry_poller, "~> 1.0"},
       {:jason, "~> 1.2"},
       {:websockex, "~> 0.5.1"},
-      {:dns_cluster, "~> 0.3.0"},
+      {:dns_cluster, "~> 0.3.1"},
       {:bandit, "~> 1.12"},
 
       # 程序依赖图 / 发布安全检查
