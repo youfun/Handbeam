@@ -22,6 +22,11 @@ Android/iOS 宿主。
   变量或进程探测偷偷开放能力。
 - 遵循 `ElixirStyleGuide.md` 和现有职责边界。优先扩展已有 owner；不把新职责塞进
   大型 UI/运行循环，也不为一次使用增加抽象层。
+- 修复缺陷时先复现问题并定位根因，遵循 Elixir/OTP 惯用法和现有架构边界；修复
+  根因而非表面症状，并补充覆盖用户可见行为的回归测试。
+- 涉及 Agent 的探索流程、工具调用或结果呈现时，先调研同类成熟 Agent 项目的交互
+  与行为语义，再结合 Handbeam 的 owner、协议和安全模型实现；借鉴实践，不照搬其
+  架构或制造第二套状态。
 - Handbeam 自有业务代码通过 `Handbeam.JSON` 编解码 JSON；不要直接新增 `Jason`
   或 OTP `:json` 调用。第三方依赖内部使用 Jason 不在此约束范围。
 - 使用不可变数据、显式管道和 `{:ok, value} | {:error, reason}`。确实会 raise 的
