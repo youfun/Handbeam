@@ -1335,6 +1335,11 @@ msgstr "实验性"
 msgid "Explored %{details}"
 msgstr "已探索 %{details}"
 
+#: lib/handbeam_web/workspace_helper.ex
+#, elixir-autogen, elixir-format
+msgid "Called advisor model"
+msgstr "已调用顾问模型"
+
 #: lib/handbeam_web/live/workspace_live.ex:1343
 #, elixir-autogen, elixir-format
 msgid "Failed to update permission mode"

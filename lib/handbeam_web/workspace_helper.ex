@@ -441,9 +441,13 @@ defmodule HandbeamWeb.WorkspaceHelper do
   once; line totals sum the recorded diffs shown by individual file cards.
   """
   def tool_work_summary(tools) when is_list(tools) and tools != [] do
-    {edits, other_tools} = Enum.split_with(tools, &(tool_work_role(tool_name(&1)) == :edit))
+    {advisors, tools} =
+      Enum.split_with(tools, &(normalized_tool_name(tool_name(&1)) == "advisor"))
 
-    [edited_work_summary(edits), explored_work_summary(other_tools)]
+    {edits, other_tools} = Enum.split_with(tools, &(tool_work_role(tool_name(&1)) == :edit))
+    advisor_summary = if advisors == [], do: "", else: gettext("Called advisor model")
+
+    [edited_work_summary(edits), explored_work_summary(other_tools), advisor_summary]
     |> Enum.reject(&(&1 == ""))
     |> Enum.join(", ")
   end

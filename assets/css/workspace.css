@@ -1867,9 +1867,32 @@ button.workspace-file-row:hover,
 
 .file-change-chevron {
   width: 12px;
+  height: 12px;
   flex: 0 0 12px;
-  text-align: center;
   color: var(--color-text-tertiary);
+}
+
+.file-change-chevron,
+.tool-work-chevron {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0;
+}
+
+.file-change-chevron::before,
+.tool-work-chevron::before {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-top: 1px solid currentColor;
+  border-right: 1px solid currentColor;
+  transform: translateX(-1px) rotate(45deg);
+}
+
+[aria-expanded="true"] > .file-change-chevron::before,
+[aria-expanded="true"] > .tool-work-chevron::before {
+  transform: translateY(-1px) rotate(135deg);
 }
 
 .file-change-label {
@@ -3237,7 +3260,7 @@ button.workspace-file-row:hover,
 
 .tool-work-summary {
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
   gap: 6px;
   width: auto;
   max-width: 100%;
@@ -3252,12 +3275,15 @@ button.workspace-file-row:hover,
 }
 
 .tool-work-chevron {
+  width: 12px;
+  height: 12px;
+  flex: 0 0 12px;
   color: var(--sig-text-quaternary, var(--sig-text-tertiary));
 }
 
 .tool-work-line {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 6px;
   min-width: 0;
   min-height: 22px;
