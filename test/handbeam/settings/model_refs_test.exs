@@ -14,6 +14,8 @@ defmodule Handbeam.Settings.ModelRefsTest do
     dir = Path.join(System.tmp_dir!(), "sigil_model_refs_#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     previous = Map.new(@env, &{&1, System.get_env(&1)})
+    host = Application.get_env(:handbeam, :host)
+    Handbeam.Host.put!(Map.put(host || %{}, :data_dir, dir))
 
     System.put_env("HANDBEAM_MODELS_FILE", Path.join(dir, "models.json"))
     System.put_env("HANDBEAM_WORKSPACES_FILE", Path.join(dir, "workspaces.json"))
@@ -35,6 +37,10 @@ defmodule Handbeam.Settings.ModelRefsTest do
       })
 
     on_exit(fn ->
+      if host,
+        do: Application.put_env(:handbeam, :host, host),
+        else: Application.delete_env(:handbeam, :host)
+
       Enum.each(previous, fn {key, value} ->
         if value, do: System.put_env(key, value), else: System.delete_env(key)
       end)

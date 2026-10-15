@@ -50,7 +50,7 @@ defmodule Handbeam.ConfigInspectionTest do
     assert report.model_ai.om_message_tokens == %{value: 8003, source: :workspace_settings}
     assert report.model_ai.om_buffer_tokens == %{value: 10_000, source: :model_ai_defaults}
     assert report.model_ai.reasoning == %{value: "medium", source: :model_ai_defaults}
-    assert Settings.effective_model_ai(root).om_enabled == true
+    assert Settings.effective_model_ai(root).om_enabled == false
     assert Settings.effective_model_ai(root).om_message_tokens == 8003
   end
 

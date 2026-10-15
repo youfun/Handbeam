@@ -58,6 +58,47 @@ defmodule HandbeamProbe.ScreenSettle do
   end
 end
 
+defmodule HandbeamProbe.RuntimeCleanup do
+  @moduledoc "Stops host-test producers and drains persistence before restoring the data directory."
+
+  def stop! do
+    for id <- registered_ids(Handbeam.AgentRunSupervisorRegistry) do
+      Handbeam.AgentRunSupervisor.stop_run(id)
+    end
+
+    for pid <- Task.Supervisor.children(Handbeam.AgentRunTaskSupervisor) do
+      Task.Supervisor.terminate_child(Handbeam.AgentRunTaskSupervisor, pid)
+    end
+
+    for id <- registered_ids(Handbeam.SessionRegistry) do
+      Handbeam.PubSub.Session.snapshot(id)
+      Handbeam.SessionSupervisor.stop_session(id)
+    end
+
+    # An ordinary call drains lifecycle messages already forwarded by Session.
+    GenServer.call(Handbeam.Runtime.TaskTracker, :snapshot)
+
+    :ok =
+      Handbeam.ConversationTranscriptStore.Journal.invalidate(
+        Handbeam.ConversationStore.index_path()
+      )
+
+    home = Handbeam.Home.path()
+
+    for path <- registered_ids(ExFff.Registry),
+        path == home or String.starts_with?(path, home <> "/"),
+        {pid, _} <- Registry.lookup(ExFff.Registry, path) do
+      GenServer.stop(pid)
+    end
+
+    :ok
+  end
+
+  defp registered_ids(registry) do
+    Registry.select(registry, [{{:"$1", :_, :_}, [], [:"$1"]}])
+  end
+end
+
 unless Process.whereis(Handbeam.ExportSnapshot.Binding) do
   {:ok, _} = Handbeam.ExportSnapshot.Binding.start_link([])
 end
@@ -67,9 +108,12 @@ data_dir =
 
 File.mkdir_p!(data_dir)
 System.put_env("MOB_DATA_DIR", data_dir)
+Handbeam.Host.put!(%{data_dir: data_dir, shell: false, mcp: false})
 
+HandbeamProbe.App.configure_error_tracker!()
 {:ok, _} = Application.ensure_all_started(:ecto_sqlite3)
 {:ok, _} = Application.ensure_all_started(:handbeam)
+Ecto.Migrator.run(Handbeam.Repo, Handbeam.Paths.migrations_dir(), :up, all: true)
 :ok = HandbeamProbe.App.ensure_task_supervisor()
 :ok = HandbeamProbe.ShareIntake.Lock.ensure_started()
 :ok = HandbeamProbe.ShareCopy.ensure_started()

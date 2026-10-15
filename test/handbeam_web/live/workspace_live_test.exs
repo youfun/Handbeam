@@ -845,7 +845,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
 
       assert render(view) =~ "history item 250"
       refute render(view) =~ "history item 150"
-      assert has_element?(view, "#load-older-history")
+      assert has_element?(view, "#ai-messages[data-history-has-more='true']")
 
       send(
         view.pid,
@@ -858,16 +858,16 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
          )}
       )
 
-      view |> element("#load-older-history") |> render_click()
+      render_hook(view, "load_older_history", %{})
       rendered = render(view)
       assert rendered =~ "history item 51"
       assert rendered =~ "live after newest page"
 
-      view |> element("#load-older-history") |> render_click()
+      render_hook(view, "load_older_history", %{})
       rendered = render(view)
       assert rendered =~ "history item 1"
       assert rendered =~ "live after newest page"
-      refute has_element?(view, "#load-older-history")
+      assert has_element?(view, "#ai-messages[data-history-has-more='false']")
 
       send(
         view.pid,
@@ -1790,7 +1790,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       )
 
       assert has_element?(view, "#tool-tu_read_1")
-      assert has_element?(view, "#tool-tu_read_1", "Read")
+      assert has_element?(view, "#tool-tu_read_1", "read")
       assert has_element?(view, "#tool-tu_read_1", "runtime.exs")
     end
 
@@ -1828,7 +1828,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       send(view.pid, {:agent_event, agent_event(:tool_start, %{tool: "read", input: %{}})})
 
       assert has_element?(view, "#tool-event-read")
-      assert has_element?(view, "#tool-event-read", "Read")
+      assert has_element?(view, "#tool-event-read", "read")
     end
 
     test "tool_end event updates tool status to done with duration", %{conn: conn} do

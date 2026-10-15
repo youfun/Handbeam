@@ -173,7 +173,7 @@ defmodule HandbeamProbe.NativeTimelineTest do
           "tool_name" => "edit",
           "tool_status" => "done",
           "input" => %{"file_path" => "lib/a.ex"},
-          "diff_lines" => [%{"type" => "add"}]
+          "diff_lines" => [%{"type" => "add", "text" => "added"}]
         }
       ],
       stream: "",
@@ -185,7 +185,7 @@ defmodule HandbeamProbe.NativeTimelineTest do
     encoded = inspect(tree, limit: :infinity)
 
     assert Enum.any?(lines, fn column ->
-             column.props.padding_left == 12 and line_text(column) =~ "Read lib/a.ex"
+             column.props.padding_left == 12 and line_text(column) =~ "read lib/a.ex"
            end)
 
     assert Enum.any?(lines, fn column ->
@@ -215,7 +215,10 @@ defmodule HandbeamProbe.NativeTimelineTest do
           "tool_name" => "edit",
           "tool_status" => "done",
           "input" => %{"file_path" => "lib/a.ex"},
-          "diff_lines" => [%{"type" => "add"}, %{"type" => "del"}]
+          "diff_lines" => [
+            %{"type" => "add", "text" => "added"},
+            %{"type" => "del", "text" => "removed"}
+          ]
         },
         %{
           "id" => "b",
@@ -233,7 +236,7 @@ defmodule HandbeamProbe.NativeTimelineTest do
     lines = line_columns(tree)
 
     assert Enum.any?(lines, fn column ->
-             column.props.padding_left == 28 and line_text(column) =~ "Read lib/a.ex"
+             column.props.padding_left == 28 and line_text(column) =~ "read lib/a.ex"
            end)
 
     assert Enum.any?(lines, fn column ->
@@ -275,7 +278,8 @@ defmodule HandbeamProbe.NativeTimelineTest do
     encoded = inspect(tree, limit: :infinity)
     diff_texts = text_nodes(tree) |> Enum.filter(&(&1.props.text_size == 12))
 
-    assert encoded =~ "Edited /tmp/ws/lib/a.ex"
+    assert encoded =~ "Edited 1 file (+41 -40)"
+    assert encoded =~ "edit /tmp/ws/lib/a.ex"
     assert encoded =~ "+41"
     assert encoded =~ "−40"
     assert encoded =~ "toggle_file_diff"

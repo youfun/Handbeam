@@ -1516,9 +1516,9 @@ msgid "MCP Servers"
 msgstr "MCP Servers"
 
 #: lib/handbeam_web/live/settings/model_ai_panel.ex:227
-#, elixir-autogen, elixir-format, fuzzy
+#, elixir-autogen, elixir-format
 msgid "Memory model"
-msgstr "Memory scope"
+msgstr "Memory model"
 
 #: lib/handbeam_web/live/settings/model_ai_panel.ex:148
 #: lib/handbeam_web/live/settings/model_ai_panel.ex:275

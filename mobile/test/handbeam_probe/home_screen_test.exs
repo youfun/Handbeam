@@ -129,6 +129,8 @@ defmodule HandbeamProbe.HomeScreenTest do
     Enum.each(vars, fn {key, value} -> System.put_env(key, value) end)
 
     on_exit(fn ->
+      HandbeamProbe.RuntimeCleanup.stop!()
+
       if host,
         do: Application.put_env(:handbeam, :host, host),
         else: Application.delete_env(:handbeam, :host)
@@ -2506,8 +2508,10 @@ defmodule HandbeamProbe.HomeScreenTest do
   end
 
   test "host directory picker opens the in-app folder browser and lists off-screen", %{
-    view: view
+    view: view,
+    dir: dir
   } do
+    File.mkdir_p!(Path.join(dir, "picker-fixture"))
     Application.put_env(:handbeam_probe, :directory_picker_screen, self())
     on_exit(fn -> Application.delete_env(:handbeam_probe, :directory_picker_screen) end)
     # Same wiring as HandbeamProbe.App: the host key points at the probe picker.
@@ -2533,8 +2537,8 @@ defmodule HandbeamProbe.HomeScreenTest do
     view = settle(loading)
     assert %{browser: %{loading?: false}} = assigns(view).workspaces
     refute text(view) =~ gettext("Loading…")
-    assert "workspace" in Enum.map(assigns(view).workspaces.browser.entries, & &1.name)
-    assert text(view) =~ "workspace"
+    assert "picker-fixture" in Enum.map(assigns(view).workspaces.browser.entries, & &1.name)
+    assert text(view) =~ "picker-fixture"
   end
 
   test "directory picker is unavailable without a screen" do

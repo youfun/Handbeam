@@ -27,6 +27,7 @@ defmodule HandbeamProbe.NativeChatTest do
       Enum.each(Agent.get(owned, & &1), &stop_owned!/1)
       :ok = Agent.stop(owned)
       stop_keeper!(keeper)
+      HandbeamProbe.RuntimeCleanup.stop!()
 
       if host,
         do: Application.put_env(:handbeam, :host, host),

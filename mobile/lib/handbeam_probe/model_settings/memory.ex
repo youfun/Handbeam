@@ -1,7 +1,7 @@
 defmodule HandbeamProbe.ModelSettings.Memory do
   @moduledoc """
-  Observational memory fields of the Model/AI form (switch, observer/reflector
-  models, scope, privacy, recent-context limit). Saves through
+  Observational memory fields of the Model/AI form (switch, memory model,
+  reasoning, scope, privacy, recent-context limit). Saves through
   `HandbeamProbe.ModelSettings.Defaults`, so scope rules apply unchanged.
   """
 
@@ -13,12 +13,13 @@ defmodule HandbeamProbe.ModelSettings.Memory do
     Defaults.save_field(state, workspace, :om_enabled, not state.defaults.om_enabled)
   end
 
-  def set_observer(state, model, workspace) do
-    Defaults.save_field(state, workspace, :om_observer_model, Defaults.blank_to_nil(model))
+  def set_model(state, model, workspace) do
+    form = %{state.defaults | om_model: Defaults.blank_to_nil(model), om_reasoning: nil}
+    Defaults.save_form(state, workspace, form)
   end
 
-  def set_reflector(state, model, workspace) do
-    Defaults.save_field(state, workspace, :om_reflector_model, Defaults.blank_to_nil(model))
+  def set_reasoning(state, level, workspace) do
+    Defaults.save_field(state, workspace, :om_reasoning, Defaults.blank_to_nil(level))
   end
 
   def set_scope(state, scope, workspace) do

@@ -70,9 +70,7 @@ defmodule HandbeamProbe.ReviewCoordinatorTest do
       :ok = Agent.stop(owned)
       stop_keeper!(keeper)
 
-      for {index, _} <- Registry.lookup(ExFff.Registry, vars["HANDBEAM_WORKSPACE"]) do
-        GenServer.stop(index)
-      end
+      HandbeamProbe.RuntimeCleanup.stop!()
 
       if host,
         do: Application.put_env(:handbeam, :host, host),

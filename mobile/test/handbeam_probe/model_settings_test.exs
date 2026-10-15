@@ -208,28 +208,46 @@ defmodule HandbeamProbe.ModelSettingsTest do
     assert Handbeam.Settings.effective_model_ai(ws_a["path"]).reasoning == "high"
   end
 
+  test "saving global memory settings keeps workspace overrides out of the next global save", %{
+    ws_a: ws
+  } do
+    save_named(ws, "alpha", "one")
+    save_named(ws, "beta", "two")
+    :ok = Handbeam.Settings.save_workspace_model_ai(ws["path"], %{"om_model" => "beta/two"})
+
+    state = ModelSettings.action({:scope, :global}, ModelSettings.load(ws), ws)
+    state = ModelSettings.action({:om_model, "alpha/one"}, state, ws)
+    assert state.scope == :global
+    assert state.defaults.om_model == "alpha/one"
+
+    state = ModelSettings.action({:om_reasoning, "high"}, state, ws)
+    assert state.defaults.om_model == "alpha/one"
+    assert Handbeam.Settings.global_model_ai().om_model == "alpha/one"
+    assert Handbeam.Settings.effective_model_ai(ws["path"]).om_model == "beta/two"
+  end
+
   test "memory switch and details enter runtime opts without saving follow labels", %{ws_a: ws} do
     save_named(ws, "alpha", "one")
     state = ModelSettings.action({:scope, :global}, ModelSettings.load(ws), ws)
     state = ModelSettings.action(:om_enabled, state, ws)
     assert Handbeam.Settings.global_model_ai().om_enabled
 
-    state =
-      ModelSettings.action(
-        {:om_observer_model, ""},
-        ModelSettings.load(ws) |> Map.put(:scope, :global),
-        ws
-      )
+    state = ModelSettings.action({:om_model, "alpha/one"}, state, ws)
+    state = ModelSettings.action({:om_reasoning, "high"}, state, ws)
+    assert state.defaults.om_model == "alpha/one"
+    assert state.defaults.om_reasoning == "high"
+    assert Handbeam.Settings.global_model_ai().om_model == "alpha/one"
 
-    state = ModelSettings.action({:om_reflector_model, ""}, %{state | scope: :global}, ws)
+    state = ModelSettings.action({:om_model, ""}, state, ws)
+    assert state.defaults.om_reasoning == nil
     state = ModelSettings.change(state, :om_max_recent_context, "3")
-    state = ModelSettings.action(:save_memory_details, %{state | scope: :global}, ws)
+    state = ModelSettings.action(:save_memory_details, state, ws)
 
     settings = Handbeam.Settings.effective_model_ai(ws["path"])
     opts = ModelAISettings.to_runtime_opts(settings)
     assert opts[:om][:enabled] == true
-    assert opts[:om][:observer_model] == settings.default_model
-    assert opts[:om][:reflector_model] == nil
+    assert opts[:om][:model] == settings.default_model
+    assert opts[:om][:reasoning] == nil
     assert opts[:om][:max_recent_context] == 3
     refute inspect(opts) =~ "Follow"
   end

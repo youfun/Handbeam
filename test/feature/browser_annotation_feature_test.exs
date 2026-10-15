@@ -44,7 +44,7 @@ defmodule HandbeamWeb.Feature.BrowserAnnotationFeatureTest do
       |> click_button("#browser-go", "Go")
       |> click_button("#browser-design", "Design")
       |> click_button("#browser-surface", "")
-      |> assert_has("#browser-annotation-count", text: "1 marked")
+      |> assert_has("#browser-annotation-count", text: "1 command")
       |> click_button("#browser-send", "Send to composer")
       |> assert_has("#ai-input", text: "Browser annotations", timeout: 5_000)
       |> assert_has("#ai-input", text: "#cta", timeout: 5_000)

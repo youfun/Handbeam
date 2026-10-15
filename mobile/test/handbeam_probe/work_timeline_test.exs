@@ -119,7 +119,7 @@ defmodule HandbeamProbe.WorkTimelineTest do
 
     assert Enum.map(Enum.take(result, 5), & &1["work_group_id"]) == ["r", "r", "r", "r", "r"]
     assert Enum.map(Enum.take(result, 5), & &1["work_summary"]) == List.duplicate(summary, 5)
-    assert summary == "Explored 4 files, 1 search"
+    assert summary == "Edited 1 file, Explored 3 files, 1 search"
     assert Enum.at(result, 0)["work_group_first"]
     refute Enum.at(result, 4)["work_group_first"]
     assert Enum.at(result, 0)["work_indent"] == 2
@@ -171,7 +171,11 @@ defmodule HandbeamProbe.WorkTimelineTest do
 
     edit =
       tool("e", "edit")
-      |> Map.put("diff_lines", [%{type: :ins}, %{"type" => "ins"}, %{"type" => "del"}])
+      |> Map.put("diff_lines", [
+        %{type: :ins, text: "added one"},
+        %{"type" => "ins", "text" => "added two"},
+        %{"type" => "del", "text" => "removed"}
+      ])
 
     [edit] = WorkTimeline.project([edit])
     assert edit["work_edit"]
@@ -187,7 +191,7 @@ defmodule HandbeamProbe.WorkTimelineTest do
       ])
 
     assert read["work_indent"] == 1
-    assert read["work_verb"] == "Read"
+    assert read["work_verb"] == "read"
     assert read["work_target"] == "lib/a.ex L1-20"
     assert grep["work_verb"] == "Grep"
     assert grep["work_target"] == "lib \"def run\""
@@ -200,10 +204,10 @@ defmodule HandbeamProbe.WorkTimelineTest do
       ])
 
     assert nested_read["work_indent"] == 2
-    assert nested_read["work_verb"] == "Read"
+    assert nested_read["work_verb"] == "read"
     assert edit["work_indent"] == 1
     assert edit["work_edit"]
-    assert edit["work_verb"] == "Edited"
+    assert edit["work_verb"] == "edit"
     assert bash["work_indent"] == 1
     assert bash["work_verb"] == "$"
     assert bash["work_target"] == "mix test"

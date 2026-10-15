@@ -21,6 +21,8 @@ defmodule HandbeamProbe.NativeFoundationTest do
     Enum.each(vars, fn {key, value} -> System.put_env(key, value) end)
 
     on_exit(fn ->
+      HandbeamProbe.RuntimeCleanup.stop!()
+
       if host,
         do: Application.put_env(:handbeam, :host, host),
         else: Application.delete_env(:handbeam, :host)

@@ -82,6 +82,7 @@ defmodule HandbeamProbe.NativeApprovalTest do
 
     on_exit(fn ->
       Coordinator.cancel(id)
+      HandbeamProbe.RuntimeCleanup.stop!()
 
       if previous_host,
         do: Application.put_env(:handbeam, :host, previous_host),

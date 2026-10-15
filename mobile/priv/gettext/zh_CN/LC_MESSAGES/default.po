@@ -528,8 +528,8 @@ msgstr "跟随默认模型"
 #: lib/handbeam_probe/model_settings/render.ex:181
 #: lib/handbeam_probe/model_settings/render.ex:182
 #, elixir-autogen, elixir-format
-msgid "Follow observer"
-msgstr "跟随观察模型"
+msgid "Model default"
+msgstr "模型默认值"
 
 #: lib/handbeam_probe/model_settings/labels.ex:105
 #, elixir-autogen, elixir-format
@@ -592,8 +592,8 @@ msgstr "观察记忆"
 
 #: lib/handbeam_probe/model_settings/render.ex:173
 #, elixir-autogen, elixir-format
-msgid "Observer model"
-msgstr "观察模型"
+msgid "Memory model"
+msgstr "记忆模型"
 
 #: lib/handbeam_probe/model_settings/labels.ex:99
 #, elixir-autogen, elixir-format
@@ -642,8 +642,8 @@ msgstr "被引用的设置"
 
 #: lib/handbeam_probe/model_settings/render.ex:179
 #, elixir-autogen, elixir-format
-msgid "Reflector model"
-msgstr "整理模型"
+msgid "Memory reasoning"
+msgstr "记忆思考等级"
 
 #: lib/handbeam_probe/model_settings/render.ex:225
 #, elixir-autogen, elixir-format

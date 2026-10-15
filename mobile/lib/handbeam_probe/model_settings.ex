@@ -119,7 +119,12 @@ defmodule HandbeamProbe.ModelSettings do
 
   @doc "Reload from disk keeping the current scope and showing `notice`."
   def reload(state, workspace, notice) do
-    %{load(workspace, state) | scope: state.scope, notice: notice}
+    %{
+      load(workspace, state)
+      | scope: state.scope,
+        defaults: Defaults.form_for_scope(state.scope, workspace),
+        notice: notice
+    }
   end
 
   def change(state, field, value) do
@@ -199,8 +204,8 @@ defmodule HandbeamProbe.ModelSettings do
   def action(:inherit_all, state, ws), do: Defaults.inherit_all(state, ws)
 
   def action(:om_enabled, state, ws), do: Memory.toggle_enabled(state, ws)
-  def action({:om_observer_model, model}, state, ws), do: Memory.set_observer(state, model, ws)
-  def action({:om_reflector_model, model}, state, ws), do: Memory.set_reflector(state, model, ws)
+  def action({:om_model, model}, state, ws), do: Memory.set_model(state, model, ws)
+  def action({:om_reasoning, level}, state, ws), do: Memory.set_reasoning(state, level, ws)
   def action({:om_memory_scope, scope}, state, ws), do: Memory.set_scope(state, scope, ws)
   def action({:om_privacy_mode, mode}, state, ws), do: Memory.set_privacy(state, mode, ws)
   def action(:save_memory_details, state, ws), do: Memory.save_details(state, ws)

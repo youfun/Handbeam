@@ -274,7 +274,7 @@ defmodule HandbeamProbe.NativeSettingsVisualTest do
     memory = ModelSettings.render(enabled)
     refute flatten_text(memory) =~ " ⌄"
 
-    for id <- ~w(select-observer select-reflector select-memory-scope select-privacy) do
+    for id <- ~w(select-memory-model select-memory-reasoning select-memory-scope select-privacy) do
       select = find_type(memory, :settings_select, id)
       assert select
       assert Enum.any?(select.children, &(&1.props[:selected] == true))

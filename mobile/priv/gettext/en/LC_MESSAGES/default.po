@@ -531,7 +531,7 @@ msgstr ""
 #: lib/handbeam_probe/model_settings/render.ex:181
 #: lib/handbeam_probe/model_settings/render.ex:182
 #, elixir-autogen, elixir-format
-msgid "Follow observer"
+msgid "Model default"
 msgstr ""
 
 #: lib/handbeam_probe/model_settings/labels.ex:105
@@ -595,7 +595,7 @@ msgstr ""
 
 #: lib/handbeam_probe/model_settings/render.ex:173
 #, elixir-autogen, elixir-format
-msgid "Observer model"
+msgid "Memory model"
 msgstr ""
 
 #: lib/handbeam_probe/model_settings/labels.ex:99
@@ -645,7 +645,7 @@ msgstr ""
 
 #: lib/handbeam_probe/model_settings/render.ex:179
 #, elixir-autogen, elixir-format
-msgid "Reflector model"
+msgid "Memory reasoning"
 msgstr ""
 
 #: lib/handbeam_probe/model_settings/render.ex:225

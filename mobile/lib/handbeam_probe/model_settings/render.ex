@@ -170,17 +170,27 @@ defmodule HandbeamProbe.ModelSettings.Render do
     d = state.defaults
 
     [
-      text(gettext("Observer model"), text_size: 13, padding_top: 12),
+      text(gettext("Memory model"), text_size: 13, padding_top: 12),
       settings_select(
-        Labels.follow(d.om_observer_model, gettext("Follow default model")),
-        follow_options(state, :om_observer_model, gettext("Follow default model")),
-        "select-observer"
+        Labels.follow(d.om_model, gettext("Follow default model")),
+        follow_options(state, :om_model, gettext("Follow default model")),
+        "select-memory-model"
       ),
-      text(gettext("Reflector model"), text_size: 13, padding_top: 12),
+      text(gettext("Memory reasoning"), text_size: 13, padding_top: 12),
       settings_select(
-        Labels.follow(d.om_reflector_model, gettext("Follow observer")),
-        follow_options(state, :om_reflector_model, gettext("Follow observer")),
-        "select-reflector"
+        if(is_nil(d.om_reasoning),
+          do: gettext("Model default"),
+          else: Labels.reasoning(d.om_reasoning)
+        ),
+        [select_option(gettext("Model default"), {:om_reasoning, ""}, is_nil(d.om_reasoning))] ++
+          Enum.map(Reasoning.levels(), fn level ->
+            select_option(
+              Labels.reasoning(level),
+              {:om_reasoning, level},
+              d.om_reasoning == level
+            )
+          end),
+        "select-memory-reasoning"
       ),
       text(gettext("Memory scope"), text_size: 13, padding_top: 12),
       settings_select(
