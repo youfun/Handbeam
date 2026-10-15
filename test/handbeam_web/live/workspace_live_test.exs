@@ -54,6 +54,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
     {:ok, tracker} = Agent.start(fn -> %{views: MapSet.new(), homes: []} end)
     Process.put(:workspace_live_test_tracker, tracker)
     original_home = System.get_env("HOME")
+    original_workspace = System.get_env("HANDBEAM_WORKSPACE")
     original_workspaces_file = System.get_env("HANDBEAM_WORKSPACES_FILE")
 
     original_config =
@@ -73,6 +74,10 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       if original_home,
         do: System.put_env("HOME", original_home),
         else: System.delete_env("HOME")
+
+      if original_workspace,
+        do: System.put_env("HANDBEAM_WORKSPACE", original_workspace),
+        else: System.delete_env("HANDBEAM_WORKSPACE")
 
       if original_workspaces_file,
         do: System.put_env("HANDBEAM_WORKSPACES_FILE", original_workspaces_file),
@@ -193,6 +198,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
   defp isolate_conversation_home! do
     home_dir = Path.join(System.tmp_dir!(), "sigil_lv_home_#{System.unique_integer([:positive])}")
     System.put_env("HOME", home_dir)
+    System.delete_env("HANDBEAM_WORKSPACE")
     System.put_env("HANDBEAM_WORKSPACES_FILE", Path.join(home_dir, ".handbeam/workspaces.json"))
     Application.put_env(:handbeam, :host, %{data_dir: home_dir})
 
@@ -2898,6 +2904,26 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
   end
 
   describe "file preview" do
+    test "default workspace preview is isolated from inherited project overrides", %{conn: conn} do
+      System.put_env("HANDBEAM_WORKSPACE", Path.join(Handbeam.Home.path(), "inherited-project"))
+      isolate_conversation_home!()
+      {:ok, workspace} = Handbeam.WorkspaceStore.ensure_default!()
+      assert Handbeam.Workspace.root() == workspace["path"]
+
+      path = Path.join(Handbeam.Workspace.ensure_root!(), "isolated-preview.txt")
+      File.write!(path, "isolated preview fixture")
+      {:ok, view, _html} = live(conn, "/")
+      _ = create_default_conversation(view)
+
+      view
+      |> element(
+        "button[phx-click='select_workspace_file'][phx-value-path='isolated-preview.txt']"
+      )
+      |> render_click()
+
+      assert render(view) =~ "isolated preview fixture"
+    end
+
     test "render_file_preview returns content for valid file" do
       ws = Handbeam.Workspace.ensure_root!()
       tmp = Path.join(ws, "sigil_lv_test_preview.txt")
