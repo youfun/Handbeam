@@ -15,6 +15,26 @@ defmodule HandbeamProbe.AppStagingRootsTest do
     :ok
   end
 
+  test "device runtime configures ErrorTracker before migrations" do
+    keys = [:repo, :otp_app, :filter, :enabled]
+    previous = Map.new(keys, &{&1, Application.fetch_env(:error_tracker, &1)})
+
+    Enum.each(keys, &Application.delete_env(:error_tracker, &1))
+
+    on_exit(fn ->
+      Enum.each(previous, fn
+        {key, {:ok, value}} -> Application.put_env(:error_tracker, key, value)
+        {key, :error} -> Application.delete_env(:error_tracker, key)
+      end)
+    end)
+
+    assert :ok = HandbeamProbe.App.configure_error_tracker!()
+    assert Application.fetch_env!(:error_tracker, :repo) == Handbeam.Repo
+    assert Application.fetch_env!(:error_tracker, :otp_app) == :handbeam
+    assert Application.fetch_env!(:error_tracker, :filter) == Handbeam.ErrorTrackerFilter
+    assert Application.fetch_env!(:error_tracker, :enabled)
+  end
+
   test "host env does not invent staging roots" do
     Application.delete_env(:handbeam_probe, :staging_roots)
     assert :ok = HandbeamProbe.App.configure_staging_roots!(%{})

@@ -136,6 +136,7 @@ defmodule HandbeamProbe.App do
     Application.put_env(:mob, :host_url, "http://127.0.0.1:#{liveview_port}/")
 
     Application.put_env(:phoenix, :json_library, Handbeam.JSON)
+    configure_error_tracker!()
     Application.put_env(:handbeam, :ecto_repos, [Handbeam.Repo])
     Application.put_env(:handbeam, :extension_hot_reload, false)
     Application.put_env(:handbeam, :trust_project_code, false)
@@ -179,6 +180,14 @@ defmodule HandbeamProbe.App do
       watchers: [],
       live_reload: [patterns: []]
     )
+  end
+
+  @doc false
+  def configure_error_tracker! do
+    Application.put_env(:error_tracker, :repo, Handbeam.Repo)
+    Application.put_env(:error_tracker, :otp_app, :handbeam)
+    Application.put_env(:error_tracker, :filter, Handbeam.ErrorTrackerFilter)
+    Application.put_env(:error_tracker, :enabled, true)
   end
 
   # Mix config/*.exs is not loaded on device. Cleanup roots must be the
