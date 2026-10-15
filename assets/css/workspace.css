@@ -1521,6 +1521,44 @@ button.workspace-file-row:hover,
   }
 }
 
+.workspace-tree-context-menu {
+  position: fixed;
+  z-index: 80;
+  min-width: 12rem;
+  padding: 0.25rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  box-shadow: var(--shadow);
+}
+
+.workspace-tree-context-menu[hidden],
+.workspace-tree-context-menu button[hidden] {
+  display: none;
+}
+
+.workspace-tree-context-menu button {
+  display: block;
+  width: 100%;
+  min-height: 1.9rem;
+  padding: 0.35rem 0.55rem;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-xs);
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.workspace-tree-context-menu button:hover,
+.workspace-tree-context-menu button:focus-visible {
+  background: var(--color-surface-hover);
+  color: var(--color-text-primary);
+  outline: none;
+}
+
 .workspace-tree-chevron {
   width: 12px;
   flex: 0 0 12px;

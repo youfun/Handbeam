@@ -1,36 +1,47 @@
+export function copyText(text, ownerDocument = document) {
+  if (!text) return Promise.resolve(false);
+
+  const clipboard = ownerDocument.defaultView?.navigator?.clipboard;
+  if (clipboard && typeof clipboard.writeText === "function") {
+    return clipboard.writeText(text).then(() => true).catch(() => fallbackCopy(text, ownerDocument));
+  }
+
+  return Promise.resolve(fallbackCopy(text, ownerDocument));
+}
+
+function fallbackCopy(text, ownerDocument) {
+  const input = ownerDocument.createElement("textarea");
+  input.value = text;
+  input.setAttribute("readonly", "");
+  input.style.position = "fixed";
+  input.style.left = "-9999px";
+  ownerDocument.body.appendChild(input);
+  input.select();
+
+  try {
+    return typeof ownerDocument.execCommand === "function" && ownerDocument.execCommand("copy");
+  } finally {
+    input.remove();
+  }
+}
+
 export const CopyText = {
   mounted() {
-    this.el.addEventListener("click", () => {
+    this.onCopy = () => {
       const text = this.el.dataset.copy || "";
-      if (!text) return;
+      copyText(text, this.el.ownerDocument).then((copied) => {
+        if (!copied) return;
 
-      const done = () => {
         this.el.dataset.copied = "true";
         window.setTimeout(() => this.el.removeAttribute("data-copied"), 1500);
-      };
+      });
+    };
 
-      const fallback = () => {
-        const input = document.createElement("textarea");
-        input.value = text;
-        input.setAttribute("readonly", "");
-        input.style.position = "fixed";
-        input.style.left = "-9999px";
-        document.body.appendChild(input);
-        input.select();
+    this.el.addEventListener("click", this.onCopy);
+  },
 
-        try {
-          if (document.execCommand("copy")) done();
-        } finally {
-          input.remove();
-        }
-      };
-
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(text).then(done).catch(fallback);
-      } else {
-        fallback();
-      }
-    });
+  destroyed() {
+    this.el.removeEventListener("click", this.onCopy);
   },
 };
 

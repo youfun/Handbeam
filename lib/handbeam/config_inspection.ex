@@ -14,7 +14,9 @@ defmodule Handbeam.ConfigInspection do
   alias Handbeam.Tool.Registry
 
   @capabilities ~w(shell terminal beam_eval mcp dist packaged_mix_toolchain host_script)a
-  @backends ~w(browser_backend git_backend artifact_delivery_backend directory_picker)a
+  @backends ~w(
+    browser_backend git_backend artifact_delivery_backend directory_picker file_manager_backend
+  )a
 
   @doc "Inspect this VM. `workspace` selects settings, not another host or a running conversation."
   @spec report(keyword()) :: map()

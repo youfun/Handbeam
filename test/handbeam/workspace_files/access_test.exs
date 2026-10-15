@@ -77,6 +77,34 @@ defmodule Handbeam.WorkspaceFiles.AccessTest do
     assert {:error, :symlink} = WorkspaceFiles.resolve(root, "loop_a")
   end
 
+  test "resolve_entry allows a symlink leaf but still rejects symlink ancestors", %{root: root} do
+    outside =
+      Path.join(System.tmp_dir!(), "ws_reveal_#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(outside)
+    File.write!(Path.join(outside, "secret.txt"), "nope")
+    leaf = Path.join(root, "leaf-link")
+    ancestor = Path.join(root, "ancestor-link")
+    File.ln_s!(Path.join(outside, "missing.txt"), leaf)
+    File.ln_s!(outside, ancestor)
+    on_exit(fn -> File.rm_rf!(outside) end)
+
+    assert {:ok, ^leaf} = WorkspaceFiles.resolve_entry(root, "leaf-link")
+    assert {:error, :symlink} = WorkspaceFiles.resolve_entry(root, "ancestor-link/secret.txt")
+  end
+
+  test "resolve_entry accepts files and directories but rejects invalid or missing entries", %{
+    root: root
+  } do
+    assert {:ok, path} = WorkspaceFiles.resolve_entry(root, "note.txt")
+    assert path == Path.join(root, "note.txt")
+    assert {:ok, path} = WorkspaceFiles.resolve_entry(root, "sub")
+    assert path == Path.join(root, "sub")
+    assert {:error, :invalid_path} = WorkspaceFiles.resolve_entry(root, "")
+    assert {:error, :invalid_path} = WorkspaceFiles.resolve_entry(root, "../outside")
+    assert {:error, :enoent} = WorkspaceFiles.resolve_entry(root, "missing")
+  end
+
   test "rejects a directory when a file is required", %{root: root} do
     assert {:error, {:unexpected_type, :directory}} = WorkspaceFiles.resolve(root, "sub", :file)
     assert {:ok, _} = WorkspaceFiles.resolve(root, "sub", :directory)

@@ -1206,11 +1206,37 @@ msgstr "已连接，发现 %{count} 个工具。"
 msgid "Conversation info"
 msgstr "对话信息"
 
-#: lib/handbeam_web/live/workspace_live/workspace_components.ex:317
-#: lib/handbeam_web/live/workspace_live/workspace_components.ex:318
+#: lib/handbeam_web/live/workspace_live/workspace_components.ex:323
+#, elixir-autogen, elixir-format
+msgid "Copy absolute path"
+msgstr "复制绝对路径"
+
+#: lib/handbeam_web/live/workspace_live/workspace_components.ex:326
+#: lib/handbeam_web/live/workspace_live/workspace_components.ex:361
+#: lib/handbeam_web/live/workspace_live/workspace_components.ex:362
 #, elixir-autogen, elixir-format
 msgid "Copy relative path"
 msgstr "复制相对路径"
+
+#: lib/handbeam_web/live/workspace_live/workspace_components.ex:318
+#, elixir-autogen, elixir-format
+msgid "File actions"
+msgstr "文件操作"
+
+#: lib/handbeam_web/live/workspace_live/workspace_components.ex:342
+#, elixir-autogen, elixir-format
+msgid "Reveal in Finder"
+msgstr "在 Finder 中显示"
+
+#: lib/handbeam_web/live/workspace_live/workspace_components.ex:344
+#, elixir-autogen, elixir-format
+msgid "Reveal in file manager"
+msgstr "在文件管理器中显示"
+
+#: lib/handbeam_web/live/workspace_live/workspace_components.ex:343
+#, elixir-autogen, elixir-format
+msgid "Show in File Explorer"
+msgstr "在文件资源管理器中显示"
 
 #: lib/handbeam_web/live/workspace_live/composer.ex:183
 #, elixir-autogen, elixir-format

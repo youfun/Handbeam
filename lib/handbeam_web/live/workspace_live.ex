@@ -41,6 +41,7 @@ defmodule HandbeamWeb.WorkspaceLive do
   import WorkspaceComponents, only: [workspace_panel: 1]
   import OverlayComponents, only: [mobile_sheets: 1, approval_overlay: 1, status_bar: 1]
 
+  alias Handbeam.Platform.FileManager
   alias Handbeam.WorkspaceFiles
 
   @impl true
@@ -109,6 +110,10 @@ defmodule HandbeamWeb.WorkspaceLive do
       |> assign(:sandbox_workspace?, WorkspaceNavigation.sandbox_workspace?())
       |> subscribe_workspace_import()
       |> assign(:terminal_available?, Handbeam.Terminal.available?())
+      |> assign(
+        :file_manager,
+        if(FileManager.available?(), do: FileManager.kind(), else: nil)
+      )
       |> assign(:show_terminal, false)
       |> assign(:right_panel_view, :files)
       |> assign(:workspace_tree, %{})
@@ -637,6 +642,19 @@ defmodule HandbeamWeb.WorkspaceLive do
   @impl true
   def handle_event("toggle_workspace_directory", %{"path" => relative_path}, socket) do
     {:noreply, WorkspaceNavigation.toggle_directory(socket, relative_path)}
+  end
+
+  @impl true
+  def handle_event("reveal_in_file_manager", %{"path" => relative_path}, socket)
+      when is_binary(relative_path) do
+    with true <- FileManager.available?(),
+         root when is_binary(root) <- socket.assigns.workspace_root,
+         {:ok, path} <- WorkspaceFiles.resolve_entry(root, relative_path),
+         :ok <- FileManager.reveal(path) do
+      {:noreply, socket}
+    else
+      _ -> {:noreply, socket}
+    end
   end
 
   @impl true

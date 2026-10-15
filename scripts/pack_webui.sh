@@ -22,6 +22,12 @@ bash scripts/version.sh verify-web "$release_dir"
 cp scripts/start.sh "$release_dir/start.sh"
 chmod +x "$release_dir/start.sh" "$release_dir/bin/handbeam"
 
+case "$target" in
+  macos-*) printf '%s\n' macos > "$release_dir/.handbeam-host" ;;
+  linux-*) rm -f "$release_dir/.handbeam-host" ;;
+  *) echo "unsupported Web UI target: $target" >&2; exit 2 ;;
+esac
+
 archive="handbeam-web-${target}.tar.gz"
 rm -f "$archive" "${archive}.sha256"
 tar -C "$release_dir" -czf "$archive" .

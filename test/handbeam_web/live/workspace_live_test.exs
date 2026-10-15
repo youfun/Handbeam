@@ -40,6 +40,16 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
     def stream(messages, tools, config, _on_chunk), do: complete(messages, tools, config)
   end
 
+  defmodule FileManagerStub do
+    def available?, do: true
+    def kind, do: :finder
+
+    def reveal(path) do
+      send(Application.fetch_env!(:handbeam, :file_manager_test_owner), {:revealed, path})
+      :ok
+    end
+  end
+
   setup do
     {:ok, tracker} = Agent.start(fn -> %{views: MapSet.new(), homes: []} end)
     Process.put(:workspace_live_test_tracker, tracker)
@@ -2111,6 +2121,92 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
                )
       after
         File.rm(file_path)
+      end
+    end
+
+    test "workspace file menu always offers path copies but hides undeclared file managers", %{
+      conn: conn
+    } do
+      host = Application.get_env(:handbeam, :host, %{})
+      Handbeam.Host.put!(Map.delete(host, :file_manager_backend))
+      {:ok, view, _html} = live(conn, "/")
+
+      assert has_element?(
+               view,
+               "#workspace-tree-context-menu[role='menu'][hidden][phx-update='ignore']"
+             )
+
+      assert has_element?(
+               view,
+               "#workspace-tree-context-menu [data-workspace-tree-action='copy-absolute']",
+               "Copy absolute path"
+             )
+
+      assert has_element?(
+               view,
+               "#workspace-tree-context-menu [data-workspace-tree-action='copy-relative']",
+               "Copy relative path"
+             )
+
+      refute has_element?(
+               view,
+               "#workspace-tree-context-menu [data-workspace-tree-action='reveal-in-file-manager']"
+             )
+    end
+
+    test "declared macOS file manager reveals only validated workspace entries", %{conn: conn} do
+      ws = Handbeam.Workspace.ensure_root!()
+      directory = Path.join(ws, "reveal-dir")
+      file = Path.join(ws, "reveal-file.txt")
+      symlink = Path.join(ws, "reveal-link")
+      File.mkdir_p!(directory)
+      File.write!(file, "reveal")
+      File.ln_s!(Path.join(ws, "missing-target"), symlink)
+
+      host = Application.get_env(:handbeam, :host, %{})
+      Handbeam.Host.put!(Map.put(host, :file_manager_backend, FileManagerStub))
+      Application.put_env(:handbeam, :file_manager_test_owner, self())
+      on_exit(fn -> Application.delete_env(:handbeam, :file_manager_test_owner) end)
+
+      try do
+        {:ok, view, _html} = live(conn, "/")
+
+        assert has_element?(
+                 view,
+                 "#workspace-tree-context-menu [data-workspace-tree-action='reveal-in-file-manager'][hidden]",
+                 "Reveal in Finder"
+               )
+
+        assert has_element?(
+                 view,
+                 ".workspace-file-row.directory[data-workspace-relative-path='reveal-dir'][data-workspace-absolute-path='#{directory}']"
+               )
+
+        assert has_element?(
+                 view,
+                 ".workspace-file-entry[data-workspace-relative-path='reveal-file.txt'][data-workspace-absolute-path='#{file}']"
+               )
+
+        assert has_element?(
+                 view,
+                 ".workspace-file-row.symlink[data-workspace-relative-path='reveal-link'][data-workspace-absolute-path='#{symlink}']"
+               )
+
+        render_click(view, "reveal_in_file_manager", %{"path" => "reveal-file.txt"})
+        assert_receive {:revealed, ^file}
+
+        render_click(view, "reveal_in_file_manager", %{"path" => "reveal-dir"})
+        assert_receive {:revealed, ^directory}
+
+        render_click(view, "reveal_in_file_manager", %{"path" => "reveal-link"})
+        assert_receive {:revealed, ^symlink}
+
+        render_click(view, "reveal_in_file_manager", %{"path" => "../outside"})
+        refute_receive {:revealed, _}
+      after
+        File.rm_rf!(directory)
+        File.rm(file)
+        File.rm(symlink)
       end
     end
 

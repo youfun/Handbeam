@@ -24,6 +24,7 @@ defmodule Handbeam.HostTest do
     assert Host.terminal?()
     assert Host.browser_backend() == :cli
     assert Host.artifact_delivery_backend() == nil
+    assert Host.file_manager_backend() == nil
     refute Host.host_script?()
     refute Host.beam_eval?()
     refute Host.configured?()
@@ -104,6 +105,25 @@ defmodule Handbeam.HostTest do
     refute Map.has_key?(Application.get_env(:handbeam, :host), :system_intents)
     refute Map.has_key?(Application.get_env(:handbeam, :host), :webview_browser)
     refute Map.has_key?(Application.get_env(:handbeam, :host), :host_script_backend)
+  end
+
+  describe "file_manager_backend/0" do
+    test "is absent unless the host explicitly declares it" do
+      Application.delete_env(:handbeam, :host)
+      assert Host.file_manager_backend() == nil
+
+      Host.put!(%{shell: true})
+      assert Host.file_manager_backend() == nil
+    end
+
+    test "returns a module or callback without inferring it from another capability" do
+      callback = fn path -> {:ok, path} end
+      Host.put!(%{file_manager_backend: callback})
+      assert Host.file_manager_backend() == callback
+
+      Host.put!(%{file_manager_backend: Handbeam.Platform.FileManager.MacOS})
+      assert Host.file_manager_backend() == Handbeam.Platform.FileManager.MacOS
+    end
   end
 
   describe "request_directory_picker/1" do

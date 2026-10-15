@@ -25,6 +25,8 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceComponents do
           style={"--tree-depth: #{@depth}"}
           phx-click="toggle_workspace_directory"
           phx-value-path={entry.relative_path}
+          data-workspace-relative-path={entry.relative_path}
+          data-workspace-absolute-path={Path.join(@workspace_root, entry.relative_path)}
           aria-expanded={to_string(MapSet.member?(@expanded, entry.relative_path))}
           title={entry.relative_path}
         >
@@ -60,7 +62,12 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceComponents do
           parent={entry.relative_path}
           depth={@depth + 1}
         />
-        <div :if={entry.kind == :file} class="workspace-file-entry">
+        <div
+          :if={entry.kind == :file}
+          class="workspace-file-entry"
+          data-workspace-relative-path={entry.relative_path}
+          data-workspace-absolute-path={Path.join(@workspace_root, entry.relative_path)}
+        >
           <button
             type="button"
             class={[
@@ -85,6 +92,8 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceComponents do
           :if={entry.kind == :symlink}
           class="workspace-file-row symlink"
           style={"--tree-depth: #{@depth}"}
+          data-workspace-relative-path={entry.relative_path}
+          data-workspace-absolute-path={Path.join(@workspace_root, entry.relative_path)}
           title={gettext("Symlinks are not opened from the workspace tree")}
         >
           <span class="workspace-tree-chevron" aria-hidden="true"></span>
@@ -102,6 +111,7 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceComponents do
   attr :expanded_file_changes, :any, required: true
   attr :expanded_workspace_dirs, :any, required: true
   attr :file_preview_error, :any, required: true
+  attr :file_manager, :atom, default: nil
   attr :mobile_right_panel_open, :any, required: true
   attr :revert_confirm_change_id, :any, required: true
   attr :revert_message, :any, required: true
@@ -300,9 +310,38 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceComponents do
           workspace_path={@workspace_root}
         />
       </div>
+
+      <div
+        id="workspace-tree-context-menu"
+        class="workspace-tree-context-menu"
+        role="menu"
+        aria-label={gettext("File actions")}
+        phx-update="ignore"
+        hidden
+      >
+        <button type="button" role="menuitem" data-workspace-tree-action="copy-absolute">
+          {gettext("Copy absolute path")}
+        </button>
+        <button type="button" role="menuitem" data-workspace-tree-action="copy-relative">
+          {gettext("Copy relative path")}
+        </button>
+        <button
+          :if={@file_manager}
+          type="button"
+          role="menuitem"
+          data-workspace-tree-action="reveal-in-file-manager"
+          hidden
+        >
+          {file_manager_reveal_label(@file_manager)}
+        </button>
+      </div>
     </div>
     """
   end
+
+  defp file_manager_reveal_label(:finder), do: gettext("Reveal in Finder")
+  defp file_manager_reveal_label(:explorer), do: gettext("Show in File Explorer")
+  defp file_manager_reveal_label(_kind), do: gettext("Reveal in file manager")
 
   attr :path, :string, required: true
 

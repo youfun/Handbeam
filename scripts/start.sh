@@ -12,6 +12,15 @@ export PHX_HOST="${PHX_HOST:-localhost}"
 export DATABASE_PATH="${DATABASE_PATH:-$HOME/.handbeam/handbeam.db}"
 export SECRET_KEY_BASE="${SECRET_KEY_BASE:-$(openssl rand -base64 48 2>/dev/null || echo 'dev-fallback')}"
 
+if [[ -f .handbeam-host ]]; then
+  IFS= read -r packaged_host < .handbeam-host || true
+  case "$packaged_host" in
+    macos) export HANDBEAM_FILE_MANAGER="${HANDBEAM_FILE_MANAGER:-macos}" ;;
+    "") ;;
+    *) echo "Unsupported packaged host declaration: $packaged_host" >&2; exit 2 ;;
+  esac
+fi
+
 mkdir -p "$HOME/.handbeam"
 
 # 获取本机 LAN IP（Linux 用 ip，macOS 回退 ifconfig）

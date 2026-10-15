@@ -1207,11 +1207,37 @@ msgstr "Connected. %{count} tools found."
 msgid "Conversation info"
 msgstr "Conversation info"
 
-#: lib/handbeam_web/live/workspace_live/workspace_components.ex:317
-#: lib/handbeam_web/live/workspace_live/workspace_components.ex:318
+#: lib/handbeam_web/live/workspace_live/workspace_components.ex:323
+#, elixir-autogen, elixir-format
+msgid "Copy absolute path"
+msgstr "Copy absolute path"
+
+#: lib/handbeam_web/live/workspace_live/workspace_components.ex:326
+#: lib/handbeam_web/live/workspace_live/workspace_components.ex:361
+#: lib/handbeam_web/live/workspace_live/workspace_components.ex:362
 #, elixir-autogen, elixir-format
 msgid "Copy relative path"
 msgstr "Copy relative path"
+
+#: lib/handbeam_web/live/workspace_live/workspace_components.ex:318
+#, elixir-autogen, elixir-format
+msgid "File actions"
+msgstr "File actions"
+
+#: lib/handbeam_web/live/workspace_live/workspace_components.ex:342
+#, elixir-autogen, elixir-format
+msgid "Reveal in Finder"
+msgstr "Reveal in Finder"
+
+#: lib/handbeam_web/live/workspace_live/workspace_components.ex:344
+#, elixir-autogen, elixir-format
+msgid "Reveal in file manager"
+msgstr "Reveal in file manager"
+
+#: lib/handbeam_web/live/workspace_live/workspace_components.ex:343
+#, elixir-autogen, elixir-format
+msgid "Show in File Explorer"
+msgstr "Show in File Explorer"
 
 #: lib/handbeam_web/live/workspace_live/composer.ex:183
 #, elixir-autogen, elixir-format

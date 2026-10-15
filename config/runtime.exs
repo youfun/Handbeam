@@ -34,6 +34,28 @@ if config_env() != :test and match?({:unix, :darwin}, :os.type()) and
   config :handbeam, :host, host
 end
 
+# Desktop launchers declare the file-manager integration explicitly. Do not
+# infer it from :os.type(); Darwin also identifies non-desktop hosts.
+file_manager_backend =
+  if config_env() == :test do
+    nil
+  else
+    case System.get_env("HANDBEAM_FILE_MANAGER") do
+      value when value in [nil, ""] -> nil
+      "macos" -> Handbeam.Platform.FileManager.MacOS
+      value -> raise "HANDBEAM_FILE_MANAGER has unsupported backend: #{inspect(value)}"
+    end
+  end
+
+if file_manager_backend do
+  host =
+    :handbeam
+    |> Application.get_env(:host, %{})
+    |> Map.put_new(:file_manager_backend, file_manager_backend)
+
+  config :handbeam, :host, host
+end
+
 # config/runtime.exs is executed for all environments, including
 # during releases. It is executed after compilation and before the
 # system starts, so it is typically used to load production configuration

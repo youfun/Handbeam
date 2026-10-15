@@ -22,6 +22,8 @@ defmodule Handbeam.Host do
   * `artifact_delivery_backend` — module or `fun/2` that presents system UI for
     `open_url`, `open_file`, and `share_file`, and runs `device_calendar` /
     `device_alarm`.
+  * `file_manager_backend` — module or `fun/1` that reveals a validated workspace
+    entry in the desktop file manager. Hosts must declare it explicitly.
   * `directory_picker` — `fun/1` or a module exporting
     `request_directory_picker/1`. Desktop never sets it.
 
@@ -51,6 +53,7 @@ defmodule Handbeam.Host do
     :browser_backend,
     :computer_use_backend,
     :artifact_delivery_backend,
+    :file_manager_backend,
     :host_script,
     :directory_picker,
     :script_http,
@@ -118,6 +121,15 @@ defmodule Handbeam.Host do
     case declared(:artifact_delivery_backend, nil) do
       backend when is_atom(backend) and not is_nil(backend) -> backend
       backend when is_function(backend, 2) -> backend
+      _ -> nil
+    end
+  end
+
+  @spec file_manager_backend() :: module() | (String.t() -> term()) | nil
+  def file_manager_backend do
+    case declared(:file_manager_backend, nil) do
+      backend when is_atom(backend) and not is_nil(backend) -> backend
+      backend when is_function(backend, 1) -> backend
       _ -> nil
     end
   end

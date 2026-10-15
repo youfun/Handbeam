@@ -2,8 +2,10 @@ defmodule Handbeam.WorkspaceFiles do
   @moduledoc """
   Workspace path resolve, name routing, and single-directory listing.
 
-  Rejects every symlink on the workspace root and each relative component.
-  Root ancestors are not walked. Bytes are not read here; Android opens one fd.
+  `resolve/3` rejects every symlink when resolving content for reading.
+  `resolve_entry/2` permits a symlink only as the final tree entry and never
+  follows it. Root ancestors are not walked. Bytes are not read here; Android
+  opens one fd.
 
   `File.ls/1` materializes the whole directory before hide/sort/cap.
   """
@@ -32,6 +34,19 @@ defmodule Handbeam.WorkspaceFiles do
   end
 
   def resolve(_, _, _), do: {:error, :invalid_path}
+
+  @doc "Resolve one visible tree entry without following a symlink leaf."
+  @spec resolve_entry(String.t(), String.t()) :: {:ok, String.t()} | {:error, term()}
+  def resolve_entry(workspace_root, relative_path)
+      when is_binary(workspace_root) and is_binary(relative_path) do
+    with {:ok, root} <- normalize_root(workspace_root),
+         {:ok, names} <- relative_names(relative_path),
+         :ok <- require_entry(names) do
+      walk_entry(root, names, root)
+    end
+  end
+
+  def resolve_entry(_, _), do: {:error, :invalid_path}
 
   @spec kind_from_name(String.t() | nil) :: {:ok, :text | :image | :external, String.t()}
   def kind_from_name(display_name) do
@@ -110,6 +125,35 @@ defmodule Handbeam.WorkspaceFiles do
         end
     end
   end
+
+  defp walk_entry(current, [name], _root) do
+    path = Path.join(current, name)
+
+    case File.lstat(path) do
+      {:ok, %File.Stat{type: type}} when type in [:regular, :directory, :symlink] ->
+        {:ok, path}
+
+      {:ok, %File.Stat{type: type}} ->
+        {:error, {:unsupported_type, type}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
+  defp walk_entry(current, [name | rest], root) do
+    next = Path.join(current, name)
+
+    case File.lstat(next) do
+      {:ok, %File.Stat{type: :directory}} -> walk_entry(next, rest, root)
+      {:ok, %File.Stat{type: :symlink}} -> {:error, :symlink}
+      {:ok, %File.Stat{type: _type}} -> {:error, :not_directory}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp require_entry([]), do: {:error, :invalid_path}
+  defp require_entry(_names), do: :ok
 
   defp walk(current, [], kind, root), do: finish(current, kind, root)
 

@@ -144,6 +144,7 @@ public enum BackendPlanner {
             "SECRET_KEY_BASE": secret,
             "RELEASE_TMP": runtimeDir,
             "HANDBEAM_RUNTIME_DIR": runtimeDir,
+            "HANDBEAM_FILE_MANAGER": "macos",
             "RELEASE_DISTRIBUTION": "none",
             "LANG": inherited["LANG"] ?? "en_US.UTF-8",
             "LC_ALL": inherited["LC_ALL"] ?? "en_US.UTF-8",

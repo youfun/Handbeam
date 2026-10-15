@@ -116,6 +116,7 @@ final class DesktopConfigTests: XCTestCase {
         XCTAssertEqual(launch.environment["PORT"], "5008")
         XCTAssertEqual(launch.environment["PHX_SERVER"], "true")
         XCTAssertEqual(launch.environment["DATABASE_PATH"], "/Users/me/.handbeam/handbeam.db")
+        XCTAssertEqual(launch.environment["HANDBEAM_FILE_MANAGER"], "macos")
         XCTAssertEqual(launch.environment["RELEASE_DISTRIBUTION"], "none")
         XCTAssertEqual(launch.environment["PATH"], "/usr/bin")
         XCTAssertEqual(launch.pageURL.absoluteString, "http://127.0.0.1:5008/")

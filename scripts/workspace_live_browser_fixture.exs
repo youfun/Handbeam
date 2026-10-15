@@ -76,8 +76,12 @@ defmodule Handbeam.Script.WorkspaceLiveHoldPlug do
 
   defp await_file(release, stop) do
     cond do
-      File.exists?(release) -> :ok
-      File.exists?(stop) -> :ok
+      File.exists?(release) ->
+        :ok
+
+      File.exists?(stop) ->
+        :ok
+
       true ->
         Process.sleep(200)
         await_file(release, stop)
@@ -133,7 +137,15 @@ File.write!(
   })
 )
 
-Handbeam.Host.put!(%{data_dir: home, shell: false, mcp: false, browser_backend: nil})
+host = %{data_dir: home, shell: false, mcp: false, browser_backend: nil}
+
+host =
+  case Handbeam.Host.file_manager_backend() do
+    nil -> host
+    backend -> Map.put(host, :file_manager_backend, backend)
+  end
+
+Handbeam.Host.put!(host)
 
 endpoint_cfg =
   Application.get_env(:handbeam, HandbeamWeb.Endpoint)
@@ -151,6 +163,7 @@ Application.put_env(:handbeam, HandbeamWeb.Endpoint, endpoint_cfg)
 repo_cfg =
   Application.get_env(:handbeam, Handbeam.Repo)
   |> Keyword.merge(
+    database: Path.join(home, "fixture.db"),
     pool_size: 1,
     busy_timeout: 15_000,
     journal_mode: :wal,
