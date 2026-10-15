@@ -389,14 +389,26 @@ defmodule HandbeamWeb.SettingsLive do
   end
 
   defp update_form_field(form, "default_model", value) do
-    struct!(form, default_model: blank_to_nil(value))
+    updates = [default_model: blank_to_nil(value)]
+
+    updates =
+      if is_nil(form.om_model), do: Keyword.put(updates, :om_reasoning, nil), else: updates
+
+    struct!(form, updates)
   end
 
   defp update_form_field(form, "advisor_model", value) do
     case blank_to_nil(value) do
-      nil -> struct!(form, advisor_mode: :inherit, advisor_model: nil)
-      model -> struct!(form, advisor_mode: :custom, advisor_model: model)
+      nil ->
+        struct!(form, advisor_mode: :inherit, advisor_model: nil, advisor_reasoning: nil)
+
+      model ->
+        struct!(form, advisor_mode: :custom, advisor_model: model, advisor_reasoning: nil)
     end
+  end
+
+  defp update_form_field(form, "advisor_reasoning", value) do
+    struct!(form, advisor_reasoning: blank_to_nil(value))
   end
 
   defp update_form_field(form, "reasoning", value) do
@@ -407,12 +419,12 @@ defmodule HandbeamWeb.SettingsLive do
     struct!(form, om_enabled: value in [true, "true", "on"])
   end
 
-  defp update_form_field(form, "om_observer_model", value) do
-    struct!(form, om_observer_model: blank_to_nil(value))
+  defp update_form_field(form, "om_model", value) do
+    struct!(form, om_model: blank_to_nil(value), om_reasoning: nil)
   end
 
-  defp update_form_field(form, "om_reflector_model", value) do
-    struct!(form, om_reflector_model: blank_to_nil(value))
+  defp update_form_field(form, "om_reasoning", value) do
+    struct!(form, om_reasoning: blank_to_nil(value))
   end
 
   defp update_form_field(form, "om_memory_scope", value) do
@@ -603,9 +615,6 @@ defmodule HandbeamWeb.SettingsLive do
 
   defp forget_unknown_memory_models(form) do
     known? = &ModelConfig.model_in_catalog?/1
-
-    form
-    |> ModelAISettings.drop_unknown_memory_model(:om_observer_model, known?)
-    |> ModelAISettings.drop_unknown_memory_model(:om_reflector_model, known?)
+    ModelAISettings.drop_unknown_memory_model(form, known?)
   end
 end

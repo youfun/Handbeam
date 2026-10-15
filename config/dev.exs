@@ -96,7 +96,7 @@ config :phoenix_live_view,
   # Enable helpful, but potentially expensive runtime checks
   enable_expensive_runtime_checks: true
 
-# Observational Memory — automatic context capture + future LLM Observer/Reflector
+# Observational Memory — automatic context capture + future LLM processing
 # Set enabled: true to activate (P0: zero-LLM middleware observations)
 config :handbeam, :observational_memory,
   enabled: false,
@@ -106,11 +106,13 @@ config :handbeam, :observational_memory,
     max_recent_context: 5
   ],
 
+  # One model and reasoning level handle both observation and reflection.
+  model: "claude-haiku-4-5-20251001",
+  provider: nil,
+  reasoning: nil,
+
   # P1 — LLM Observer (extracts structured observations from raw events)
-  # Uses a cheap/fast model to minimise cost
   observer: [
-    model: "claude-haiku-4-5-20251001",
-    provider: nil,
     model_settings: [
       temperature: 0.3,
       max_output_tokens: 4000
@@ -122,8 +124,6 @@ config :handbeam, :observational_memory,
 
   # P2 — LLM Reflector (compresses observations → long-term engrams)
   reflector: [
-    model: "claude-haiku-4-5-20251001",
-    provider: nil,
     model_settings: [
       temperature: 0,
       max_output_tokens: 8000

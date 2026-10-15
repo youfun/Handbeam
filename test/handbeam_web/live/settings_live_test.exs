@@ -130,6 +130,40 @@ defmodule HandbeamWeb.SettingsLiveTest do
       # Form with model selection and reasoning is rendered
       assert html =~ ~s(name="default_model")
       assert html =~ ~s(name="reasoning")
+      assert html =~ ~s(name="advisor_model")
+      assert html =~ ~s(name="advisor_reasoning")
+    end
+
+    test "configures advisor and one shared memory model with supported think levels", %{
+      conn: conn
+    } do
+      {:ok, view, _html} = live(conn, "/settings")
+
+      render_change(view, "update_field", %{"advisor_model" => "stepfun/step-router-v1"})
+
+      assert has_element?(
+               view,
+               ~s(select[name="advisor_reasoning"] option[value="high"])
+             )
+
+      render_change(view, "update_field", %{"advisor_reasoning" => "high"})
+      render_change(view, "update_field", %{"om_enabled" => "true"})
+      render_change(view, "update_field", %{"om_model" => "stepfun/step-router-v1"})
+
+      assert has_element?(view, ~s(select[name="om_model"]))
+      assert has_element?(view, ~s(select[name="om_reasoning"] option[value="low"]))
+      refute has_element?(view, ~s(select[name="om_observer_model"]))
+      refute has_element?(view, ~s(select[name="om_reflector_model"]))
+
+      render_change(view, "update_field", %{"om_reasoning" => "low"})
+      view |> element(~s(button[phx-click="save_settings"])) |> render_click()
+
+      saved = Handbeam.Settings.global_model_ai()
+      assert saved.advisor_model == "stepfun/step-router-v1"
+      assert saved.advisor_reasoning == "high"
+      assert saved.om_enabled
+      assert saved.om_model == "stepfun/step-router-v1"
+      assert saved.om_reasoning == "low"
     end
 
     test "first visit seeds default models into the Model / AI picker", %{conn: conn} do

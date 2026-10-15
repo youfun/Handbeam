@@ -792,10 +792,13 @@ defmodule Handbeam.Agent.Delegation do
     ]
   end
 
-  defp child_prompt(%Profile{name: "advisor", source: :builtin}, input),
-    do: Handbeam.Utils.SafeMap.get_any(input, "prompt", :prompt)
+  defp child_prompt(%Profile{name: "advisor", source: :builtin}, input) do
+    Handbeam.Utils.SafeMap.get_any(input, "prompt", :prompt) || task_prompt(input)
+  end
 
-  defp child_prompt(_profile, input) do
+  defp child_prompt(_profile, input), do: task_prompt(input)
+
+  defp task_prompt(input) do
     task = Handbeam.Utils.SafeMap.get_any(input, "task", :task) || ""
     criteria = Handbeam.Utils.SafeMap.get_any(input, "criteria", :criteria) || ""
     task <> "\n\nCompletion criteria:\n" <> criteria

@@ -50,8 +50,11 @@ defmodule Handbeam.Settings.ModelAIOverride do
     |> ModelAISettings.to_json_map()
     |> Map.update("advisor", nil, fn advisor ->
       case advisor do
-        %{"model" => model} when is_binary(model) and model != "" -> %{"model" => model}
-        _ -> nil
+        %{"model" => model} = value when is_binary(model) and model != "" ->
+          Map.take(value, ["model", "reasoning"])
+
+        _ ->
+          nil
       end
     end)
     |> drop_nil_advisor()
@@ -100,10 +103,14 @@ defmodule Handbeam.Settings.ModelAIOverride do
         %{}
 
       :disabled ->
-        %{advisor_mode: :disabled, advisor_model: nil}
+        %{advisor_mode: :disabled, advisor_model: nil, advisor_reasoning: nil}
 
       :custom ->
-        %{advisor_mode: :custom, advisor_model: form.advisor_model}
+        %{
+          advisor_mode: :custom,
+          advisor_model: form.advisor_model,
+          advisor_reasoning: form.advisor_reasoning
+        }
     end
   end
 

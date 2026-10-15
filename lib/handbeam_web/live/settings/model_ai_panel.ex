@@ -8,6 +8,8 @@ defmodule HandbeamWeb.Live.Settings.ModelAIPanel do
 
   use HandbeamWeb, :html
 
+  alias Handbeam.Agent.Reasoning
+
   attr(:form, :map, required: true)
   attr(:available_models, :list, required: true)
   attr(:errors, :map, required: true)
@@ -119,6 +121,28 @@ defmodule HandbeamWeb.Live.Settings.ModelAIPanel do
               </select>
             </div>
           </div>
+          <div class="settings-field-row">
+            <div class="settings-field-copy">
+              <div class="settings-field-title">{gettext("Think level")}</div>
+              <div class="settings-field-desc">
+                {gettext("Reasoning level used by the advisor model.")}
+              </div>
+            </div>
+            <div class="settings-field-control">
+              <select name="advisor_reasoning" phx-change="update_field" class="settings-input">
+                <option value="" selected={is_nil(@form.advisor_reasoning)}>
+                  {gettext("Model default")}
+                </option>
+                <option
+                  :for={level <- reasoning_levels(@available_models, @form.advisor_model)}
+                  value={level}
+                  selected={@form.advisor_reasoning == level}
+                >
+                  {reasoning_label(level)}
+                </option>
+              </select>
+            </div>
+          </div>
           <div :if={@scope != :global} class="settings-field-row">
             <div class="settings-field-copy">
               <div class="settings-field-title">{gettext("Workspace advisor")}</div>
@@ -173,27 +197,27 @@ defmodule HandbeamWeb.Live.Settings.ModelAIPanel do
 
           <div :if={@form.om_enabled} class="settings-field-row">
             <div class="settings-field-copy">
-              <div class="settings-field-title">{gettext("Observer model")}</div>
+              <div class="settings-field-title">{gettext("Memory model")}</div>
               <div class="settings-field-desc">
-                {gettext("Model that watches the conversation.")}
+                {gettext("Used for both observing conversations and consolidating memories.")}
               </div>
             </div>
             <div class="settings-field-control">
               <select
-                name="om_observer_model"
+                name="om_model"
                 phx-change="update_field"
                 class="settings-input"
               >
                 <option
                   value=""
-                  selected={is_nil(@form.om_observer_model)}
+                  selected={is_nil(@form.om_model)}
                 >
                   {gettext("Same as default model")}
                 </option>
                 <option
                   :for={m <- @available_models}
                   value={model_value(m)}
-                  selected={@form.om_observer_model == model_value(m)}
+                  selected={@form.om_model == model_value(m)}
                 >
                   {model_display(m)}
                 </option>
@@ -202,26 +226,29 @@ defmodule HandbeamWeb.Live.Settings.ModelAIPanel do
           </div>
           <div :if={@form.om_enabled} class="settings-field-row">
             <div class="settings-field-copy">
-              <div class="settings-field-title">{gettext("Reflector model")}</div>
+              <div class="settings-field-title">{gettext("Think level")}</div>
               <div class="settings-field-desc">
-                {gettext("Model that consolidates observed memories.")}
+                {gettext("Reasoning level used for memory processing.")}
               </div>
             </div>
             <div class="settings-field-control">
               <select
-                name="om_reflector_model"
+                name="om_reasoning"
                 phx-change="update_field"
                 class="settings-input"
               >
-                <option value="" selected={is_nil(@form.om_reflector_model)}>
-                  {gettext("Same as observer")}
+                <option value="" selected={is_nil(@form.om_reasoning)}>
+                  {gettext("Model default")}
                 </option>
                 <option
-                  :for={m <- @available_models}
-                  value={model_value(m)}
-                  selected={@form.om_reflector_model == model_value(m)}
+                  :for={
+                    level <-
+                      reasoning_levels(@available_models, @form.om_model || @form.default_model)
+                  }
+                  value={level}
+                  selected={@form.om_reasoning == level}
                 >
-                  {model_display(m)}
+                  {reasoning_label(level)}
                 </option>
               </select>
             </div>
@@ -340,4 +367,14 @@ defmodule HandbeamWeb.Live.Settings.ModelAIPanel do
 
   defp model_display(str) when is_binary(str), do: str
   defp model_display(_), do: ""
+
+  defp reasoning_levels(models, model_id) do
+    case Enum.find(models, &(model_value(&1) == model_id)) do
+      nil -> []
+      model -> Reasoning.supported_levels(model)
+    end
+  end
+
+  defp reasoning_label("xhigh"), do: "X-High"
+  defp reasoning_label(level), do: String.capitalize(level)
 end

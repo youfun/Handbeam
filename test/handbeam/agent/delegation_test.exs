@@ -3,6 +3,7 @@ defmodule Handbeam.Agent.DelegationTest do
 
   alias Handbeam.Agent.{Config, Coordinator, Delegation, Message, State}
   alias Handbeam.Agent.Delegation.Policy
+  alias Handbeam.Agent.Subagent.Profile
   alias Handbeam.Agent.Tool.Executor
   alias Handbeam.ConversationStore
 
@@ -130,6 +131,29 @@ defmodule Handbeam.Agent.DelegationTest do
     assert Policy.budget(10_000) == {:ok, 5_000}
     assert Policy.budget(120_000) == {:ok, 45_000}
     assert {:error, _} = Policy.budget(3_999)
+  end
+
+  test "manual advisor tasks use task and criteria as the child prompt", %{context: context} do
+    task =
+      Task.async(fn ->
+        Handbeam.Tool.Builtin.Task.execute(
+          %{
+            "task" => "Review the proposed approach",
+            "criteria" => "Identify the highest-risk assumption",
+            "subagent_type" => "advisor",
+            "background" => false
+          },
+          context
+        )
+      end)
+
+    assert_receive {:provider, :child, child, messages, _, _}, 2_000
+    prompt = Enum.map_join(messages, "\n", &Message.text/1)
+    assert prompt =~ "Review the proposed approach"
+    assert prompt =~ "Identify the highest-risk assumption"
+
+    send(child, :finish)
+    assert {:ok, _, _} = Task.await(task, 5_000)
   end
 
   test "independent context, raw usage once, no visible child or notification", %{
@@ -435,6 +459,79 @@ defmodule Handbeam.Agent.DelegationTest do
       Policy.child_opts(%{context | delegation_config: delegation_config}, 30_000)
 
     assert Config.from_opts(opts).max_tokens == 272_000
+  end
+
+  test "advisor child uses its configured reasoning level", %{context: context} do
+    models_path = Path.join([context.working_directory, ".handbeam", "models.json"])
+    File.mkdir_p!(Path.dirname(models_path))
+
+    previous_models_path = System.get_env("HANDBEAM_MODELS_FILE")
+    System.put_env("HANDBEAM_MODELS_FILE", models_path)
+
+    on_exit(fn ->
+      if previous_models_path,
+        do: System.put_env("HANDBEAM_MODELS_FILE", previous_models_path),
+        else: System.delete_env("HANDBEAM_MODELS_FILE")
+    end)
+
+    File.write!(
+      models_path,
+      Handbeam.JSON.encode!(%{
+        "defaultProvider" => "openai",
+        "defaultModel" => "gpt-advisor",
+        "providers" => %{
+          "openai" => %{
+            "baseUrl" => "https://api.openai.com/v1",
+            "api" => "openai-responses",
+            "provider" => "openai",
+            "apiKey" => "test-key",
+            "models" => [
+              %{
+                "id" => "gpt-advisor",
+                "reasoning" => true,
+                "reasoningLevels" => ["low", "high"]
+              }
+            ]
+          }
+        }
+      })
+    )
+
+    default_advisor = %{
+      provider_id: "openai",
+      model_id: "gpt-advisor",
+      reasoning: nil
+    }
+
+    default_config = %{context.delegation_config | advisor: default_advisor}
+
+    assert {:ok, default_opts} =
+             Policy.child_opts(
+               %{context | delegation_config: default_config},
+               30_000,
+               Profile.advisor(:consult)
+             )
+
+    refute Keyword.has_key?(default_opts, :reasoning_level)
+    refute Map.has_key?(default_opts[:provider_config], :reasoning)
+
+    explicit_advisor = %{
+      provider_id: "openai",
+      model_id: "gpt-advisor",
+      reasoning: "high"
+    }
+
+    explicit_config = %{context.delegation_config | advisor: explicit_advisor}
+
+    assert {:ok, opts} =
+             Policy.child_opts(
+               %{context | delegation_config: explicit_config},
+               30_000,
+               Profile.advisor(:consult)
+             )
+
+    assert opts[:reasoning_level] == "high"
+    assert opts[:provider_config].reasoning == %{effort: "high"}
   end
 
   test "neither delegated nor ordinary runs are restarted with the original input" do

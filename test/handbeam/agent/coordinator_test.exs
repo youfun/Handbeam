@@ -696,8 +696,7 @@ defmodule Handbeam.Agent.CoordinatorTest do
                opts(
                  om: %{
                    enabled: true,
-                   observer_model: "xai/grok-4.7",
-                   reflector_model: "xai/grok-4.7"
+                   model: "xai/grok-4.7"
                  }
                )
              )
@@ -726,7 +725,7 @@ defmodule Handbeam.Agent.CoordinatorTest do
     run_opts =
       opts(
         workspace_path: workspace,
-        om: %{enabled: true, observer_model: "other/other-model"}
+        om: %{enabled: true, model: "other/other-model"}
       )
       |> Keyword.delete(:provider)
 

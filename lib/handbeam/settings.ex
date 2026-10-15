@@ -193,7 +193,8 @@ defmodule Handbeam.Settings do
   @doc """
   Advisor resolution for a workspace.
 
-  Returns `{:ok, %{model, source}}`, `:none`, `:disabled`, or `{:error, reason}`.
+  Returns `{:ok, %{model, reasoning, source}}`, `:none`, `:disabled`, or
+  `{:error, reason}`.
   Web and native settings read this result instead of deriving the tri-state themselves.
   """
   def advisor_resolution(workspace_root) when is_binary(workspace_root) do
@@ -215,7 +216,8 @@ defmodule Handbeam.Settings do
         case ModelAISettings.resolve_advisor(%{
                settings
                | advisor_mode: :custom,
-                 advisor_model: workspace_override[:advisor_model]
+                 advisor_model: workspace_override[:advisor_model],
+                 advisor_reasoning: workspace_override[:advisor_reasoning]
              }) do
           {:ok, info} -> {:ok, %{info | source: :workspace}}
           other -> other
@@ -226,7 +228,8 @@ defmodule Handbeam.Settings do
         case ModelAISettings.resolve_advisor(%{
                settings
                | advisor_mode: :custom,
-                 advisor_model: global_override[:advisor_model]
+                 advisor_model: global_override[:advisor_model],
+                 advisor_reasoning: global_override[:advisor_reasoning]
              }) do
           {:ok, info} -> {:ok, %{info | source: :global}}
           other -> other

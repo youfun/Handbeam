@@ -59,6 +59,57 @@ defmodule Handbeam.Settings.ModelAIOverrideTest do
     assert Settings.effective_model_ai(ws).reasoning == "high"
   end
 
+  test "advisor model and reasoning inherit and override together", %{ws: ws} do
+    global = %{
+      ModelAISettings.defaults()
+      | advisor_mode: :custom,
+        advisor_model: "provider/global-advisor",
+        advisor_reasoning: "high"
+    }
+
+    assert :ok = ModelAIOverride.save(:global, global)
+
+    assert {:ok, %{model: "provider/global-advisor", reasoning: "high", source: :global}} =
+             Settings.advisor_resolution(ws)
+
+    workspace = %{
+      global
+      | advisor_mode: :custom,
+        advisor_model: "provider/workspace-advisor",
+        advisor_reasoning: "low"
+    }
+
+    assert :ok = ModelAIOverride.save({:workspace, ws}, workspace)
+
+    assert {:ok, %{model: "provider/workspace-advisor", reasoning: "low", source: :workspace}} =
+             Settings.advisor_resolution(ws)
+  end
+
+  test "workspace can reset the global memory model and think level to their defaults", %{ws: ws} do
+    global = %{
+      ModelAISettings.defaults()
+      | om_model: "provider/memory-model",
+        om_reasoning: "high"
+    }
+
+    assert :ok = ModelAIOverride.save(:global, global)
+
+    assert :ok =
+             ModelAIOverride.save({:workspace, ws}, %{global | om_model: nil, om_reasoning: nil})
+
+    assert {:ok,
+            %{
+              "observational_memory" => %{
+                "model" => nil,
+                "reasoning" => nil
+              }
+            }} = Settings.load_workspace_model_ai(ws)
+
+    effective = Settings.effective_model_ai(ws)
+    assert effective.om_model == nil
+    assert effective.om_reasoning == nil
+  end
+
   test "sources treats an unreadable workspace file as no overrides", %{ws: ws} do
     path = Handbeam.WorkspaceSettings.path(ws)
     File.mkdir_p!(Path.dirname(path))

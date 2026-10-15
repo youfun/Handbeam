@@ -10,8 +10,8 @@ defmodule Handbeam.Settings.ModelAISettingsTest do
       assert defaults.default_model == nil
       assert defaults.reasoning == "medium"
       assert defaults.om_enabled == false
-      assert defaults.om_observer_model == nil
-      assert defaults.om_reflector_model == nil
+      assert defaults.om_model == nil
+      assert defaults.om_reasoning == nil
       assert defaults.om_memory_scope == "workspace"
       assert defaults.om_privacy_mode == "standard"
       assert defaults.om_max_recent_context == 5
@@ -43,7 +43,7 @@ defmodule Handbeam.Settings.ModelAISettingsTest do
       assert settings.om_enabled == true
       assert settings.om_memory_scope == "both"
       # Unspecified fields stay at defaults
-      assert settings.om_observer_model == nil
+      assert settings.om_model == nil
       assert settings.om_privacy_mode == "standard"
     end
   end
@@ -56,16 +56,33 @@ defmodule Handbeam.Settings.ModelAISettingsTest do
           "reasoning" => "high",
           "observational_memory" => %{
             "enabled" => true,
-            "observer_model" => "claude-opus",
+            "model" => "claude-opus",
+            "reasoning" => "low",
             "memory_scope" => "global"
-          }
+          },
+          "advisor" => %{"model" => "anthropic/claude-opus", "reasoning" => "high"}
         })
 
       assert settings.default_model == "claude-sonnet-4"
       assert settings.reasoning == "high"
       assert settings.om_enabled == true
-      assert settings.om_observer_model == "claude-opus"
+      assert settings.om_model == "claude-opus"
+      assert settings.om_reasoning == "low"
       assert settings.om_memory_scope == "global"
+      assert settings.advisor_model == "anthropic/claude-opus"
+      assert settings.advisor_reasoning == "high"
+    end
+
+    test "does not read removed observer and reflector model fields" do
+      settings =
+        ModelAISettings.new(%{
+          "observational_memory" => %{
+            "observer_model" => "old/observer",
+            "reflector_model" => "old/reflector"
+          }
+        })
+
+      assert settings.om_model == nil
     end
   end
 
@@ -91,8 +108,11 @@ defmodule Handbeam.Settings.ModelAISettingsTest do
         ModelAISettings.new(%{
           "default_model" => "stepfun/step-router-v1",
           "reasoning" => "medium",
-          "om_enabled" => true,
-          "om_observer_model" => "claude-opus"
+          "observational_memory" => %{
+            "enabled" => true,
+            "model" => "anthropic/claude-opus",
+            "reasoning" => "high"
+          }
         })
 
       opts = ModelAISettings.to_runtime_opts(settings)
@@ -102,7 +122,8 @@ defmodule Handbeam.Settings.ModelAISettingsTest do
 
       om = Keyword.get(opts, :om)
       assert om[:enabled] == true
-      assert om[:observer_model] == "claude-opus"
+      assert om[:model] == "anthropic/claude-opus"
+      assert om[:reasoning] == "high"
     end
 
     test "om is nil when disabled" do
@@ -123,7 +144,7 @@ defmodule Handbeam.Settings.ModelAISettingsTest do
       assert Keyword.get(opts, :model) == nil
     end
 
-    test "observer_model falls back to default_model when not set" do
+    test "memory model falls back to default_model when not set" do
       settings =
         ModelAISettings.new(%{
           "default_model" => "stepfun/step-router-v1",
@@ -132,10 +153,10 @@ defmodule Handbeam.Settings.ModelAISettingsTest do
 
       opts = ModelAISettings.to_runtime_opts(settings)
       om = Keyword.get(opts, :om)
-      assert om[:observer_model] == "stepfun/step-router-v1"
+      assert om[:model] == "stepfun/step-router-v1"
     end
 
-    test "observer_model is nil when both are nil" do
+    test "memory model is nil when both are nil" do
       settings =
         ModelAISettings.new(%{
           "om_enabled" => true
@@ -143,7 +164,7 @@ defmodule Handbeam.Settings.ModelAISettingsTest do
 
       opts = ModelAISettings.to_runtime_opts(settings)
       om = Keyword.get(opts, :om)
-      assert om[:observer_model] == nil
+      assert om[:model] == nil
     end
   end
 
@@ -153,7 +174,12 @@ defmodule Handbeam.Settings.ModelAISettingsTest do
         ModelAISettings.new(%{
           "default_model" => "claude-sonnet-4",
           "reasoning" => "medium",
-          "om_enabled" => true
+          "observational_memory" => %{
+            "enabled" => true,
+            "model" => "anthropic/claude-haiku",
+            "reasoning" => "low"
+          },
+          "advisor" => %{"model" => "openai/gpt-5", "reasoning" => "high"}
         })
 
       json_map = ModelAISettings.to_json_map(original)
@@ -162,14 +188,18 @@ defmodule Handbeam.Settings.ModelAISettingsTest do
       assert reloaded.default_model == original.default_model
       assert reloaded.reasoning == original.reasoning
       assert reloaded.om_enabled == original.om_enabled
+      assert reloaded.om_model == original.om_model
+      assert reloaded.om_reasoning == original.om_reasoning
+      assert reloaded.advisor_model == original.advisor_model
+      assert reloaded.advisor_reasoning == original.advisor_reasoning
     end
 
-    test "excludes nil default_model and nil om_reflector_model" do
+    test "excludes nil default and memory models" do
       settings = ModelAISettings.defaults()
       json_map = ModelAISettings.to_json_map(settings)
 
       refute Map.has_key?(json_map, "default_model")
-      refute Map.has_key?(Map.get(json_map, "observational_memory", %{}), "reflector_model")
+      refute Map.has_key?(Map.get(json_map, "observational_memory", %{}), "model")
     end
   end
 
@@ -250,11 +280,14 @@ defmodule Handbeam.Settings.ModelAISettingsTest do
     test "accepts valid full config" do
       assert ModelAISettings.validate(%{
                "default_model" => "claude-sonnet-4",
-               "om_enabled" => true,
-               "om_observer_model" => "claude-haiku",
-               "om_memory_scope" => "workspace",
-               "om_privacy_mode" => "standard",
-               "om_max_recent_context" => 5
+               "observational_memory" => %{
+                 "enabled" => true,
+                 "model" => "anthropic/claude-haiku",
+                 "reasoning" => "medium",
+                 "memory_scope" => "workspace",
+                 "privacy_mode" => "standard",
+                 "max_recent_context" => 5
+               }
              }) == :ok
     end
 
@@ -266,22 +299,18 @@ defmodule Handbeam.Settings.ModelAISettingsTest do
     end
   end
 
-  describe "drop_unknown_memory_model/3" do
-    test "clears a model the catalog no longer has and keeps a known one" do
+  describe "drop_unknown_memory_model/2" do
+    test "clears a removed model and its reasoning level" do
       settings = %ModelAISettings{
-        om_observer_model: "xai/grok-4.7",
-        om_reflector_model: "openai_codex/gpt-6-sol"
+        om_model: "xai/grok-4.7",
+        om_reasoning: "high"
       }
 
       known? = &(&1 == "openai_codex/gpt-6-sol")
+      updated = ModelAISettings.drop_unknown_memory_model(settings, known?)
 
-      updated =
-        settings
-        |> ModelAISettings.drop_unknown_memory_model(:om_observer_model, known?)
-        |> ModelAISettings.drop_unknown_memory_model(:om_reflector_model, known?)
-
-      assert updated.om_observer_model == nil
-      assert updated.om_reflector_model == "openai_codex/gpt-6-sol"
+      assert updated.om_model == nil
+      assert updated.om_reasoning == nil
     end
   end
 end

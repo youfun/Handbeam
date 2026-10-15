@@ -8,6 +8,7 @@ defmodule Handbeam.Agent.Delegation.Policy do
   """
 
   alias Handbeam.Agent.Subagent.Profile
+  alias Handbeam.Agent.{ModelConfig, Reasoning}
 
   @delegation_tools Profile.delegation_tools()
 
@@ -113,34 +114,42 @@ defmodule Handbeam.Agent.Delegation.Policy do
   tools depend on (see `authorized_child?/2`).
   """
   def child_opts(context, budget, %Profile{} = profile, parent \\ %{}) do
-    with {:ok, model, provider, provider_config} <- model_opts(context, profile) do
+    with {:ok, model, provider, provider_config, reasoning_level} <-
+           model_opts(context, profile) do
       delegation_parent =
         context
         |> Map.take([:conversation_id, :run_id, :runner_pid])
         |> Map.merge(parent)
 
-      {:ok,
-       [
-         workspace_path: context.working_directory,
-         workspace_id: context[:workspace_id],
-         model: model,
-         provider: provider,
-         provider_config: provider_config(provider_config),
-         tools: [],
-         context: %{delegation_parent: delegation_parent},
-         allowed_tools: allowed_tools(context[:authorized_tools] || [], profile),
-         source: :delegation,
-         channel: :internal,
-         delivery: Handbeam.Delivery.Noop,
-         delegated?: true,
-         history_messages: [],
-         mcp: false,
-         max_turns: profile.max_turns,
-         tool_timeout: min(budget, 10_000),
-         timeout_ms: budget,
-         middleware: [Handbeam.Agent.Middleware.Security, Handbeam.Agent.Middleware.ToolGuard],
-         system_prompt: profile.system_prompt
-       ]}
+      opts =
+        [
+          workspace_path: context.working_directory,
+          workspace_id: context[:workspace_id],
+          model: model,
+          provider: provider,
+          provider_config: provider_config(provider_config),
+          tools: [],
+          context: %{delegation_parent: delegation_parent},
+          allowed_tools: allowed_tools(context[:authorized_tools] || [], profile),
+          source: :delegation,
+          channel: :internal,
+          delivery: Handbeam.Delivery.Noop,
+          delegated?: true,
+          history_messages: [],
+          mcp: false,
+          max_turns: profile.max_turns,
+          tool_timeout: min(budget, 10_000),
+          timeout_ms: budget,
+          middleware: [Handbeam.Agent.Middleware.Security, Handbeam.Agent.Middleware.ToolGuard],
+          system_prompt: profile.system_prompt
+        ]
+
+      opts =
+        if is_binary(reasoning_level),
+          do: Keyword.put(opts, :reasoning_level, reasoning_level),
+          else: opts
+
+      {:ok, opts}
     end
   end
 
@@ -180,7 +189,7 @@ defmodule Handbeam.Agent.Delegation.Policy do
 
   defp resolve_model(context, %Profile{} = profile) do
     case model_opts(context, profile) do
-      {:ok, _, _, _} -> :ok
+      {:ok, _, _, _, _} -> :ok
       error -> error
     end
   end
@@ -196,7 +205,7 @@ defmodule Handbeam.Agent.Delegation.Policy do
     advisor = context.delegation_config.advisor
 
     if is_map(advisor) and is_binary(advisor[:provider_id]) do
-      configured_model(context, advisor.provider_id, advisor.model_id)
+      configured_model(context, advisor.provider_id, advisor.model_id, advisor[:reasoning])
     else
       inherit_model(context)
     end
@@ -207,20 +216,29 @@ defmodule Handbeam.Agent.Delegation.Policy do
   defp model_opts(context, %Profile{model: {provider_id, model_id}}),
     do: configured_model(context, provider_id, model_id)
 
-  defp configured_model(context, provider_id, model_id) do
-    case Handbeam.Agent.ModelConfig.provider_config_for(
-           context.working_directory,
-           provider_id,
-           model_id
-         ) do
-      {:ok, provider_config} -> {:ok, model_id, provider_id, provider_config}
-      {:error, reason} -> {:error, model_error(reason)}
+  defp configured_model(context, provider_id, model_id, selected_reasoning \\ nil) do
+    case ModelConfig.provider_config_for(context.working_directory, provider_id, model_id) do
+      {:ok, provider_config} ->
+        entry =
+          Enum.find(ModelConfig.all_global_models(), &(&1.id == "#{provider_id}/#{model_id}"))
+
+        reasoning_level = if is_binary(selected_reasoning), do: selected_reasoning
+
+        provider_config =
+          if is_binary(reasoning_level),
+            do: Reasoning.apply_provider_options(provider_config, entry, reasoning_level),
+            else: provider_config
+
+        {:ok, model_id, provider_id, provider_config, reasoning_level}
+
+      {:error, reason} ->
+        {:error, model_error(reason)}
     end
   end
 
   defp inherit_model(context) do
     config = context.delegation_config
-    {:ok, config.model, config.provider, config.provider_config}
+    {:ok, config.model, config.provider, config.provider_config, config.reasoning_level}
   end
 
   defp model_error(reason) when is_binary(reason), do: reason

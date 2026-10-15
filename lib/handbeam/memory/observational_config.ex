@@ -15,10 +15,13 @@ defmodule Handbeam.Memory.ObservationalConfig do
           max_recent_context: 5
         ],
 
-        # P1 — LLM Observer (extracts structured observations)
+        # Shared by the LLM Observer and Reflector
+        model: "claude-haiku-4-5-20251001",
+        provider: nil,               # nil = reuse agent provider
+        reasoning: nil,              # nil = model default
+
+        # P1 — Observer-specific processing settings
         observer: [
-          model: "claude-haiku-4-5-20251001",
-          provider: nil,               # nil = reuse agent provider
           model_settings: [
             temperature: 0.3,
             max_output_tokens: 4000
@@ -28,10 +31,8 @@ defmodule Handbeam.Memory.ObservationalConfig do
           instruction: ""               # custom observer prompt
         ],
 
-        # P2 — LLM Reflector (compresses observations → engrams)
+        # P2 — Reflector-specific processing settings
         reflector: [
-          model: "claude-haiku-4-5-20251001",
-          provider: nil,
           model_settings: [
             temperature: 0,
             max_output_tokens: 8000
@@ -49,14 +50,13 @@ defmodule Handbeam.Memory.ObservationalConfig do
   @type t :: %__MODULE__{
           enabled: boolean(),
           max_recent_context: non_neg_integer(),
-          observer_model: String.t() | nil,
-          observer_provider: module() | nil,
+          model: String.t() | nil,
+          provider: module() | nil,
+          reasoning: String.t() | nil,
           observer_model_settings: model_settings(),
           observer_message_tokens: pos_integer(),
           observer_buffer_tokens: pos_integer(),
           observer_instruction: String.t() | nil,
-          reflector_model: String.t() | nil,
-          reflector_provider: module() | nil,
           reflector_model_settings: model_settings(),
           reflector_observation_tokens: pos_integer()
         }
@@ -64,16 +64,15 @@ defmodule Handbeam.Memory.ObservationalConfig do
   defstruct [
     :enabled,
     max_recent_context: 5,
+    model: "claude-haiku-4-5-20251001",
+    provider: nil,
+    reasoning: nil,
     # Observer (P1)
-    observer_model: "claude-haiku-4-5-20251001",
-    observer_provider: nil,
     observer_model_settings: %{temperature: 0.3, max_output_tokens: 4000},
     observer_message_tokens: 30_000,
     observer_buffer_tokens: 10_000,
     observer_instruction: nil,
     # Reflector (P2)
-    reflector_model: "claude-haiku-4-5-20251001",
-    reflector_provider: nil,
     reflector_model_settings: %{temperature: 0, max_output_tokens: 8000},
     reflector_observation_tokens: 40_000
   ]
@@ -97,8 +96,8 @@ defmodule Handbeam.Memory.ObservationalConfig do
       iex> Config.from_kw(enabled: true, observation: [max_recent_context: 10])
       %Config{enabled: true, max_recent_context: 10}
 
-      iex> Config.from_kw(enabled: true, observer: [model: "claude-opus"])
-      %Config{enabled: true, observer_model: "claude-opus"}
+      iex> Config.from_kw(enabled: true, model: "claude-opus")
+      %Config{enabled: true, model: "claude-opus"}
   """
   @spec from_kw(keyword() | map()) :: t()
   def from_kw(kw) when is_list(kw) do
@@ -109,17 +108,16 @@ defmodule Handbeam.Memory.ObservationalConfig do
     %__MODULE__{
       enabled: Keyword.get(kw, :enabled, false),
       max_recent_context: get_max_recent_context(obs_cfg),
+      model: Keyword.get(kw, :model, "claude-haiku-4-5-20251001"),
+      provider: Keyword.get(kw, :provider),
+      reasoning: Keyword.get(kw, :reasoning),
       # Observer
-      observer_model: maybe_get(observer_cfg, [:model], "claude-haiku-4-5-20251001"),
-      observer_provider: maybe_get(observer_cfg, [:provider]),
       observer_model_settings:
         maybe_get(observer_cfg, [:model_settings], %{temperature: 0.3, max_output_tokens: 4000}),
       observer_message_tokens: maybe_get(observer_cfg, [:message_tokens], 30_000),
       observer_buffer_tokens: maybe_get(observer_cfg, [:buffer_tokens], 10_000),
       observer_instruction: maybe_get(observer_cfg, [:instruction]),
       # Reflector
-      reflector_model: maybe_get(reflector_cfg, [:model], "claude-haiku-4-5-20251001"),
-      reflector_provider: maybe_get(reflector_cfg, [:provider]),
       reflector_model_settings:
         maybe_get(reflector_cfg, [:model_settings], %{temperature: 0, max_output_tokens: 8000}),
       reflector_observation_tokens: maybe_get(reflector_cfg, [:observation_tokens], 40_000)
@@ -134,6 +132,9 @@ defmodule Handbeam.Memory.ObservationalConfig do
 
     from_kw(
       enabled: enabled,
+      model: Map.get(kw, :model, Map.get(kw, "model", "claude-haiku-4-5-20251001")),
+      provider: Map.get(kw, :provider, Map.get(kw, "provider")),
+      reasoning: Map.get(kw, :reasoning, Map.get(kw, "reasoning")),
       observation: normalize_nested(obs),
       observer: normalize_nested(observer),
       reflector: normalize_nested(reflector)
@@ -170,10 +171,10 @@ defmodule Handbeam.Memory.ObservationalConfig do
       base
       | enabled: enabled_value(om, base.enabled),
         max_recent_context: non_neg_or(om, :max_recent_context, base.max_recent_context),
-        observer_model: string_or(om, :observer_model, base.observer_model),
+        model: string_or(om, :model, base.model),
+        reasoning: string_or(om, :reasoning, base.reasoning),
         observer_message_tokens: pos_or(om, :message_tokens, base.observer_message_tokens),
         observer_buffer_tokens: pos_or(om, :buffer_tokens, base.observer_buffer_tokens),
-        reflector_model: string_or(om, :reflector_model, base.reflector_model),
         reflector_observation_tokens:
           pos_or(om, :observation_tokens, base.reflector_observation_tokens)
     }
@@ -206,27 +207,15 @@ defmodule Handbeam.Memory.ObservationalConfig do
   def middleware_modules(%__MODULE__{}), do: []
 
   @doc """
-  Resolve the provider module for the Observer.
+  Resolve the provider module for memory processing.
 
-  Falls back to the agent's provider if `observer_provider` is not set.
+  Falls back to the agent's provider when no dedicated provider is set.
   """
-  @spec observer_provider(t(), module()) :: module()
-  def observer_provider(%__MODULE__{observer_provider: nil}, agent_provider),
+  @spec provider(t(), module()) :: module()
+  def provider(%__MODULE__{provider: nil}, agent_provider),
     do: agent_provider
 
-  def observer_provider(%__MODULE__{observer_provider: provider}, _agent_provider),
-    do: provider
-
-  @doc """
-  Resolve the provider module for the Reflector.
-
-  Falls back to the agent's provider if `reflector_provider` is not set.
-  """
-  @spec reflector_provider(t(), module()) :: module()
-  def reflector_provider(%__MODULE__{reflector_provider: nil}, agent_provider),
-    do: agent_provider
-
-  def reflector_provider(%__MODULE__{reflector_provider: provider}, _agent_provider),
+  def provider(%__MODULE__{provider: provider}, _agent_provider),
     do: provider
 
   # ── Private ──

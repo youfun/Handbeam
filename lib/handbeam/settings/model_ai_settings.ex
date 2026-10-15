@@ -9,7 +9,7 @@ defmodule Handbeam.Settings.ModelAISettings do
   """
 
   @fields ~w(
-    default_model reasoning om_enabled om_observer_model om_reflector_model
+    default_model reasoning om_enabled om_model om_reasoning
     om_memory_scope om_privacy_mode om_max_recent_context
     om_message_tokens om_buffer_tokens om_observation_tokens
   )a
@@ -20,8 +20,8 @@ defmodule Handbeam.Settings.ModelAISettings do
     :default_model,
     reasoning: "medium",
     om_enabled: false,
-    om_observer_model: nil,
-    om_reflector_model: nil,
+    om_model: nil,
+    om_reasoning: nil,
     om_memory_scope: "workspace",
     om_privacy_mode: "standard",
     om_max_recent_context: 5,
@@ -31,15 +31,16 @@ defmodule Handbeam.Settings.ModelAISettings do
     # Advisor is not part of @fields. Generic diff/merge would turn a custom
     # model equal to the global value back into inherit, and has no disabled carrier.
     advisor_mode: :inherit,
-    advisor_model: nil
+    advisor_model: nil,
+    advisor_reasoning: nil
   ]
 
   @type t :: %__MODULE__{
           default_model: String.t() | nil,
           reasoning: String.t(),
           om_enabled: boolean(),
-          om_observer_model: String.t() | nil,
-          om_reflector_model: String.t() | nil,
+          om_model: String.t() | nil,
+          om_reasoning: String.t() | nil,
           om_memory_scope: String.t(),
           om_privacy_mode: String.t(),
           om_max_recent_context: non_neg_integer(),
@@ -47,7 +48,8 @@ defmodule Handbeam.Settings.ModelAISettings do
           om_buffer_tokens: pos_integer(),
           om_observation_tokens: pos_integer(),
           advisor_mode: :inherit | :custom | :disabled,
-          advisor_model: String.t() | nil
+          advisor_model: String.t() | nil,
+          advisor_reasoning: String.t() | nil
         }
 
   @doc "Return the default settings struct."
@@ -85,13 +87,19 @@ defmodule Handbeam.Settings.ModelAISettings do
     |> maybe_put(:default_model, raw_string(map, "default_model"))
     |> maybe_put(:reasoning, raw_string(map, "reasoning"))
     |> maybe_put(:om_enabled, raw_bool_present(om_map, "enabled", map, "om_enabled"))
-    |> maybe_put(
-      :om_observer_model,
-      raw_string(om_map, "observer_model") || raw_string(map, "om_observer_model")
+    |> put_optional_string(
+      :om_model,
+      om_map,
+      "model",
+      map,
+      "om_model"
     )
-    |> maybe_put(
-      :om_reflector_model,
-      raw_string(om_map, "reflector_model") || raw_string(map, "om_reflector_model")
+    |> put_optional_string(
+      :om_reasoning,
+      om_map,
+      "reasoning",
+      map,
+      "om_reasoning"
     )
     |> maybe_put(
       :om_memory_scope,
@@ -134,8 +142,8 @@ defmodule Handbeam.Settings.ModelAISettings do
 
     om_map = %{
       enabled: settings.om_enabled,
-      observer_model: settings.om_observer_model || settings.default_model,
-      reflector_model: settings.om_reflector_model,
+      model: settings.om_model || settings.default_model,
+      reasoning: settings.om_reasoning,
       memory_scope: settings.om_memory_scope,
       privacy_mode: settings.om_privacy_mode,
       max_recent_context: settings.om_max_recent_context,
@@ -148,19 +156,14 @@ defmodule Handbeam.Settings.ModelAISettings do
     Keyword.put(opts, :advisor, resolve_advisor(settings))
   end
 
-  @doc """
-  Drop an observational-memory model that is no longer in the catalog.
-
-  Nil means "same as the chat model" and is already safe. A model the catalog
-  still lists is kept, even when a workspace allowlist would reject it.
-  """
-  @spec drop_unknown_memory_model(t(), atom(), (String.t() -> boolean())) :: t()
-  def drop_unknown_memory_model(%__MODULE__{} = settings, field, known?)
-      when field in [:om_observer_model, :om_reflector_model] and is_function(known?, 1) do
-    model = Map.get(settings, field)
+  @doc "Drop a memory model that is no longer in the catalog."
+  @spec drop_unknown_memory_model(t(), (String.t() -> boolean())) :: t()
+  def drop_unknown_memory_model(%__MODULE__{} = settings, known?)
+      when is_function(known?, 1) do
+    model = settings.om_model
 
     if is_binary(model) and model != "" and not known?.(model) do
-      Map.put(settings, field, nil)
+      %{settings | om_model: nil, om_reasoning: nil}
     else
       settings
     end
@@ -173,19 +176,30 @@ defmodule Handbeam.Settings.ModelAISettings do
   re-check `ModelConfig.resolve_model_for_workspace/2`.
   """
   @spec resolve_advisor(t()) ::
-          {:ok, %{model: String.t(), source: :settings}} | :none | :disabled | {:error, term()}
+          {:ok, %{model: String.t(), reasoning: String.t() | nil, source: :settings}}
+          | :none
+          | :disabled
+          | {:error, term()}
   def resolve_advisor(%__MODULE__{advisor_mode: :disabled}), do: :disabled
   def resolve_advisor(%__MODULE__{advisor_mode: :inherit, advisor_model: nil}), do: :none
 
-  def resolve_advisor(%__MODULE__{advisor_mode: :inherit, advisor_model: model})
+  def resolve_advisor(%__MODULE__{
+        advisor_mode: :inherit,
+        advisor_model: model,
+        advisor_reasoning: reasoning
+      })
       when is_binary(model) and model != "" do
-    {:ok, %{model: model, source: :settings}}
+    {:ok, %{model: model, reasoning: reasoning, source: :settings}}
   end
 
-  def resolve_advisor(%__MODULE__{advisor_mode: :custom, advisor_model: model})
+  def resolve_advisor(%__MODULE__{
+        advisor_mode: :custom,
+        advisor_model: model,
+        advisor_reasoning: reasoning
+      })
       when is_binary(model) and model != "" do
     if composite?(model),
-      do: {:ok, %{model: model, source: :settings}},
+      do: {:ok, %{model: model, reasoning: reasoning, source: :settings}},
       else: {:error, :bare_model_id}
   end
 
@@ -194,7 +208,7 @@ defmodule Handbeam.Settings.ModelAISettings do
   @doc "Drop a workspace advisor override so the workspace inherits the global advisor."
   @spec clear_advisor(t()) :: t()
   def clear_advisor(%__MODULE__{} = settings) do
-    %{settings | advisor_mode: :inherit, advisor_model: nil}
+    %{settings | advisor_mode: :inherit, advisor_model: nil, advisor_reasoning: nil}
   end
 
   @doc "Serialise to a JSON-safe map (string keys, canonical nested OM structure)."
@@ -203,6 +217,7 @@ defmodule Handbeam.Settings.ModelAISettings do
     defaults()
     |> diff(settings)
     |> Map.put(:advisor_model, settings.advisor_model)
+    |> Map.put(:advisor_reasoning, settings.advisor_reasoning)
     |> override_to_json_map()
   end
 
@@ -226,10 +241,14 @@ defmodule Handbeam.Settings.ModelAISettings do
 
     case {scope, form.advisor_mode, form.advisor_model} do
       {:global, :custom, model} when is_binary(model) and model != "" ->
-        Map.put(model_ai, "advisor", %{"model" => model})
+        Map.put(model_ai, "advisor", advisor_json(model, form.advisor_reasoning))
 
       {:workspace, :custom, model} when is_binary(model) and model != "" ->
-        Map.put(model_ai, "advisor", %{"mode" => "custom", "model" => model})
+        Map.put(
+          model_ai,
+          "advisor",
+          advisor_json(model, form.advisor_reasoning) |> Map.put("mode", "custom")
+        )
 
       {:workspace, :disabled, _} ->
         Map.put(model_ai, "advisor", %{"mode" => "disabled"})
@@ -249,8 +268,8 @@ defmodule Handbeam.Settings.ModelAISettings do
 
     om_map = %{}
     om_map = put_if_present(om_map, override, :om_enabled, "enabled")
-    om_map = put_if_present(om_map, override, :om_observer_model, "observer_model")
-    om_map = put_if_present(om_map, override, :om_reflector_model, "reflector_model")
+    om_map = put_if_present(om_map, override, :om_model, "model")
+    om_map = put_if_present(om_map, override, :om_reasoning, "reasoning")
     om_map = put_if_present(om_map, override, :om_memory_scope, "memory_scope")
     om_map = put_if_present(om_map, override, :om_privacy_mode, "privacy_mode")
     om_map = put_if_present(om_map, override, :om_max_recent_context, "max_recent_context")
@@ -304,17 +323,27 @@ defmodule Handbeam.Settings.ModelAISettings do
   @doc "Advisor fields stay out of generic diff so custom-equal-to-global is not dropped."
   @spec advisor_fields(map() | t()) :: map()
   def advisor_fields(%__MODULE__{} = settings) do
-    %{advisor_mode: settings.advisor_mode, advisor_model: settings.advisor_model}
+    %{
+      advisor_mode: settings.advisor_mode,
+      advisor_model: settings.advisor_model,
+      advisor_reasoning: settings.advisor_reasoning
+    }
   end
 
   def advisor_fields(%{} = map) do
-    Map.take(map, [:advisor_mode, :advisor_model])
+    Map.take(map, [:advisor_mode, :advisor_model, :advisor_reasoning])
   end
 
   defp advisor_merge(base, override) do
     mode = Map.get(override, :advisor_mode, base.advisor_mode)
     model = Map.get(override, :advisor_model, base.advisor_model)
-    %{advisor_mode: mode, advisor_model: if(mode == :custom, do: model, else: nil)}
+    reasoning = Map.get(override, :advisor_reasoning, base.advisor_reasoning)
+
+    %{
+      advisor_mode: mode,
+      advisor_model: if(mode == :custom, do: model, else: nil),
+      advisor_reasoning: if(mode == :custom, do: reasoning, else: nil)
+    }
   end
 
   defp normalize_advisor_override(map) do
@@ -325,16 +354,24 @@ defmodule Handbeam.Settings.ModelAISettings do
       %{} = advisor ->
         mode = advisor_mode(advisor)
         model = raw_string(advisor, "model")
+        reasoning = raw_string(advisor, "reasoning")
 
         case mode do
-          :custom -> %{advisor_mode: :custom, advisor_model: model}
-          :disabled -> %{advisor_mode: :disabled, advisor_model: nil}
-          :inherit -> %{advisor_mode: :inherit, advisor_model: nil}
-          _ -> %{advisor_mode: mode, advisor_model: model}
+          :custom ->
+            %{advisor_mode: :custom, advisor_model: model, advisor_reasoning: reasoning}
+
+          :disabled ->
+            %{advisor_mode: :disabled, advisor_model: nil, advisor_reasoning: nil}
+
+          :inherit ->
+            %{advisor_mode: :inherit, advisor_model: nil, advisor_reasoning: nil}
+
+          _ ->
+            %{advisor_mode: mode, advisor_model: model, advisor_reasoning: reasoning}
         end
 
       _ ->
-        %{advisor_mode: :invalid, advisor_model: nil}
+        %{advisor_mode: :invalid, advisor_model: nil, advisor_reasoning: nil}
     end
   end
 
@@ -366,13 +403,19 @@ defmodule Handbeam.Settings.ModelAISettings do
         Map.put(json, "advisor", %{"mode" => "disabled"})
 
       Map.get(override, :advisor_mode) == :custom ->
-        Map.put(json, "advisor", %{
-          "mode" => "custom",
-          "model" => Map.get(override, :advisor_model)
-        })
+        Map.put(
+          json,
+          "advisor",
+          advisor_json(Map.get(override, :advisor_model), Map.get(override, :advisor_reasoning))
+          |> Map.put("mode", "custom")
+        )
 
       is_binary(Map.get(override, :advisor_model)) and Map.get(override, :advisor_model) != "" ->
-        Map.put(json, "advisor", %{"model" => Map.get(override, :advisor_model)})
+        Map.put(
+          json,
+          "advisor",
+          advisor_json(Map.get(override, :advisor_model), Map.get(override, :advisor_reasoning))
+        )
 
       true ->
         json
@@ -384,6 +427,15 @@ defmodule Handbeam.Settings.ModelAISettings do
       [provider, id] when provider != "" and id != "" -> true
       _ -> false
     end
+  end
+
+  defp advisor_json(model, reasoning) do
+    %{"model" => model}
+    |> then(fn json ->
+      if is_binary(reasoning) and reasoning != "",
+        do: Map.put(json, "reasoning", reasoning),
+        else: json
+    end)
   end
 
   defp validate_advisor(map) do
@@ -417,7 +469,20 @@ defmodule Handbeam.Settings.ModelAISettings do
   # ── Private helpers ──
 
   defp get_key(map, key) do
-    Map.get(map, key) || Map.get(map, Map.get(@atom_keys, key))
+    case fetch_key(map, key) do
+      {:ok, value} -> value
+      :error -> nil
+    end
+  end
+
+  defp fetch_key(map, key) do
+    atom_key = Map.get(@atom_keys, key)
+
+    cond do
+      Map.has_key?(map, key) -> Map.fetch(map, key)
+      atom_key && Map.has_key?(map, atom_key) -> Map.fetch(map, atom_key)
+      true -> :error
+    end
   end
 
   defp raw_string(map, key) do
@@ -450,6 +515,28 @@ defmodule Handbeam.Settings.ModelAISettings do
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, _key, :not_present), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp put_optional_string(map, field, primary, primary_key, fallback, fallback_key) do
+    case fetch_key(primary, primary_key) do
+      {:ok, value} ->
+        put_optional_string_value(map, field, value)
+
+      :error ->
+        case fetch_key(fallback, fallback_key) do
+          {:ok, value} -> put_optional_string_value(map, field, value)
+          :error -> map
+        end
+    end
+  end
+
+  defp put_optional_string_value(map, field, value)
+       when is_binary(value) and value != "",
+       do: Map.put(map, field, value)
+
+  defp put_optional_string_value(map, field, value) when value in [nil, ""],
+    do: Map.put(map, field, nil)
+
+  defp put_optional_string_value(map, _field, _value), do: map
 
   defp put_if_present(json, override, atom_key, json_key) do
     if Map.has_key?(override, atom_key),

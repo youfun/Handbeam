@@ -311,7 +311,7 @@ defmodule HandbeamWeb.Live.SettingsPanel do
           |> ModelAISettings.advisor_fields()
 
         if fields == %{} do
-          struct!(form, advisor_mode: :inherit, advisor_model: nil)
+          struct!(form, advisor_mode: :inherit, advisor_model: nil, advisor_reasoning: nil)
         else
           struct!(form, Map.to_list(fields))
         end
@@ -325,46 +325,78 @@ defmodule HandbeamWeb.Live.SettingsPanel do
     case blank_to_nil(value) do
       nil ->
         mode = if form.advisor_mode == :disabled, do: :disabled, else: :inherit
-        struct!(form, advisor_mode: mode, advisor_model: nil)
+        struct!(form, advisor_mode: mode, advisor_model: nil, advisor_reasoning: nil)
 
       model ->
-        struct!(form, advisor_mode: :custom, advisor_model: model)
+        struct!(form, advisor_mode: :custom, advisor_model: model, advisor_reasoning: nil)
     end
   end
 
   defp put_advisor_setting(form, "disabled"),
-    do: struct!(form, advisor_mode: :disabled, advisor_model: nil)
+    do: struct!(form, advisor_mode: :disabled, advisor_model: nil, advisor_reasoning: nil)
 
   defp put_advisor_setting(form, "custom"), do: struct!(form, advisor_mode: :custom)
 
   defp put_advisor_setting(form, _),
-    do: struct!(form, advisor_mode: :inherit, advisor_model: nil)
+    do: struct!(form, advisor_mode: :inherit, advisor_model: nil, advisor_reasoning: nil)
 
   defp update_form_field(form, field, value) do
     case field do
-      "om_enabled" -> struct!(form, om_enabled: value in [true, "true"])
-      "default_model" -> struct!(form, default_model: blank_to_nil(value))
-      "advisor_model" -> put_advisor_model(form, value)
-      "advisor_setting" -> put_advisor_setting(form, value)
-      "reasoning" -> struct!(form, reasoning: value)
-      "om_observer_model" -> struct!(form, om_observer_model: blank_to_nil(value))
-      "om_reflector_model" -> struct!(form, om_reflector_model: blank_to_nil(value))
-      "om_memory_scope" -> struct!(form, om_memory_scope: value)
-      "om_privacy_mode" -> struct!(form, om_privacy_mode: value)
-      "om_max_recent_context" -> struct!(form, om_max_recent_context: parse_int(value, 5))
-      "om_message_tokens" -> struct!(form, om_message_tokens: parse_int(value, 30_000))
-      "om_buffer_tokens" -> struct!(form, om_buffer_tokens: parse_int(value, 10_000))
-      "om_observation_tokens" -> struct!(form, om_observation_tokens: parse_int(value, 40_000))
-      _ -> form
+      "om_enabled" ->
+        struct!(form, om_enabled: value in [true, "true"])
+
+      "default_model" ->
+        updates = [default_model: blank_to_nil(value)]
+
+        updates =
+          if is_nil(form.om_model), do: Keyword.put(updates, :om_reasoning, nil), else: updates
+
+        struct!(form, updates)
+
+      "advisor_model" ->
+        put_advisor_model(form, value)
+
+      "advisor_reasoning" ->
+        struct!(form, advisor_reasoning: blank_to_nil(value))
+
+      "advisor_setting" ->
+        put_advisor_setting(form, value)
+
+      "reasoning" ->
+        struct!(form, reasoning: value)
+
+      "om_model" ->
+        struct!(form, om_model: blank_to_nil(value), om_reasoning: nil)
+
+      "om_reasoning" ->
+        struct!(form, om_reasoning: blank_to_nil(value))
+
+      "om_memory_scope" ->
+        struct!(form, om_memory_scope: value)
+
+      "om_privacy_mode" ->
+        struct!(form, om_privacy_mode: value)
+
+      "om_max_recent_context" ->
+        struct!(form, om_max_recent_context: parse_int(value, 5))
+
+      "om_message_tokens" ->
+        struct!(form, om_message_tokens: parse_int(value, 30_000))
+
+      "om_buffer_tokens" ->
+        struct!(form, om_buffer_tokens: parse_int(value, 10_000))
+
+      "om_observation_tokens" ->
+        struct!(form, om_observation_tokens: parse_int(value, 40_000))
+
+      _ ->
+        form
     end
   end
 
   defp forget_unknown_memory_models(form) do
     known? = &Handbeam.Agent.ModelConfig.model_in_catalog?/1
-
-    form
-    |> ModelAISettings.drop_unknown_memory_model(:om_observer_model, known?)
-    |> ModelAISettings.drop_unknown_memory_model(:om_reflector_model, known?)
+    ModelAISettings.drop_unknown_memory_model(form, known?)
   end
 
   defp blank_to_nil(""), do: nil

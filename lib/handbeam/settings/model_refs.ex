@@ -183,8 +183,8 @@ defmodule Handbeam.Settings.ModelRefs do
 
     [
       {:default_model, map["default_model"]},
-      {:om_observer_model, om["observer_model"] || map["om_observer_model"]},
-      {:om_reflector_model, om["reflector_model"] || map["om_reflector_model"]}
+      {:om_model, om["model"]},
+      {:advisor_model, get_in(map, ["advisor", "model"])}
     ]
     |> Enum.filter(fn {_k, v} -> is_binary(v) and v != "" end)
   end

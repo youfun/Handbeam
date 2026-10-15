@@ -158,10 +158,10 @@ defmodule Handbeam.Memory.ObservationalTest do
       config = Config.from_kw([])
       refute Config.enabled?(config)
       assert config.max_recent_context == 5
-      assert config.observer_model == "claude-haiku-4-5-20251001"
-      assert is_nil(config.observer_provider)
+      assert config.model == "claude-haiku-4-5-20251001"
+      assert is_nil(config.provider)
+      assert is_nil(config.reasoning)
       assert config.observer_message_tokens == 30_000
-      assert config.reflector_model == "claude-haiku-4-5-20251001"
       assert config.reflector_observation_tokens == 40_000
     end
 
@@ -171,27 +171,29 @@ defmodule Handbeam.Memory.ObservationalTest do
       assert config.max_recent_context == 10
     end
 
-    test "from_kw with observer model override" do
+    test "from_kw applies one model and reasoning level to memory processing" do
       config =
         Config.from_kw(
           enabled: true,
-          observer: [model: "claude-opus", message_tokens: 50_000]
+          model: "claude-opus",
+          reasoning: "high",
+          observer: [message_tokens: 50_000]
         )
 
-      assert config.observer_model == "claude-opus"
+      assert config.model == "claude-opus"
+      assert config.reasoning == "high"
       assert config.observer_message_tokens == 50_000
-      # Other fields should stay at defaults
-      assert config.reflector_model == "claude-haiku-4-5-20251001"
     end
 
-    test "from_kw with reflector model override" do
+    test "from_kw keeps reflector-specific thresholds" do
       config =
         Config.from_kw(
           enabled: true,
-          reflector: [model: "gpt-4o-mini", observation_tokens: 80_000]
+          model: "gpt-4o-mini",
+          reflector: [observation_tokens: 80_000]
         )
 
-      assert config.reflector_model == "gpt-4o-mini"
+      assert config.model == "gpt-4o-mini"
       assert config.reflector_observation_tokens == 80_000
     end
 
@@ -205,27 +207,25 @@ defmodule Handbeam.Memory.ObservationalTest do
       config =
         Config.from_kw(%{
           "enabled" => true,
-          "observer" => %{"model" => "claude-opus", "message_tokens" => 20_000}
+          "model" => "claude-opus",
+          "reasoning" => "low",
+          "observer" => %{"message_tokens" => 20_000}
         })
 
       assert Config.enabled?(config)
-      assert config.observer_model == "claude-opus"
+      assert config.model == "claude-opus"
+      assert config.reasoning == "low"
       assert config.observer_message_tokens == 20_000
     end
 
-    test "observer_provider falls back to agent provider when nil" do
+    test "provider falls back to agent provider when nil" do
       config = Config.from_kw([])
-      assert Config.observer_provider(config, :fallback_provider) == :fallback_provider
+      assert Config.provider(config, :fallback_provider) == :fallback_provider
     end
 
-    test "observer_provider returns explicit provider when set" do
-      config = Config.from_kw(observer: [provider: :explicit_provider])
-      assert Config.observer_provider(config, :fallback_provider) == :explicit_provider
-    end
-
-    test "reflector_provider falls back to agent provider when nil" do
-      config = Config.from_kw([])
-      assert Config.reflector_provider(config, :fallback_provider) == :fallback_provider
+    test "provider returns explicit provider when set" do
+      config = Config.from_kw(provider: :explicit_provider)
+      assert Config.provider(config, :fallback_provider) == :explicit_provider
     end
 
     test "enabled?/1 returns false for nil" do
@@ -249,6 +249,8 @@ defmodule Handbeam.Memory.ObservationalTest do
         AgentConfig.from_opts(
           om: %{
             enabled: true,
+            model: "stepfun/step-router-v1",
+            reasoning: "high",
             max_recent_context: 2,
             memory_scope: "both",
             privacy_mode: "standard"
@@ -259,6 +261,8 @@ defmodule Handbeam.Memory.ObservationalTest do
       assert Handbeam.Agent.Middleware.ObservationalAfterCompletion in config.middleware
       assert Handbeam.Agent.Middleware.ObservationalAfterToolExec in config.middleware
       assert config.context.observational.enabled
+      assert config.context.observational.model == "stepfun/step-router-v1"
+      assert config.context.observational.reasoning == "high"
       assert config.context.observational.max_recent_context == 2
       assert config.context.memory_scope == "both"
       assert config.context.privacy_mode == "standard"

@@ -444,47 +444,35 @@ defmodule Handbeam.Agent.Coordinator do
   defp validate_om_model_policy(opts) do
     workspace_path = Keyword.fetch!(opts, :workspace_path)
     om = Keyword.get(opts, :om, %{})
-
-    with :ok <- memory_model_allowed(workspace_path, om[:observer_model], :observer) do
-      memory_model_allowed(workspace_path, om[:reflector_model], :reflector)
-    end
+    memory_model_allowed(workspace_path, om[:model])
   end
 
   # A removed catalog entry is not a workspace restriction. "Unrestricted" and
   # an allowlist that simply does not name the model both mean "do not use it
   # for memory", so the chat model can still start. An explicit allowlist that
   # excludes a model still present in the catalog remains a hard error.
-  defp memory_model_allowed(_workspace_path, model, _role)
+  defp memory_model_allowed(_workspace_path, model)
        when model in [nil, ""],
        do: :ok
 
-  defp memory_model_allowed(workspace_path, model, role) do
+  defp memory_model_allowed(workspace_path, model) do
     cond do
       Handbeam.Agent.ModelConfig.model_allowed_for_workspace?(workspace_path, model) ->
         :ok
 
       Handbeam.Agent.ModelConfig.model_in_catalog?(model) ->
-        {:error, memory_model_rejected(role, model)}
+        {:error, memory_model_rejected(model)}
 
       true ->
         :ok
     end
   end
 
-  defp memory_model_rejected(:observer, model) do
+  defp memory_model_rejected(model) do
     Gettext.dgettext(
       HandbeamWeb.Gettext,
       "errors",
-      "Observational Memory observer model (%{model}) is not allowed in this workspace. Check Settings → Model / AI → Observational Memory → Observer model.",
-      model: model
-    )
-  end
-
-  defp memory_model_rejected(:reflector, model) do
-    Gettext.dgettext(
-      HandbeamWeb.Gettext,
-      "errors",
-      "Observational Memory reflector model (%{model}) is not allowed in this workspace. Check Settings → Model / AI → Observational Memory → Reflector model.",
+      "Observational Memory model (%{model}) is not allowed in this workspace. Check Settings → Model / AI → Observational Memory → Memory model.",
       model: model
     )
   end

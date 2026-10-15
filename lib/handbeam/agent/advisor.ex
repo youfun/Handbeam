@@ -60,7 +60,7 @@ defmodule Handbeam.Agent.Advisor do
 
   def resolve(workspace_path) do
     case Handbeam.Settings.advisor_resolution(workspace_path) do
-      {:ok, %{model: model, source: source}} ->
+      {:ok, %{model: model, reasoning: reasoning, source: source}} ->
         case ModelConfig.resolve_model_for_workspace(workspace_path, model) do
           {:ok, _config, model_id} ->
             [provider_id, _] = String.split(model, "/", parts: 2)
@@ -70,6 +70,7 @@ defmodule Handbeam.Agent.Advisor do
                composite_id: model,
                provider_id: provider_id,
                model_id: model_id,
+               reasoning: reasoning,
                source: source
              }}
 
@@ -167,6 +168,7 @@ defmodule Handbeam.Agent.Advisor do
       composite_id: nil,
       provider_id: nil,
       model_id: nil,
+      reasoning: nil,
       source: nil
     }
   end

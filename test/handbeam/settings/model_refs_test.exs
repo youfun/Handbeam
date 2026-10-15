@@ -53,7 +53,7 @@ defmodule Handbeam.Settings.ModelRefsTest do
     :ok = ModelAIOverride.save(:global, global)
 
     :ok =
-      ModelAIOverride.save({:workspace, ws_b["path"]}, %{global | om_observer_model: "alpha/one"})
+      ModelAIOverride.save({:workspace, ws_b["path"]}, %{global | om_model: "alpha/one"})
 
     :ok =
       ModelPolicy.save(ws_a["path"], %{
@@ -69,8 +69,8 @@ defmodule Handbeam.Settings.ModelRefsTest do
     assert :catalog_default_provider in sources
     assert %{source: :global_model_ai, field: :default_model} = find_ref(refs, :global_model_ai)
 
-    assert %{source: :workspace_model_ai, field: :om_observer_model, workspace_id: id} =
-             find_ref(refs, :workspace_model_ai)
+    assert %{source: :workspace_model_ai, field: :om_model, workspace_id: id} =
+             find_ref(refs, :workspace_model_ai, :om_model)
 
     assert id == ws_b["id"]
 
@@ -92,11 +92,13 @@ defmodule Handbeam.Settings.ModelRefsTest do
     :ok =
       ModelAIOverride.save({:workspace, ws_b["path"]}, %{
         Settings.global_model_ai()
-        | om_reflector_model: "beta/two"
+        | om_model: "beta/two"
       })
 
     %{refs: refs} = ModelRefs.find(:provider, "beta", nil)
-    assert [%{source: :workspace_model_ai, field: :om_reflector_model}] = refs
+
+    assert %{source: :workspace_model_ai, field: :om_model} =
+             find_ref(refs, :workspace_model_ai, :om_model)
   end
 
   test "replace_all rewrites every reference and catalog defaults", %{ws_a: ws_a} do
@@ -157,4 +159,7 @@ defmodule Handbeam.Settings.ModelRefsTest do
   end
 
   defp find_ref(refs, source), do: Enum.find(refs, &(&1.source == source))
+
+  defp find_ref(refs, source, field),
+    do: Enum.find(refs, &(&1.source == source and &1.field == field))
 end
