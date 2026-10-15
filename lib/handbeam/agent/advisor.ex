@@ -10,8 +10,8 @@ defmodule Handbeam.Agent.Advisor do
 
   @modes ~w(off consult review plan_review)a
   @repair_limit 2
-  @consult_timeout_ms 90_000
-  @review_timeout_ms 120_000
+  @consult_timeout_ms 300_000
+  @review_timeout_ms 300_000
   @run_budget_ms 8 * 60 * 1000
   @readonly ~w(read grep file_search code_search)
 

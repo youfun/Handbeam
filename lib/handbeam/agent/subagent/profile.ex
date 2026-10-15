@@ -112,8 +112,8 @@ defmodule Handbeam.Agent.Subagent.Profile do
         tools: ~w(read grep file_search code_search),
         mode: :read_only,
         isolation: :shared,
-        max_turns: 4,
-        timeout_ms: 120_000,
+        max_turns: 8,
+        timeout_ms: 300_000,
         source: :builtin
       }
     ]
