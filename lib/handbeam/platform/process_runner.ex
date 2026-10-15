@@ -17,7 +17,6 @@ defmodule Handbeam.Platform.ProcessRunner do
   @max_output_bytes 50_000
   @max_output_lines 2_000
   @buffer_limit 102_400
-  @release_env ~w(BINDIR EMU PROGNAME RELEASE_NAME RELEASE_ROOT RELEASE_VSN ROOTDIR)
 
   @doc """
   Opens a gated shell using the same shell resolution and Port transport as synchronous Bash.
@@ -130,8 +129,10 @@ defmodule Handbeam.Platform.ProcessRunner do
     options = [:binary, :exit_status, :use_stdio, :stderr_to_stdout, :hide]
 
     env =
-      Enum.map(@release_env, &{String.to_charlist(&1), false}) ++
-        CommandEnvironment.encode_port_env(child_env(invocation.env))
+      invocation.env
+      |> child_env()
+      |> CommandEnvironment.child_port_env()
+      |> CommandEnvironment.encode_port_env()
 
     options = [{:env, env} | options]
 
@@ -146,7 +147,7 @@ defmodule Handbeam.Platform.ProcessRunner do
   # directories. Mobile hosts keep their packaged OTP; they do not use bash mix.
   @doc false
   def shell_prelude do
-    unset = "unset " <> Enum.join(@release_env, " ")
+    unset = "unset " <> Enum.join(CommandEnvironment.shell_unset_names(), " ")
 
     case sanitized_path() do
       nil -> unset
@@ -166,8 +167,7 @@ defmodule Handbeam.Platform.ProcessRunner do
           sanitized_path()
       end
 
-    environment = if path, do: Map.put(environment, "PATH", path), else: environment
-    environment |> Map.drop(@release_env) |> Map.to_list()
+    if path, do: Map.put(environment, "PATH", path), else: environment
   end
 
   defp sanitized_path do

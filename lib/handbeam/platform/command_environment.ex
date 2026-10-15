@@ -1,24 +1,66 @@
 defmodule Handbeam.Platform.CommandEnvironment do
   @moduledoc false
 
-  @release_env ~w(BINDIR EMU PROGNAME RELEASE_NAME RELEASE_ROOT RELEASE_VSN ROOTDIR)
+  @release_env ~w(
+    BINDIR EMU PROGNAME RELEASE_NAME RELEASE_ROOT RELEASE_VSN ROOTDIR
+    RELEASE_TMP RELEASE_DISTRIBUTION RELEASE_NODE RELEASE_COOKIE
+    RELEASE_SYS_CONFIG RELEASE_BOOT_SCRIPT RELEASE_BOOT_SCRIPT_CLEAN
+  )
+
+  @desktop_internal_env ~w(
+    HANDBEAM_RUNTIME_DIR HANDBEAM_DESKTOP_ENV_HELPER
+    HANDBEAM_COMPUTER_PORT HANDBEAM_COMPUTER_TOKEN
+    HANDBEAM_NOTIFY_PORT HANDBEAM_NOTIFY_TOKEN
+  )
+
+  # The desktop host injects these generic names for its Phoenix backend. They
+  # must not become project settings merely because a command was launched by
+  # that backend. A captured login shell or an explicit command environment can
+  # still set its own values for these names.
+  @backend_env ~w(PHX_SERVER PORT PHX_HOST DATABASE_PATH SECRET_KEY_BASE)
+  @internal_env @release_env ++ @desktop_internal_env
+  @inherited_backend_env @internal_env ++ @backend_env
 
   @spec sanitize(map()) :: map()
   def sanitize(environment) when is_map(environment) do
     environment
-    |> Map.drop(@release_env)
+    |> Map.drop(@internal_env)
     |> Map.update("PATH", nil, &strip_release_erts/1)
     |> Map.reject(fn {_key, value} -> is_nil(value) end)
   end
 
   @spec port_env(map()) :: [{String.t(), String.t() | false}]
-  def port_env(environment) when environment == %{}, do: []
+  def port_env(environment) when environment == %{}, do: port_unsets()
 
   def port_env(environment) when is_map(environment) do
     environment = sanitize(environment)
-    removed = Map.keys(System.get_env()) -- Map.keys(environment)
+
+    removed =
+      (Map.keys(System.get_env()) -- Map.keys(environment)) ++
+        (@inherited_backend_env -- Map.keys(environment))
+
+    removed = Enum.uniq(removed)
     Enum.map(removed, &{&1, false}) ++ Map.to_list(environment)
   end
+
+  @doc false
+  @spec child_port_env(map() | [{String.t(), String.t() | false}]) ::
+          [{String.t(), String.t() | false}]
+  def child_port_env(environment) do
+    environment = environment |> Map.new() |> sanitize()
+    removed = @inherited_backend_env -- Map.keys(environment)
+    Enum.map(removed, &{&1, false}) ++ Map.to_list(environment)
+  end
+
+  @doc false
+  @spec system_cmd_unsets() :: [{String.t(), nil}]
+  def system_cmd_unsets, do: Enum.map(@inherited_backend_env, &{&1, nil})
+
+  @doc false
+  @spec shell_unset_names() :: [String.t()]
+  def shell_unset_names, do: @inherited_backend_env
+
+  defp port_unsets, do: Enum.map(@inherited_backend_env, &{&1, false})
 
   @spec encode_port_env([{String.t(), String.t() | false}]) ::
           [{charlist(), charlist() | false}]

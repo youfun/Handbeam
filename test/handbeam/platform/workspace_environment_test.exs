@@ -46,6 +46,56 @@ defmodule Handbeam.Platform.WorkspaceEnvironmentTest do
     assert System.get_env("HANDBEAM_PROJECT_MARKER") == original
   end
 
+  test "removes desktop backend values before invoking the shell environment helper" do
+    if match?({:unix, _}, :os.type()) do
+      root =
+        Path.join(System.tmp_dir!(), "handbeam-env-helper-#{System.unique_integer([:positive])}")
+
+      helper = Path.join(root, "capture-env")
+
+      keys =
+        ~w(HANDBEAM_DESKTOP_ENV_HELPER PHX_SERVER PORT SECRET_KEY_BASE HANDBEAM_COMPUTER_TOKEN)
+
+      originals = Map.new(keys, &{&1, System.get_env(&1)})
+
+      File.mkdir_p!(root)
+
+      File.write!(
+        helper,
+        ~S|#!/bin/sh
+printf '{"INHERITED_PHX_SERVER":"%s","INHERITED_PORT":"%s","INHERITED_SECRET":"%s","INHERITED_TOKEN":"%s","PORT":"4100"}' "${PHX_SERVER-unset}" "${PORT-unset}" "${SECRET_KEY_BASE-unset}" "${HANDBEAM_COMPUTER_TOKEN-unset}"
+|
+      )
+
+      File.chmod!(helper, 0o755)
+      System.put_env("HANDBEAM_DESKTOP_ENV_HELPER", helper)
+      System.put_env("PHX_SERVER", "true")
+      System.put_env("PORT", "60302")
+      System.put_env("SECRET_KEY_BASE", "desktop-secret")
+      System.put_env("HANDBEAM_COMPUTER_TOKEN", "desktop-token")
+
+      try do
+        Application.delete_env(:handbeam, :workspace_environment_capture)
+        WorkspaceEnvironment.clear()
+
+        assert WorkspaceEnvironment.environment(root) == %{
+                 "INHERITED_PHX_SERVER" => "unset",
+                 "INHERITED_PORT" => "unset",
+                 "INHERITED_SECRET" => "unset",
+                 "INHERITED_TOKEN" => "unset",
+                 "PORT" => "4100"
+               }
+      after
+        Enum.each(originals, fn
+          {key, nil} -> System.delete_env(key)
+          {key, value} -> System.put_env(key, value)
+        end)
+
+        File.rm_rf!(root)
+      end
+    end
+  end
+
   test "resolves executables from the workspace PATH" do
     root =
       Path.join(System.tmp_dir!(), "handbeam-workspace-env-#{System.unique_integer([:positive])}")

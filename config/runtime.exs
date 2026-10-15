@@ -1,6 +1,7 @@
 import Config
 
-if match?({:unix, :darwin}, :os.type()) and System.get_env("HANDBEAM_NOTIFY_PORT") do
+if config_env() != :test and match?({:unix, :darwin}, :os.type()) and
+     System.get_env("HANDBEAM_NOTIFY_PORT") do
   config :handbeam,
          :macos_notify_port,
          String.to_integer(System.fetch_env!("HANDBEAM_NOTIFY_PORT"))
@@ -9,7 +10,8 @@ if match?({:unix, :darwin}, :os.type()) and System.get_env("HANDBEAM_NOTIFY_PORT
   config :handbeam, :runtime_notify_adapter, Handbeam.Runtime.MacNotify
 end
 
-if match?({:unix, :darwin}, :os.type()) and System.get_env("HANDBEAM_COMPUTER_PORT") do
+if config_env() != :test and match?({:unix, :darwin}, :os.type()) and
+     System.get_env("HANDBEAM_COMPUTER_PORT") do
   config :handbeam,
          :computer_use_port,
          String.to_integer(System.fetch_env!("HANDBEAM_COMPUTER_PORT"))
@@ -48,21 +50,23 @@ end
 #
 # Alternatively, you can use `mix phx.gen.release` to generate a `bin/server`
 # script that automatically sets the env var above.
-if System.get_env("PHX_SERVER") do
-  config :handbeam, HandbeamWeb.Endpoint, server: true
-end
-
-public_bind? = System.get_env("AMP_ORB") == "1"
-http_opts = [port: String.to_integer(System.get_env("PORT", "5002"))]
+public_bind? = config_env() != :test and System.get_env("AMP_ORB") == "1"
 
 http_opts =
-  if public_bind? do
-    Keyword.put(http_opts, :ip, {0, 0, 0, 0})
+  if config_env() == :test do
+    [ip: {127, 0, 0, 1}, port: 4002]
   else
-    Keyword.put(http_opts, :ip, {127, 0, 0, 1})
+    ip = if public_bind?, do: {0, 0, 0, 0}, else: {127, 0, 0, 1}
+    [ip: ip, port: String.to_integer(System.get_env("PORT", "5002"))]
   end
 
-config :handbeam, HandbeamWeb.Endpoint, http: http_opts
+if config_env() != :test do
+  if System.get_env("PHX_SERVER") do
+    config :handbeam, HandbeamWeb.Endpoint, server: true
+  end
+
+  config :handbeam, HandbeamWeb.Endpoint, http: http_opts
+end
 
 access_mode =
   case System.get_env("HANDBEAM_ACCESS_MODE", if(public_bind?, do: "password", else: "local")) do

@@ -76,6 +76,7 @@ defmodule Handbeam.Platform.WorkspaceEnvironment do
       {output, status} =
         System.cmd(helper, ["--capture-shell-environment", path],
           cd: path,
+          env: CommandEnvironment.system_cmd_unsets(),
           stderr_to_stdout: false
         )
 

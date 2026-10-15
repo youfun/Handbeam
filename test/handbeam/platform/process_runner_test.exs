@@ -74,6 +74,30 @@ defmodule Handbeam.Platform.ProcessRunnerTest do
       end
     end
 
+    test "does not leak desktop backend variables into child tools" do
+      keys = ~w(PHX_SERVER PORT PHX_HOST DATABASE_PATH SECRET_KEY_BASE HANDBEAM_COMPUTER_TOKEN)
+      originals = Map.new(keys, &{&1, System.get_env(&1)})
+
+      Enum.each(keys, &System.put_env(&1, "desktop-value"))
+
+      try do
+        command =
+          Enum.map_join(keys, "; printf ':'; ", fn key ->
+            ~s|printf %s "${#{key}-unset}"|
+          end)
+
+        assert {:ok, output, %{exit_code: 0}} = ProcessRunner.run_bash(command, nil, 5_000)
+        assert String.split(output, ":") == List.duplicate("unset", length(keys))
+
+        assert {:ok, "4100", %{exit_code: 0}} =
+                 ProcessRunner.run_bash(~S|printf %s "$PORT"|, nil, 5_000,
+                   env: [{"PORT", "4100"}]
+                 )
+      after
+        Enum.each(originals, fn {key, value} -> restore_env(key, value) end)
+      end
+    end
+
     test "keeps a packaged mobile OTP erl on PATH" do
       root =
         Path.join(System.tmp_dir!(), "handbeam-mobile-otp-#{System.unique_integer([:positive])}")
