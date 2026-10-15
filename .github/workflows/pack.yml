@@ -657,6 +657,27 @@ jobs:
           echo "HANDREAM_ISH_LIBS=$RUNNER_TEMP/ish-arm64/build-ios/libish_emu.a,$RUNNER_TEMP/ish-arm64/build-ios/libish.a,$RUNNER_TEMP/ish-arm64/build-ios/libfakefs.a" >> "$GITHUB_ENV"
           echo "HANDREAM_ISH_INCLUDE=$RUNNER_TEMP/ish-arm64" >> "$GITHUB_ENV"
 
+      - name: Apply pinned iOS build harness
+        env:
+          PACKAGE_COMMIT: ${{ needs.target.outputs.commit }}
+          RELEASE_TAG: ${{ needs.target.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          git fetch --depth=1 origin "$GITHUB_SHA"
+          harness=mobile/script/pack_sideload_ipa.exs
+          blob="$(git rev-parse "$GITHUB_SHA:$harness")"
+          git show "$blob" > script/pack_sideload_ipa.exs
+          echo "Workflow commit: $GITHUB_SHA"
+          echo "Package commit: $PACKAGE_COMMIT"
+          echo "Build harness: $harness; blob: $blob"
+          test "$(git rev-parse HEAD)" = "$PACKAGE_COMMIT"
+          while IFS= read -r changed; do
+            test "$changed" = "$harness"
+          done < <(git -C .. diff --name-only)
+          if [[ -n "$RELEASE_TAG" ]]; then
+            bash ../scripts/version.sh check-tag "$RELEASE_TAG"
+          fi
+
       - name: Pack sideload IPA
         run: bash script/pack_sideload_ipa.sh --artifacts artifacts
 

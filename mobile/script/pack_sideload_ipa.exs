@@ -102,7 +102,17 @@ if [ -n "${HANDREAM_ISH_LIBS:-}" ]; then
   $CC $IFLAGS -DSTATIC_ERLANG_NIF -DSTATIC_ERLANG_NIF_LIBNAME=handbeam_ios \
     -DHANDREAM_IOS_GUEST -I "${HANDREAM_ISH_INCLUDE:?}" \
     -c c_src/handbeam_ios.c -o "$BUILD_DIR/handbeam_ios.o"
-  PLUGIN_OBJS="$PLUGIN_OBJS $BUILD_DIR/handbeam_ios.o"
+  $CC $IFLAGS -DHANDREAM_IOS_GUEST -DGUEST_ARM64=1 -I "$HANDREAM_ISH_INCLUDE" \
+    -c c_src/handbeam_ios_guest.c -o "$BUILD_DIR/handbeam_ios_guest.o"
+  PLUGIN_OBJS="$PLUGIN_OBJS $BUILD_DIR/handbeam_ios.o $BUILD_DIR/handbeam_ios_guest.o"
+  old_ifs=$IFS
+  IFS=,
+  for lib in $HANDREAM_ISH_LIBS; do
+    [ -f "$lib" ] || { echo "missing iSH archive: $lib" >&2; exit 1; }
+    PLUGIN_OBJS="$PLUGIN_OBJS $lib"
+  done
+  IFS=$old_ifs
+  PLUGIN_OBJS="$PLUGIN_OBJS -lsqlite3 -lresolv -Xlinker -framework -Xlinker SystemConfiguration"
 else
   compile_static_nif handbeam_ios c_src/handbeam_ios.c
 fi
