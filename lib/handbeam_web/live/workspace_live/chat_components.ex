@@ -667,7 +667,7 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
                     do: "tool-work-follow"
                   ),
                   if(entry["work_collapsed"], do: "tool-work-collapsed"),
-                  if(entry["work_group_complete"] && !entry["work_collapsed"],
+                  if(!entry["work_collapsed"],
                     do: "tool-work-open"
                   )
                 ]}
@@ -687,10 +687,7 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
                   </span>
                 </button>
                 <div
-                  :if={
-                    entry["work_group_complete"] && !entry["work_collapsed"] &&
-                      !FileChangeCard.change_entry?(entry)
-                  }
+                  :if={!entry["work_collapsed"] && !FileChangeCard.change_entry?(entry)}
                   id={"tool-work-line-#{entry["id"]}"}
                   class={"tool-work-line indent-#{entry["work_indent"] || 1}"}
                 >
@@ -705,30 +702,6 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
                 <% install_prompt = browser_install_prompt(entry) %>
                 <% preview_card = preview_card(entry) %>
                 <% browser_takeover = browser_takeover_prompt(entry) %>
-                <div :if={!entry["work_group_complete"]} class="tool-work-body">
-                  <div class="flex items-center gap-2">
-                    <span class="tool-name text-xs">{tool_entry_name(entry)}</span>
-                    <span
-                      :if={(tool_entry_input_summary(entry) || "") != ""}
-                      class="tool-summary truncate flex-1"
-                    >
-                      {tool_entry_input_summary(entry)}
-                    </span>
-                    <span
-                      :if={tool_entry_duration(entry)}
-                      class="tool-duration tabular-nums"
-                    >
-                      {format_duration(tool_entry_duration(entry))}
-                    </span>
-                  </div>
-                  <div class={[
-                    "tool-status-line",
-                    tool_status_class(tool_entry_status(entry))
-                  ]}>
-                    {tool_status_icon(tool_entry_status(entry))}
-                    {tool_entry_status(entry)}
-                  </div>
-                </div>
                 <div
                   :if={preview_card}
                   id={"preview-card-#{entry["id"]}"}
@@ -813,7 +786,7 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
                   open?={entry["file_change_open"] == true}
                   id={"chat-file-change-#{entry["id"]}"}
                   class={
-                    if(entry["work_group_complete"] && !entry["work_collapsed"],
+                    if(!entry["work_collapsed"],
                       do: "tool-work-file indent-#{entry["work_indent"] || 1}"
                     )
                   }

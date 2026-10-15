@@ -1675,7 +1675,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       end)
     end
 
-    test "tool_start event displays tool name and input summary", %{conn: conn} do
+    test "tool_start event displays compact tool verb and input summary", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/")
 
       send(
@@ -1689,7 +1689,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       )
 
       assert has_element?(view, "#tool-tu_read_1")
-      assert has_element?(view, "#tool-tu_read_1", "read")
+      assert has_element?(view, "#tool-tu_read_1", "Read")
       assert has_element?(view, "#tool-tu_read_1", "runtime.exs")
     end
 
@@ -1702,8 +1702,10 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       )
 
       assert has_element?(view, "#tool-event-bash")
-      assert has_element?(view, "#tool-event-bash", "bash")
+      assert has_element?(view, "#tool-event-bash", "$")
       assert has_element?(view, "#tool-event-bash", "mix test")
+      assert has_element?(view, "#tool-work-line-tool-event-bash.tool-work-line")
+      refute has_element?(view, "#tool-event-bash .tool-status-line")
     end
 
     test "tool_start event with content input shows content summary", %{conn: conn} do
@@ -1719,13 +1721,13 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert has_element?(view, "#tool-event-write", "defmodule Foo do end")
     end
 
-    test "tool_start event with empty input shows no summary text", %{conn: conn} do
+    test "tool_start event with empty input shows only the compact verb", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/")
 
       send(view.pid, {:agent_event, agent_event(:tool_start, %{tool: "read", input: %{}})})
 
       assert has_element?(view, "#tool-event-read")
-      assert has_element?(view, "#tool-event-read", "read")
+      assert has_element?(view, "#tool-event-read", "Read")
     end
 
     test "tool_end event updates tool status to done with duration", %{conn: conn} do
@@ -4683,6 +4685,43 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert rendered =~ "tool-work-summary"
       assert rendered =~ "Explored 1 file, 1 command"
       refute rendered =~ "Hide Work"
+    end
+
+    test "completed tools stay compact while a later tool in the streak is running", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      send(view.pid, {:agent_event, agent_event(:run_start, %{model: "test"})})
+
+      send(
+        view.pid,
+        {:agent_event,
+         agent_event(:tool_start, %{
+           tool_use_id: "tu_read",
+           tool: "read",
+           input: %{file_path: "lib/app.ex"}
+         })}
+      )
+
+      send(
+        view.pid,
+        {:agent_event,
+         agent_event(:tool_end, %{tool_use_id: "tu_read", tool: "read", duration_ms: 10}, 2)}
+      )
+
+      send(
+        view.pid,
+        {:agent_event,
+         agent_event(
+           :tool_start,
+           %{tool_use_id: "tu_bash", tool: "bash", input: %{command: "mix test"}},
+           3
+         )}
+      )
+
+      assert has_element?(view, "#tool-work-line-tool-tu_read.tool-work-line", "lib/app.ex")
+      assert has_element?(view, "#tool-work-line-tool-tu_bash.tool-work-line", "mix test")
+      refute has_element?(view, "#tool-tu_read .tool-status-line")
+      refute has_element?(view, "#tool-tu_bash .tool-status-line")
     end
 
     test "single completed tool call collapses without a group wrapper", %{conn: conn} do
