@@ -254,7 +254,8 @@ defmodule Handbeam.Tool.Builtin.Browser do
     [
       timeout_ms: timeout_ms,
       session_name: session_name(args, session_mode, context),
-      screenshot_dir: dir
+      screenshot_dir: dir,
+      workspace_path: context[:working_directory]
     ]
     |> maybe_put(:runner, context[:browser_runner])
     |> maybe_put(:executable, context[:browser_executable])
