@@ -21,7 +21,7 @@ defmodule Handbeam.Tool.Builtin.CodeSearch do
 
   @impl true
   def description do
-    "Find code locations in the workspace by symbol, path, or meaning. " <>
+    "Find code locations in the workspace, or under an explicit external path in yolo mode, by symbol, path, or meaning. " <>
       "Returns path and line numbers, not file contents; use read to inspect a hit. " <>
       "Without an embeddings config this is keyword/token search, not natural-language search. " <>
       "A keyword miss or index=partial does not mean the repository has no other matches. " <>
@@ -45,7 +45,10 @@ defmodule Handbeam.Tool.Builtin.CodeSearch do
           description: "Maximum hits",
           default: @default_limit
         },
-        path: %{type: "string", description: "Optional workspace-relative directory prefix"},
+        path: %{
+          type: "string",
+          description: "Optional workspace-relative prefix; yolo also permits an external path"
+        },
         glob: %{type: "string", description: "Optional suffix filter such as .ex"}
       },
       required: ["query"]
@@ -61,14 +64,15 @@ defmodule Handbeam.Tool.Builtin.CodeSearch do
   @impl true
   def execute(input, context) when is_map(input) do
     with {:ok, query} <- fetch_query(input),
-         {:ok, root} <- workspace(context),
-         {:ok, id} <- workspace_id(root, context) do
+         {:ok, workspace} <- workspace(context),
+         {:ok, root, scoped_input, absolute_paths?} <- search_scope(workspace, input, context),
+         {:ok, id} <- workspace_id(root, workspace, context) do
       parent = self()
 
-      case CodeIndex.search(root, id, query, search_opts(input, context, parent)) do
+      case CodeIndex.search(root, id, query, search_opts(scoped_input, context, parent)) do
         {:ok, payload} ->
           payload = drop_sensitive_hits(payload, root)
-          {:ok, format(payload, input), details(payload)}
+          {:ok, format(payload, scoped_input, root, absolute_paths?), details(payload, root, absolute_paths?)}
 
         {:error, reason} ->
           {:error, format_error(reason)}
@@ -111,9 +115,49 @@ defmodule Handbeam.Tool.Builtin.CodeSearch do
     end
   end
 
-  defp workspace_id(root, context) do
+  defp search_scope(workspace, input, context) do
+    case Handbeam.Utils.SafeMap.get_any(input, "path", :path) do
+      path when path in [nil, ""] ->
+        {:ok, workspace, input, false}
+
+      path when is_binary(path) ->
+        with {:ok, resolved} <- Handbeam.Agent.Tool.resolve_path(path, context) do
+          if Handbeam.Security.PathValidator.validate_within_workspace(resolved, workspace) == :ok do
+            {:ok, workspace, put_path(input, Path.relative_to(resolved, workspace)), false}
+          else
+            external_search_scope(resolved, input)
+          end
+        end
+
+      _ ->
+        {:error, "path must be a string"}
+    end
+  end
+
+  defp external_search_scope(path, input) do
+    cond do
+      File.dir?(path) ->
+        {:ok, path, put_path(input, nil), true}
+
+      File.dir?(Path.dirname(path)) ->
+        {:ok, Path.dirname(path), put_path(input, Path.basename(path)), true}
+
+      true ->
+        {:error, "path not found: #{path}"}
+    end
+  end
+
+  defp put_path(input, nil), do: input |> Map.delete("path") |> Map.delete(:path)
+
+  defp put_path(input, path) do
+    input
+    |> Map.delete(:path)
+    |> Map.put("path", path)
+  end
+
+  defp workspace_id(root, workspace, context) do
     case Handbeam.Utils.SafeMap.get_any(context, :workspace_id, "workspace_id") do
-      id when is_binary(id) and id != "" ->
+      id when is_binary(id) and id != "" and root == workspace ->
         {:ok, id}
 
       _ ->
@@ -138,7 +182,7 @@ defmodule Handbeam.Tool.Builtin.CodeSearch do
   defp blank_to_nil(value) when value in [nil, ""], do: nil
   defp blank_to_nil(value), do: value
 
-  defp format(%{hits: hits, mode: mode, index: index, elapsed_ms: elapsed}, input) do
+  defp format(%{hits: hits, mode: mode, index: index, elapsed_ms: elapsed}, input, root, absolute?) do
     filtered = filter_hits(hits, input)
 
     header =
@@ -147,7 +191,7 @@ defmodule Handbeam.Tool.Builtin.CodeSearch do
     body =
       filtered
       |> Enum.with_index(1)
-      |> Enum.map_join("\n", &format_hit/1)
+      |> Enum.map_join("\n", &format_hit(&1, root, absolute?))
 
     note =
       case mode do
@@ -176,10 +220,11 @@ defmodule Handbeam.Tool.Builtin.CodeSearch do
     |> Enum.join("\n")
   end
 
-  defp format_hit({hit, n}) do
+  defp format_hit({hit, n}, root, absolute?) do
     symbol = if is_binary(hit.symbol) and hit.symbol != "", do: "  #{hit.symbol}", else: ""
     score = hit |> Map.get(:score, 0.0) |> Float.round(2)
-    "#{n}. #{hit.path}:#{hit.start_line}-#{hit.end_line}#{symbol}  (#{score})"
+    path = if absolute?, do: Path.join(root, hit.path), else: hit.path
+    "#{n}. #{path}:#{hit.start_line}-#{hit.end_line}#{symbol}  (#{score})"
   end
 
   defp filter_hits(hits, input) do
@@ -205,11 +250,11 @@ defmodule Handbeam.Tool.Builtin.CodeSearch do
     String.ends_with?(hit, suffix)
   end
 
-  defp details(%{hits: hits}) do
+  defp details(%{hits: hits}, root, absolute?) do
     case hits do
       [hit | _] ->
         %{
-          file_path: hit.path,
+          file_path: if(absolute?, do: Path.join(root, hit.path), else: hit.path),
           start_line: hit.start_line,
           end_line: hit.end_line
         }

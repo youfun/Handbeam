@@ -17,6 +17,7 @@ defmodule Handbeam.Tool.Builtin.Grep do
   @max_line_bytes 2_000
   @max_context 3
   @scan_budget_ms 2_000
+  @external_index_wait_ms 3_000
 
   @impl true
   def name, do: "grep"
@@ -26,14 +27,14 @@ defmodule Handbeam.Tool.Builtin.Grep do
     "Search file contents for a regex or literal pattern. " <>
       "Omit pattern and pass glob to list matching files. " <>
       "Use file_search for fuzzy name search. " <>
-      "path should be workspace-relative; an absolute path is accepted only inside the current workspace. " <>
+      "path should be workspace-relative; yolo mode also accepts paths outside the workspace. " <>
       "Results are grouped by file; pass next_cursor as cursor to continue."
   end
 
   @impl true
   def hint do
     "A failed search is not an empty result. Add a content pattern, or pass glob to list files. " <>
-      "If path is outside the workspace, omit it or use a workspace-relative path. " <>
+      "If path is outside the workspace, yolo mode is required. " <>
       "Do not invent another user's absolute path, and do not repeat the same arguments unchanged."
   end
 
@@ -50,7 +51,7 @@ defmodule Handbeam.Tool.Builtin.Grep do
         path: %{
           type: "string",
           description:
-            "Workspace-relative file or directory. Absolute paths must stay inside the current workspace"
+            "Workspace-relative file or directory. Yolo mode also permits an absolute path outside the workspace"
         },
         glob: %{
           type: "string",
@@ -84,16 +85,16 @@ defmodule Handbeam.Tool.Builtin.Grep do
 
   @impl true
   def execute(input, context) when is_map(input) do
-    with {:ok, workspace, prefix, note} <- resolve_scope(input, context) do
+    with {:ok, workspace, prefix, note, absolute_paths?} <- resolve_scope(input, context) do
       case fetch_pattern(input) do
         {:ok, pattern} ->
           input
-          |> search_pattern(pattern, workspace, prefix)
+          |> search_pattern(pattern, workspace, prefix, absolute_paths?)
           |> with_note(note)
 
         :missing ->
           if glob_present?(input) do
-            list_by_glob(input, workspace, prefix, note)
+            list_by_glob(input, workspace, prefix, note, absolute_paths?)
           else
             {:error, missing_pattern_error(workspace)}
           end
@@ -133,7 +134,7 @@ defmodule Handbeam.Tool.Builtin.Grep do
     end
   end
 
-  defp search(pattern, regex, inventory, workspace, input) do
+  defp search(pattern, regex, inventory, workspace, input, absolute_paths?) do
     started_at = System.monotonic_time(:millisecond)
 
     cursor =
@@ -198,7 +199,14 @@ defmodule Handbeam.Tool.Builtin.Grep do
        %{code: :scan_timeout, status: :failed, side_effect: :not_started}}
     else
       {:ok,
-       format_results(page, next_cursor, Map.put(inventory, :partial, partial?), workspace, input)}
+       format_results(
+         page,
+         next_cursor,
+         Map.put(inventory, :partial, partial?),
+         workspace,
+         input,
+         absolute_paths?
+       )}
     end
   end
 
@@ -414,11 +422,11 @@ defmodule Handbeam.Tool.Builtin.Grep do
     %{hit | path: hit.path |> String.replace("\\", "/") |> String.trim_leading("./")}
   end
 
-  defp format_results([], _cursor, inventory, _workspace, _input) do
+  defp format_results([], _cursor, inventory, _workspace, _input, _absolute_paths?) do
     "No matches found" <> indexing_suffix(inventory)
   end
 
-  defp format_results(hits, next_cursor, inventory, workspace, input) do
+  defp format_results(hits, next_cursor, inventory, workspace, input, absolute_paths?) do
     before_n = context_before(input)
     after_n = context_after(input)
 
@@ -428,15 +436,16 @@ defmodule Handbeam.Tool.Builtin.Grep do
       |> Enum.sort_by(&elem(&1, 0))
       |> Enum.map_join("\n", fn {path, file_hits} ->
         lines = read_lines(workspace, path)
+        shown_path = if absolute_paths?, do: Path.join(workspace, path), else: path
 
         rendered =
           file_hits
           |> Enum.sort_by(& &1.line)
-          |> Enum.flat_map(&format_hit(path, lines, &1.line, before_n, after_n))
+          |> Enum.flat_map(&format_hit(shown_path, lines, &1.line, before_n, after_n))
           |> Enum.uniq()
           |> Enum.join("\n")
 
-        "== #{path} ==\n" <> rendered
+        "== #{shown_path} ==\n" <> rendered
       end)
 
     continuation = if next_cursor, do: "next_cursor: #{next_cursor}\n", else: ""
@@ -645,16 +654,18 @@ defmodule Handbeam.Tool.Builtin.Grep do
     end
   end
 
-  defp search_pattern(input, pattern, workspace, prefix) do
+  defp search_pattern(input, pattern, workspace, prefix, absolute_paths?) do
     with {:ok, regex} <- compile_pattern(pattern, input),
          {:ok, index} <- Handbeam.Search.ensure_started(workspace),
+         :ok <- await_external_index(index, absolute_paths?),
          {:ok, inventory} <- inventory(index, workspace, prefix, input) do
-      search(pattern, regex, inventory, workspace, input)
+      search(pattern, regex, inventory, workspace, input, absolute_paths?)
     end
   end
 
-  defp list_by_glob(input, workspace, prefix, note) do
+  defp list_by_glob(input, workspace, prefix, note, absolute_paths?) do
     with {:ok, index} <- Handbeam.Search.ensure_started(workspace),
+         :ok <- await_external_index(index, absolute_paths?),
          {:ok, inventory} <- inventory(index, workspace, prefix, input) do
       glob = Handbeam.Utils.SafeMap.get_any(input, ["glob", :glob])
 
@@ -667,13 +678,21 @@ defmodule Handbeam.Tool.Builtin.Grep do
       body =
         case files do
           [] -> "No matches found"
-          paths -> Enum.join(paths, "\n")
+          paths ->
+            paths
+            |> Enum.map(fn path -> if absolute_paths?, do: Path.join(workspace, path), else: path end)
+            |> Enum.join("\n")
         end
 
       {:ok, body <> indexing_suffix(inventory)}
       |> with_note(note)
     end
   end
+
+  defp await_external_index(index, true),
+    do: Handbeam.Search.await(index, @external_index_wait_ms)
+
+  defp await_external_index(_index, false), do: :ok
 
   defp fetch_pattern(input) do
     pattern = Handbeam.Utils.SafeMap.get_any(input, ["pattern", :pattern, "query", :query])
@@ -712,7 +731,26 @@ defmodule Handbeam.Tool.Builtin.Grep do
     requested =
       if Path.type(raw_path) == :absolute, do: raw_path, else: Path.expand(raw_path, workspace)
 
-    {path, note} =
+    {path, note} = maybe_reroot(requested, workspace, context)
+
+    with {:ok, resolved} <- Handbeam.Agent.Tool.resolve_path(path, context),
+         true <- File.exists?(resolved) do
+      if Handbeam.Security.PathValidator.validate_within_workspace(resolved, workspace) == :ok do
+        {:ok, workspace, Path.relative_to(resolved, workspace), note, false}
+      else
+        external_scope(resolved)
+      end
+    else
+      false -> {:error, path_not_found(path, note)}
+      {:error, "Path traversal blocked: " <> _} -> {:error, outside_workspace_error(requested, workspace)}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp maybe_reroot(requested, workspace, context) do
+    if Handbeam.Agent.Tool.outside_workspace_allowed?(context) do
+      {requested, nil}
+    else
       case reroot_foreign_workspace(requested, workspace) do
         {:ok, rerooted} ->
           relative = Path.relative_to(rerooted, workspace)
@@ -723,20 +761,14 @@ defmodule Handbeam.Tool.Builtin.Grep do
         :error ->
           {requested, nil}
       end
+    end
+  end
 
-    with :ok <- Handbeam.Security.PathValidator.validate_within_workspace(path, workspace),
-         :ok <- Handbeam.Security.PathValidator.reject_resolved(path),
-         true <- File.exists?(path) do
-      {:ok, workspace, Path.relative_to(path, workspace), note}
+  defp external_scope(path) do
+    if File.dir?(path) do
+      {:ok, path, ".", nil, true}
     else
-      false ->
-        {:error, path_not_found(path, note)}
-
-      {:error, "Path traversal blocked: " <> _} ->
-        {:error, outside_workspace_error(requested, workspace)}
-
-      {:error, reason} ->
-        {:error, reason}
+      {:ok, Path.dirname(path), Path.basename(path), nil, true}
     end
   end
 

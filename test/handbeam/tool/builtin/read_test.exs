@@ -298,6 +298,38 @@ defmodule Handbeam.Tool.Builtin.ReadTest do
 
       assert reason =~ "Path traversal" or reason =~ "outside workspace"
     end
+
+    test "yolo reads an ordinary file outside the workspace" do
+      outside =
+        Path.join(System.tmp_dir!(), "handbeam-yolo-read-#{System.unique_integer([:positive])}.txt")
+
+      File.write!(outside, "outside content")
+      on_exit(fn -> File.rm(outside) end)
+
+      assert {:ok, output, %{file_path: ^outside}} =
+               Read.execute(
+                 %{"file_path" => outside},
+                 %{working_directory: @fixtures_dir, approval_mode: :yolo}
+               )
+
+      assert output =~ "outside content"
+    end
+
+    test "yolo still rejects sensitive files outside the workspace" do
+      root =
+        Path.join(System.tmp_dir!(), "handbeam-yolo-sensitive-#{System.unique_integer([:positive])}")
+
+      sensitive = Path.join(root, ".env")
+      File.mkdir_p!(root)
+      File.write!(sensitive, "TOKEN=secret")
+      on_exit(fn -> File.rm_rf!(root) end)
+
+      assert {:error, "sensitive path blocked"} =
+               Read.execute(
+                 %{"file_path" => sensitive},
+                 %{working_directory: @fixtures_dir, approval_mode: :yolo}
+               )
+    end
   end
 
   describe "result metadata" do

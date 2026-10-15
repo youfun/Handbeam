@@ -12,6 +12,10 @@ defmodule Handbeam.Search do
     backend().ensure_started(workspace)
   end
 
+  def await(index, timeout \\ 5_000) when is_integer(timeout) and timeout > 0 do
+    backend().await(index, timeout)
+  end
+
   def search(index, query, opts \\ []) when is_binary(query) and is_list(opts) do
     backend = backend()
     started_at = System.monotonic_time(:millisecond)

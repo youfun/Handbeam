@@ -25,8 +25,8 @@ defmodule Handbeam.Tool.Builtin.Read do
 
   @impl true
   def hint do
-    "Check file_path against the workspace. Use offset and limit to read another slice; " <>
-      "do not repeat a path or range that just failed."
+    "Check file_path against the workspace unless the run is in yolo mode. " <>
+      "Use offset and limit to read another slice; do not repeat a path or range that just failed."
   end
 
   @impl true

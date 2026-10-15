@@ -86,6 +86,32 @@ defmodule Handbeam.Tool.Builtin.FileSearchTest do
       assert output =~ "ms"
     end
 
+    test "yolo searches an explicit directory outside the workspace", %{tmp_dir: tmp_dir} do
+      outside =
+        Path.join(System.tmp_dir!(), "handbeam-yolo-files-#{System.unique_integer([:positive])}")
+
+      file = Path.join(outside, "external_widget.ex")
+      File.mkdir_p!(outside)
+      File.write!(file, "module")
+
+      on_exit(fn ->
+        case ExFff.Index.ensure_started(outside) do
+          {:ok, pid} when is_pid(pid) -> GenServer.stop(pid)
+          _ -> :ok
+        end
+
+        File.rm_rf!(outside)
+      end)
+
+      assert {:ok, output} =
+               FileSearch.execute(%{"query" => "external_widget", "path" => outside}, %{
+                 working_directory: tmp_dir,
+                 approval_mode: :yolo
+               })
+
+      assert output =~ file
+    end
+
     test "includes score in output", %{tmp_dir: tmp_dir} do
       {:ok, output} = FileSearch.execute(%{"query" => "user"}, %{working_directory: tmp_dir})
 

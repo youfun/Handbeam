@@ -16,6 +16,7 @@ defmodule Handbeam.Search.Backend do
         }
 
   @callback ensure_started(workspace :: String.t()) :: {:ok, index()} | {:error, term()}
+  @callback await(index(), timeout()) :: :ok | {:error, term()}
   @callback search(index(), query :: String.t(), keyword()) :: {:ok, result()} | {:error, term()}
   @callback files(index(), keyword()) :: {:ok, map()} | {:error, term()}
   @callback touch(index(), path :: String.t()) :: :ok

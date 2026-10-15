@@ -11,6 +11,7 @@ defmodule Handbeam.Agent.Tool.Executor do
   alias Handbeam.Agent.{ErrorReporter, Message, ModelContext, State}
   alias Handbeam.Agent.Tool.{Result, ResultContract}
   alias Handbeam.Extension.HookPipeline
+  alias Handbeam.Permissions.ToolPolicy
   alias Handbeam.Utils.SafeMap
 
   require Logger
@@ -836,7 +837,8 @@ defmodule Handbeam.Agent.Tool.Executor do
       config: config,
       run_metadata: run_metadata,
       usage: usage,
-      tool_guard_overrides: overrides
+      tool_guard_overrides: overrides,
+      tool_guard_session_allow: session_allow
     } = state
 
     context = config.context || %{}
@@ -845,6 +847,7 @@ defmodule Handbeam.Agent.Tool.Executor do
     context
     |> Map.merge(%{
       working_directory: config.working_directory,
+      approval_mode: effective_approval_mode(config, overrides, session_allow),
       skill_paths: config.skill_paths,
       tool_timeout: config.tool_timeout,
       run_deadline: context_run_deadline(config),
@@ -872,5 +875,18 @@ defmodule Handbeam.Agent.Tool.Executor do
     |> Enum.reject(fn {_key, value} -> is_nil(value) end)
     |> Map.new()
     |> Map.put(:model_messages, ModelContext.visible(state))
+  end
+
+  defp effective_approval_mode(config, overrides, session_allow) do
+    delegated =
+      SafeMap.get_any(config.context || %{}, :delegated_approval, "delegated_approval")
+
+    if delegated in [:yolo, "yolo"] do
+      :yolo
+    else
+      config.working_directory
+      |> ToolPolicy.from_workspace(overrides || %{}, session_allow || [])
+      |> Map.fetch!(:default_mode)
+    end
   end
 end

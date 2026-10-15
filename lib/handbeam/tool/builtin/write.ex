@@ -23,7 +23,8 @@ defmodule Handbeam.Tool.Builtin.Write do
 
   @impl true
   def hint do
-    "Use a workspace-relative file_path. A leading / is filesystem root, not the workspace. " <>
+    "Use a workspace-relative file_path by default. A leading / is filesystem root, not the workspace. " <>
+      "Paths outside the workspace require yolo mode. " <>
       "For a precise change to an existing file, use edit instead of rewriting the whole file."
   end
 
@@ -35,7 +36,7 @@ defmodule Handbeam.Tool.Builtin.Write do
         file_path: %{
           type: "string",
           description:
-            "File path inside the current workspace. Prefer a relative path such as workspace-check.txt or reports/summary.md. A leading / means filesystem root, not workspace root; absolute paths must remain inside the workspace."
+            "File path. Prefer a workspace-relative path such as workspace-check.txt or reports/summary.md. A leading / means filesystem root, not workspace root; paths outside the workspace require yolo mode."
         },
         content: %{type: "string", description: "Content to write to the file"},
         retry_of: %{
@@ -150,8 +151,11 @@ defmodule Handbeam.Tool.Builtin.Write do
   end
 
   # Validates the resolved path stays within workspace, including symlink resolution.
-  defp validate_within_workspace(path, %{working_directory: wd}) when is_binary(wd) do
-    Handbeam.Security.PathValidator.validate_within_workspace(path, wd)
+  defp validate_within_workspace(path, %{working_directory: wd} = context)
+       when is_binary(wd) do
+    if Handbeam.Agent.Tool.outside_workspace_allowed?(context),
+      do: :ok,
+      else: Handbeam.Security.PathValidator.validate_within_workspace(path, wd)
   end
 
   defp validate_within_workspace(_path, _context), do: :ok

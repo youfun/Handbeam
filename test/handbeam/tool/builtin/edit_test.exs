@@ -462,6 +462,26 @@ defmodule Handbeam.Tool.Builtin.EditTest do
 
       assert reason =~ "Path traversal" or reason =~ "outside workspace"
     end
+
+    test "yolo edits a file outside the workspace" do
+      outside =
+        Path.join(System.tmp_dir!(), "handbeam-yolo-edit-#{System.unique_integer([:positive])}.txt")
+
+      File.write!(outside, "before")
+      on_exit(fn -> File.rm(outside) end)
+
+      assert {:ok, _output, %{file_path: ^outside}} =
+               Edit.execute(
+                 %{"file_path" => outside, "old_string" => "before", "new_string" => "after"},
+                 %{
+                   working_directory: @work_dir,
+                   approval_mode: :yolo,
+                   conversation_id: "edit-yolo-test"
+                 }
+               )
+
+      assert File.read!(outside) == "after"
+    end
   end
 
   describe "permission handling" do

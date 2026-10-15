@@ -75,7 +75,7 @@ defmodule Handbeam.Agent.Tool do
         end
       end
 
-    with :ok <- within_workspace(resolved, working_directory),
+    with :ok <- within_workspace(resolved, working_directory, context),
          :ok <- Handbeam.Security.PathValidator.reject_resolved(resolved) do
       {:ok, resolved}
     else
@@ -94,10 +94,29 @@ defmodule Handbeam.Agent.Tool do
 
   defp working_directory(_context), do: nil
 
-  defp within_workspace(_resolved, wd) when not is_binary(wd) or wd == "", do: :ok
+  @doc "Whether this tool context may access paths outside the current workspace."
+  @spec outside_workspace_allowed?(map()) :: boolean()
+  def outside_workspace_allowed?(context) when is_map(context) do
+    Handbeam.Utils.SafeMap.get_any(context, :approval_mode, "approval_mode") in [:yolo, "yolo"] or
+      Handbeam.Utils.SafeMap.get_any(context, :delegated_approval, "delegated_approval") in [
+        :yolo,
+        "yolo"
+      ]
+  end
 
-  defp within_workspace(resolved, wd) do
-    Handbeam.Security.PathValidator.validate_within_workspace(resolved, wd)
+  def outside_workspace_allowed?(_context), do: false
+
+  defp within_workspace(resolved, wd, context) do
+    cond do
+      outside_workspace_allowed?(context) ->
+        :ok
+
+      not is_binary(wd) or wd == "" ->
+        :ok
+
+      true ->
+        Handbeam.Security.PathValidator.validate_within_workspace(resolved, wd)
+    end
   end
 
   defp sensitive_resolved?(resolved, original) do

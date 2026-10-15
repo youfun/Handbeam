@@ -13,6 +13,9 @@ defmodule Handbeam.Search.ExFffBackend do
   end
 
   @impl true
+  def await(index, timeout), do: ExFff.Index.await_index(index, timeout)
+
+  @impl true
   def search(index, query, opts), do: ExFff.Index.search(index, query, opts)
 
   @impl true

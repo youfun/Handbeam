@@ -214,6 +214,26 @@ defmodule Handbeam.Tool.Builtin.WriteTest do
       assert reason =~ "Path traversal" or reason =~ "outside workspace"
     end
 
+    test "yolo writes outside the workspace" do
+      outside_dir =
+        Path.join(System.tmp_dir!(), "handbeam-yolo-write-#{System.unique_integer([:positive])}")
+
+      outside = Path.join(outside_dir, "nested/file.txt")
+      on_exit(fn -> File.rm_rf!(outside_dir) end)
+
+      assert {:ok, _output, %{file_path: ^outside}} =
+               Write.execute(
+                 %{"file_path" => outside, "content" => "outside"},
+                 %{
+                   working_directory: @work_dir,
+                   approval_mode: :yolo,
+                   conversation_id: "write-yolo-test"
+                 }
+               )
+
+      assert File.read!(outside) == "outside"
+    end
+
     @tag :"BDD-WRITE-010"
     test "writes through symlink to file inside workspace" do
       # Gong scenario: symlink overwrite writes through to real target.

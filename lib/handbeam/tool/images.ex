@@ -49,9 +49,17 @@ defmodule Handbeam.Tool.Images do
   defp source_allowed(%{trusted_root: root, path: path}, _context),
     do: Access.within_root(path, root)
 
-  defp source_allowed(%{path: path}, context),
-    do:
-      Handbeam.Security.PathValidator.validate_within_workspace(path, context[:working_directory])
+  defp source_allowed(%{path: path}, context) do
+    with :ok <- Handbeam.Security.PathValidator.reject_resolved(path) do
+      if Handbeam.Agent.Tool.outside_workspace_allowed?(context),
+        do: :ok,
+        else:
+          Handbeam.Security.PathValidator.validate_within_workspace(
+            path,
+            context[:working_directory]
+          )
+    end
+  end
 
   def store_file(path, mime, context) do
     with :ok <- Access.verify_canonical(path, mime),

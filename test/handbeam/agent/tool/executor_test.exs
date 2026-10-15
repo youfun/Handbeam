@@ -108,6 +108,31 @@ defmodule Handbeam.Agent.Tool.ExecutorTest do
       assert first_block[:content] =~ "line one"
     end
 
+    test "workspace yolo mode reaches tools as unrestricted path access" do
+      root =
+        Path.join(System.tmp_dir!(), "handbeam-executor-yolo-#{System.unique_integer([:positive])}")
+
+      workspace = Path.join(root, "workspace")
+      outside = Path.join(root, "outside.txt")
+      File.mkdir_p!(workspace)
+      File.write!(outside, "outside through executor")
+      on_exit(fn -> File.rm_rf!(root) end)
+
+      assert :ok = Handbeam.WorkspaceSettings.update_permission_mode(workspace, :yolo)
+
+      state = State.init(%Config{working_directory: workspace}, "Read outside")
+
+      assert {:ok, result_msg} =
+               Executor.execute_all(
+                 [%{id: "yolo-read", name: "read", input: %{"file_path" => outside}}],
+                 state
+               )
+
+      assert [block] = result_msg.content
+      refute block[:is_error]
+      assert block[:content] =~ "outside through executor"
+    end
+
     test "returns error for unknown tool" do
       config = %Config{}
       state = State.init(config, "Use unknown tool")

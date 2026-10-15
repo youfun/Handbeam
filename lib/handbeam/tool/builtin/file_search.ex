@@ -41,7 +41,10 @@ defmodule Handbeam.Tool.Builtin.FileSearch do
           description:
             "1–2 filename fragments, an extension (`*.ex`), a path glob (`desktop/**/*webview*`), or an exclusion (`!test/`). Not a sentence, and not file contents."
         },
-        path: %{type: "string", description: "Workspace-relative directory prefix"},
+        path: %{
+          type: "string",
+          description: "Workspace-relative prefix; yolo also permits an external path"
+        },
         exclude: %{
           type: "array",
           items: %{type: "string"},
@@ -62,8 +65,8 @@ defmodule Handbeam.Tool.Builtin.FileSearch do
     limit = Map.get(input, "limit", 20)
     working_directory = Map.get(context, :working_directory)
 
-    with {:ok, root} <- resolve_root(working_directory),
-         {:ok, path} <- resolve_path_filter(root, input["path"]),
+    with {:ok, workspace} <- resolve_root(working_directory),
+         {:ok, root, path, absolute_paths?} <- resolve_search_scope(workspace, input["path"], context),
          {:ok, index} <- Handbeam.Search.ensure_started(root),
          search_opts = [
            limit: limit,
@@ -77,7 +80,7 @@ defmodule Handbeam.Tool.Builtin.FileSearch do
           Handbeam.Security.PathValidator.allowed_result?(root, path)
         end)
 
-      {:ok, format_results(%{result | paths: paths})}
+      {:ok, format_results(%{result | paths: paths}, root, absolute_paths?)}
     end
   end
 
@@ -116,28 +119,40 @@ defmodule Handbeam.Tool.Builtin.FileSearch do
     {:error, "working_directory is required"}
   end
 
-  defp resolve_path_filter(_root, nil), do: {:ok, nil}
-  defp resolve_path_filter(_root, ""), do: {:ok, nil}
+  defp resolve_search_scope(root, nil, _context), do: {:ok, root, nil, false}
+  defp resolve_search_scope(root, "", _context), do: {:ok, root, nil, false}
 
-  defp resolve_path_filter(root, path) when is_binary(path) do
-    expanded = if Path.type(path) == :absolute, do: path, else: Path.expand(path, root)
-
-    case Handbeam.Security.PathValidator.validate_within_workspace(expanded, root) do
-      :ok -> {:ok, Path.relative_to(expanded, root)}
-      {:error, reason} -> {:error, reason}
+  defp resolve_search_scope(root, path, context) when is_binary(path) do
+    with {:ok, expanded} <- Handbeam.Agent.Tool.resolve_path(path, context) do
+      if Handbeam.Security.PathValidator.validate_within_workspace(expanded, root) == :ok do
+        {:ok, root, Path.relative_to(expanded, root), false}
+      else
+        external_search_scope(expanded)
+      end
     end
   end
 
-  defp resolve_path_filter(_root, _path), do: {:error, "path must be a string"}
+  defp resolve_search_scope(_root, _path, _context), do: {:error, "path must be a string"}
 
-  defp format_results(%{paths: [], query: query, duration_ms: ms} = result) do
+  defp external_search_scope(path) do
+    cond do
+      File.dir?(path) -> {:ok, path, nil, true}
+      File.dir?(Path.dirname(path)) -> {:ok, Path.dirname(path), Path.basename(path), true}
+      true -> {:error, "path not found: #{path}"}
+    end
+  end
+
+  defp format_results(%{paths: [], query: query, duration_ms: ms} = result, _root, _absolute?) do
     "# No files found for: #{query} (#{ms}ms)#{indexing_suffix(result)}\n" <>
       empty_hint(query, result)
   end
 
-  defp format_results(%{paths: paths, query: query, duration_ms: ms} = result) do
+  defp format_results(%{paths: paths, query: query, duration_ms: ms} = result, root, absolute?) do
     lines =
       paths
+      |> Enum.map(fn entry ->
+        if absolute?, do: %{entry | path: Path.join(root, entry.path)}, else: entry
+      end)
       |> Enum.with_index(1)
       |> Enum.map(&format_line/1)
 

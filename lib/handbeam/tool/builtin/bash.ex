@@ -29,8 +29,8 @@ defmodule Handbeam.Tool.Builtin.Bash do
       "Runs inside an OS sandbox (Linux Bubblewrap, macOS Seatbelt): the host filesystem " <>
       "is readable, writes are allowed only in the workspace and $TMPDIR, network is not " <>
       "restricted. Writes elsewhere fail with 'Operation not permitted' or 'Read-only file " <>
-      "system'. Only after such a sandbox denial, retry with unsandboxed=true; that always " <>
-      "asks the user for approval. Commands that name sensitive credential paths are " <>
+      "system'. Only after such a sandbox denial, retry with unsandboxed=true; that asks " <>
+      "for approval unless the run is in yolo mode. Commands that name sensitive credential paths are " <>
       "rejected before execution; unsandboxed=true does not bypass that, and the " <>
       "precheck is not a complete shell parser. " <>
       "Set job=true for a run-scoped job (Linux only). Query job_status until finished before " <>
@@ -68,15 +68,15 @@ defmodule Handbeam.Tool.Builtin.Bash do
         cwd: %{
           type: "string",
           description:
-            "Optional working directory override. Use only for a subdirectory inside " <>
-              "the current workspace."
+            "Optional working directory override. Use a subdirectory inside the current workspace, " <>
+              "or an external directory in yolo mode."
         },
         unsandboxed: %{
           type: "boolean",
           default: false,
           description:
             "Run outside the OS sandbox. Use only after the sandbox denied a needed write; " <>
-              "always requires user approval. Does not permit sensitive credential paths. " <>
+              "requires approval unless the run is in yolo mode. Does not permit sensitive credential paths. " <>
               "Not available for job=true."
         }
       },
@@ -96,10 +96,14 @@ defmodule Handbeam.Tool.Builtin.Bash do
     working_directory = context[:working_directory]
 
     with :ok <- validate_command(command),
-         :ok <- preflight_sensitive(command, working_directory),
          :ok <- preflight_cwd(Map.get(input, "cwd"), working_directory),
-         {:ok, cwd} <- resolve_cwd(Map.get(input, "cwd"), working_directory) do
-      unsandboxed? = Map.get(input, "unsandboxed") == true
+         {:ok, cwd} <- resolve_cwd(Map.get(input, "cwd"), working_directory, context),
+         :ok <- preflight_sensitive(command, cwd) do
+      external_cwd? = outside_workspace?(cwd, working_directory)
+
+      unsandboxed? =
+        Map.get(input, "unsandboxed") == true or
+          (Handbeam.Agent.Tool.outside_workspace_allowed?(context) and external_cwd?)
 
       cond do
         unsandboxed? and Map.get(input, "job", false) == true ->
@@ -161,9 +165,9 @@ defmodule Handbeam.Tool.Builtin.Bash do
 
   defp preflight_cwd(_path, _working_directory), do: :ok
 
-  defp resolve_cwd(nil, working_directory), do: {:ok, working_directory}
+  defp resolve_cwd(nil, working_directory, _context), do: {:ok, working_directory}
 
-  defp resolve_cwd(path, working_directory) do
+  defp resolve_cwd(path, working_directory, context) do
     cwd =
       if Path.type(path) == :absolute do
         Path.expand(path)
@@ -181,8 +185,8 @@ defmodule Handbeam.Tool.Builtin.Bash do
         resolved_cwd = Handbeam.Security.PathValidator.resolve_symlink(cwd)
         resolved_wd = Handbeam.Security.PathValidator.resolve_symlink(Path.expand(wd))
 
-        if String.starts_with?(resolved_cwd, resolved_wd <> "/") or
-             resolved_cwd == resolved_wd do
+        if Handbeam.Agent.Tool.outside_workspace_allowed?(context) or
+             String.starts_with?(resolved_cwd, resolved_wd <> "/") or resolved_cwd == resolved_wd do
           if cwd == "/" or File.dir?(cwd) do
             {:ok, cwd}
           else
@@ -193,6 +197,16 @@ defmodule Handbeam.Tool.Builtin.Bash do
         end
     end
   end
+
+  defp outside_workspace?(_cwd, working_directory)
+       when not is_binary(working_directory) or working_directory == "",
+       do: false
+
+  defp outside_workspace?(cwd, working_directory) when is_binary(cwd) do
+    Handbeam.Security.PathValidator.validate_within_workspace(cwd, working_directory) != :ok
+  end
+
+  defp outside_workspace?(_cwd, _working_directory), do: false
 
   # ── Execution ──
 

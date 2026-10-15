@@ -213,6 +213,24 @@ defmodule Handbeam.Tool.Builtin.GrepTest do
     assert reason =~ "outside workspace"
   end
 
+  test "yolo searches an explicit path outside the workspace" do
+    outside =
+      Path.join(System.tmp_dir!(), "handbeam-yolo-grep-#{System.unique_integer([:positive])}")
+
+    file = Path.join(outside, "external.txt")
+    File.mkdir_p!(outside)
+    File.write!(file, "external_marker\n")
+    on_exit(fn -> File.rm_rf!(outside) end)
+
+    assert {:ok, output} =
+             grep(%{"pattern" => "external_marker", "path" => outside}, %{
+               working_directory: @work_dir,
+               approval_mode: :yolo
+             })
+
+    assert output =~ file <> ":1:external_marker"
+  end
+
   test "has expected metadata" do
     assert Grep.name() == "grep"
     assert Grep.concurrent?() == true
