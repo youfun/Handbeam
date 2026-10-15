@@ -697,9 +697,13 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
                     {entry["work_target"]}
                   </span>
                 </div>
-                <% install_prompt = browser_install_prompt(entry) %>
-                <% preview_card = preview_card(entry) %>
-                <% browser_takeover = browser_takeover_prompt(entry) %>
+                <% render_tool_details? =
+                  entry["work_collapsed"] != true or entry["work_group_first"] %>
+                <% install_prompt =
+                  if(render_tool_details?, do: browser_install_prompt(entry), else: nil) %>
+                <% preview_card = if(render_tool_details?, do: preview_card(entry), else: nil) %>
+                <% browser_takeover =
+                  if(render_tool_details?, do: browser_takeover_prompt(entry), else: nil) %>
                 <div
                   :if={preview_card}
                   id={"preview-card-#{entry["id"]}"}
@@ -773,13 +777,13 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
                   <p class="mt-1 text-xs text-tertiary">{install_prompt.hint}</p>
                 </div>
                 <div
-                  :if={is_nil(install_prompt) and tool_entry_error(entry)}
+                  :if={render_tool_details? && is_nil(install_prompt) && tool_entry_error(entry)}
                   class="mt-1 text-error truncate"
                 >
                   {inspect(tool_entry_error(entry))}
                 </div>
                 <.card
-                  :if={FileChangeCard.change_entry?(entry)}
+                  :if={render_tool_details? && FileChangeCard.change_entry?(entry)}
                   entry={entry}
                   open?={entry["file_change_open"] == true}
                   id={"chat-file-change-#{entry["id"]}"}

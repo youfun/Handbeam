@@ -4906,6 +4906,64 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert collapsed =~ "Edited 1 file, Explored 1 file"
       refute collapsed =~ "Hide Work"
     end
+
+    test "collapsed tool work defers later file change cards until expanded", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/")
+
+      send(view.pid, {:agent_event, agent_event(:run_start, %{model: "test"})})
+
+      send(
+        view.pid,
+        {:agent_event,
+         agent_event(:tool_start, %{
+           tool_use_id: "tu_lead",
+           tool: "read",
+           input: %{file_path: "x.ex"}
+         })}
+      )
+
+      send(
+        view.pid,
+        {:agent_event,
+         agent_event(:tool_end, %{tool_use_id: "tu_lead", tool: "read", duration_ms: 10}, 2)}
+      )
+
+      send(
+        view.pid,
+        {:agent_event,
+         agent_event(
+           :tool_start,
+           %{tool_use_id: "tu_change", tool: "edit", input: %{file_path: "y.ex"}},
+           3
+         )}
+      )
+
+      send(
+        view.pid,
+        {:agent_event,
+         agent_event(
+           :tool_end,
+           %{
+             tool_use_id: "tu_change",
+             tool: "edit",
+             duration_ms: 5,
+             details: %{
+               file_path: "y.ex",
+               diff_lines: [%{"type" => "ins", "text" => "new line"}]
+             }
+           },
+           4
+         )}
+      )
+
+      refute has_element?(view, "#chat-file-change-tool-tu_change")
+
+      view
+      |> element("#tool-work-summary-tool-tu_lead")
+      |> render_click()
+
+      assert has_element?(view, "#chat-file-change-tool-tu_change")
+    end
   end
 
   describe "workspace model policy" do
