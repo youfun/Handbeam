@@ -9,6 +9,7 @@ defmodule HandbeamWeb.WorkspaceHelper do
   use Gettext, backend: HandbeamWeb.Gettext
 
   alias Handbeam.TranscriptEntry
+  alias HandbeamWeb.ChangeHelper
 
   @doc """
   Returns the CSS class for the status indicator dot.
@@ -436,9 +437,22 @@ defmodule HandbeamWeb.WorkspaceHelper do
   def tool_work_counts(_), do: %{files: 0, searches: 0, commands: 0, others: 0}
 
   @doc """
-  Amp-style collapsed summary, e.g. "Explored 1 file, 2 searches".
+  Collapsed summary separating edits from exploration. Edited paths are counted
+  once; line totals sum the recorded diffs shown by individual file cards.
   """
   def tool_work_summary(tools) when is_list(tools) and tools != [] do
+    {edits, other_tools} = Enum.split_with(tools, &(tool_work_role(tool_name(&1)) == :edit))
+
+    [edited_work_summary(edits), explored_work_summary(other_tools)]
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.join(", ")
+  end
+
+  def tool_work_summary(_), do: ""
+
+  defp explored_work_summary([]), do: ""
+
+  defp explored_work_summary(tools) do
     counts = tool_work_counts(tools)
     details = format_tool_work_details(counts)
 
@@ -454,7 +468,48 @@ defmodule HandbeamWeb.WorkspaceHelper do
     end
   end
 
-  def tool_work_summary(_), do: ""
+  # Count recorded changes just as the individual file cards do. Failed edits
+  # are actions, not changed files; repeated edits count the path only once.
+  defp edited_work_summary(edits) do
+    {successful, failed} =
+      Enum.split_with(edits, &(TranscriptEntry.tool_status(&1) in [nil, "", :done, "done"]))
+
+    changes = Enum.map(successful, &ChangeHelper.change_from_entry/1)
+
+    files =
+      successful
+      |> Enum.zip(changes)
+      |> Enum.with_index()
+      |> Enum.map(fn {{entry, change}, index} ->
+        change["file_path"] || input_string(TranscriptEntry.input(entry), "file_path") ||
+          input_string(TranscriptEntry.input(entry), "path") || {:unknown, index}
+      end)
+      |> Enum.uniq()
+      |> length()
+
+    lines = Enum.flat_map(changes, &(&1["diff_lines"] || []))
+    %{added: added, removed: removed} = HandbeamWeb.FileChangeCard.line_counts(lines)
+
+    summary =
+      if files > 0 do
+        label = ngettext("Edited %{count} file", "Edited %{count} files", files)
+        if added + removed > 0, do: "#{label} (+#{added} -#{removed})", else: label
+      else
+        ""
+      end
+
+    failed_summary =
+      if failed == [] do
+        ""
+      else
+        details = ngettext("%{count} action", "%{count} actions", length(failed))
+        gettext("Used %{details}", details: details)
+      end
+
+    [summary, failed_summary]
+    |> Enum.reject(&(&1 == ""))
+    |> Enum.join(", ")
+  end
 
   @doc """
   One expanded activity line: verb plus the argument a person would scan.

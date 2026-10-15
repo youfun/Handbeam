@@ -353,6 +353,65 @@ defmodule HandbeamWeb.WorkspaceHelperTest do
       assert WorkspaceHelper.tool_work_summary(tools) == "Ran 1 command"
     end
 
+    test "includes edits and creates separately from exploration" do
+      tools = [
+        %{"tool" => "read"},
+        %{"tool" => "grep"},
+        %{"tool" => "bash"},
+        %{
+          "tool" => "edit",
+          "tool_status" => "done",
+          "input" => %{"file_path" => "lib/app.ex"},
+          "diff_lines" => [%{type: :ins, text: "new"}, %{type: :del, text: "old"}]
+        },
+        %{
+          "tool" => "write",
+          "tool_status" => "done",
+          "details" => %{
+            "change" => %{
+              "file_path" => "lib/new.ex",
+              "diff_lines" => [%{"type" => "add", "text" => "created"}]
+            }
+          }
+        }
+      ]
+
+      assert WorkspaceHelper.tool_work_summary(tools) ==
+               "Edited 2 files (+2 -1), Explored 1 file, 1 search, 1 command"
+    end
+
+    test "counts repeated edited paths once and sums the visible recorded diffs" do
+      edit = %{
+        "tool_name" => "edit",
+        "tool_status" => "done",
+        "change" => %{
+          "file_path" => "lib/app.ex",
+          "diff_lines" => [%{"type" => "add", "text" => "new"}]
+        }
+      }
+
+      assert WorkspaceHelper.tool_work_summary([edit, edit]) == "Edited 1 file (+2 -0)"
+    end
+
+    test "does not count failed changes as edited files" do
+      tools = [
+        %{"tool" => "edit", "status" => :error, "input" => %{"file_path" => "missing"}}
+      ]
+
+      assert WorkspaceHelper.tool_work_summary(tools) == "Used 1 action"
+    end
+
+    test "shows edited paths without inventing line counts for unavailable diffs" do
+      tools = [%{"tool" => "edit", "input" => %{"file_path" => "lib/app.ex"}}]
+      assert WorkspaceHelper.tool_work_summary(tools) == "Edited 1 file"
+    end
+
+    test "translates the edit summary" do
+      Gettext.with_locale(HandbeamWeb.Gettext, "zh_CN", fn ->
+        assert WorkspaceHelper.tool_work_summary([%{"tool" => "write"}]) == "已编辑 1 个文件"
+      end)
+    end
+
     test "returns empty string for no tools" do
       assert WorkspaceHelper.tool_work_summary([]) == ""
     end

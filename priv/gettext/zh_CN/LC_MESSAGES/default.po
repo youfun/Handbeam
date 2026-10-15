@@ -716,6 +716,10 @@ msgstr "等待认证中..."
 msgid "Workspace Models"
 msgstr "工作区模型"
 
+#: lib/handbeam_web/live/settings_live.ex
+msgid "Workspace Memory"
+msgstr "工作区记忆"
+
 #: lib/sigil_web/live/available_models_live.html.heex:750
 #, elixir-autogen, elixir-format
 msgid "[subscription]"
@@ -1068,6 +1072,11 @@ msgstr "默认供应商已更改"
 
 #: lib/sigil_web/workspace_helper.ex
 #, elixir-autogen, elixir-format
+msgid "Edited %{count} file"
+msgid_plural "Edited %{count} files"
+msgstr[0] "已编辑 %{count} 个文件"
+msgstr[1] "已编辑 %{count} 个文件"
+
 msgid "Explored %{details}"
 msgstr "已探索 %{details}"
 

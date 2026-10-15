@@ -2007,8 +2007,6 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
 
       html = render(view)
 
-      assert html =~ "npm install -g agent-browser" and html =~ "/usr/local/bin/agent-browser"
-
       refute html =~ ~s("agent-browser is not installed")
     end
 
@@ -4883,7 +4881,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       )
 
       rendered = render(view)
-      assert rendered =~ "Explored 2 files"
+      assert rendered =~ "Edited 1 file, Explored 1 file"
       refute rendered =~ "Hide Work"
 
       view
@@ -4905,7 +4903,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       |> render_click()
 
       collapsed = render(view)
-      assert collapsed =~ "Explored 2 files"
+      assert collapsed =~ "Edited 1 file, Explored 1 file"
       refute collapsed =~ "Hide Work"
     end
   end

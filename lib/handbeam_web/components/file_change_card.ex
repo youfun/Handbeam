@@ -166,6 +166,12 @@ defmodule HandbeamWeb.FileChangeCard do
     """
   end
 
+  @doc "Counts additions and removals using the same diff types as file cards."
+  def line_counts(lines) do
+    lines = ChangeHelper.normalize_diff_lines(lines) || []
+    %{added: count(lines, :add), removed: count(lines, :remove)}
+  end
+
   @doc "True when the entry records an edit or write with visible diff lines."
   def change_entry?(%{} = entry) do
     TranscriptEntry.tool_name(entry) in ["edit", "write"] and diff_lines(entry) != []
