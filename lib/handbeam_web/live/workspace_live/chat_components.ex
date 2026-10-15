@@ -163,6 +163,7 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
   attr :current_conversation_id, :any, required: true
   attr :current_workspace_id, :any, required: true
   attr :file_browser_path, :any, required: true
+  attr :history_before, :any, required: true
   attr :history_has_more?, :any, required: true
   attr :input_value, :any, required: true
   attr :mobile_right_panel_open, :any, required: true
@@ -461,17 +462,14 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
 
       <!-- Chat messages -->
       <div class="conversation-nav-host">
-        <div id="ai-messages" class="flex-1 overflow-y-auto p-4 space-y-3" phx-hook="ChatScroll">
-          <div :if={@history_has_more?} class="flex justify-center">
-            <button
-              id="load-older-history"
-              type="button"
-              phx-click="load_older_history"
-              class="text-xs text-secondary hover:text-primary"
-            >
-              {gettext("加载更早消息")}
-            </button>
-          </div>
+        <div
+          id="ai-messages"
+          class="flex-1 overflow-y-auto p-4 space-y-3"
+          phx-hook="ChatScroll"
+          data-conversation-id={@current_conversation_id || ""}
+          data-history-before={@history_before || ""}
+          data-history-has-more={to_string(@history_has_more?)}
+        >
           <div :if={length(@timeline) > 1} id="turn-header" class="turn-header">
             <span class="turn-summary">
               {timeline_summary(@timeline)}

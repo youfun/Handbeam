@@ -48,8 +48,20 @@ class NativeChatScrollTest {
         children = emptyList(),
     )
 
-    private fun timeline(id: String, children: List<MobNode>) =
-        MobNode("scroll", mapOf("id" to id), children)
+    private fun timeline(
+        id: String,
+        children: List<MobNode>,
+        historyBefore: String? = null,
+        topHandle: Int? = null,
+    ) = MobNode(
+        "scroll",
+        buildMap {
+            put("id", id)
+            if (historyBefore != null) put("history_before", historyBefore)
+            if (topHandle != null) put("on_top_reached", topHandle)
+        },
+        children,
+    )
 
     @Composable
     private fun render(node: MobNode) {
@@ -68,7 +80,7 @@ class NativeChatScrollTest {
                 NativeChatScroll(
                     timeline("contrast", listOf(row("first", "First"), row("second", longSummary))),
                     Modifier.height(240.dp),
-                    { render(it) },
+                    renderChild = { render(it) },
                 )
             }
         }
@@ -110,7 +122,7 @@ class NativeChatScrollTest {
             NativeChatScroll(
                 timeline("jumps", listOf(row("first", "First"), row(null), row("second", "Second"))),
                 Modifier.height(240.dp),
-                { render(it) },
+                renderChild = { render(it) },
             )
         }
         ui.waitUntil { state("jumps").maxValue > 0 }
@@ -139,6 +151,49 @@ class NativeChatScrollTest {
         val oldMax = state("growth").maxValue
         ui.runOnIdle { rows.value = rows.value + row(null, height = 200) }
         ui.waitUntil { state("growth").maxValue > oldMax && state("growth").value == state("growth").maxValue }
+    }
+
+    @Test fun reachingTopLoadsOnceAndPrependingKeepsTheVisibleAnchor() {
+        val node = mutableStateOf(
+            timeline(
+                "older",
+                listOf(row("one"), row("two"), row("three")),
+                historyBefore = "cursor-2",
+                topHandle = 77,
+            ),
+        )
+        var topEvents = 0
+        ui.setContent {
+            NativeChatScroll(
+                node.value,
+                Modifier.height(240.dp),
+                onTopReached = { handle ->
+                    assertEquals(77, handle)
+                    topEvents += 1
+                },
+            ) { render(it) }
+        }
+        ui.waitUntil { state("older").maxValue > 0 && state("older").value == state("older").maxValue }
+        val oldMax = state("older").maxValue
+
+        ui.runOnIdle { runBlocking { state("older").scrollTo(0) } }
+        ui.waitUntil { topEvents == 1 }
+
+        ui.runOnIdle {
+            node.value = timeline(
+                "older",
+                listOf(row("earlier-one"), row("earlier-two")) + node.value.children,
+                historyBefore = "cursor-1",
+                topHandle = 77,
+            )
+        }
+        ui.waitUntil {
+            state("older").maxValue == oldMax + 600 && state("older").value == 600
+        }
+        ui.runOnIdle { assertEquals(1, topEvents) }
+
+        ui.runOnIdle { runBlocking { state("older").scrollTo(0) } }
+        ui.waitUntil { topEvents == 2 }
     }
 
     @Test fun switchingTimelineResetsPositionClosesPopupAndRegistersNewId() {

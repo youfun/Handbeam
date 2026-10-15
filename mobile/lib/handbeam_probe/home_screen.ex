@@ -63,7 +63,6 @@ defmodule HandbeamProbe.HomeScreen do
   @chat_taps [
     :send,
     :stop,
-    :load_older_history,
     :new_chat,
     :new_free_chat,
     :dismiss_approval,
@@ -173,6 +172,7 @@ defmodule HandbeamProbe.HomeScreen do
   defp dispatch({:change, :review_place, _} = msg, socket), do: Chat.handle(msg, socket)
   defp dispatch({:change, :review_feeling, _} = msg, socket), do: Chat.handle(msg, socket)
   defp dispatch({:submit, :send} = msg, socket), do: Chat.handle(msg, socket)
+  defp dispatch({:top_reached, :load_older_history} = msg, socket), do: Chat.handle(msg, socket)
 
   defp dispatch({:tap, {:toggle_thread_handoff, handoff_id}}, socket)
        when is_binary(handoff_id) do

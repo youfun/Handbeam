@@ -31,6 +31,7 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -44,6 +45,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 
 private data class ChatNavItem(val id: String, val summary: String)
@@ -53,11 +55,12 @@ private data class ChatNavItem(val id: String, val summary: String)
 fun NativeChatScroll(
     node: MobNode,
     modifier: Modifier = Modifier,
+    onTopReached: (Int) -> Unit = { MobBridge.nativeSendTopReached(it) },
     renderChild: @Composable (MobNode) -> Unit,
 ) {
     val timelineId = node.props["id"] as? String ?: "chat-timeline"
     key(timelineId) {
-        NativeChatScrollForTimeline(node, timelineId, modifier, renderChild)
+        NativeChatScrollForTimeline(node, timelineId, modifier, onTopReached, renderChild)
     }
 }
 
@@ -66,6 +69,7 @@ private fun NativeChatScrollForTimeline(
     node: MobNode,
     timelineId: String,
     modifier: Modifier,
+    onTopReached: (Int) -> Unit,
     renderChild: @Composable (MobNode) -> Unit,
 ) {
     val density = LocalDensity.current
@@ -80,6 +84,11 @@ private fun NativeChatScrollForTimeline(
     }
     var menuOpen by remember { mutableStateOf(false) }
     var previousMax by remember { mutableIntStateOf(0) }
+    val historyBefore = node.props["history_before"] as? String
+    val currentHistoryBefore by rememberUpdatedState(historyBefore)
+    var previousHistoryBefore by remember(timelineId) { mutableStateOf(historyBefore) }
+    val topHandle by rememberUpdatedState((node.props["on_top_reached"] as? Number)?.toInt())
+    val currentOnTopReached by rememberUpdatedState(onTopReached)
 
     val handle = remember(timelineId) { MobBridge.scrollHandle(timelineId) }
     LaunchedEffect(handle, scrollState) {
@@ -87,12 +96,30 @@ private fun NativeChatScrollForTimeline(
         handle.horizontal = false
     }
     LaunchedEffect(scrollState) {
+        var previous = scrollState.value
+        snapshotFlow { scrollState.value }.drop(1).collectLatest { current ->
+            if (current == 0 && previous > 0) {
+                topHandle?.let(currentOnTopReached)
+            }
+            previous = current
+        }
+    }
+    LaunchedEffect(scrollState) {
         snapshotFlow { scrollState.maxValue }.collectLatest { maximum ->
             if (maximum != Int.MAX_VALUE) {
+                val prepended =
+                    previousMax > 0 && maximum > previousMax &&
+                        currentHistoryBefore != previousHistoryBefore
                 val followedBeforeGrowth = previousMax == 0 ||
                     scrollState.value >= previousMax - nearBottomPx
-                if (followedBeforeGrowth) scrollState.scrollTo(maximum)
+                when {
+                    prepended -> scrollState.scrollTo(
+                        (scrollState.value + maximum - previousMax).coerceIn(0, maximum),
+                    )
+                    followedBeforeGrowth -> scrollState.scrollTo(maximum)
+                }
                 previousMax = maximum
+                previousHistoryBefore = currentHistoryBefore
             }
         }
     }

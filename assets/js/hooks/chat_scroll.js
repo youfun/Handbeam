@@ -4,6 +4,7 @@
  * Behavior:
  * - On mount: scroll to bottom, mark as "pinned".
  * - On user scroll: track whether user is within threshold of bottom.
+ * - On a user-driven top reach: request one older page and retain the viewport.
  * - After DOM updates (LiveView morph / stream insert / innerHTML changes):
  *   if pinned → auto-scroll to bottom; if not pinned → preserve position.
  * - LiveView can push "user-message-sent" event to force-scroll and re-pin.
@@ -13,18 +14,31 @@
  */
 
 const SCROLL_THRESHOLD_PX = 64;
+const LOAD_OLDER_THRESHOLD_PX = 32;
 
 export const ChatScroll = {
   mounted() {
     this.pinned = true;
     this._programmatic = false;
+    this._loadingOlder = false;
+    this._olderAnchor = null;
+    this._touching = false;
+    this._pointing = false;
 
     requestAnimationFrame(() => {
       this.scrollToBottom();
     });
 
-    this.onUserIntent = () => {
+    this.onUserIntent = (event) => {
       this._userIntent = true;
+      if (event?.type === "touchstart") this._touching = true;
+      if (event?.type === "pointerdown") this._pointing = true;
+      if (event?.type === "wheel" && event.deltaY < 0) this.maybeLoadOlder();
+    };
+
+    this.onUserIntentEnd = (event) => {
+      if (event?.type.startsWith("touch")) this._touching = false;
+      if (event?.type.startsWith("pointer")) this._pointing = false;
     };
 
     this.onScroll = () => {
@@ -35,14 +49,19 @@ export const ChatScroll = {
       const nearBottom = distFromBottom <= SCROLL_THRESHOLD_PX;
       if (this._userIntent) {
         this.pinned = nearBottom;
-        if (nearBottom) this._userIntent = false;
+        if (nearBottom && !this._touching && !this._pointing) this._userIntent = false;
+        else this.maybeLoadOlder();
       }
     };
 
     this.el.addEventListener("scroll", this.onScroll, { passive: true });
     this.el.addEventListener("wheel", this.onUserIntent, { passive: true });
     this.el.addEventListener("touchstart", this.onUserIntent, { passive: true });
+    this.el.addEventListener("touchend", this.onUserIntentEnd, { passive: true });
+    this.el.addEventListener("touchcancel", this.onUserIntentEnd, { passive: true });
     this.el.addEventListener("pointerdown", this.onUserIntent, { passive: true });
+    this.el.addEventListener("pointerup", this.onUserIntentEnd, { passive: true });
+    this.el.addEventListener("pointercancel", this.onUserIntentEnd, { passive: true });
 
     this.observer = new MutationObserver(() => {
       this.maybeScrollToBottom();
@@ -74,6 +93,7 @@ export const ChatScroll = {
   },
 
   updated() {
+    this.restoreOlderAnchor();
     this.maybeScrollToBottom();
   },
 
@@ -86,9 +106,68 @@ export const ChatScroll = {
       this.el.removeEventListener("scroll", this.onScroll);
       this.el.removeEventListener("wheel", this.onUserIntent);
       this.el.removeEventListener("touchstart", this.onUserIntent);
+      this.el.removeEventListener("touchend", this.onUserIntentEnd);
+      this.el.removeEventListener("touchcancel", this.onUserIntentEnd);
       this.el.removeEventListener("pointerdown", this.onUserIntent);
+      this.el.removeEventListener("pointerup", this.onUserIntentEnd);
+      this.el.removeEventListener("pointercancel", this.onUserIntentEnd);
       this.el.removeEventListener("handbeam:unpin-chat-scroll", this.onUnpin);
     }
+  },
+
+  historyCursor() {
+    return this.el?.dataset.historyBefore || "";
+  },
+
+  maybeLoadOlder() {
+    const el = this.el;
+    if (!el || this._loadingOlder || !this._userIntent) return;
+    if (el.dataset.historyHasMore !== "true" || el.scrollTop > LOAD_OLDER_THRESHOLD_PX) return;
+
+    this.pinned = false;
+    this._loadingOlder = true;
+    this._olderAnchor = {
+      conversationId: el.dataset.conversationId || "",
+      cursor: this.historyCursor(),
+      scrollHeight: el.scrollHeight,
+      scrollTop: el.scrollTop,
+    };
+
+    this.pushEvent("load_older_history", {}, () => {
+      requestAnimationFrame(() => {
+        requestAnimationFrame(() => {
+          if (this._loadingOlder && this.historyCursor() === this._olderAnchor?.cursor) {
+            this.finishOlderLoad();
+          }
+        });
+      });
+    });
+  },
+
+  restoreOlderAnchor() {
+    const el = this.el;
+    const anchor = this._olderAnchor;
+    if (!el || !anchor) return;
+
+    if ((el.dataset.conversationId || "") !== anchor.conversationId) {
+      this.finishOlderLoad();
+      return;
+    }
+
+    if (this.historyCursor() === anchor.cursor) return;
+
+    const addedHeight = Math.max(0, el.scrollHeight - anchor.scrollHeight);
+    this._programmatic = true;
+    el.scrollTop = anchor.scrollTop + addedHeight;
+    requestAnimationFrame(() => {
+      this._programmatic = false;
+    });
+    this.finishOlderLoad();
+  },
+
+  finishOlderLoad() {
+    this._loadingOlder = false;
+    this._olderAnchor = null;
   },
 
   maybeScrollToBottom() {

@@ -264,11 +264,16 @@ defmodule HandbeamProbe.HomeScreenTest do
     assert hd(assigns(view).chat.entries)["id"] == "history-106"
     assert assigns(view).chat.history_has_more?
     assert_renderable(view, extra: [:icon, :settings_select, :settings_button])
-    assert find(view, :text, text: gettext("Load older messages"))
+    timeline = find(view, :scroll, id: "chat-timeline-#{id}")
+    assert timeline.props.on_top_reached
+    refute find(view, :text, text: gettext("Load older messages"))
 
-    view = info(view, {:tap, :load_older_history}) |> info({:tap, :load_older_history})
+    view =
+      info(view, {:top_reached, :load_older_history}) |> info({:top_reached, :load_older_history})
+
     assert Enum.map(assigns(view).chat.entries, & &1["id"]) == Enum.map(entries, & &1["id"])
     refute assigns(view).chat.history_has_more?
+    refute Map.has_key?(find(view, :scroll, id: "chat-timeline-#{id}").props, :on_top_reached)
 
     {:ok, _} =
       Handbeam.ConversationTranscriptStore.append(id, %{

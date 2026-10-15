@@ -140,24 +140,26 @@ defmodule HandbeamProbe.HomeScreen.Render do
       if(entries == [] and stream == "" and not running,
         do: empty_chat(),
         else:
-          scroll(
+          NativeTimeline.render(
+            a.chat
+            |> Map.put(:expanded_handoffs, a.expanded_handoffs || MapSet.new())
+            |> Map.put(:current_conversation_id, Map.get(a.chat.conversation, "id")),
+            a.work_groups,
+            a.work_segments,
+            a.tool_outputs,
+            Map.get(a, :file_diffs, %{})
+          )
+          |> scroll(
             [
-              if(Map.get(a.chat, :history_has_more?, false),
-                do: button(gettext("Load older messages"), :load_older_history, fill_width: true)
-              )
+              id: "chat-timeline-#{a.chat.conversation["id"]}",
+              chat_navigation: true,
+              stick_to_bottom: true,
+              history_before: Map.get(a.chat, :history_before)
             ] ++
-              NativeTimeline.render(
-                a.chat
-                |> Map.put(:expanded_handoffs, a.expanded_handoffs || MapSet.new())
-                |> Map.put(:current_conversation_id, Map.get(a.chat.conversation, "id")),
-                a.work_groups,
-                a.work_segments,
-                a.tool_outputs,
-                Map.get(a, :file_diffs, %{})
-              ),
-            id: "chat-timeline-#{a.chat.conversation["id"]}",
-            chat_navigation: true,
-            stick_to_bottom: true
+              if(Map.get(a.chat, :history_has_more?, false),
+                do: [on_top_reached: {self(), :load_older_history}],
+                else: []
+              )
           )
       ),
       composer_controls(a),

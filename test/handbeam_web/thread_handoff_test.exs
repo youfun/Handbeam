@@ -104,22 +104,23 @@ defmodule HandbeamWeb.ThreadHandoffTest do
     {:ok, view, _} = live(c.conn, "/w/#{c.ws}/c/#{c.parent}")
 
     refute has_element?(view, "button[phx-click='toggle_thread_collaboration']")
-    assert has_element?(view, "button[phx-click='load_older_history']")
+    assert has_element?(view, "#ai-messages[data-history-has-more='true']")
+    refute has_element?(view, "button[phx-click='load_older_history']")
     refute has_element?(view, "[data-user-msg='history-1']")
     assert has_element?(view, "[data-thread-handoff='audit-a'] details")
 
-    view |> element("button[phx-click='load_older_history']") |> render_click()
+    render_hook(view, "load_older_history", %{})
     assert has_element?(view, "[data-user-msg='history-1']")
-    refute has_element?(view, "button[phx-click='load_older_history']")
+    refute has_element?(view, "#ai-messages[data-history-has-more='true']")
 
     render_patch(view, "/w/#{c.ws}/c/#{c.child}")
     refute has_element?(view, "button[phx-click='toggle_thread_collaboration']")
-    refute has_element?(view, "button[phx-click='load_older_history']")
+    refute has_element?(view, "#ai-messages[data-history-has-more='true']")
     refute has_element?(view, "[data-user-msg='history-1']")
 
     render_patch(view, "/w/#{c.ws}/c/#{c.parent}")
     refute has_element?(view, "button[phx-click='toggle_thread_collaboration']")
-    assert has_element?(view, "button[phx-click='load_older_history']")
+    assert has_element?(view, "#ai-messages[data-history-has-more='true']")
     assert has_element?(view, "[data-thread-handoff='audit-a'] details")
     refute has_element?(view, "[data-user-msg='history-1']")
     assert Handbeam.Agent.Runner.status(c.parent) == {:error, :not_found}

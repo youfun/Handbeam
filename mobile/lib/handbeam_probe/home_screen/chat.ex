@@ -51,12 +51,12 @@ defmodule HandbeamProbe.HomeScreen.Chat do
 
   def handle({:tap, :send}, socket), do: start_send(socket, :chat)
 
-  def handle({:tap, :load_older_history}, %{assigns: %{chat: chat}} = socket)
+  def handle({:top_reached, :load_older_history}, %{assigns: %{chat: chat}} = socket)
       when not is_nil(chat) do
     assign(socket, :chat, NativeChat.load_older(chat))
   end
 
-  def handle({:tap, :load_older_history}, socket), do: socket
+  def handle({:top_reached, :load_older_history}, socket), do: socket
 
   def handle({:tap, :stop}, %{assigns: %{chat: chat}} = socket) when not is_nil(chat) do
     case Handbeam.Agent.Coordinator.cancel(chat.conversation["id"]) do
