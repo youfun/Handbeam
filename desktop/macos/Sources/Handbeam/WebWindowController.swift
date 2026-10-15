@@ -209,9 +209,9 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
     }
 
     @objc private func selectWorkspacePanelView() {
-        let views = ["changes", "files", "terminal"]
+        let views = WorkspacePanelView.allCases
         guard views.indices.contains(workspaceSwitcher.selectedSegment) else { return }
-        let view = views[workspaceSwitcher.selectedSegment]
+        let view = views[workspaceSwitcher.selectedSegment].rawValue
         clickWebControl(
             "button[phx-click='select_right_panel_view'][phx-value-view='\(view)']"
         )
@@ -412,6 +412,7 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
               return {
                 collapsed: toggle.getAttribute('aria-pressed') === 'false',
                 view: document.querySelector('.workspace-panel-tab.active')?.getAttribute('phx-value-view') || '',
+                browser: Boolean(document.querySelector("button[phx-value-view='browser']")),
                 terminal: Boolean(document.querySelector("button[phx-value-view='terminal']")),
                 width: rect.width
               };
@@ -431,13 +432,16 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
                 self.workspaceSwitcher.isHidden = collapsed
                 self.updatePanelButton(collapsed: collapsed)
                 self.workspaceSwitcher.setEnabled(
-                    state["terminal"] as? Bool ?? false,
-                    forSegment: 2
+                    state["browser"] as? Bool ?? false,
+                    forSegment: WorkspacePanelView.allCases.firstIndex(of: .browser) ?? -1
                 )
-                let views = ["changes", "files", "terminal"]
-                self.workspaceSwitcher.selectedSegment = views.firstIndex(
-                    of: state["view"] as? String ?? ""
-                ) ?? -1
+                self.workspaceSwitcher.setEnabled(
+                    state["terminal"] as? Bool ?? false,
+                    forSegment: WorkspacePanelView.allCases.firstIndex(of: .terminal) ?? -1
+                )
+                self.workspaceSwitcher.selectedSegment = WorkspacePanelView.allCases.firstIndex {
+                    $0.rawValue == (state["view"] as? String ?? "")
+                } ?? -1
                 let width = (state["width"] as? NSNumber).map { CGFloat(truncating: $0) } ?? 0
                 self.measuredPanelWidth = collapsed ? 0 : width
                 self.layoutWorkspaceActions()
@@ -536,8 +540,11 @@ private final class WorkspacePanelSwitcher: NSView {
         }
     }
 
-    private let labels = ["Changes", "Files", "Terminal"]
-    private var enabledSegments = [true, true, true]
+    private let labels = WorkspacePanelView.allCases.map(\.title)
+    private var enabledSegments = Array(
+        repeating: true,
+        count: WorkspacePanelView.allCases.count
+    )
     private let labelFont = NSFont.systemFont(ofSize: 12, weight: .medium)
 
     override var isFlipped: Bool { true }
