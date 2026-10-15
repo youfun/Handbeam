@@ -50,7 +50,7 @@ defmodule Handbeam.ConversationTranscriptStore.ConversationStore do
 
       case Journal.append(Handbeam.ConversationStore.messages_path(conversation_id), normalized) do
         {:ok, persisted} ->
-          touch_meta(conversation_id)
+          touch_user_activity(conversation_id, persisted)
           {:ok, persisted}
 
         {:error, reason} ->
@@ -87,14 +87,7 @@ defmodule Handbeam.ConversationTranscriptStore.ConversationStore do
         normalize_entry(conversation_id, entry, sequence: index)
       end)
 
-    case Handbeam.ConversationStore.replace_messages(conversation_id, entries) do
-      :ok ->
-        touch_meta(conversation_id)
-        :ok
-
-      other ->
-        other
-    end
+    Handbeam.ConversationStore.replace_messages(conversation_id, entries)
   end
 
   defp normalize_entry(conversation_id, entry, opts) do
@@ -119,12 +112,20 @@ defmodule Handbeam.ConversationTranscriptStore.ConversationStore do
     end
   end
 
-  defp touch_meta(conversation_id) do
+  # A user-authored message defines sidebar recency. Assistant/tool transcript
+  # entries are deliberately excluded so an agent reply cannot reshuffle chats.
+  defp touch_user_activity(conversation_id, %{"role" => "user"}) do
     case Handbeam.ConversationStore.update_meta(conversation_id, []) do
-      {:ok, _} -> :ok
-      {:error, _} -> :ok
+      {:ok, _} ->
+        Handbeam.ConversationStore.broadcast_title_updated(conversation_id)
+        :ok
+
+      {:error, _} ->
+        :ok
     end
   end
+
+  defp touch_user_activity(_conversation_id, _entry), do: :ok
 
   defp stringify_keys(%{__struct__: _} = struct) do
     struct |> Map.from_struct() |> stringify_keys()

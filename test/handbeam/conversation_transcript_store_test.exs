@@ -61,6 +61,45 @@ defmodule Handbeam.ConversationTranscriptStoreTest do
     assert Enum.map(entries, & &1["id"]) == ["msg-user-1", "msg-assistant-1"]
   end
 
+  test "only a newly appended user message advances conversation activity" do
+    {:ok, conversation} =
+      Handbeam.ConversationStore.create("default", id: "transcript-user-activity")
+
+    conversation_id = conversation["id"]
+    old_activity = "2000-01-01T00:00:00Z"
+
+    assert {:ok, _} =
+             Handbeam.ConversationStore.update_meta(conversation_id,
+               updated_at: old_activity,
+               touch: false
+             )
+
+    assert {:ok, assistant} =
+             ConversationTranscriptStore.append(conversation_id, %{
+               "id" => "assistant",
+               "role" => "assistant",
+               "content" => "reply"
+             })
+
+    assert {:ok, _} =
+             ConversationTranscriptStore.update(conversation_id, assistant["id"], %{
+               "content" => %{"$append" => " continued"}
+             })
+
+    assert {:ok, meta_after_assistant} = Handbeam.ConversationStore.get(conversation_id)
+    assert meta_after_assistant["updated_at"] == old_activity
+
+    assert {:ok, _user} =
+             ConversationTranscriptStore.append(conversation_id, %{
+               "id" => "user",
+               "role" => "user",
+               "content" => "new question"
+             })
+
+    assert {:ok, meta_after_user} = Handbeam.ConversationStore.get(conversation_id)
+    assert meta_after_user["updated_at"] > old_activity
+  end
+
   test "delete removes only its target and is idempotent" do
     {:ok, conversation} = Handbeam.ConversationStore.create("default", id: "transcript-delete")
     id = conversation["id"]
