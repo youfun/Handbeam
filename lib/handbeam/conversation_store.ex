@@ -178,6 +178,7 @@ defmodule Handbeam.ConversationStore do
       {:ok, index} ->
         index
         |> Map.get("conversations", [])
+        |> Enum.reject(&internal?/1)
         |> Enum.filter(predicate)
 
       _ ->

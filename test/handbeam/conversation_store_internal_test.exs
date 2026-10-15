@@ -27,6 +27,7 @@ defmodule Handbeam.ConversationStoreInternalTest do
       )
 
     assert ConversationStore.list_for_workspace("ws") == [user]
+    assert Enum.map(ConversationStore.list_summaries("ws"), & &1["id"]) == [user["id"]]
 
     assert {:error, :not_found} =
              ConversationStore.get(child["id"],
