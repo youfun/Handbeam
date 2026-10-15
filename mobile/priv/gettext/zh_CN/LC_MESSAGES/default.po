@@ -2543,3 +2543,132 @@ msgstr "已授权读取"
 
 msgid "Write allowed"
 msgstr "已授权写入"
+
+#: lib/handbeam_probe/workspace_memory.ex:130
+msgid "Workspace Memory"
+msgstr "工作区记忆"
+
+#: lib/handbeam_probe/workspace_memory.ex:131
+msgid "Current workspace: %{name}"
+msgstr "当前工作区：%{name}"
+
+#: lib/handbeam_probe/workspace_memory.ex:153
+msgid "Active memory"
+msgstr "有效记忆"
+
+#: lib/handbeam_probe/workspace_memory.ex:154
+msgid "Long-term memory"
+msgstr "长期记忆"
+
+#: lib/handbeam_probe/workspace_memory.ex:155
+msgid "Short-term memory"
+msgstr "短期记忆"
+
+#: lib/handbeam_probe/workspace_memory.ex:156
+#: lib/handbeam_probe/workspace_memory.ex:304
+msgid "Expired"
+msgstr "已过期"
+
+#: lib/handbeam_probe/workspace_memory.ex:169
+msgid "Search"
+msgstr "搜索"
+
+#: lib/handbeam_probe/workspace_memory.ex:170
+msgid "Search content or #ID…"
+msgstr "搜索内容或 #ID…"
+
+#: lib/handbeam_probe/workspace_memory.ex:172
+msgid "Scope"
+msgstr "范围"
+
+#: lib/handbeam_probe/workspace_memory.ex:178
+msgid "Type"
+msgstr "类型"
+
+#: lib/handbeam_probe/workspace_memory.ex:198
+msgid "Loading memory…"
+msgstr "正在加载记忆…"
+
+#: lib/handbeam_probe/workspace_memory.ex:208
+msgid "No memories match these filters"
+msgstr "没有符合筛选条件的记忆"
+
+#: lib/handbeam_probe/workspace_memory.ex:209
+msgid "Try another scope, lifecycle, type, or search."
+msgstr "尝试切换范围、生命周期、类型或搜索条件。"
+
+#: lib/handbeam_probe/workspace_memory.ex:230
+msgid "Global"
+msgstr "全局"
+
+#: lib/handbeam_probe/workspace_memory.ex:246
+msgid "Copy #ID"
+msgstr "复制 #ID"
+
+#: lib/handbeam_probe/workspace_memory.ex:247
+msgid "Copy content"
+msgstr "复制内容"
+
+#: lib/handbeam_probe/workspace_memory.ex:262
+msgid "Connections"
+msgstr "关联"
+
+#: lib/handbeam_probe/workspace_memory.ex:295
+msgid "Long-term · reinforced ×%{count}"
+msgstr "长期 · 强化 ×%{count}"
+
+#: lib/handbeam_probe/workspace_memory.ex:297
+msgid "Long-term"
+msgstr "长期"
+
+#: lib/handbeam_probe/workspace_memory.ex:307
+msgid "Short-term · expires in %{hours}h"
+msgstr "短期 · %{hours}h 后过期"
+
+#: lib/handbeam_probe/workspace_memory.ex:311
+msgid "Short-term"
+msgstr "短期"
+
+#: lib/handbeam_probe/workspace_memory.ex:325
+msgid "Include global"
+msgstr "包含全局"
+
+#: lib/handbeam_probe/workspace_memory.ex:326
+msgid "Global only"
+msgstr "仅全局"
+
+#: lib/handbeam_probe/workspace_memory.ex:328
+msgid "All"
+msgstr "全部"
+
+#: lib/handbeam_probe/workspace_memory.ex:329
+msgid "Preference"
+msgstr "偏好"
+
+#: lib/handbeam_probe/workspace_memory.ex:330
+msgid "Rule"
+msgstr "规则"
+
+#: lib/handbeam_probe/workspace_memory.ex:331
+msgid "Pattern"
+msgstr "模式"
+
+#: lib/handbeam_probe/workspace_memory.ex:332
+msgid "Fact"
+msgstr "事实"
+
+#: lib/handbeam_probe/workspace_memory.ex:333
+msgid "Context"
+msgstr "上下文"
+
+#: lib/handbeam_probe/home_screen/render.ex:243
+msgid "Memory"
+msgstr "记忆"
+
+#: lib/handbeam_probe/home_screen/workspace_memory.ex:75
+msgid "Memory ID copied"
+msgstr "已复制记忆 ID"
+
+#: lib/handbeam_probe/home_screen/workspace_memory.ex:76
+msgid "Memory content copied"
+msgstr "已复制记忆内容"

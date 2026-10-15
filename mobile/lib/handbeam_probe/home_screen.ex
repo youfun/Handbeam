@@ -37,7 +37,8 @@ defmodule HandbeamProbe.HomeScreen do
     Requests,
     Settings,
     Share,
-    State
+    State,
+    WorkspaceMemory
   }
 
   alias HandbeamProbe.{
@@ -372,6 +373,17 @@ defmodule HandbeamProbe.HomeScreen do
   defp dispatch({:files, _, _} = msg, socket), do: FileNav.handle(msg, socket)
   defp dispatch({:directory_picker, _} = msg, socket), do: FileNav.handle(msg, socket)
 
+  # workspace memory settings
+  defp dispatch({:change, :memory_query, _} = msg, %{assigns: %{page: :memory}} = socket),
+    do: WorkspaceMemory.handle(msg, socket)
+
+  defp dispatch({:tap, {action, _}} = msg, %{assigns: %{page: :memory}} = socket)
+       when action in [:memory_scope, :memory_lifecycle, :memory_kind, :memory_related],
+       do: WorkspaceMemory.handle(msg, socket)
+
+  defp dispatch({:tap, {:memory_copy, _, _}} = msg, %{assigns: %{page: :memory}} = socket),
+    do: WorkspaceMemory.handle(msg, socket)
+
   # model / AI settings
   defp dispatch({:change, {:git_identity, _}, _} = msg, socket),
     do: GitSettings.handle(msg, socket)
@@ -485,6 +497,9 @@ defmodule HandbeamProbe.HomeScreen do
 
   defp async_result(:model_settings_loaded, result, socket),
     do: Settings.handle_loaded(socket, result)
+
+  defp async_result(:workspace_memory_loaded, result, socket),
+    do: WorkspaceMemory.result(result, socket)
 
   defp async_result(:models_fetched, result, socket),
     do: Settings.handle_subscription(:models_fetched, result, socket)

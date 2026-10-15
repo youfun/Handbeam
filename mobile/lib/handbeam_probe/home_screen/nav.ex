@@ -20,7 +20,8 @@ defmodule HandbeamProbe.HomeScreen.Nav do
     Requests,
     Settings,
     Share,
-    State
+    State,
+    WorkspaceMemory
   }
 
   alias HandbeamProbe.{
@@ -69,6 +70,9 @@ defmodule HandbeamProbe.HomeScreen.Nav do
 
         page == :mcp ->
           MCPSettings.load(socket)
+
+        page == :memory ->
+          WorkspaceMemory.load(socket)
 
         page == :git ->
           GitSettings.load(socket)
@@ -427,6 +431,7 @@ defmodule HandbeamProbe.HomeScreen.Nav do
     drafts = NativeWorkspaces.put_draft(a.drafts, draft_workspace(socket), a.chat, a.draft)
     {_generation, socket} = Requests.bump(socket, :mcp_settings)
     {_generation, socket} = Requests.bump(socket, :git_settings)
+    {_generation, socket} = Requests.bump(socket, :workspace_memory)
 
     unsubscribe(a.chat)
     socket = reset_composer(socket)
@@ -441,6 +446,7 @@ defmodule HandbeamProbe.HomeScreen.Nav do
           workspace: selected.workspace,
           conversations: selected.conversations,
           permission_mode: selected.permission_mode,
+          workspace_memory: HandbeamProbe.WorkspaceMemory.new(),
           mcp: HandbeamProbe.MCPSettings.empty(),
           git: HandbeamProbe.GitSettings.empty(),
           drafts: drafts,

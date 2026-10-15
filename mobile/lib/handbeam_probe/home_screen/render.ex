@@ -18,7 +18,8 @@ defmodule HandbeamProbe.HomeScreen.Render do
     NativeComposer,
     NativeTimeline,
     NativeWorkspaceOpen,
-    NativeWorkspaces
+    NativeWorkspaces,
+    WorkspaceMemory
   }
 
   def render(a) do
@@ -198,7 +199,7 @@ defmodule HandbeamProbe.HomeScreen.Render do
   defp content(%{page: :settings} = a), do: content(%{a | page: :models})
 
   defp content(%{page: page} = a)
-       when page in [:models, :workspace, :mcp, :git, :appearance, :app] do
+       when page in [:models, :memory, :workspace, :mcp, :git, :appearance, :app] do
     node(:column, [weight: 1, fill_width: true], [
       settings_tabs(page),
       settings_body(a),
@@ -239,6 +240,7 @@ defmodule HandbeamProbe.HomeScreen.Render do
     node(:column, [fill_width: true, padding_bottom: 8], [
       segment_row([
         tab_button(gettext("Model / AI"), {:page, :models}, page == :models),
+        tab_button(gettext("Memory"), {:page, :memory}, page == :memory),
         tab_button(gettext("Workspaces"), {:page, :workspace}, page == :workspace),
         tab_button(gettext("MCP"), {:page, :mcp}, page == :mcp)
       ]),
@@ -268,6 +270,9 @@ defmodule HandbeamProbe.HomeScreen.Render do
 
   defp settings_body(%{page: :workspace} = a),
     do: NativeWorkspaces.render(a.workspaces, a.workspace)
+
+  defp settings_body(%{page: :memory} = a),
+    do: WorkspaceMemory.render(a.workspace_memory, a.workspace)
 
   defp settings_body(%{page: :mcp} = a),
     do: MCPSettings.render(a.mcp, a.workspaces.items)

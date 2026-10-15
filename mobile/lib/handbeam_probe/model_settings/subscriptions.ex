@@ -142,14 +142,7 @@ defmodule HandbeamProbe.ModelSettings.Subscriptions do
   replace the call; it receives only the text being copied.
   """
   def copy(socket, text) when is_binary(text) do
-    case Application.get_env(:handbeam_probe, :clipboard_put) do
-      fun when is_function(fun, 1) ->
-        fun.(text)
-        socket
-
-      _ ->
-        Mob.Clipboard.put(socket, text)
-    end
+    HandbeamProbe.NativeClipboard.put(socket, text)
   end
 
   def connected_message("openai_codex"), do: gettext("Connected ChatGPT / Codex subscription")

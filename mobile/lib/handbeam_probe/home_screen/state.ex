@@ -71,6 +71,7 @@ defmodule HandbeamProbe.HomeScreen.State do
 
     # ── settings ──
     models: nil,
+    workspace_memory: nil,
     mcp: nil,
     git: nil,
     app_settings: nil,
@@ -112,6 +113,7 @@ defmodule HandbeamProbe.HomeScreen.State do
       %__MODULE__{
         workspaces: NativeWorkspaces.empty_state(),
         models: ModelSettings.empty(),
+        workspace_memory: HandbeamProbe.WorkspaceMemory.new(),
         mcp: HandbeamProbe.MCPSettings.empty(),
         git: HandbeamProbe.GitSettings.empty(),
         approval_export_inflight: MapSet.new(),
