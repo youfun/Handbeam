@@ -236,6 +236,7 @@ textarea::placeholder {
 .justify-end { justify-content: flex-end; }
 .justify-start { justify-content: flex-start; }
 .min-w-0 { min-width: 0; }
+.min-h-0 { min-height: 0; }
 
 /* ── Overflow ── */
 .overflow-hidden { overflow: hidden; }

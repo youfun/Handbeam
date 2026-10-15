@@ -27,6 +27,8 @@ defmodule HandbeamWeb.AssetsTest do
       styles = File.read!(Path.join(output, "css/workspace.css"))
       assert styles =~ ".settings-provider-sidebar"
       assert styles =~ ".settings-dialog"
+      assert styles =~ ~r/\.min-h-0\s*\{\s*min-height:\s*0/
+      assert styles =~ ~r/\.workspace-tree-pane\s*\{[^}]*overflow:\s*auto/s
     end
   end
 end
