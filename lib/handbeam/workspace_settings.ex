@@ -21,14 +21,14 @@ defmodule Handbeam.WorkspaceSettings do
       }
     },
 
-    // Tool permissions default to today's backward-compatible behavior.
+    // Ordinary tools run automatically; gated operations use AI review.
     // Use default_mode/per_tool/allow/deny to control execution per workspace.
     // Example: "per_tool": { "bash": "prompt", "edit": "prompt" }
     "tools": {
       "default_mode": "auto",
       // "user" asks a person. "auto_review" only re-reviews calls that would
       // already prompt. It does not widen sandbox, allow, or unsandboxed gates.
-      "approvals_reviewer": "user",
+      "approvals_reviewer": "auto_review",
       "auto_review": {
         "model": null,
         "timeout_ms": 30000
@@ -117,7 +117,60 @@ defmodule Handbeam.WorkspaceSettings do
   defp normalize_string_list(list) when is_list(list), do: Enum.filter(list, &is_binary/1)
   defp normalize_string_list(_), do: []
 
-  @reviewers [:user, :auto_review]
+  @doc "The three workspace permission modes exposed by Web and native hosts."
+  def permission_mode(workspace_root) do
+    case load(workspace_root) do
+      {:ok, settings} ->
+        case settings |> Map.get("tools") |> ensure_map() |> Map.get("default_mode") do
+          "prompt" -> :prompt
+          "yolo" -> :yolo
+          "deny" -> :deny
+          _ -> :auto_review
+        end
+
+      {:error, _} ->
+        :prompt
+    end
+  end
+
+  @doc "Save the execution policy and reviewer together for a permission mode."
+  def update_permission_mode(workspace_root, mode) when mode in [:prompt, :auto_review, :yolo] do
+    {default_mode, reviewer} =
+      case mode do
+        :prompt -> {"prompt", "user"}
+        :auto_review -> {"auto", "auto_review"}
+        :yolo -> {"yolo", "user"}
+      end
+
+    with :ok <- ensure_file(workspace_root),
+         {:ok, content} <- File.read(path(workspace_root)),
+         {:ok, settings} <- decode_jsonc(content),
+         {:ok, content} <- put_approvals_reviewer(content, reviewer) do
+      content =
+        if Regex.match?(~r/"default_mode"\s*:\s*"[^"]*"/, content) do
+          Regex.replace(
+            ~r/"default_mode"\s*:\s*"[^"]*"/,
+            content,
+            "\"default_mode\": \"#{default_mode}\"",
+            global: false
+          )
+        else
+          tools =
+            settings
+            |> Map.get("tools")
+            |> ensure_map()
+            |> Map.merge(%{
+              "default_mode" => default_mode,
+              "approvals_reviewer" => reviewer
+            })
+
+          settings |> Map.put("tools", tools) |> Handbeam.JSON.encode!(pretty: true)
+        end
+
+      File.write(path(workspace_root), content)
+    end
+  end
+
   @default_review_timeout_ms 30_000
 
   @doc """
@@ -161,42 +214,6 @@ defmodule Handbeam.WorkspaceSettings do
 
   def auto_review_config(_settings) do
     %{model: nil, timeout_ms: @default_review_timeout_ms}
-  end
-
-  @doc """
-  Set `tools.approvals_reviewer` without rewriting the settings file.
-
-  Existing JSONC comments and sibling fields, including `default_mode`, stay
-  in place. The key is inserted when missing.
-  """
-  @spec update_approvals_reviewer(Path.t(), :user | :auto_review) :: :ok | {:error, term()}
-  def update_approvals_reviewer(workspace_root, reviewer) when reviewer in @reviewers do
-    settings_path = path(workspace_root)
-
-    case File.read(settings_path) do
-      {:ok, content} ->
-        case put_approvals_reviewer(content, Atom.to_string(reviewer)) do
-          {:ok, updated} ->
-            case File.write(settings_path, updated) do
-              :ok ->
-                :ok
-
-              {:error, reason} ->
-                {:error, "Failed to write workspace settings: #{inspect(reason)}"}
-            end
-
-          {:error, reason} ->
-            {:error, reason}
-        end
-
-      {:error, :enoent} ->
-        with :ok <- ensure_file(workspace_root) do
-          update_approvals_reviewer(workspace_root, reviewer)
-        end
-
-      {:error, reason} ->
-        {:error, reason}
-    end
   end
 
   defp blank_to_nil(value) when is_binary(value) do
@@ -252,47 +269,6 @@ defmodule Handbeam.WorkspaceSettings do
 
       true ->
         {:error, "workspace settings have no JSON object to update"}
-    end
-  end
-
-  def update_default_mode(workspace_root, mode) when mode in [:auto, :prompt, :deny, :yolo] do
-    mode_str = Atom.to_string(mode)
-    settings_path = path(workspace_root)
-
-    case File.read(settings_path) do
-      {:ok, content} ->
-        updated_content =
-          if String.contains?(content, "default_mode") do
-            Regex.replace(
-              ~r/"default_mode"\s*:\s*"[^"]*"/,
-              content,
-              "\"default_mode\": \"#{mode_str}\""
-            )
-          else
-            case decode_jsonc(content) do
-              {:ok, settings} ->
-                tools = Map.get(settings, "tools", %{})
-                updated_tools = Map.put(tools, "default_mode", mode_str)
-                updated_settings = Map.put(settings, "tools", updated_tools)
-                Handbeam.JSON.encode!(updated_settings, pretty: true)
-
-              {:error, _} ->
-                content
-            end
-          end
-
-        case File.write(settings_path, updated_content) do
-          :ok -> :ok
-          {:error, reason} -> {:error, "Failed to write workspace settings: #{inspect(reason)}"}
-        end
-
-      {:error, :enoent} ->
-        with :ok <- ensure_file(workspace_root) do
-          update_default_mode(workspace_root, mode)
-        end
-
-      {:error, reason} ->
-        {:error, reason}
     end
   end
 

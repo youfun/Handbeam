@@ -1311,7 +1311,8 @@ defmodule HandbeamProbe.HomeScreenTest do
   test "permission selector persists workspace policy and reloads on mount", %{view: view} do
     view = info(view, {:tap, {:page, :permissions}})
     assert text(view) =~ gettext("Tool permissions")
-    assert text(view) =~ gettext("Full access")
+    assert text(view) =~ gettext("Smart approval")
+    refute text(view) =~ "Full access"
     view = info(view, {:tap, {:permission_mode, :prompt}})
     assert assigns(view).page == :chat
     assert assigns(view).permission_mode == :prompt
@@ -1322,6 +1323,13 @@ defmodule HandbeamProbe.HomeScreenTest do
 
     view = info(view, {:tap, {:permission_mode, :yolo}})
     assert assigns(view).permission_mode == :yolo
+
+    view = info(view, {:tap, {:permission_mode, :auto_review}})
+    assert assigns(view).permission_mode == :auto_review
+    assert assigns(mount_screen(HomeScreen)).permission_mode == :auto_review
+    path = assigns(view).workspace["path"]
+    assert Handbeam.Permissions.ToolPolicy.from_workspace(path).default_mode == :auto
+    assert Handbeam.WorkspaceSettings.approvals_reviewer(path) == :auto_review
   end
 
   test "approval projection ignores foreign and stale requests and clears cancelled review", %{

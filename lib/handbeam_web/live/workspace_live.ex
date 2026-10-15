@@ -1189,22 +1189,20 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   @impl true
-  def handle_event("select_permission_mode", %{"mode" => "auto_review"}, socket) do
+  def handle_event("select_permission_mode", %{"mode" => mode_str}, socket)
+      when mode_str in ["prompt", "auto_review", "yolo"] do
+    mode = String.to_existing_atom(mode_str)
     workspace_root = socket.assigns.workspace_root || Handbeam.Workspace.root()
 
-    case Handbeam.WorkspaceSettings.update_approvals_reviewer(workspace_root, :auto_review) do
+    case Handbeam.WorkspaceSettings.update_permission_mode(workspace_root, mode) do
       :ok ->
-        Logger.info(
-          "[WorkspaceLive] Updated approvals_reviewer to auto_review in #{workspace_root}"
-        )
-
         {:noreply,
          socket
-         |> assign(:permission_mode, :auto_review)
+         |> assign(:permission_mode, mode)
          |> assign(:show_permission_menu, false)}
 
       {:error, reason} ->
-        Logger.error("[WorkspaceLive] Failed to update approvals_reviewer: #{inspect(reason)}")
+        Logger.error("[WorkspaceLive] Failed to update permission mode: #{inspect(reason)}")
 
         {:noreply,
          socket
@@ -1213,27 +1211,8 @@ defmodule HandbeamWeb.WorkspaceLive do
     end
   end
 
-  def handle_event("select_permission_mode", %{"mode" => mode_str}, socket) do
-    mode = Handbeam.Permissions.ApprovalMode.parse(mode_str, :auto)
-    workspace_root = socket.assigns.workspace_root || Handbeam.Workspace.root()
-
-    with :ok <- Handbeam.WorkspaceSettings.update_default_mode(workspace_root, mode),
-         :ok <- Handbeam.WorkspaceSettings.update_approvals_reviewer(workspace_root, :user) do
-      Logger.info("[WorkspaceLive] Updated tool default_mode to #{mode} in #{workspace_root}")
-
-      {:noreply,
-       socket
-       |> assign(:permission_mode, mode)
-       |> assign(:show_permission_menu, false)}
-    else
-      {:error, reason} ->
-        Logger.error("[WorkspaceLive] Failed to update tool default_mode: #{inspect(reason)}")
-
-        {:noreply,
-         socket
-         |> assign(:show_permission_menu, false)
-         |> put_flash(:error, gettext("Failed to update permission mode"))}
-    end
+  def handle_event("select_permission_mode", _params, socket) do
+    {:noreply, assign(socket, :show_permission_menu, false)}
   end
 
   @impl true

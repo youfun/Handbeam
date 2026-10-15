@@ -196,7 +196,7 @@ msgstr ""
 
 #: lib/handbeam_probe/native_approval.ex:25
 #, elixir-autogen, elixir-format
-msgid "Full access"
+msgid "Smart approval"
 msgstr ""
 
 #: lib/handbeam_probe/native_timeline.ex:111
@@ -303,7 +303,7 @@ msgstr ""
 
 #: lib/handbeam_probe/native_approval.ex:43
 #, elixir-autogen, elixir-format
-msgid "Runs tools automatically by default. Use only in trusted workspaces."
+msgid "Runs ordinary tools automatically. AI reviews operations that need approval."
 msgstr ""
 
 #: lib/handbeam_probe/native_approval.ex:26

@@ -65,7 +65,7 @@ defmodule HandbeamWeb.Feature.PermissionModeFeatureTest do
     page =
       conn
       |> visit("/w/#{ws["id"]}/c/#{first["id"]}")
-      |> click_button("button[phx-click='toggle_permission_menu']", "完整存取")
+      |> click_button("button[phx-click='toggle_permission_menu']", "智能审批")
       |> click_button("button[phx-value-mode='prompt']", "Safe Mode")
 
     assert {:ok, settings} = WorkspaceSettings.load(workspace)

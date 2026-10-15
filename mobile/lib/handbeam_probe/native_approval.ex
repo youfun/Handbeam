@@ -20,9 +20,9 @@ defmodule HandbeamProbe.NativeApproval do
   def mode(nil), do: :prompt
 
   def mode(workspace),
-    do: Handbeam.Permissions.ToolPolicy.from_workspace(workspace["path"]).default_mode
+    do: Handbeam.WorkspaceSettings.permission_mode(workspace["path"])
 
-  def mode_label(:auto), do: gettext("Full access")
+  def mode_label(:auto_review), do: gettext("Smart approval")
   def mode_label(:prompt), do: gettext("Safe mode")
   def mode_label(:yolo), do: gettext("yolo")
   def mode_label(:deny), do: gettext("Read-only mode")
@@ -40,10 +40,10 @@ defmodule HandbeamProbe.NativeApproval do
     ] ++
       Enum.flat_map(
         [
-          {:auto,
-           gettext("Runs tools automatically by default. Use only in trusted workspaces.")},
           {:prompt,
            gettext("Asks for approval by default, so you decide whether to run each tool.")},
+          {:auto_review,
+           gettext("Runs ordinary tools automatically. AI reviews operations that need approval.")},
           {:yolo,
            gettext(
              "Runs tools without asking. Built-in env and credential-path intercepts still apply."

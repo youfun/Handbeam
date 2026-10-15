@@ -186,8 +186,8 @@ msgstr "已探索 %{details}"
 
 #: lib/handbeam_probe/native_approval.ex:25
 #, elixir-autogen, elixir-format
-msgid "Full access"
-msgstr "完整存取"
+msgid "Smart approval"
+msgstr "智能审批"
 
 #: lib/handbeam_probe/native_timeline.ex:111
 #, elixir-autogen, elixir-format
@@ -299,8 +299,8 @@ msgstr "请检查以下操作。允许后才会执行；稍后处理会保持等
 
 #: lib/handbeam_probe/native_approval.ex:43
 #, elixir-autogen, elixir-format
-msgid "Runs tools automatically by default. Use only in trusted workspaces."
-msgstr "默认自动执行工具，请仅在可信工作区使用。"
+msgid "Runs ordinary tools automatically. AI reviews operations that need approval."
+msgstr "常规操作自动执行，需要审批的操作由 AI 审核。"
 
 #: lib/handbeam_probe/native_approval.ex:26
 #, elixir-autogen, elixir-format

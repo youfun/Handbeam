@@ -165,14 +165,12 @@ defmodule HandbeamWeb.WorkspaceLive.ViewComponents do
     ~p"/settings?#{query}"
   end
 
-  def permission_label(:auto), do: "完整存取"
-
   def permission_label(:prompt), do: "安全模式"
 
   def permission_label(:deny), do: "只读"
   def permission_label(:yolo), do: "yolo"
   def permission_label(:auto_review), do: "智能审批"
-  def permission_label(_), do: "完整存取"
+  def permission_label(_), do: "安全模式"
 
   def permission_title(:auto_review), do: gettext("只自动复审本来要问的操作，不扩大权限。")
 

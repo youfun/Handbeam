@@ -327,7 +327,7 @@ defmodule HandbeamProbe.HomeScreen.Render do
       end)
 
     permission_opts =
-      Enum.map([:auto, :prompt, :deny], fn mode ->
+      Enum.map([:prompt, :auto_review, :yolo], fn mode ->
         select_option(
           NativeApproval.mode_label(mode),
           {:permission_mode, mode},

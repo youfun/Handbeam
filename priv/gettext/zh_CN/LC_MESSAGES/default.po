@@ -396,11 +396,6 @@ msgstr "添加图片"
 msgid "当前权限："
 msgstr "当前权限："
 
-#: lib/sigil_web/live/workspace_live.html.heex:633
-#, elixir-autogen
-msgid "完整存取"
-msgstr "完整存取"
-
 #: lib/sigil_web/live/workspace_live.html.heex:644
 #, elixir-autogen
 msgid "安全模式"

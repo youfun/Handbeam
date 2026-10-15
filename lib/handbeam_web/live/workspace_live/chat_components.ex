@@ -1060,50 +1060,20 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
                 class="permission-dropdown-menu"
               >
                 <button
+                  :for={
+                    {mode, label} <- [
+                      {:prompt, gettext("安全模式")},
+                      {:auto_review, gettext("智能审批")},
+                      {:yolo, gettext("yolo")}
+                    ]
+                  }
                   type="button"
                   phx-click="select_permission_mode"
-                  phx-value-mode="auto"
-                  class={[
-                    "permission-dropdown-item",
-                    if(@permission_mode == :auto, do: "active")
-                  ]}
+                  phx-value-mode={mode}
+                  class={["permission-dropdown-item", if(@permission_mode == mode, do: "active")]}
+                  title={permission_title(mode)}
                 >
-                  {gettext("完整存取")}
-                </button>
-                <button
-                  type="button"
-                  phx-click="select_permission_mode"
-                  phx-value-mode="prompt"
-                  class={[
-                    "permission-dropdown-item",
-                    if(@permission_mode == :prompt, do: "active")
-                  ]}
-                >
-                  {gettext("安全模式")}
-                </button>
-                <button
-                  type="button"
-                  phx-click="select_permission_mode"
-                  phx-value-mode="yolo"
-                  class={[
-                    "permission-dropdown-item",
-                    if(@permission_mode == :yolo, do: "active")
-                  ]}
-                  title={gettext("不限制操作，仅保留内置的 env 与敏感路径拦截。")}
-                >
-                  {gettext("yolo")}
-                </button>
-                <button
-                  type="button"
-                  phx-click="select_permission_mode"
-                  phx-value-mode="auto_review"
-                  class={[
-                    "permission-dropdown-item",
-                    if(@permission_mode == :auto_review, do: "active")
-                  ]}
-                  title={gettext("只自动复审本来要问的操作，不扩大权限。")}
-                >
-                  {gettext("智能审批")}
+                  {label}
                 </button>
               </div>
             </div>

@@ -24,6 +24,51 @@ defmodule Handbeam.WorkspaceSettingsTest do
     path
   end
 
+  test "permission modes replace both execution policy and reviewer on every switch" do
+    workspace = tmp_workspace()
+
+    for {mode, default_mode, reviewer} <- [
+          {:yolo, "yolo", "user"},
+          {:auto_review, "auto", "auto_review"},
+          {:prompt, "prompt", "user"},
+          {:auto_review, "auto", "auto_review"}
+        ] do
+      assert :ok = WorkspaceSettings.update_permission_mode(workspace, mode)
+      assert WorkspaceSettings.permission_mode(workspace) == mode
+      assert {:ok, settings} = WorkspaceSettings.load(workspace)
+      assert get_in(settings, ["tools", "default_mode"]) == default_mode
+      assert get_in(settings, ["tools", "approvals_reviewer"]) == reviewer
+    end
+  end
+
+  test "permission mode update preserves comments and specific tool rules" do
+    workspace = tmp_workspace()
+
+    write_settings(workspace, """
+    {
+      // keep workspace rules
+      "tools": {
+        "default_mode": "yolo",
+        "per_tool": {"bash": "prompt"},
+        "deny": ["secret"]
+      }
+    }
+    """)
+
+    assert :ok = WorkspaceSettings.update_permission_mode(workspace, :auto_review)
+    assert File.read!(WorkspaceSettings.path(workspace)) =~ "// keep workspace rules"
+    assert {:ok, settings} = WorkspaceSettings.load(workspace)
+    assert get_in(settings, ["tools", "per_tool"]) == %{"bash" => "prompt"}
+    assert get_in(settings, ["tools", "deny"]) == ["secret"]
+  end
+
+  test "new workspace settings use smart approval" do
+    workspace = tmp_workspace()
+    assert :ok = WorkspaceSettings.ensure_file(workspace)
+    assert WorkspaceSettings.permission_mode(workspace) == :auto_review
+    assert WorkspaceSettings.approvals_reviewer(workspace) == :auto_review
+  end
+
   test "path points at workspace .handbeam/settings.jsonc" do
     workspace = tmp_workspace()
     assert WorkspaceSettings.path(workspace) == Path.join(workspace, ".handbeam/settings.jsonc")
@@ -114,7 +159,7 @@ defmodule Handbeam.WorkspaceSettingsTest do
     assert File.read!(WorkspaceSettings.path(workspace)) == ~s({"custom": true})
   end
 
-  test "update_default_mode/2 updates default tool mode and preserves JSONC comments" do
+  test "update_permission_mode/2 updates tool mode and preserves JSONC comments" do
     workspace = tmp_workspace()
 
     write_settings(workspace, """
@@ -130,7 +175,7 @@ defmodule Handbeam.WorkspaceSettingsTest do
     }
     """)
 
-    assert :ok = WorkspaceSettings.update_default_mode(workspace, :prompt)
+    assert :ok = WorkspaceSettings.update_permission_mode(workspace, :prompt)
 
     content = File.read!(WorkspaceSettings.path(workspace))
     assert content =~ "// Some comment here"
@@ -141,13 +186,13 @@ defmodule Handbeam.WorkspaceSettingsTest do
     assert get_in(settings, ["tools", "default_mode"]) == "prompt"
   end
 
-  test "update_default_mode/2 creates default file and updates it if missing" do
+  test "update_permission_mode/2 creates default file and updates it if missing" do
     workspace = tmp_workspace()
 
-    assert :ok = WorkspaceSettings.update_default_mode(workspace, :deny)
+    assert :ok = WorkspaceSettings.update_permission_mode(workspace, :yolo)
 
     assert {:ok, settings} = WorkspaceSettings.load(workspace)
-    assert get_in(settings, ["tools", "default_mode"]) == "deny"
+    assert get_in(settings, ["tools", "default_mode"]) == "yolo"
   end
 
   test "approvals_reviewer defaults to user and rejects unknown values" do
@@ -169,7 +214,7 @@ defmodule Handbeam.WorkspaceSettingsTest do
            }) == %{model: nil, timeout_ms: 1500}
   end
 
-  test "update_approvals_reviewer preserves comments and default_mode" do
+  test "update_permission_mode preserves comments and updates reviewer with default_mode" do
     workspace = tmp_workspace()
 
     write_settings(workspace, """
@@ -182,20 +227,20 @@ defmodule Handbeam.WorkspaceSettingsTest do
     }
     """)
 
-    assert :ok = WorkspaceSettings.update_approvals_reviewer(workspace, :auto_review)
+    assert :ok = WorkspaceSettings.update_permission_mode(workspace, :auto_review)
 
     content = File.read!(WorkspaceSettings.path(workspace))
     assert content =~ "// keep this comment"
-    assert content =~ "\"default_mode\": \"prompt\""
+    assert content =~ "\"default_mode\": \"auto\""
     assert content =~ "\"allow\": [\"read\"]"
     assert content =~ "\"approvals_reviewer\": \"auto_review\""
 
     assert {:ok, settings} = WorkspaceSettings.load(workspace)
-    assert get_in(settings, ["tools", "default_mode"]) == "prompt"
+    assert get_in(settings, ["tools", "default_mode"]) == "auto"
     assert get_in(settings, ["tools", "allow"]) == ["read"]
     assert get_in(settings, ["tools", "approvals_reviewer"]) == "auto_review"
 
-    assert :ok = WorkspaceSettings.update_approvals_reviewer(workspace, :user)
+    assert :ok = WorkspaceSettings.update_permission_mode(workspace, :prompt)
     assert {:ok, settings} = WorkspaceSettings.load(workspace)
     assert get_in(settings, ["tools", "approvals_reviewer"]) == "user"
     assert get_in(settings, ["tools", "default_mode"]) == "prompt"
