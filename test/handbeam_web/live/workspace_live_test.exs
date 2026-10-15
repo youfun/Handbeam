@@ -880,6 +880,72 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert rendered =~ "history item 1"
     end
 
+    test "projects tool groups when older history is loaded", %{conn: conn} do
+      older_entries = [
+        %{
+          "id" => "older-commentary",
+          "content_type" => "assistant_msg",
+          "role" => "assistant",
+          "content" => "Inspecting older files"
+        },
+        %{
+          "id" => "older-read",
+          "content_type" => "tool",
+          "tool_name" => "read",
+          "tool_status" => "done",
+          "input" => %{"file_path" => "lib/older.ex"}
+        },
+        %{
+          "id" => "older-search",
+          "content_type" => "tool",
+          "tool_name" => "grep",
+          "tool_status" => "done",
+          "input" => %{"path" => "lib", "pattern" => "older"}
+        },
+        %{
+          "id" => "older-answer",
+          "content_type" => "assistant_msg",
+          "role" => "assistant",
+          "content" => "Older inspection complete"
+        }
+      ]
+
+      newer_entries =
+        Enum.map(1..100, fn index ->
+          %{
+            "id" => "newer-history-#{index}",
+            "content_type" => "user_msg",
+            "role" => "user",
+            "content" => "newer history item #{index}"
+          }
+        end)
+
+      {:ok, conversation} =
+        Handbeam.ConversationStore.create("default",
+          id: "conv-older-tool-work",
+          title: "Older tool work",
+          timeline: older_entries ++ newer_entries
+        )
+
+      {:ok, view, _html} = live(conn, "/w/default/c/#{conversation["id"]}")
+
+      refute has_element?(view, "#older-read")
+
+      render_hook(view, "load_older_history", %{})
+
+      assert has_element?(view, "#older-read .tool-work-collapsed.tool-work-lead")
+
+      assert has_element?(
+               view,
+               "#tool-work-summary-older-read[aria-expanded='false']",
+               "Explored 1 file, 1 search"
+             )
+
+      assert has_element?(view, "#older-search .tool-work-collapsed.tool-work-follow")
+      refute has_element?(view, "#tool-work-line-older-read")
+      refute has_element?(view, "#tool-work-line-older-search")
+    end
+
     test "switching away and back reloads persisted streaming display history", %{conn: conn} do
       isolate_conversation_home!()
 

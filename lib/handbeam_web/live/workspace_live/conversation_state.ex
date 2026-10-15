@@ -313,7 +313,14 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
          {:ok, %{entries: entries, before: next_before, has_more?: has_more?}} <-
            Handbeam.ConversationTranscriptStore.page(conv_id, limit: 100, before: before) do
       entries = Handbeam.PubSub.Projection.visible_entries(entries)
-      timeline = deduplicate_entries(entries ++ socket.assigns.timeline)
+
+      timeline =
+        entries
+        |> Kernel.++(socket.assigns.timeline)
+        |> deduplicate_entries()
+        |> HandbeamWeb.WorkspaceHelper.apply_tool_work_collapse(
+          Map.get(socket.assigns, :expanded_tool_groups, MapSet.new())
+        )
 
       pending =
         Handbeam.Agent.PendingMessages.reconcile(
