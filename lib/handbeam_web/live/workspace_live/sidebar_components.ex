@@ -146,6 +146,9 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
   attr :current_workspace_id, :any, required: true
   attr :show_archive, :any, required: true
   attr :workspaces, :any, required: true
+  attr :conversation_list_loading, :boolean, default: false
+  attr :conversation_list_loaded, :boolean, default: false
+  attr :conversation_list_error, :any, default: nil
   attr :runtime_tasks, :map, default: %{tasks: []}
 
   def projects_sidebar(assigns) do
@@ -174,7 +177,41 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
           +
         </button>
       </div>
-      <div class="flex-1 overflow-y-auto" id="projects-sidebar-scroll">
+      <div
+        class="flex-1 overflow-y-auto"
+        id="projects-sidebar-scroll"
+        aria-busy={to_string(@conversation_list_loading)}
+      >
+        <div
+          :if={@conversation_list_loading and not @conversation_list_loaded}
+          id="conversation-list-loading"
+          role="status"
+          class="px-3 py-2 text-xs text-tertiary flex items-center gap-2"
+        >
+          <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
+          {gettext("正在加载对话…")}
+        </div>
+        <div
+          :if={@conversation_list_loading and @conversation_list_loaded}
+          id="conversation-list-refreshing"
+          role="status"
+          class="px-3 py-1 text-xs text-tertiary"
+        >
+          {gettext("正在刷新对话…")}
+        </div>
+        <div
+          :if={@conversation_list_error}
+          id="conversation-list-error"
+          role="alert"
+          class="px-3 py-2 text-xs text-tertiary"
+        >
+          <p>{gettext("对话加载失败")}</p>
+          <button
+            type="button"
+            phx-click="retry_conversation_list"
+            class="mt-1 underline hover:text-primary"
+          >{gettext("重试")}</button>
+        </div>
         <div
           :if={pinned_conversations(@workspaces, @conversations_by_workspace) != []}
           id="pinned-conversations-group"
@@ -577,31 +614,41 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
 
         <!-- Archived conversations -->
         <div class="workspace-group">
-          <button
-            phx-click="toggle_archive"
-            class="workspace-header w-full text-left px-2 py-1.5 flex items-center gap-1.5 text-xs text-tertiary hover:bg-surface-hover transition-colors rounded"
-            aria-expanded={to_string(@show_archive)}
-          >
-            <span class="workspace-icon" aria-hidden="true">
-              <svg
-                width="20"
-                height="22"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-              >
-                <rect x="3" y="3" width="18" height="4" rx="1" />
-                <path d="M5 7v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7M10 11h4" />
-              </svg>
-            </span>
-            <span>{gettext("已存档")}</span>
-            <span class="ml-auto tabular-nums text-[0.6rem] lowercase">
-              {length(archived_conversations(@workspaces, @conversations_by_workspace))}
-            </span>
-          </button>
+          <div class="workspace-title-row">
+            <button
+              phx-click="toggle_archive"
+              class="workspace-header w-full text-left px-2 py-1.5 flex items-center gap-1.5 text-xs text-tertiary hover:bg-surface-hover transition-colors rounded"
+              aria-expanded={to_string(@show_archive)}
+            >
+              <span class="workspace-icon" aria-hidden="true">
+                <svg
+                  width="20"
+                  height="22"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <rect x="3" y="3" width="18" height="4" rx="1" />
+                  <path d="M5 7v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7M10 11h4" />
+                </svg>
+              </span>
+              <span>{gettext("已存档")}</span>
+            </button>
+            <span class="workspace-title-rule" aria-hidden="true"></span>
+            <button
+              type="button"
+              phx-click="toggle_archive"
+              class="workspace-count-toggle"
+              aria-expanded={to_string(@show_archive)}
+            >
+              <span class="workspace-conv-count">
+                {length(archived_conversations(@workspaces, @conversations_by_workspace))}
+              </span>
+            </button>
+          </div>
 
           <div :if={@show_archive} class="conversations-list">
             <div

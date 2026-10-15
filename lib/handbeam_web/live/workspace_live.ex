@@ -50,9 +50,7 @@ defmodule HandbeamWeb.WorkspaceLive do
 
     workspaces = Handbeam.WorkspaceStore.list()
 
-    # Initialize conversations: one empty conversation per workspace
-    conversations_by_ws = build_initial_conversations(workspaces, default_ws)
-    log_workspace_boot(default_ws, workspaces, conversations_by_ws)
+    conversations_by_ws = Map.new(workspaces, &{&1["id"], []}) |> Map.put(:free, [])
 
     boot = boot_location(params, workspaces, default_ws, conversations_by_ws)
 
@@ -78,6 +76,12 @@ defmodule HandbeamWeb.WorkspaceLive do
       |> assign(:workspace_root, boot.workspace_root)
       |> assign(:workspace_label, boot.workspace_label)
       |> assign(:conversations_by_workspace, conversations_by_ws)
+      |> assign(:conversation_list_loading, true)
+      |> assign(:conversation_list_loaded, false)
+      |> assign(:conversation_list_error, nil)
+      |> assign(:conversation_list_revision, 0)
+      |> assign(:conversation_list_task_revision, nil)
+      |> assign(:conversation_list_boot, if(params["conversation_id"], do: nil, else: boot))
       |> assign(:selected_model, selected_model)
       |> assign(:available_models, available_models)
       |> assign(:selected_reasoning_level, selected_reasoning_level)
@@ -157,6 +161,7 @@ defmodule HandbeamWeb.WorkspaceLive do
       |> RuntimeProjection.subscribe_tasks()
       |> restore_session()
       |> Schedules.reload()
+      |> ConversationSwitching.load_conversation_list()
       |> load_available_skills()
       # Mobile mode
       |> assign(:mobile_mode, mobile_mode)
@@ -179,7 +184,8 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   defp boot_location(params, workspaces, default_ws, conversations_by_ws) do
     if is_binary(params["conversation_id"]) do
-      default_boot(default_ws, conversations_by_ws)
+      explicit_boot(params, workspaces, default_ws) ||
+        default_boot(default_ws, conversations_by_ws)
     else
       case SessionMemory.restore(workspaces) do
         %{scope: :free, conversation_id: id} ->
@@ -210,6 +216,46 @@ defmodule HandbeamWeb.WorkspaceLive do
     end
   end
 
+  defp explicit_boot(
+         %{"workspace_id" => workspace_id, "conversation_id" => conversation_id},
+         workspaces,
+         _default_ws
+       ) do
+    with %{} = workspace <- Enum.find(workspaces, &(&1["id"] == workspace_id)),
+         {:ok, conversation} <-
+           Handbeam.ConversationStore.get(conversation_id, include_timeline?: false),
+         true <- conversation["workspace_id"] == workspace_id,
+         false <- Handbeam.ConversationStore.free?(conversation) do
+      %{
+        chat_scope: :workspace,
+        workspace_id: workspace_id,
+        conversation_id: conversation_id,
+        workspace_root: workspace["path"],
+        workspace_label: workspace["name"],
+        model_root: workspace["path"]
+      }
+    else
+      _ -> nil
+    end
+  end
+
+  defp explicit_boot(%{"conversation_id" => conversation_id}, _workspaces, default_ws) do
+    with {:ok, conversation} <-
+           Handbeam.ConversationStore.get(conversation_id, include_timeline?: false),
+         true <- Handbeam.ConversationStore.free?(conversation) do
+      %{
+        chat_scope: :free,
+        workspace_id: nil,
+        conversation_id: conversation_id,
+        workspace_root: nil,
+        workspace_label: "Chats",
+        model_root: default_ws["path"]
+      }
+    else
+      _ -> nil
+    end
+  end
+
   defp default_boot(default_ws, conversations_by_ws) do
     %{
       chat_scope: :workspace,
@@ -235,6 +281,89 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   defp maybe_remember_boot(socket, params) do
     if is_binary(params["conversation_id"]), do: socket, else: SessionMemory.remember(socket)
+  end
+
+  @impl true
+  def handle_async(:conversation_list, {:ok, {revision, result}}, socket) do
+    if revision != socket.assigns.conversation_list_revision do
+      {:noreply, ConversationSwitching.load_conversation_list(socket)}
+    else
+      case result do
+        {:ok, conversations} ->
+          log_workspace_boot(
+            socket.assigns.current_workspace_id,
+            socket.assigns.workspaces,
+            conversations
+          )
+
+          socket =
+            socket
+            |> assign(:conversations_by_workspace, conversations)
+            |> assign(:conversation_list_loading, false)
+            |> assign(:conversation_list_loaded, true)
+            |> assign(:conversation_list_error, nil)
+            |> stream_conversations(conversations, socket.assigns.workspaces)
+            |> finish_conversation_list_boot()
+
+          {:noreply, socket}
+
+        {:error, reason} ->
+          {:noreply, conversation_list_failed(socket, reason)}
+      end
+    end
+  end
+
+  def handle_async(:conversation_list, {:exit, reason}, socket) do
+    if socket.assigns.conversation_list_task_revision !=
+         socket.assigns.conversation_list_revision do
+      {:noreply, ConversationSwitching.load_conversation_list(socket)}
+    else
+      {:noreply, conversation_list_failed(socket, reason)}
+    end
+  end
+
+  defp conversation_list_failed(socket, reason) do
+    Logger.warning("Conversation list failed to load: #{inspect(reason)}")
+
+    socket
+    |> assign(:conversation_list_loading, false)
+    |> assign(:conversation_list_error, "Could not load conversations.")
+  end
+
+  defp finish_conversation_list_boot(socket) do
+    boot = socket.assigns.conversation_list_boot
+    socket = assign(socket, :conversation_list_boot, nil)
+
+    if boot && is_nil(boot.conversation_id) &&
+         is_nil(socket.assigns.current_conversation_id) &&
+         socket.assigns.chat_scope == boot.chat_scope &&
+         socket.assigns.current_workspace_id == boot.workspace_id do
+      key = if boot.chat_scope == :free, do: :free, else: boot.workspace_id
+      id = initial_conversation_id(socket.assigns.conversations_by_workspace, key)
+
+      if id do
+        {socket, _id} =
+          if boot.chat_scope == :free do
+            ConversationSwitching.select_free_conversation(socket, id)
+          else
+            ConversationSwitching.select_conversation(socket, boot.workspace_id, id)
+          end
+
+        socket =
+          if boot.chat_scope == :free,
+            do: WorkspaceNavigation.enter_free_chat(socket),
+            else: WorkspaceNavigation.after_switch(socket)
+
+        socket
+        |> RuntimeProjection.subscribe_session()
+        |> restore_session()
+        |> SessionMemory.remember()
+      else
+        socket
+      end
+    else
+      socket
+    end
   end
 
   @impl true
@@ -1056,6 +1185,10 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   @impl true
+  def handle_event("retry_conversation_list", _params, socket) do
+    {:noreply, ConversationSwitching.load_conversation_list(socket)}
+  end
+
   def handle_event("new_conversation", _params, socket) do
     ws_id = socket.assigns.current_workspace_id
 
@@ -1569,6 +1702,7 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   defp drop_composer_for_switch(socket, next_id \\ :new) do
     socket
+    |> assign(:conversation_list_boot, nil)
     |> Composer.materialize_uploads()
     |> Composer.switch_conversation(next_id)
   end
@@ -1690,9 +1824,6 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   # ── Conversation construction ──
-
-  defp build_initial_conversations(workspaces, default_ws),
-    do: ConversationSwitching.build_initial_conversations(workspaces, default_ws)
 
   defp initial_conversation_id(conversations_by_ws, ws_id),
     do: ConversationSwitching.initial_conversation_id(conversations_by_ws, ws_id)

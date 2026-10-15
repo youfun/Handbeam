@@ -2,7 +2,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
   @moduledoc false
 
   import Phoenix.Component, only: [assign: 3, update: 3]
-  import Phoenix.LiveView, only: [stream: 4]
+  import Phoenix.LiveView, only: [stream: 4, start_async: 3]
 
   require Logger
 
@@ -309,7 +309,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
   def load_free_conversations(opts \\ []) do
     include_archived? = Keyword.get(opts, :include_archived?, false)
 
-    Handbeam.ConversationStore.list_free_summaries()
+    conversation_summaries(@free_key, opts)
     |> Enum.filter(&persisted_conversation?/1)
     |> filter_archived(include_archived?)
     |> Enum.sort_by(&(&1["updated_at"] || ""), :desc)
@@ -485,10 +485,36 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
     end
   end
 
-  def build_initial_conversations(workspaces, _default_ws) do
-    workspaces
-    |> build_conversations_by_workspace(include_archived?: true)
-    |> Map.put(@free_key, load_free_conversations(include_archived?: true))
+  def fetch_conversations(workspaces) do
+    with {:ok, summaries} <- Handbeam.ConversationStore.fetch_summaries() do
+      grouped =
+        Enum.group_by(summaries, fn summary ->
+          if Handbeam.ConversationStore.free?(summary),
+            do: @free_key,
+            else: summary["workspace_id"]
+        end)
+
+      opts = [include_archived?: true, summaries_by_workspace: grouped]
+
+      {:ok,
+       workspaces
+       |> build_conversations_by_workspace(opts)
+       |> Map.put(@free_key, load_free_conversations(opts))}
+    end
+  end
+
+  def load_conversation_list(socket) do
+    workspaces = Enum.map(socket.assigns.workspaces, &Map.take(&1, ["id", "path"]))
+    revision = Map.get(socket.assigns, :conversation_list_revision, 0) + 1
+
+    socket
+    |> assign(:conversation_list_revision, revision)
+    |> assign(:conversation_list_task_revision, revision)
+    |> assign(:conversation_list_loading, true)
+    |> assign(:conversation_list_error, nil)
+    |> start_async(:conversation_list, fn ->
+      {revision, fetch_conversations(workspaces)}
+    end)
   end
 
   def initial_conversation_id(conversations_by_ws, ws_id) do
@@ -521,7 +547,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
       ws_id = ws["id"]
 
       convs =
-        Handbeam.ConversationStore.list_summaries(ws_id)
+        conversation_summaries(ws_id, opts)
         |> Enum.filter(&persisted_conversation?/1)
         |> filter_archived(include_archived?)
         |> Enum.sort_by(&(&1["updated_at"] || ""), :desc)
@@ -540,6 +566,14 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
       {ws_id, maybe_sort_conversations(convs, include_archived?)}
     end)
     |> Map.new()
+  end
+
+  defp conversation_summaries(workspace_id, opts) do
+    case Keyword.fetch(opts, :summaries_by_workspace) do
+      {:ok, grouped} -> Map.get(grouped, workspace_id, [])
+      :error when workspace_id == @free_key -> Handbeam.ConversationStore.list_free_summaries()
+      :error -> Handbeam.ConversationStore.list_summaries(workspace_id)
+    end
   end
 
   defp persisted_conversation?(conversation) do
@@ -595,6 +629,13 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
   end
 
   def reload_conversation_stream(socket) do
+    socket =
+      assign(
+        socket,
+        :conversation_list_revision,
+        Map.get(socket.assigns, :conversation_list_revision, 0) + 1
+      )
+
     stream_conversations(
       socket,
       socket.assigns.conversations_by_workspace,

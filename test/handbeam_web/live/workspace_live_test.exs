@@ -494,6 +494,95 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       refute html =~ ~s(data-conversation-id="#{conversation["id"]}")
     end
 
+    test "static mount shows loading state and connected mount fills the sidebar", %{conn: conn} do
+      {:ok, conversation} =
+        Handbeam.ConversationStore.create("default",
+          title: "Loaded asynchronously",
+          timeline: [%{"id" => "message", "role" => "user", "content" => "hello"}]
+        )
+
+      static_html = conn |> get("/") |> html_response(200)
+      assert static_html =~ ~s(id="conversation-list-loading")
+      refute static_html =~ "Loaded asynchronously"
+
+      {:ok, view, _html} = live(recycle(conn), "/")
+      rendered = render_async(view, 5_000)
+
+      assert rendered =~ "Loaded asynchronously"
+      assert rendered =~ ~s(data-conversation-id="#{conversation["id"]}")
+      refute rendered =~ ~s(id="conversation-list-loading")
+      refute rendered =~ ~s(id="conversation-list-refreshing")
+    end
+
+    test "stale sidebar results and refresh failures preserve newer rows" do
+      current = %{"id" => "current", "title" => "Current", "workspace_id" => "default"}
+      stale = %{"id" => "stale", "title" => "Stale", "workspace_id" => "default"}
+
+      socket = %Phoenix.LiveView.Socket{
+        assigns: %{
+          __changed__: %{},
+          conversation_list_boot: nil,
+          conversation_list_error: nil,
+          conversation_list_loaded: true,
+          conversation_list_loading: true,
+          conversation_list_revision: 2,
+          conversation_list_task_revision: 1,
+          conversations_by_workspace: %{"default" => [current], free: []},
+          workspaces: [%{"id" => "default", "path" => System.tmp_dir!()}]
+        }
+      }
+
+      assert {:noreply, refreshed} =
+               HandbeamWeb.WorkspaceLive.handle_async(
+                 :conversation_list,
+                 {:ok, {1, {:ok, %{"default" => [stale], free: []}}}},
+                 socket
+               )
+
+      assert refreshed.assigns.conversation_list_revision == 3
+      assert refreshed.assigns.conversation_list_task_revision == 3
+      assert refreshed.assigns.conversations_by_workspace["default"] == [current]
+
+      assert {:noreply, failed} =
+               HandbeamWeb.WorkspaceLive.handle_async(
+                 :conversation_list,
+                 {:exit, :index_unavailable},
+                 refreshed
+               )
+
+      assert failed.assigns.conversations_by_workspace["default"] == [current]
+      assert failed.assigns.conversation_list_loaded
+      refute failed.assigns.conversation_list_loading
+      assert failed.assigns.conversation_list_error
+    end
+
+    test "stale sidebar task exits trigger a fresh query without showing an error" do
+      socket = %Phoenix.LiveView.Socket{
+        assigns: %{
+          __changed__: %{},
+          conversation_list_error: nil,
+          conversation_list_loaded: true,
+          conversation_list_loading: true,
+          conversation_list_revision: 2,
+          conversation_list_task_revision: 1,
+          conversations_by_workspace: %{"default" => [], free: []},
+          workspaces: [%{"id" => "default", "path" => System.tmp_dir!()}]
+        }
+      }
+
+      assert {:noreply, refreshed} =
+               HandbeamWeb.WorkspaceLive.handle_async(
+                 :conversation_list,
+                 {:exit, :index_unavailable},
+                 socket
+               )
+
+      assert refreshed.assigns.conversation_list_revision == 3
+      assert refreshed.assigns.conversation_list_task_revision == 3
+      assert refreshed.assigns.conversation_list_loading
+      refute refreshed.assigns.conversation_list_error
+    end
+
     test "renders AI input area with input box and send button", %{conn: conn} do
       {:ok, _view, html} = live(conn, "/")
 
@@ -1195,6 +1284,8 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       |> render_submit(%{"message" => "left behind", "model" => "stepfun/step-router-v1"})
 
       :ok = Handbeam.PubSub.Session.broadcast_event(sid, :run_end, %{status: "cancelled"})
+      # Wait for the asynchronous terminal event before checking its rendered result.
+      _snapshot = Handbeam.PubSub.Session.snapshot(sid)
 
       html = render(view)
       assert html =~ "Not delivered"
@@ -4060,7 +4151,8 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
           updated_at: "2099-01-01T00:00:00Z"
         )
 
-      {:ok, view, html} = live(conn, "/")
+      {:ok, view, _html} = live(conn, "/")
+      html = render_async(view, 5_000)
       assert html =~ "sid:#{newer["id"]}"
 
       view
@@ -4071,7 +4163,8 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
 
       view |> element("#free-workspace-toggle") |> render_click()
 
-      {:ok, restored, html} = live(conn, "/")
+      {:ok, restored, _html} = live(conn, "/")
+      html = render_async(restored, 5_000)
       assert html =~ "sid:#{older["id"]}"
       assert html =~ "stay on the older chat"
       refute html =~ "sid:#{newer["id"]}"
@@ -4411,12 +4504,18 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       html = render(view)
       assert html =~ "Archived"
       refute html =~ "Trash"
-      assert html =~ "▸"
 
-      view |> element("button[phx-click='toggle_archive']") |> render_click()
+      assert has_element?(
+               view,
+               "button.workspace-header[phx-click='toggle_archive'][aria-expanded='false']"
+             )
 
-      html = render(view)
-      assert html =~ "▾"
+      view |> element("button.workspace-header[phx-click='toggle_archive']") |> render_click()
+
+      assert has_element?(
+               view,
+               "button.workspace-header[phx-click='toggle_archive'][aria-expanded='true']"
+             )
     end
 
     test "conversation stream scrolls past workspaces while preserving scroll position", %{
@@ -5385,7 +5484,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         |> render_change(%{"om_enabled" => "true"})
 
       # Verify it toggled and didn't crash
-      assert html_after_click =~ "Observer model" or html_after_click =~ "观测模型"
+      assert html_after_click =~ "Memory model" or html_after_click =~ "记忆模型"
     end
 
     test "updates default model and reasoning settings without crashing", %{conn: conn} do
@@ -5890,7 +5989,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       {:ok, archived} = Handbeam.ConversationStore.get_metadata(conv["id"])
       assert is_binary(archived["archived_at"])
 
-      view |> element("button[phx-click='toggle_archive']") |> render_click()
+      view |> element("button.workspace-header[phx-click='toggle_archive']") |> render_click()
 
       assert has_element?(
                view,

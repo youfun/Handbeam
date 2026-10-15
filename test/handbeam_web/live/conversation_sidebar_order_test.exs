@@ -109,6 +109,29 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSidebarOrderTest do
     end
   end
 
+  test "refresh state preserves existing conversation rows" do
+    conv = conversation("existing", "2026-01-01T00:00:00Z")
+
+    html =
+      Phoenix.LiveViewTest.render_component(
+        &HandbeamWeb.WorkspaceLive.SidebarComponents.projects_sidebar/1,
+        chat_scope: :workspace,
+        collapsed_workspace_ids: MapSet.new(),
+        conversation_menu_id: nil,
+        conversation_list_loading: true,
+        conversation_list_loaded: true,
+        conversations_by_workspace: %{"ws" => [conv]},
+        current_conversation_id: "existing",
+        current_workspace_id: "ws",
+        show_archive: false,
+        workspaces: [%{"id" => "ws", "name" => "Workspace"}]
+      )
+
+    assert html =~ ~s(id="conversation-list-refreshing")
+    assert html =~ ~s(id="conversation-existing")
+    refute html =~ ~s(id="conversation-list-loading")
+  end
+
   defp conversation(id, updated_at) do
     %{
       "id" => id,

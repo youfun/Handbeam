@@ -18,6 +18,9 @@
   />
   <div class="flex flex-1 overflow-hidden workspace-main">
     <.projects_sidebar
+      conversation_list_loading={@conversation_list_loading}
+      conversation_list_loaded={@conversation_list_loaded}
+      conversation_list_error={@conversation_list_error}
       chat_scope={@chat_scope}
       collapsed_workspace_ids={@collapsed_workspace_ids}
       conversation_menu_id={@conversation_menu_id}
