@@ -14,10 +14,14 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
     private let workspaceSwitcher = WorkspacePanelSwitcher()
     private let actionsContainer = WorkspaceActionsBar()
     private let iconStack = NSStackView()
+    private let workspaceActionsGap: CGFloat = 12
     private var actionsGapConstraint: NSLayoutConstraint?
     private var switcherWidthConstraint: NSLayoutConstraint?
     private var actionsInstalled = false
     private var measuredPanelWidth: CGFloat = 0
+    private var measuredPanelRightInset: CGFloat = 0
+    private var measuredPanelLeadingInset: CGFloat = 9
+    private var measuredToolbarTrailingInset: CGFloat = 8
     private var panelSyncToken = 0
     private var origin = AppOrigin(hosts: DesktopConfig.loopbackHosts, port: DesktopConfig.defaultPort)
     private var loadedURL: URL?
@@ -345,7 +349,7 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
         actionsContainer.addSubview(iconStack)
         let gap = iconStack.leadingAnchor.constraint(
             greaterThanOrEqualTo: workspaceSwitcher.trailingAnchor,
-            constant: 12
+            constant: workspaceActionsGap
         )
         actionsGapConstraint = gap
         let switcherWidth = workspaceSwitcher.widthAnchor.constraint(
@@ -369,12 +373,42 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
     private func layoutWorkspaceActions() {
         guard actionsInstalled else { return }
         let collapsed = workspaceSwitcher.isHidden
-        let tabWidth = collapsed ? 0 : workspaceSwitcher.intrinsicContentSize.width
-        switcherWidthConstraint?.constant = tabWidth
-        actionsGapConstraint?.constant = collapsed ? 0 : 12
-        let needed = iconStack.fittingSize.width + tabWidth + (collapsed ? 0 : 12)
-        let width = measuredPanelWidth > needed ? measuredPanelWidth : needed
-        actionsContainer.measuredSize = NSSize(width: max(width, 1), height: 22)
+        let iconWidth = iconStack.fittingSize.width
+
+        if collapsed {
+            switcherWidthConstraint?.constant = 0
+            actionsGapConstraint?.constant = 0
+            actionsContainer.measuredSize = NSSize(width: max(iconWidth, 1), height: 22)
+            return
+        }
+
+        updateToolbarTrailingInset()
+        let layout = WorkspacePanelToolbarLayout.expanded(
+            panelWidth: Double(measuredPanelWidth),
+            panelRightInset: Double(measuredPanelRightInset),
+            panelLeadingInset: Double(measuredPanelLeadingInset),
+            toolbarTrailingInset: Double(measuredToolbarTrailingInset),
+            iconWidth: Double(iconWidth),
+            minimumGap: Double(workspaceActionsGap),
+            preferredSwitcherWidth: Double(workspaceSwitcher.intrinsicContentSize.width),
+            minimumSwitcherWidth: Double(workspaceSwitcher.minimumContentWidth)
+        )
+        switcherWidthConstraint?.constant = CGFloat(layout.switcherWidth)
+        actionsGapConstraint?.constant = workspaceActionsGap
+        actionsContainer.measuredSize = NSSize(
+            width: max(CGFloat(layout.containerWidth), 1),
+            height: 22
+        )
+    }
+
+    private func updateToolbarTrailingInset() {
+        guard actionsContainer.window != nil, actionsContainer.bounds.width > 0 else { return }
+        actionsContainer.superview?.layoutSubtreeIfNeeded()
+        let webRight = webView.convert(webView.bounds, to: nil).maxX
+        let actionsRight = actionsContainer.convert(actionsContainer.bounds, to: nil).maxX
+        let candidate = webRight - actionsRight
+        guard candidate.isFinite, (0...64).contains(candidate) else { return }
+        measuredToolbarTrailingInset = candidate
     }
 
     private func clickWebControl(_ selector: String) {
@@ -409,12 +443,16 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
               const toggle = document.querySelector('[data-workspace-panel-toggle]');
               if (!panel || !toggle) return null;
               const rect = panel.getBoundingClientRect();
+              const header = panel.querySelector('.workspace-panel-header');
+              const headerStyle = header ? getComputedStyle(header) : null;
               return {
                 collapsed: toggle.getAttribute('aria-pressed') === 'false',
                 view: document.querySelector('.workspace-panel-tab.active')?.getAttribute('phx-value-view') || '',
                 browser: Boolean(document.querySelector("button[phx-value-view='browser']")),
                 terminal: Boolean(document.querySelector("button[phx-value-view='terminal']")),
-                width: rect.width
+                width: rect.width,
+                rightInset: Math.max(0, document.documentElement.clientWidth - rect.right),
+                leadingInset: panel.clientLeft + (parseFloat(headerStyle?.paddingLeft) || 0)
               };
             })()
             """
@@ -424,6 +462,7 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
                     self.panelButton.isEnabled = false
                     self.workspaceSwitcher.isHidden = true
                     self.measuredPanelWidth = 0
+                    self.measuredPanelRightInset = 0
                     self.layoutWorkspaceActions()
                     return
                 }
@@ -443,7 +482,11 @@ final class WebWindowController: NSWindowController, WKNavigationDelegate, WKUID
                     $0.rawValue == (state["view"] as? String ?? "")
                 } ?? -1
                 let width = (state["width"] as? NSNumber).map { CGFloat(truncating: $0) } ?? 0
+                let rightInset = (state["rightInset"] as? NSNumber).map { CGFloat(truncating: $0) } ?? 0
+                let leadingInset = (state["leadingInset"] as? NSNumber).map { CGFloat(truncating: $0) } ?? 9
                 self.measuredPanelWidth = collapsed ? 0 : width
+                self.measuredPanelRightInset = collapsed ? 0 : rightInset
+                self.measuredPanelLeadingInset = max(0, leadingInset)
                 self.layoutWorkspaceActions()
             }
         }
@@ -547,10 +590,14 @@ private final class WorkspacePanelSwitcher: NSView {
     )
     private let labelFont = NSFont.systemFont(ofSize: 12, weight: .medium)
 
+    var minimumContentWidth: CGFloat {
+        minimumSegmentWidth * CGFloat(labels.count)
+    }
+
     override var isFlipped: Bool { true }
 
     override var intrinsicContentSize: NSSize {
-        NSSize(width: segmentWidth * CGFloat(labels.count), height: 22)
+        NSSize(width: preferredSegmentWidth * CGFloat(labels.count), height: 22)
     }
 
     func setEnabled(_ enabled: Bool, forSegment index: Int) {
@@ -620,9 +667,21 @@ private final class WorkspacePanelSwitcher: NSView {
 
     override func accessibilityLabel() -> String? { "工作區面板" }
 
+    private var preferredSegmentWidth: CGFloat {
+        ceil(max(longestLabelWidth + 28, 68))
+    }
+
+    private var minimumSegmentWidth: CGFloat {
+        ceil(longestLabelWidth + 4)
+    }
+
+    private var longestLabelWidth: CGFloat {
+        labels.map { ($0 as NSString).size(withAttributes: [.font: labelFont]).width }.max() ?? 48
+    }
+
     private var segmentWidth: CGFloat {
-        let longest = labels.map { ($0 as NSString).size(withAttributes: [.font: labelFont]).width }.max() ?? 48
-        return ceil(max(longest + 28, 68))
+        guard !labels.isEmpty, bounds.width > 0 else { return preferredSegmentWidth }
+        return bounds.width / CGFloat(labels.count)
     }
 
     private func segmentRect(_ index: Int) -> NSRect {
