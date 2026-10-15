@@ -47,8 +47,8 @@ defmodule Handbeam.Agent.ErrorReporterTest do
     errors = Repo.all(from(error in Error, order_by: error.source_line))
 
     assert Enum.map(errors, & &1.source_line) == [
-             "agent://a.gateway.test:0",
-             "agent://b.gateway.test:0"
+             "agent://a.gateway.test/server_is_overloaded:0",
+             "agent://b.gateway.test/server_is_overloaded:0"
            ]
 
     assert Enum.all?(errors, &String.ends_with?(&1.kind, "Agent.ErrorReporter.AgentRunError"))
@@ -66,5 +66,63 @@ defmodule Handbeam.Agent.ErrorReporterTest do
     refute recorded =~ "bearer-secret"
     refute recorded =~ "api-key-secret"
     refute recorded =~ "query-secret"
+  end
+
+  test "separates tool reason categories while grouping dynamic details" do
+    context = %{"source" => "agent_tool", "tool" => "read_thread"}
+
+    assert :ok = ErrorReporter.report(:not_accessible, context, failure_class: :tool_error)
+
+    assert :ok =
+             ErrorReporter.report(:stale_or_invalid_cursor, context, failure_class: :tool_error)
+
+    assert :ok =
+             ErrorReporter.report(:stale_or_invalid_cursor, context, failure_class: :tool_error)
+
+    dynamic_context = %{"source" => "agent_tool", "tool" => "task_status"}
+
+    assert :ok =
+             ErrorReporter.report(
+               ~s(No subagent "11111111-1111-4111-8111-111111111111" in this conversation),
+               dynamic_context,
+               failure_class: :tool_error
+             )
+
+    assert :ok =
+             ErrorReporter.report(
+               ~s(No subagent "22222222-2222-4222-8222-222222222222" in this conversation),
+               dynamic_context,
+               failure_class: :tool_error
+             )
+
+    http_context = %{"source" => "agent_tool", "tool" => "web_fetch"}
+    assert :ok = ErrorReporter.report("HTTP status 404", http_context, failure_class: :tool_error)
+    assert :ok = ErrorReporter.report("HTTP status 429", http_context, failure_class: :tool_error)
+    assert :ok = ErrorReporter.report("HTTP status 404", http_context, failure_class: :tool_error)
+
+    errors = Repo.all(from(error in Error, order_by: error.source_line))
+
+    assert Enum.map(errors, & &1.source_line) == [
+             "agent://agent_tool/read_thread/not_accessible:0",
+             "agent://agent_tool/read_thread/stale_or_invalid_cursor:0",
+             "agent://agent_tool/task_status/subagent_not_found:0",
+             "agent://agent_tool/web_fetch/http_status_404:0",
+             "agent://agent_tool/web_fetch/http_status_429:0"
+           ]
+
+    assert Repo.aggregate(Occurrence, :count) == 8
+
+    categories =
+      Occurrence
+      |> Repo.all()
+      |> Enum.frequencies_by(& &1.context["reason_category"])
+
+    assert categories == %{
+             "http_status_404" => 2,
+             "http_status_429" => 1,
+             "not_accessible" => 1,
+             "stale_or_invalid_cursor" => 2,
+             "subagent_not_found" => 2
+           }
   end
 end

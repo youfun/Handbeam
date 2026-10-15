@@ -42,10 +42,12 @@ defmodule Handbeam.Agent.ErrorReporter do
   def report(reason, context, opts \\ []) when is_map(context) and is_list(opts) do
     provider_config = Keyword.get(opts, :provider_config) || %{}
     failure_class = failure_class(reason, Keyword.get(opts, :failure_class))
+    reason_category = reason_category(reason, safe_reason(reason, provider_config))
 
     context =
       context
       |> Map.put("failure_class", Atom.to_string(failure_class))
+      |> Map.put("reason_category", reason_category)
       |> put_provider_context(provider_config, Keyword.get(opts, :provider))
 
     do_report(reason, failure_class, context, provider_config)
@@ -209,12 +211,80 @@ defmodule Handbeam.Agent.ErrorReporter do
   defp put_present(map, _key, ""), do: map
   defp put_present(map, key, value), do: Map.put(map, key, value)
 
+  defp reason_category(reason, _safe_reason) when is_atom(reason), do: Atom.to_string(reason)
+
+  defp reason_category(reason, _safe_reason)
+       when is_tuple(reason) and tuple_size(reason) > 0 and is_atom(elem(reason, 0)),
+       do: reason |> elem(0) |> Atom.to_string()
+
+  defp reason_category(_reason, safe_reason) do
+    first_line =
+      safe_reason
+      |> String.split("\n", trim: true)
+      |> List.first()
+      |> to_string()
+      |> String.downcase()
+
+    cond do
+      Regex.match?(~r/^[a-z][a-z0-9_:-]{0,80}$/, first_line) ->
+        first_line
+
+      match = Regex.run(~r/http status\s+(\d{3})/, first_line) ->
+        "http_status_#{Enum.at(match, 1)}"
+
+      String.contains?(first_line, "no such file") ->
+        "no_such_file"
+
+      String.contains?(first_line, "no subagent") ->
+        "subagent_not_found"
+
+      String.contains?(first_line, "could not find text") ->
+        "text_not_found"
+
+      String.contains?(first_line, "chunk_not_found") ->
+        "chunk_not_found"
+
+      String.contains?(first_line, "exceeds 1 mib limit") ->
+        "response_too_large"
+
+      String.contains?(first_line, ["tls verification failed", "connection or tls"]) ->
+        "connection_or_tls_failed"
+
+      String.contains?(first_line, ["timed out", "timeout"]) ->
+        "timeout"
+
+      String.contains?(first_line, "not installed") ->
+        "dependency_not_installed"
+
+      String.contains?(first_line, "unavailable") ->
+        "capability_unavailable"
+
+      true ->
+        normalized_reason_category(first_line)
+    end
+  end
+
+  defp normalized_reason_category(reason) do
+    category =
+      reason
+      |> String.replace(~r/https?:\/\/\S+/, " url ")
+      |> String.replace(~r/[0-9a-f]{8}-[0-9a-f-]{27,}/i, " id ")
+      |> String.replace(~r/\"[^\"]+\"/, " value ")
+      |> String.replace(~r/(?:^|\s)\/[^\s:]+/, " path ")
+      |> String.replace(~r/\b\d+\b/, " number ")
+      |> String.replace(~r/[^a-z0-9]+/, "_")
+      |> String.trim("_")
+      |> String.slice(0, 80)
+
+    if category == "", do: "unknown", else: category
+  end
+
   defp synthetic_stacktrace(failure_class, context) do
     source =
       context["gateway_host"] || context["provider"] || context["source"] || "agent_runtime"
 
     source =
-      [source, context["tool"], context["subagent_type"]]
+      [source, context["tool"], context["subagent_type"], context["reason_category"]]
       |> Enum.reject(&is_nil/1)
       |> Enum.map_join("/", &safe_source/1)
 
