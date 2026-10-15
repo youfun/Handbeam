@@ -3,7 +3,7 @@ defmodule Handbeam.Jobs.CleanupTest do
   alias Handbeam.Jobs.Cleaner
   alias Handbeam.Platform.{ProcessManager, ProcessRunner}
 
-  @moduletag :linux_jobs
+  @moduletag :unix_jobs
 
   setup do
     unless Process.whereis(Cleaner), do: start_supervised!(Cleaner)
@@ -68,8 +68,18 @@ defmodule Handbeam.Jobs.CleanupTest do
   test "a reused leader identity is not signalled" do
     {id, port, identity} = gated("printf must_not_run")
 
-    assert {:error, _} =
-             ProcessManager.cleanup_job_group(%{identity | started: "wrong-generation"})
+    wrong_identity =
+      case identity do
+        %{backend: :darwin, started: {sec, usec, abstime}} ->
+          %{identity | started: {sec, usec, abstime + 1}}
+
+        %{backend: :linux} ->
+          %{identity | started: "wrong-generation"}
+      end
+
+    assert {:error,
+            "Process identity changed or cannot be verified; refusing to signal reused PID"} =
+             ProcessManager.cleanup_job_group(wrong_identity)
 
     assert Port.info(port) != nil
     Cleaner.cancel(id)

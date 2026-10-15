@@ -5,7 +5,7 @@ defmodule Handbeam.JobsTest do
   alias Handbeam.Jobs.{Cleaner, Server}
   alias Handbeam.Tool.Builtin.{Bash, JobCancel, JobStatus}
 
-  @moduletag :linux_jobs
+  @moduletag :unix_jobs
 
   setup do
     unless Process.whereis(Cleaner), do: start_supervised!(Cleaner)

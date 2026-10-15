@@ -1,14 +1,14 @@
 platform_excludes =
   case :os.type() do
     {:unix, :linux} ->
-      []
+      [:darwin_process]
 
     {:unix, :darwin} ->
       os_sandbox = if File.regular?("/usr/bin/sandbox-exec"), do: [], else: [:os_sandbox]
-      [:linux_jobs, :linux_sandbox] ++ os_sandbox
+      [:linux_sandbox] ++ os_sandbox
 
     _ ->
-      [:linux_jobs, :linux_sandbox, :os_sandbox]
+      [:unix_jobs, :darwin_process, :linux_sandbox, :os_sandbox]
   end
 
 ExUnit.configure(exclude: [:slow, :e2e, :external_api] ++ platform_excludes)

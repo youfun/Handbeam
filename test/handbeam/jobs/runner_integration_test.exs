@@ -1,7 +1,7 @@
 defmodule Handbeam.Jobs.RunnerIntegrationTest do
   use ExUnit.Case, async: false
 
-  @moduletag :linux_jobs
+  @moduletag :unix_jobs
 
   alias Handbeam.Agent.{Coordinator, Message}
   alias Handbeam.Jobs

@@ -13,17 +13,23 @@ defmodule Handbeam.Platform.ProcessManager do
 
   alias Handbeam.Platform
 
-  @doc "Job process-group verification is currently supported only on Linux with /proc."
-  def jobs_supported?, do: :os.type() == {:unix, :linux} and File.dir?("/proc/self")
+  @doc "Job process-group verification is supported on Linux /proc and the Darwin process NIF."
+  def jobs_supported? do
+    case job_backend() do
+      :linux -> File.dir?("/proc/self")
+      :darwin -> :handbeam_darwin_process.available()
+      nil -> false
+    end
+  rescue
+    _ -> false
+  end
 
   @doc "Verifies the gated Port shell is both session and process-group leader."
   def verify_job_group(pid) when is_integer(pid) and pid > 1 do
-    case proc_stat(pid) do
-      {:ok, %{group: ^pid, session: ^pid, started: started}} ->
-        {:ok, %{pid: pid, started: started}}
-
-      _ ->
-        {:error, "Job shell does not have a verified independent process group"}
+    case job_backend() do
+      :linux -> verify_linux_job_group(pid)
+      :darwin -> verify_darwin_job_group(pid)
+      nil -> {:error, "Job process-group verification is unavailable"}
     end
   end
 
@@ -31,10 +37,78 @@ defmodule Handbeam.Platform.ProcessManager do
 
   @doc """
   Kills a previously verified job group, including descendants after the leader exits.
-  Returns :ok only when /proc confirms no live members; zombies cannot execute.
+  Returns :ok only when the platform backend confirms no live members; zombies cannot execute.
   Escaped sessions/groups are not contained. Callers retain responsibility on uncertainty.
   """
-  def cleanup_job_group(%{pid: group, started: started}) when is_integer(group) and group > 1 do
+  def cleanup_job_group(%{backend: :linux, pid: group, started: started})
+      when is_integer(group) and group > 1 do
+    cleanup_linux_job_group(group, started)
+  rescue
+    _ -> {:error, "Process group cleanup unavailable"}
+  end
+
+  def cleanup_job_group(%{
+        backend: :darwin,
+        pid: group,
+        started: {start_sec, start_usec, start_abstime}
+      })
+      when is_integer(group) and group > 1 and is_integer(start_sec) and start_sec >= 0 and
+             is_integer(start_usec) and start_usec >= 0 and is_integer(start_abstime) and
+             start_abstime > 0 do
+    case :handbeam_darwin_process.cleanup_group(
+           group,
+           start_sec,
+           start_usec,
+           start_abstime
+         ) do
+      :ok -> :ok
+      {:error, :identity_mismatch} -> identity_mismatch_error()
+      {:error, :still_alive} -> {:error, "Process group still has live members"}
+      {:error, :signal_failed} -> {:error, "Process group signal failed; cleanup unconfirmed"}
+      {:error, :cannot_verify} -> {:error, "Cannot verify process group membership"}
+      {:error, :enomem} -> {:error, "Process group inspection exhausted memory"}
+      _ -> {:error, "Process group cleanup unavailable"}
+    end
+  rescue
+    _ -> {:error, "Process group cleanup unavailable"}
+  end
+
+  def cleanup_job_group(_), do: {:error, "Process group identity unavailable"}
+
+  defp job_backend do
+    case :os.type() do
+      {:unix, :linux} -> :linux
+      {:unix, :darwin} -> :darwin
+      _ -> nil
+    end
+  end
+
+  defp verify_linux_job_group(pid) do
+    case proc_stat(pid) do
+      {:ok, %{group: ^pid, session: ^pid, started: started}} ->
+        {:ok, %{backend: :linux, pid: pid, started: started}}
+
+      _ ->
+        {:error, "Job shell does not have a verified independent process group"}
+    end
+  end
+
+  defp verify_darwin_job_group(pid) do
+    case :handbeam_darwin_process.verify_group(pid) do
+      {:ok, start_sec, start_usec, start_abstime} ->
+        {:ok,
+         %{
+           backend: :darwin,
+           pid: pid,
+           started: {start_sec, start_usec, start_abstime}
+         }}
+
+      _ ->
+        {:error, "Job shell does not have a verified independent process group"}
+    end
+  end
+
+  defp cleanup_linux_job_group(group, started) do
     with :ok <- same_group_generation(group, started),
          {:ok, members} <- group_members(group) do
       if members == [] do
@@ -52,8 +126,10 @@ defmodule Handbeam.Platform.ProcessManager do
         end
       end
     end
-  rescue
-    _ -> {:error, "Process group cleanup unavailable"}
+  end
+
+  defp identity_mismatch_error do
+    {:error, "Process identity changed or cannot be verified; refusing to signal reused PID"}
   end
 
   defp same_group_generation(group, started) do
@@ -65,7 +141,7 @@ defmodule Handbeam.Platform.ProcessManager do
         :ok
 
       _ ->
-        {:error, "Process identity changed or cannot be verified; refusing to signal reused PID"}
+        identity_mismatch_error()
     end
   end
 

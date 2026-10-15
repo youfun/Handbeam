@@ -28,7 +28,7 @@ defmodule Handbeam.Jobs.SandboxTest do
     %{workspace: workspace, context: context}
   end
 
-  @tag :linux_sandbox
+  @tag :os_sandbox
   test "job Bash persists workspace writes but isolates computed outside writes", %{
     workspace: workspace,
     context: context
@@ -44,7 +44,7 @@ defmodule Handbeam.Jobs.SandboxTest do
     refute File.exists?(workspace <> "-outside")
   end
 
-  @tag :linux_sandbox
+  @tag :os_sandbox
   test "sandbox gate retains verified group cancellation before user code executes", %{
     workspace: workspace
   } do

@@ -33,7 +33,7 @@ defmodule Handbeam.Tool.Builtin.Bash do
       "for approval unless the run is in yolo mode. Commands that name sensitive credential paths are " <>
       "rejected before execution; unsandboxed=true does not bypass that, and the " <>
       "precheck is not a complete shell parser. " <>
-      "Set job=true for a run-scoped job (Linux only). Query job_status until finished before " <>
+      "Set job=true for a run-scoped job (Linux and macOS). Query job_status until finished before " <>
       "ending this run: run completion cancels unfinished jobs. Not a detached dev server; " <>
       "descendants that escape the process group are not contained."
   end
