@@ -199,6 +199,26 @@ defmodule Handbeam.JobsTest do
              launch("printf overflow", %{context | tool_call_id: "call-5"})
   end
 
+  test "terminal history rolls over without blocking new jobs", %{context: context} do
+    ids =
+      for n <- 1..33 do
+        job_context = %{context | tool_call_id: "retained-#{n}"}
+
+        assert {:ok, %{job_id: id, state: :completed}} =
+                 Jobs.start_beam(:script, fn _ -> {:ok, "done"} end, 30_000, 5_000, job_context)
+
+        id
+      end
+
+    assert {:ok, %{jobs: jobs, limit: 32}} = Jobs.status(nil, 0, 500, context)
+    retained_ids = Enum.map(jobs, & &1.job_id)
+    assert length(retained_ids) == 32
+    assert List.last(ids) in retained_ids
+    assert [expired_id] = ids -- retained_ids
+    assert expired_id == hd(ids)
+    assert {:error, _} = Jobs.status(expired_id, 0, 500, context)
+  end
+
   test "completed results expire only after the run is closed", %{context: context} do
     assert {:ok, job} = Jobs.start("printf done", File.cwd!(), 10_000, 3_000, context)
 

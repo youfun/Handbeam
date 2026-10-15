@@ -7,8 +7,10 @@ defmodule Handbeam.Jobs do
 
   Context requires trusted :conversation_id, :run_id and :working_directory; tool
   calls additionally require :tool_timeout (milliseconds), and launches :tool_call_id.
-  Limits: 4 running jobs/run, 16 globally, 32 retained/conversation/workspace,
-  256 globally, 50KB output/job, 15-minute terminal TTL (not evicted in an open run).
+  Limits: 4 running jobs/run, 16 globally, the most recent 32 retained jobs per
+  conversation/workspace, 256 retained globally, 50KB output/job, and a 15-minute
+  terminal TTL after its run closes. Retention limits evict the oldest terminal jobs instead of
+  blocking launches.
   """
   alias Handbeam.Jobs.Server
 

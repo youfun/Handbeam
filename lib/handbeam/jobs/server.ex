@@ -7,6 +7,8 @@ defmodule Handbeam.Jobs.Server do
 
   @terminal [:completed, :failed, :cancelled, :timed_out]
   @retention_ms 900_000
+  @retained_per_conversation 32
+  @retained_globally 256
 
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
@@ -68,7 +70,7 @@ defmodule Handbeam.Jobs.Server do
       deadline <= now() ->
         {:reply, {:error, "Job admission deadline expired"}, state}
 
-      at_capacity?(state, owner) ->
+      active_capacity?(state, owner) ->
         {:reply, {:error, "Job capacity exhausted"}, state}
 
       true ->
@@ -81,8 +83,8 @@ defmodule Handbeam.Jobs.Server do
       state.jobs
       |> Map.values()
       |> Enum.filter(&visible?(&1, owner))
-      |> Enum.sort_by(& &1.created_at, :desc)
-      |> Enum.take(32)
+      |> Enum.sort_by(&{&1.created_at, Map.get(&1, :sequence, 0)}, :desc)
+      |> Enum.take(@retained_per_conversation)
       |> Enum.map(
         &Map.take(snapshot(&1, &1.buffer.total), [
           :job_id,
@@ -93,7 +95,7 @@ defmodule Handbeam.Jobs.Server do
         ])
       )
 
-    {:reply, {:ok, %{jobs: jobs, limit: 32}}, state}
+    {:reply, {:ok, %{jobs: jobs, limit: @retained_per_conversation}}, state}
   end
 
   def handle_call({:status, owner, id, cursor, deadline}, from, state) do
@@ -332,11 +334,12 @@ defmodule Handbeam.Jobs.Server do
           exit_code: nil,
           cleanup_error: nil,
           created_at: now(),
+          sequence: System.unique_integer([:positive, :monotonic]),
           finished_at: nil,
           timer: Process.send_after(self(), {:expire, id}, timeout)
         }
 
-        state = put_in(state.jobs[id], job)
+        state = state |> make_retention_room(owner) |> put_in([:jobs, id], job)
 
         if now() < deadline and Process.alive?(state.scopes[owner].runner) do
           GenServer.cast(pid, :go)
@@ -375,11 +378,12 @@ defmodule Handbeam.Jobs.Server do
               exit_code: nil,
               cleanup_error: nil,
               created_at: now(),
+              sequence: System.unique_integer([:positive, :monotonic]),
               finished_at: nil,
               timer: Process.send_after(self(), {:expire, id}, timeout)
             }
 
-            state = put_in(state.jobs[id], job)
+            state = state |> make_retention_room(owner) |> put_in([:jobs, id], job)
 
             if now() < deadline and Process.alive?(state.scopes[owner].runner) do
               Port.command(port, "go\n")
@@ -470,14 +474,46 @@ defmodule Handbeam.Jobs.Server do
     end)
   end
 
-  defp at_capacity?(state, owner) do
+  defp active_capacity?(state, owner) do
     jobs = Map.values(state.jobs)
 
-    map_size(state.jobs) >= 256 or
-      Enum.count(jobs, &visible?(&1, owner)) >= 32 or
-      Enum.count(jobs, &(&1.state not in @terminal)) >= 16 or
+    Enum.count(jobs, &(&1.state not in @terminal)) >= 16 or
       Enum.count(jobs, &(&1.owner == owner and &1.state not in @terminal)) >= 4
   end
+
+  defp make_retention_room(state, owner) do
+    terminal_order = &{&1.finished_at, Map.get(&1, :sequence, 0)}
+
+    jobs =
+      state.jobs
+      |> prune_terminal_jobs(
+        @retained_per_conversation,
+        &visible?(&1, owner),
+        terminal_order
+      )
+      |> prune_terminal_jobs(@retained_globally, fn _job -> true end, fn job ->
+        {scope_open?(state, job.owner), terminal_order.(job)}
+      end)
+
+    %{state | jobs: jobs}
+  end
+
+  defp prune_terminal_jobs(jobs, limit, visible?, order) do
+    matching_count = Enum.count(jobs, fn {_id, job} -> visible?.(job) end)
+    remove_count = max(matching_count - limit + 1, 0)
+
+    ids =
+      jobs
+      |> Map.values()
+      |> Enum.filter(&(&1.state in @terminal and visible?.(&1)))
+      |> Enum.sort_by(order)
+      |> Enum.take(remove_count)
+      |> Enum.map(& &1.id)
+
+    Map.drop(jobs, ids)
+  end
+
+  defp scope_open?(state, owner), do: match?(%{open?: true}, state.scopes[owner])
 
   defp close_port(port) do
     if Port.info(port), do: Port.close(port)

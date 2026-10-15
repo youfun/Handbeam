@@ -7,7 +7,7 @@ defmodule Handbeam.Tool.Builtin.JobStatus do
   @impl true
   def description do
     "Query a Bash or BEAM job's state and bounded output using its byte cursor. Omit job_id to " <>
-      "recover up to 32 handles in this conversation/workspace. Wait is capped at 5s and " <>
+      "recover the most recent 32 handles in this conversation/workspace. Wait is capped at 5s and " <>
       "half the tool timeout. Query completion before ending the run; unfinished jobs are " <>
       "cancelled at run end. Later runs can inspect retained results, not resume execution. " <>
       "cancelling with cleanup_error means termination is not yet confirmed."
