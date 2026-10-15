@@ -175,6 +175,23 @@ assert.equal(callbacks.size, 0);
 hook.destroyed();
 assert.equal(callbacks.size, 0);
 assert.equal(listeners.size, 0);
+
+const paletteIndicators = Array.from(
+  { length: 256 },
+  (_, index) => indicator(`palette-${index}`, "idle"),
+);
+const paletteHook = {
+  ...ConversationActivity,
+  el: { querySelectorAll: () => paletteIndicators },
+};
+paletteHook.mounted();
+assert.equal(
+  new Set(paletteIndicators.map(el => el.style.getPropertyValue("--run-color"))).size,
+  12,
+  "conversation ids can use all twelve visually distinct colors",
+);
+paletteHook.destroyed();
+
 // Check real visibility transitions separately from the no-observer fallback above.
 let observer;
 globalThis.IntersectionObserver = class {

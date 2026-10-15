@@ -10,23 +10,28 @@ defmodule HandbeamProbe.ConversationBeanTest do
   # - Waiting holds the standing pose instead of walking.
   # - A closed 1x2 rect path fills exactly those two pixels.
 
-  alias HandbeamProbe.ConversationBean
+  alias HandbeamProbe.{ConversationBean, NativeUI}
 
-  test "conversation color follows the web sidebar hash" do
+  test "conversation color follows the web sidebar hash and palette" do
+    palette = [
+      "#c5a552",
+      "#d48a46",
+      "#c96f5f",
+      "#bd5f67",
+      "#c47d9b",
+      "#aa679a",
+      "#8b7ec4",
+      "#6e94cc",
+      "#4f9670",
+      "#7fa45b",
+      "#a97852",
+      "#85736e"
+    ]
+
+    assert NativeUI.bean_colors() == palette
+
     assert ConversationBean.color("conv-1") ==
-             Enum.at(
-               [
-                 "#7eb8c9",
-                 "#c9846a",
-                 "#6a9a72",
-                 "#8b7ec4",
-                 "#c5a552",
-                 "#c47d9b",
-                 "#58aaa0",
-                 "#6e94cc"
-               ],
-               rem(266_869_767, 8)
-             )
+             Enum.at(palette, rem(266_869_767, length(palette)))
   end
 
   test "idle stem stays put and a running bean hops" do
