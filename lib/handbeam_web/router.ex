@@ -52,6 +52,7 @@ defmodule HandbeamWeb.Router do
     error_tracker_dashboard("/errors")
 
     get "/uploads/:conversation_id/:file", UploadsController, :show
+    get "/workspace-files/:workspace_id/*path", WorkspaceMediaController, :show
 
     get "/preview/:id", PreviewController, :show
     get "/preview/:id/files", PreviewController, :files
