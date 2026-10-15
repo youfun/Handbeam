@@ -17,6 +17,10 @@ defmodule Handbeam.Workspace do
 
   @default_root "~/.handbeam/workspace"
 
+  @doc "The fixed default workspace under the host data directory, independent of project overrides."
+  @spec default_root() :: String.t()
+  def default_root, do: Handbeam.Home.expand(@default_root)
+
   @doc """
   Return the expanded workspace root directory.
 

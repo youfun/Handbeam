@@ -40,15 +40,19 @@ defmodule Handbeam.WorkspaceStore do
 
   Resolution order:
     1. `HANDBEAM_WORKSPACES_FILE` env var
-    2. `~/.handbeam/workspaces.json`
+    2. `:handbeam, :workspaces_file` application config
+    3. `~/.handbeam/workspaces.json` under the host data directory
   """
   @spec storage_path() :: String.t()
   def storage_path do
     env = System.get_env("HANDBEAM_WORKSPACES_FILE")
 
-    if is_binary(env) and env != "",
-      do: Handbeam.Home.expand(env),
-      else: Handbeam.Home.expand(@default_storage)
+    path =
+      if is_binary(env) and env != "",
+        do: env,
+        else: Application.get_env(:handbeam, :workspaces_file) || @default_storage
+
+    Handbeam.Home.expand(path)
   end
 
   @doc """
@@ -71,8 +75,22 @@ defmodule Handbeam.WorkspaceStore do
         default = Enum.find(workspaces, & &1["default"])
 
         if default do
-          Handbeam.WorkspaceSettings.ensure_file(default["path"])
-          {:ok, default}
+          root = Handbeam.Workspace.default_root()
+          File.mkdir_p!(root)
+          corrected = Map.put(default, "path", root)
+
+          result =
+            if corrected == default do
+              :ok
+            else
+              updated = Enum.map(workspaces, &if(&1 == default, do: corrected, else: &1))
+              write_storage(path, Map.put(data, "workspaces", updated))
+            end
+
+          with :ok <- result do
+            Handbeam.WorkspaceSettings.ensure_file(root)
+            {:ok, corrected}
+          end
         else
           new_default = build_default_workspace()
           Handbeam.WorkspaceSettings.ensure_file(new_default["path"])
@@ -311,7 +329,8 @@ defmodule Handbeam.WorkspaceStore do
   @dangerous_roots ["/", "/etc", "/System", "/bin", "/sbin", "/usr", "/var"]
 
   defp build_default_workspace do
-    root = Handbeam.Workspace.ensure_root!()
+    root = Handbeam.Workspace.default_root()
+    File.mkdir_p!(root)
     now = now_iso8601()
 
     %{

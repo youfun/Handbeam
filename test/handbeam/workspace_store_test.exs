@@ -24,15 +24,20 @@ defmodule Handbeam.WorkspaceStoreTest do
     workspace_path = Path.join(System.tmp_dir!(), "sigil_ws_store_workspace_#{test_id}")
     previous_storage_path = System.get_env("HANDBEAM_WORKSPACES_FILE")
     previous_workspace_path = System.get_env("HANDBEAM_WORKSPACE")
+    previous_config = Application.fetch_env(:handbeam, :workspaces_file)
+    previous_host = Application.fetch_env(:handbeam, :host)
 
     System.put_env("HANDBEAM_WORKSPACES_FILE", storage_path)
     System.put_env("HANDBEAM_WORKSPACE", workspace_path)
+    Application.put_env(:handbeam, :host, %{data_dir: workspace_path})
 
     if File.exists?(storage_path), do: File.rm!(storage_path)
 
     on_exit(fn ->
       restore_env("HANDBEAM_WORKSPACES_FILE", previous_storage_path)
       restore_env("HANDBEAM_WORKSPACE", previous_workspace_path)
+      restore_config(:workspaces_file, previous_config)
+      restore_config(:host, previous_host)
       if File.exists?(storage_path), do: File.rm!(storage_path)
       File.rm_rf!(workspace_path)
     end)
@@ -43,19 +48,68 @@ defmodule Handbeam.WorkspaceStoreTest do
   defp restore_env(name, nil), do: System.delete_env(name)
   defp restore_env(name, value), do: System.put_env(name, value)
 
+  defp restore_config(key, {:ok, value}), do: Application.put_env(:handbeam, key, value)
+  defp restore_config(key, :error), do: Application.delete_env(:handbeam, key)
+
   describe "storage_path/0" do
-    test "returns ~/.handbeam/workspaces.json by default" do
+    test "returns the host's workspace file when no override is configured" do
       System.delete_env("HANDBEAM_WORKSPACES_FILE")
-      expected = Path.expand("~/.handbeam/workspaces.json")
+      Application.delete_env(:handbeam, :workspaces_file)
+      expected = Handbeam.Home.expand("~/.handbeam/workspaces.json")
       assert WorkspaceStore.storage_path() == expected
     end
 
+    test "test config isolates workspace metadata from the user's home" do
+      System.delete_env("HANDBEAM_WORKSPACES_FILE")
+      configured_path = Application.fetch_env!(:handbeam, :workspaces_file)
+
+      assert WorkspaceStore.storage_path() == configured_path
+      refute configured_path == Path.expand("~/.handbeam/workspaces.json")
+      test_home = configured_path |> Path.dirname() |> Path.dirname()
+      assert String.starts_with?(Path.basename(test_home), "handbeam_test_")
+    end
+
+    test "empty environment override uses application config", %{storage_path: storage_path} do
+      System.put_env("HANDBEAM_WORKSPACES_FILE", "")
+      Application.put_env(:handbeam, :workspaces_file, storage_path)
+
+      assert WorkspaceStore.storage_path() == storage_path
+    end
+
     test "uses HANDBEAM_WORKSPACES_FILE env var when set", %{storage_path: storage_path} do
+      Application.put_env(:handbeam, :workspaces_file, storage_path <> ".other")
       assert WorkspaceStore.storage_path() == storage_path
     end
   end
 
   describe "ensure_default!/0" do
+    test "creating a test default preserves the host's workspace index", %{
+      workspace_path: workspace_path
+    } do
+      host_home = Path.join(workspace_path, "user-home")
+      host_index = Path.join(host_home, ".handbeam/workspaces.json")
+      isolated_index = Path.join(workspace_path, "test-data/workspaces.json")
+
+      original =
+        Jason.encode!(%{"workspaces" => [%{"id" => "default", "path" => "/user/project"}]})
+
+      File.mkdir_p!(Path.dirname(host_index))
+      File.write!(host_index, original)
+      Application.put_env(:handbeam, :host, %{data_dir: host_home})
+      Application.put_env(:handbeam, :workspaces_file, isolated_index)
+      System.delete_env("HANDBEAM_WORKSPACES_FILE")
+
+      expected_root = Path.join(host_home, ".handbeam/workspace")
+
+      assert {:ok, %{"id" => "default", "path" => ^expected_root}} =
+               WorkspaceStore.ensure_default!()
+
+      assert File.read!(host_index) == original
+
+      assert %{"workspaces" => [%{"path" => ^expected_root}]} =
+               isolated_index |> File.read!() |> Jason.decode!()
+    end
+
     test "creates default workspace when file does not exist", %{
       storage_path: storage_path,
       workspace_path: workspace_path
@@ -67,12 +121,40 @@ defmodule Handbeam.WorkspaceStoreTest do
       assert ws["id"] == "default"
       assert ws["name"] == "My Workspace"
       assert ws["default"] == true
-      assert ws["path"] == workspace_path
+      assert ws["path"] == Path.join(workspace_path, ".handbeam/workspace")
+      refute ws["path"] == workspace_path
       assert ws["added_at"] =~ ~r/^\d{4}-\d{2}-\d{2}T/
       assert ws["last_opened_at"] =~ ~r/^\d{4}-\d{2}-\d{2}T/
 
       assert File.exists?(storage_path)
       assert File.exists?(Path.join(ws["path"], ".handbeam/settings.jsonc"))
+    end
+
+    test "repairs a default pointing to a project without moving its files", %{
+      storage_path: storage_path,
+      workspace_path: workspace_path
+    } do
+      File.mkdir_p!(workspace_path)
+      marker = Path.join(workspace_path, "keep.txt")
+      File.write!(marker, "existing project")
+
+      existing = %{
+        "id" => "default",
+        "default" => true,
+        "path" => workspace_path,
+        "name" => "My Workspace",
+        "added_at" => "original"
+      }
+
+      other = %{"id" => "project", "path" => workspace_path, "name" => "Project"}
+      File.write!(storage_path, Jason.encode!(%{"workspaces" => [existing, other]}))
+
+      assert {:ok, repaired} = WorkspaceStore.ensure_default!()
+      assert repaired == Map.put(existing, "path", Handbeam.Workspace.default_root())
+      assert {:ok, ^repaired} = WorkspaceStore.get("default")
+      assert {:ok, ^other} = WorkspaceStore.get("project")
+      assert File.read!(marker) == "existing project"
+      assert {:ok, ^repaired} = WorkspaceStore.ensure_default!()
     end
 
     test "returns existing default workspace if file already has one" do

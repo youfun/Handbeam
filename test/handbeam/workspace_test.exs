@@ -17,7 +17,6 @@ defmodule Handbeam.WorkspaceTest do
 
   alias Handbeam.Workspace
 
-  @default_ws Path.expand("~/.handbeam/workspace")
   @test_ws Path.join(System.tmp_dir!(), "sigil_ws_test_#{System.unique_integer([:positive])}")
 
   setup do
@@ -43,7 +42,7 @@ defmodule Handbeam.WorkspaceTest do
 
   describe "root/0" do
     test "default root is ~/.handbeam/workspace" do
-      assert Workspace.root() == @default_ws
+      assert Workspace.root() == Handbeam.Home.expand("~/.handbeam/workspace")
     end
 
     test "HANDBEAM_WORKSPACE env var overrides default" do
@@ -68,7 +67,7 @@ defmodule Handbeam.WorkspaceTest do
 
     test "expands tilde paths" do
       System.put_env("HANDBEAM_WORKSPACE", "~/custom/ws")
-      expected = Path.expand("~/custom/ws")
+      expected = Handbeam.Home.expand("~/custom/ws")
       assert Workspace.root() == expected
     end
   end

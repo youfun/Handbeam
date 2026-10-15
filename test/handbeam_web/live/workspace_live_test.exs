@@ -44,6 +44,12 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
     {:ok, tracker} = Agent.start(fn -> %{views: MapSet.new(), homes: []} end)
     Process.put(:workspace_live_test_tracker, tracker)
     original_home = System.get_env("HOME")
+    original_workspaces_file = System.get_env("HANDBEAM_WORKSPACES_FILE")
+
+    original_config =
+      Map.new([:host, :workspaces_file, :workspace_root, :conversation_root], fn key ->
+        {key, Application.fetch_env(:handbeam, key)}
+      end)
 
     on_exit(fn ->
       stop_test_runtime!(tracker)
@@ -57,6 +63,15 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       if original_home,
         do: System.put_env("HOME", original_home),
         else: System.delete_env("HOME")
+
+      if original_workspaces_file,
+        do: System.put_env("HANDBEAM_WORKSPACES_FILE", original_workspaces_file),
+        else: System.delete_env("HANDBEAM_WORKSPACES_FILE")
+
+      Enum.each(original_config, fn
+        {key, {:ok, value}} -> Application.put_env(:handbeam, key, value)
+        {key, :error} -> Application.delete_env(:handbeam, key)
+      end)
 
       Agent.stop(tracker)
     end)
@@ -168,6 +183,22 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
   defp isolate_conversation_home! do
     home_dir = Path.join(System.tmp_dir!(), "sigil_lv_home_#{System.unique_integer([:positive])}")
     System.put_env("HOME", home_dir)
+    System.put_env("HANDBEAM_WORKSPACES_FILE", Path.join(home_dir, ".handbeam/workspaces.json"))
+    Application.put_env(:handbeam, :host, %{data_dir: home_dir})
+
+    Application.put_env(
+      :handbeam,
+      :workspaces_file,
+      Path.join(home_dir, ".handbeam/workspaces.json")
+    )
+
+    Application.put_env(:handbeam, :workspace_root, Handbeam.Workspace.default_root())
+
+    Application.put_env(
+      :handbeam,
+      :conversation_root,
+      Path.join(home_dir, ".handbeam/conversations")
+    )
 
     safe_rm_test_rune!(home_dir)
 
@@ -3425,12 +3456,13 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       base_dir =
         Path.join(System.tmp_dir!(), "sigil_lv_ws_case_#{System.unique_integer([:positive])}")
 
-      ws_dir = Path.join(base_dir, "workspace")
       store_path = Path.join(base_dir, "workspaces.json")
       old_home = System.get_env("HOME")
       home_dir = Path.join(base_dir, "home")
+      ws_dir = Path.join(home_dir, ".handbeam/workspace")
 
       File.mkdir_p!(base_dir)
+      Application.put_env(:handbeam, :host, %{data_dir: home_dir})
       System.put_env("HOME", home_dir)
       System.put_env("HANDBEAM_WORKSPACES_FILE", store_path)
       System.put_env("HANDBEAM_WORKSPACE", ws_dir)

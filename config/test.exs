@@ -38,14 +38,26 @@ config :handbeam, :schedule_dispatch, :sync
 
 # Fix the test environment to use its own paths — never fall back to dev ~/.handbeam/... paths.
 fixture_models_path = Path.expand("../test/fixtures/models.json", __DIR__)
-fixture_workspace_path = Path.expand("../test/fixtures/workspace", __DIR__)
+
+# Give each test VM its own writable home, including workspace metadata.
+# This must happen before application startup, not only in test_helper.exs.
+test_data_dir =
+  Path.join(
+    System.tmp_dir!(),
+    "handbeam_test_#{System.pid()}_#{System.unique_integer([:positive])}"
+  )
+
+test_workspace_path = Path.join(test_data_dir, ".handbeam/workspace")
 System.put_env("HANDBEAM_MODELS_FILE", fixture_models_path)
-File.mkdir_p!(fixture_workspace_path)
+System.put_env("HANDBEAM_WORKSPACES_FILE", Path.join(test_data_dir, ".handbeam/workspaces.json"))
+File.mkdir_p!(test_workspace_path)
 
 config :handbeam,
   models_file: fixture_models_path,
-  workspace_root: fixture_workspace_path,
-  conversation_root: Path.join(fixture_workspace_path, ".handbeam/conversations")
+  host: %{data_dir: test_data_dir},
+  workspaces_file: Path.join(test_data_dir, ".handbeam/workspaces.json"),
+  workspace_root: test_workspace_path,
+  conversation_root: Path.join(test_data_dir, ".handbeam/conversations")
 
 config :phoenix_test, :endpoint, HandbeamWeb.Endpoint
 
