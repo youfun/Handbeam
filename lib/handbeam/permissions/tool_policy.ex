@@ -127,6 +127,9 @@ defmodule Handbeam.Permissions.ToolPolicy do
       bash_browser_mode = bash_browser_decision(policy, name, call) ->
         bash_browser_mode
 
+      raw_sql_mode = raw_sql_decision(policy, name) ->
+        raw_sql_mode
+
       capability_prompt?(policy, name) ->
         :prompt
 
@@ -196,6 +199,9 @@ defmodule Handbeam.Permissions.ToolPolicy do
 
   defp release(:yolo), do: :auto
   defp release(mode), do: mode
+
+  defp raw_sql_decision(policy, "ext__beam__sql"), do: escalate(policy)
+  defp raw_sql_decision(_policy, _name), do: nil
 
   # Full access (`default_mode: :auto`) means capability-level prompts do not
   # interrupt. Capability denies (local file URLs, bash wrapping agent-browser)

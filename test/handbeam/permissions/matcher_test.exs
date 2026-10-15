@@ -45,6 +45,38 @@ defmodule Handbeam.Permissions.MatcherTest do
              })
     end
 
+    test "matches multiline raw SQL only against the query field" do
+      call = %{
+        name: "ext__beam__sql",
+        input: %{
+          "repo" => "Handbeam.Repo",
+          "query" => "DROP TABLE\nusers",
+          "params" => []
+        }
+      }
+
+      assert Matcher.match?("ext__beam__sql(DROP:*)", call)
+      refute Matcher.match?("ext__beam__sql(SELECT:*)", call)
+    end
+
+    test "raw SQL fingerprints include repo, query, and parameters" do
+      input = %{
+        "repo" => "Handbeam.Repo",
+        "query" => "DELETE FROM users WHERE id = ?",
+        "params" => [1]
+      }
+
+      fingerprint = Matcher.sql_call_fingerprint(input)
+      pattern = "ext__beam__sql(call:#{fingerprint})"
+
+      assert Matcher.match?(pattern, %{name: "ext__beam__sql", input: input})
+
+      refute Matcher.match?(pattern, %{
+               name: "ext__beam__sql",
+               input: Map.put(input, "params", [2])
+             })
+    end
+
     test "matches file path patterns for edit and write" do
       assert Matcher.match?("edit(.env)", %{name: "edit", input: %{"file_path" => ".env"}})
 

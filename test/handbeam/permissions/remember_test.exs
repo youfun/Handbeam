@@ -39,6 +39,17 @@ defmodule Handbeam.Permissions.RememberTest do
                "write(config/dev.exs)"
     end
 
+    test "raw SQL remembers only the exact repo, query, and parameters" do
+      input = %{
+        "repo" => "Handbeam.Repo",
+        "query" => "UPDATE users SET active = ? WHERE id = ?",
+        "params" => [true, 7]
+      }
+
+      pattern = Remember.pattern(call("ext__beam__sql", input))
+      assert pattern =~ ~r/^ext__beam__sql\(call:[0-9a-f]{64}\)$/
+    end
+
     test "CLI browser remembers args only" do
       assert Remember.pattern(call("browser", %{"args" => ["eval", "1"]})) == "browser(eval:*)"
 
@@ -75,6 +86,34 @@ defmodule Handbeam.Permissions.RememberTest do
 
     assert ToolPolicy.decision(policy, call("bash", %{"command" => "git status"})) == :auto
     assert ToolPolicy.decision(policy, call("bash", %{"command" => "rm -rf tmp"})) == :prompt
+  end
+
+  test "remembered raw SQL does not authorize a different query or parameter set" do
+    input = %{
+      "repo" => "Handbeam.Repo",
+      "query" => "DELETE FROM users WHERE id = ?",
+      "params" => [7]
+    }
+
+    policy =
+      ToolPolicy.from_settings(%{
+        "tools" => %{
+          "default_mode" => "auto",
+          "allow" => [Remember.pattern(call("ext__beam__sql", input))]
+        }
+      })
+
+    assert ToolPolicy.decision(policy, call("ext__beam__sql", input)) == :auto
+
+    assert ToolPolicy.decision(
+             policy,
+             call("ext__beam__sql", Map.put(input, "params", [8]))
+           ) == :prompt
+
+    assert ToolPolicy.decision(
+             policy,
+             call("ext__beam__sql", Map.put(input, "query", "DROP TABLE users"))
+           ) == :prompt
   end
 
   defp restore_browser(:unfixed), do: Handbeam.Tool.Builtin.Browser.release_backend!()

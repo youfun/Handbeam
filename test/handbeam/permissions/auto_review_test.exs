@@ -104,6 +104,57 @@ defmodule Handbeam.Permissions.AutoReviewTest do
     refute_received :reviewed
   end
 
+  test "workspace smart review receives raw SQL and yolo releases it without review" do
+    sql_call = %{
+      type: "tool_use",
+      id: "sql1",
+      name: "ext__beam__sql",
+      input: %{
+        "repo" => "Handbeam.Repo",
+        "query" => "UPDATE users SET admin = ? WHERE id = ?",
+        "params" => [true, 42]
+      }
+    }
+
+    parent = self()
+
+    Process.put(AutoReview.transport_key(), fn request ->
+      send(parent, {:sql_reviewed, request})
+      {:ok, ~s({"decision":"approve","rationale":"requested database change"})}
+    end)
+
+    smart_settings = %{
+      "tools" => %{
+        "default_mode" => "auto",
+        "approvals_reviewer" => "auto_review"
+      }
+    }
+
+    assert %State{status: :running} =
+             ToolGuard.call(:after_tool_request, guard_state(smart_settings, [sql_call]))
+
+    assert_receive {:sql_reviewed, %{action_requests: [request]}}
+    assert request.tool_name == "ext__beam__sql"
+    assert request.arguments == sql_call.input
+
+    Process.put(AutoReview.transport_key(), fn _request ->
+      send(parent, :sql_reviewed_in_yolo)
+      {:ok, ~s({"decision":"deny","rationale":"should not run"})}
+    end)
+
+    yolo_settings = %{
+      "tools" => %{
+        "default_mode" => "yolo",
+        "approvals_reviewer" => "auto_review"
+      }
+    }
+
+    assert %State{status: :running} =
+             ToolGuard.call(:after_tool_request, guard_state(yolo_settings, [sql_call]))
+
+    refute_receive :sql_reviewed_in_yolo
+  end
+
   test "missing approvals_reviewer still interrupts a prompt" do
     state =
       guard_state(%{"tools" => %{"per_tool" => %{"bash" => "prompt"}}}, [

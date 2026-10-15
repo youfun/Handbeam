@@ -236,6 +236,40 @@ defmodule Handbeam.Permissions.ToolPolicyTest do
                :auto
     end
 
+    test "read-only database schema inspection remains automatic" do
+      for mode <- ["auto", "yolo"] do
+        policy = ToolPolicy.from_settings(%{"tools" => %{"default_mode" => mode}})
+
+        assert ToolPolicy.decision(
+                 policy,
+                 call("ext__beam__db_schema", %{"operation" => "list_tables"})
+               ) == :auto
+      end
+    end
+
+    test "raw SQL prompts in auto workspaces but honors explicit authorization" do
+      sql_call = call("ext__beam__sql", %{"query" => "UPDATE users SET admin = 1"})
+      auto = ToolPolicy.from_settings(%{"tools" => %{"default_mode" => "auto"}})
+      assert ToolPolicy.decision(auto, sql_call) == :prompt
+
+      read_only = ToolPolicy.from_settings(%{"tools" => %{"default_mode" => "deny"}})
+      assert ToolPolicy.decision(read_only, sql_call) == :deny
+
+      denied =
+        ToolPolicy.from_settings(%{
+          "tools" => %{"default_mode" => "auto", "deny" => ["ext__beam__sql"]}
+        })
+
+      assert ToolPolicy.decision(denied, sql_call) == :deny
+
+      allowed =
+        ToolPolicy.from_settings(%{
+          "tools" => %{"default_mode" => "auto", "allow" => ["ext__beam__sql"]}
+        })
+
+      assert ToolPolicy.decision(allowed, sql_call) == :auto
+    end
+
     test "system open and share tools prompt in full access unless explicitly allowed or denied" do
       auto = ToolPolicy.from_settings(%{"tools" => %{"default_mode" => "auto"}})
 
@@ -419,6 +453,9 @@ defmodule Handbeam.Permissions.ToolPolicyTest do
       assert ToolPolicy.decision(policy, call("run_elixir_script")) == :auto
       assert ToolPolicy.decision(policy, call("mix_project")) == :auto
       assert ToolPolicy.decision(policy, call("ext__term_send")) == :auto
+
+      assert ToolPolicy.decision(policy, call("ext__beam__sql", %{"query" => "DROP TABLE users"})) ==
+               :auto
 
       assert ToolPolicy.decision(
                policy,

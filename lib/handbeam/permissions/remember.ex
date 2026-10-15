@@ -3,6 +3,8 @@ defmodule Handbeam.Permissions.Remember do
   Turns a tool call into a workspace Matcher pattern the user can remember.
   """
 
+  alias Handbeam.Permissions.Matcher
+
   @spec pattern(map()) :: String.t()
   def pattern(call) when is_map(call) do
     name = normalize_name(Handbeam.Utils.SafeMap.get_any(call, :name, "name"))
@@ -28,6 +30,10 @@ defmodule Handbeam.Permissions.Remember do
     else
       "#{name}(#{path})"
     end
+  end
+
+  defp do_pattern("ext__beam__sql", input) do
+    "ext__beam__sql(call:#{Matcher.sql_call_fingerprint(input)})"
   end
 
   defp do_pattern("browser", input) do

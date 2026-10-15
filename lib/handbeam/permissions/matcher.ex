@@ -21,8 +21,25 @@ defmodule Handbeam.Permissions.Matcher do
 
   def match?(_pattern, _call), do: false
 
+  @doc false
+  @spec sql_call_fingerprint(map()) :: String.t()
+  def sql_call_fingerprint(input) when is_map(input) do
+    normalized = %{
+      "repo" => Map.get(input, "repo") || Map.get(input, :repo),
+      "query" => Map.get(input, "query") || Map.get(input, :query) || "",
+      "params" => Map.get(input, "params") || Map.get(input, :params) || []
+    }
+
+    normalized
+    |> :erlang.term_to_binary([:deterministic])
+    |> then(&:crypto.hash(:sha256, &1))
+    |> Base.encode16(case: :lower)
+  end
+
+  def sql_call_fingerprint(_input), do: sql_call_fingerprint(%{})
+
   defp split_pattern(pattern) do
-    case Regex.run(~r/^([^()]+)\((.*)\)$/, pattern) do
+    case Regex.run(~r/^([^()]+)\((.*)\)$/s, pattern) do
       [_, tool, arg] -> {String.trim(tool), String.trim(arg)}
       _ -> {String.trim(pattern), nil}
     end
@@ -32,6 +49,14 @@ defmodule Handbeam.Permissions.Matcher do
 
   defp arg_match?("bash", arg_pattern, input) do
     glob_match?(arg_pattern, input_value(input, ["command", :command]))
+  end
+
+  defp arg_match?("ext__beam__sql", "call:" <> fingerprint, input) do
+    fingerprint == sql_call_fingerprint(input)
+  end
+
+  defp arg_match?("ext__beam__sql", arg_pattern, input) do
+    glob_match?(arg_pattern, input_value(input, ["query", :query]))
   end
 
   defp arg_match?("browser", arg_pattern, input) do
@@ -84,6 +109,6 @@ defmodule Handbeam.Permissions.Matcher do
         char -> Regex.escape(char)
       end)
 
-    Regex.compile!("^" <> source <> "$")
+    Regex.compile!("^" <> source <> "$", "s")
   end
 end
