@@ -52,6 +52,11 @@
   word-break: normal;
 }
 
+.markdown-noscript-fallback {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .markdown-body > :first-child {
   margin-top: 0;
 }

@@ -5,6 +5,7 @@ defmodule HandbeamWeb.ThreadHandoff do
   attr :entry, :map, required: true
   attr :conversation_id, :string, required: true
   attr :workspace_id, :string, required: true
+  attr :time_zone, :string, default: nil
 
   def card(assigns) do
     context = %{conversation_id: assigns.conversation_id, workspace_id: assigns.workspace_id}
@@ -75,8 +76,9 @@ defmodule HandbeamWeb.ThreadHandoff do
         <p class="whitespace-pre-wrap">{@entry["content"]}</p>
       </div>
       <details :if={@target && !@important} class="mt-2">
-        <summary class="cursor-pointer">
-          View exchange<span :if={@access_label}> ({@access_label})</span>
+        <summary class="thread-handoff-summary disclosure-summary cursor-pointer">
+          <span>View exchange<span :if={@access_label}> ({@access_label})</span></span>
+          <span class="disclosure-chevron" aria-hidden="true">⌄</span>
         </summary>
         <p class="mt-2 text-xs opacity-60">
           Latest 20 reports. Open the task thread to read all messages or give instructions.
@@ -85,10 +87,18 @@ defmodule HandbeamWeb.ThreadHandoff do
           {@entry["content"] || "No confirmed delivery yet."}
         </p>
         <article :for={message <- @messages} class="mt-3 border-l-2 border-base-300 pl-3">
-          <span class="text-xs opacity-60">{if get_in(message, ["origin", "conversation_id"]) ==
-                                                 @conversation_id, do: "Sent", else: "Received"} · {message[
-            "created_at"
-          ]}</span>
+          <span class="text-xs opacity-60">
+            {if get_in(message, ["origin", "conversation_id"]) == @conversation_id,
+              do: "Sent",
+              else: "Received"} ·
+            <time
+              datetime={message["created_at"]}
+              data-time-zone={@time_zone || "Etc/UTC"}
+              title={@time_zone || "Etc/UTC"}
+            >
+              {format_local_time(message["created_at"], @time_zone)}
+            </time>
+          </span>
           <p class="whitespace-pre-wrap break-words">{body(message)}</p>
         </article>
       </details>
@@ -124,6 +134,17 @@ defmodule HandbeamWeb.ThreadHandoff do
 
   defp delegated?(%{"collaboration" => %{"parent" => parent}}) when is_binary(parent), do: true
   defp delegated?(_), do: false
+
+  defp format_local_time(value, time_zone) when is_binary(value) do
+    with {:ok, datetime, _offset} <- DateTime.from_iso8601(value),
+         {:ok, local} <- DateTime.shift_zone(datetime, time_zone || "Etc/UTC") do
+      Calendar.strftime(local, "%Y-%m-%d %H:%M:%S")
+    else
+      _ -> value
+    end
+  end
+
+  defp format_local_time(value, _time_zone), do: value
 
   defp body(message) do
     text = message["content"] || ""

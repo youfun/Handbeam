@@ -1089,8 +1089,19 @@ textarea::placeholder {
   color: var(--sig-text-secondary);
 }
 
-#ai-messages .subagent-report-summary::-webkit-details-marker {
+#ai-messages .disclosure-summary {
+  list-style: none;
+}
+
+#ai-messages .disclosure-summary::-webkit-details-marker {
   display: none;
+}
+
+#ai-messages .thread-handoff-summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
 }
 
 #ai-messages .subagent-report-summary:hover,
@@ -1116,11 +1127,13 @@ textarea::placeholder {
   font-weight: var(--font-weight-medium);
 }
 
-#ai-messages .subagent-report-chevron {
+#ai-messages .disclosure-chevron {
+  flex: none;
+  margin-left: auto;
   transition: transform 0.15s ease;
 }
 
-#ai-messages .subagent-report-card details[open] .subagent-report-chevron {
+#ai-messages details[open] > .disclosure-summary .disclosure-chevron {
   transform: rotate(180deg);
 }
 

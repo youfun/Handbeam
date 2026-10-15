@@ -33,7 +33,8 @@ defmodule HandbeamWeb.ThreadHandoffTest do
         "role" => "user",
         "content_type" => "user_msg",
         "origin" => origin,
-        "content" => "Working"
+        "content" => "Working",
+        "created_at" => "2026-10-15T12:57:08Z"
       },
       %{
         "id" => "result",
@@ -64,7 +65,8 @@ defmodule HandbeamWeb.ThreadHandoffTest do
   test "history restores one exchange, important report and inaccessible placeholder without dispatch",
        c do
     {:ok, before_entries} = ConversationTranscriptStore.list(c.parent)
-    {:ok, view, html} = live(c.conn, "/w/#{c.ws}/c/#{c.parent}")
+    conn = put_connect_params(c.conn, %{"time_zone" => "Asia/Singapore"})
+    {:ok, view, html} = live(conn, "/w/#{c.ws}/c/#{c.parent}")
     assert length(Regex.scan(~r/data-thread-handoff/, html)) == 3
     assert length(Regex.scan(~r/<details/, html)) == 1
 
@@ -75,6 +77,13 @@ defmodule HandbeamWeb.ThreadHandoffTest do
            )
 
     assert has_element?(view, "[data-user-msg='human']", "not a trusted origin")
+
+    assert has_element?(
+             view,
+             "[data-thread-handoff] time[datetime='2026-10-15T12:57:08Z'][data-time-zone='Asia/Singapore']",
+             "2026-10-15 20:57:08"
+           )
+
     refute has_element?(view, "[data-user-msg='progress']")
     assert html =~ "Verified result"
     assert html =~ "Source unavailable"

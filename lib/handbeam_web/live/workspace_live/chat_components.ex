@@ -20,7 +20,7 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
       data-status={@report.status}
     >
       <details>
-        <summary class="subagent-report-summary">
+        <summary class="subagent-report-summary disclosure-summary">
           <span class="subagent-report-icon" aria-hidden="true">↳</span>
           <span class="subagent-report-title">
             <strong>{@report.subagent_type}</strong>
@@ -29,7 +29,7 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
             <span aria-hidden="true">·</span>
             <span>{report_availability_label(@report.availability)}</span>
           </span>
-          <span class="subagent-report-chevron" aria-hidden="true">⌄</span>
+          <span class="disclosure-chevron" aria-hidden="true">⌄</span>
         </summary>
 
         <div class="subagent-report-body">
@@ -117,9 +117,7 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
               phx-update="ignore"
               class="markdown-body prose prose-sm max-w-none break-words"
             >
-              <div class="markdown-noscript-fallback whitespace-pre-wrap break-words">
-                {@report.report}
-              </div>
+              <div class="markdown-noscript-fallback">{@report.report}</div>
               <noscript>{@report.report}</noscript>
             </div>
           </div>
@@ -487,6 +485,7 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
                 entry={entry}
                 conversation_id={@current_conversation_id}
                 workspace_id={@current_workspace_id}
+                time_zone={@user_time_zone}
               />
               <.subagent_report_card
                 :for={report <- reports}
@@ -636,9 +635,7 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
                       phx-update="ignore"
                       class="markdown-body prose prose-sm max-w-none break-words"
                     >
-                      <div class="markdown-noscript-fallback whitespace-pre-wrap break-words">
-                        {entry["content"]}
-                      </div>
+                      <div class="markdown-noscript-fallback">{entry["content"]}</div>
                       <noscript>{entry["content"]}</noscript>
                     </div>
                   </div>
