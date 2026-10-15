@@ -233,6 +233,24 @@ defmodule Handbeam.Tool.Builtin.BashTest do
       assert reason =~ "Path traversal" or reason =~ "outside workspace"
     end
 
+    test "yolo runs with a cwd outside the workspace" do
+      outside =
+        Path.join(System.tmp_dir!(), "handbeam-yolo-cwd-#{System.unique_integer([:positive])}")
+
+      File.mkdir_p!(outside)
+      on_exit(fn -> File.rm_rf!(outside) end)
+
+      assert {:ok, output, %{exit_code: 0}} =
+               Bash.execute(
+                 %{"command" => "pwd", "cwd" => outside},
+                 %{working_directory: File.cwd!(), approval_mode: :yolo}
+               )
+
+      # macOS resolves /var to /private/var; normalize both sides before comparing.
+      normalize = &String.replace(&1, ~r{^/private}, "")
+      assert normalize.(String.trim(output)) == normalize.(outside)
+    end
+
     @tag :os_sandbox
     test "allows reading host paths outside the workspace" do
       {:ok, output, data} =
