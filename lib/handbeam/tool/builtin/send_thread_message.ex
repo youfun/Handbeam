@@ -19,7 +19,12 @@ defmodule Handbeam.Tool.Builtin.SendThreadMessage do
         },
         message: %{type: "string", maxLength: 8000},
         request_id: %{type: "string", maxLength: 128},
-        handoff_id: %{type: "string", maxLength: 128},
+        handoff_id: %{
+          type: "string",
+          maxLength: 128,
+          description:
+            "Existing runtime-issued handoff ID for continuing an exchange. For a new exchange, omit this field entirely; do not pass an empty string or a placeholder such as 'new'."
+        },
         deliver_as: %{type: "string", enum: ["follow_up", "steer"]}
       }
     }

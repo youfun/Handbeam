@@ -74,6 +74,8 @@ defmodule Handbeam.Threads.Collaboration do
   end
 
   def send_message(input, context) do
+    input = normalize_optional_handoff(input)
+
     with :ok <- Threads.validate(input, ~w(thread message request_id deliver_as handoff_id)),
          {:ok, source} <- Threads.identity(context),
          {:ok, target} <- Threads.authorize(context, input["thread"]) do
@@ -82,6 +84,8 @@ defmodule Handbeam.Threads.Collaboration do
   end
 
   def reply(input, context) do
+    input = normalize_optional_handoff(input)
+
     with :ok <- Threads.validate(input, ~w(message request_id handoff_id)),
          {:ok, source} <- Threads.identity(context),
          parent when is_binary(parent) <- get_in(source, ["collaboration", "parent"]),
@@ -217,6 +221,13 @@ defmodule Handbeam.Threads.Collaboration do
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  defp normalize_optional_handoff(%{"handoff_id" => handoff_id} = input)
+       when is_binary(handoff_id) do
+    if String.trim(handoff_id) == "", do: Map.delete(input, "handoff_id"), else: input
+  end
+
+  defp normalize_optional_handoff(input), do: input
 
   defp child_matches?(target, spec) do
     collab = target["collaboration"] || %{}

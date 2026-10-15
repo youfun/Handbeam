@@ -229,6 +229,24 @@ defmodule Handbeam.ThreadCollaborationTest do
     assert {:ok, []} = ConversationTranscriptStore.list(c.target)
   end
 
+  test "blank optional handoff starts a new exchange and matches an omitted-field retry", c do
+    input = %{
+      "thread" => c.target,
+      "message" => "Coordinate work",
+      "request_id" => "blank-handoff"
+    }
+
+    assert {:ok, receipt} =
+             Collaboration.send_message(Map.put(input, "handoff_id", ""), c.context)
+
+    assert {:ok, ^receipt} = Collaboration.send_message(input, c.context)
+    assert String.starts_with?(receipt.handoff_id, "handoff-")
+    assert_receive {:held, _, _}, 2000
+
+    assert {:ok, entries} = ConversationTranscriptStore.list(c.source)
+    assert Enum.count(entries, &(&1["content_type"] == "thread_handoff")) == 1
+  end
+
   test "independent handoffs, replies and retries preserve their exact association", c do
     {:ok, first} =
       Collaboration.create(
