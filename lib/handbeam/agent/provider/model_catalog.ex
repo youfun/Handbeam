@@ -162,14 +162,22 @@ defmodule Handbeam.Agent.Provider.ModelCatalog do
       data
       |> Enum.flat_map(fn
         %{"id" => id} = model when is_binary(id) and id != "" ->
-          [{id, model["name"] || model["display_name"]}]
+          [{id, model["name"] || model["display_name"], explicit_input(model)}]
 
         _ ->
           []
       end)
       |> Enum.uniq_by(&elem(&1, 0))
 
-    models = entries |> LlmDbDefaults.enrich_models() |> Map.values()
+    enriched =
+      entries
+      |> Enum.map(fn {id, name, _input} -> {id, name} end)
+      |> LlmDbDefaults.enrich_models()
+
+    models =
+      Enum.map(entries, fn {id, _name, input} ->
+        enriched |> Map.fetch!(id) |> maybe_put_input(input)
+      end)
 
     case models do
       [] -> {:error, "The provider returned no models. The existing list was kept."}
@@ -187,6 +195,36 @@ defmodule Handbeam.Agent.Provider.ModelCatalog do
   defp parse_models(_body) do
     {:error, "The provider returned an unreadable model list. The existing list was kept."}
   end
+
+  defp explicit_input(model) do
+    modalities =
+      model["input"] ||
+        model["input_modalities"] ||
+        get_in(model, ["architecture", "input_modalities"])
+
+    normalize_input(modalities)
+  end
+
+  defp normalize_input(modalities) when is_list(modalities) do
+    normalized =
+      modalities
+      |> Enum.flat_map(fn
+        modality when is_binary(modality) -> [String.downcase(modality)]
+        _ -> []
+      end)
+      |> Enum.filter(&(&1 in ["text", "image"]))
+      |> Enum.uniq()
+
+    case normalized do
+      [] -> nil
+      modalities -> ["text" | Enum.reject(modalities, &(&1 == "text"))]
+    end
+  end
+
+  defp normalize_input(_modalities), do: nil
+
+  defp maybe_put_input(model, nil), do: model
+  defp maybe_put_input(model, input), do: Map.put(model, "input", input)
 
   defp prefer_existing(existing, remote) when existing in [nil, "", []], do: remote
   defp prefer_existing(existing, _remote), do: existing

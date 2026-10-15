@@ -153,7 +153,6 @@ defmodule HandbeamWeb.SettingsLive do
 
       # Save global Model/AI settings
       defaults = ModelAISettings.defaults()
-      form = forget_unknown_memory_models(form)
       json = ModelAISettings.snapshot_model_ai(defaults, form, :global)
       {:ok, existing} = Settings.load_global()
       current = Map.get(existing, "model_ai", %{})
@@ -615,9 +614,4 @@ defmodule HandbeamWeb.SettingsLive do
 
   defp format_error(reason) when is_binary(reason), do: reason
   defp format_error(reason), do: inspect(reason)
-
-  defp forget_unknown_memory_models(form) do
-    known? = &ModelConfig.model_in_catalog?/1
-    ModelAISettings.drop_unknown_memory_model(form, known?)
-  end
 end

@@ -276,6 +276,55 @@ defmodule Handbeam.Agent.ModelConfigWriteTest do
       assert qwen.input == ["text", "image", "audio"]
     end
 
+    test "concurrent provider updates preserve every provider change" do
+      provider_ids = Enum.map(1..24, &"provider-#{&1}")
+
+      providers =
+        Map.new(provider_ids, fn provider_id ->
+          {provider_id,
+           %{
+             "name" => provider_id,
+             "api" => "openai-chat-completions",
+             "models" => []
+           }}
+        end)
+
+      assert :ok =
+               ModelConfig.write_config(%{
+                 "defaultProvider" => hd(provider_ids),
+                 "providers" => providers
+               })
+
+      parent = self()
+
+      tasks =
+        Enum.map(provider_ids, fn provider_id ->
+          Task.async(fn ->
+            send(parent, {:ready, self()})
+
+            receive do
+              :update ->
+                ModelConfig.update_provider(provider_id, %{"name" => "Updated #{provider_id}"})
+            end
+          end)
+        end)
+
+      pids =
+        Enum.map(tasks, fn _task ->
+          assert_receive {:ready, pid}
+          pid
+        end)
+
+      Enum.each(pids, &send(&1, :update))
+      assert Enum.all?(Task.await_many(tasks), &(&1 == :ok))
+
+      assert {:ok, saved} = ModelConfig.read_config()
+
+      Enum.each(provider_ids, fn provider_id ->
+        assert saved["providers"][provider_id]["name"] == "Updated #{provider_id}"
+      end)
+    end
+
     test "write_config validates and rejects invalid config" do
       # Missing providers key
       assert {:error, "At least one provider is required"} =

@@ -345,6 +345,32 @@ defmodule HandbeamWeb.AvailableModelsLiveTest do
     assert provider["models"] == []
   end
 
+  test "changing the default provider from a stale page keeps providers added later", %{
+    conn: conn
+  } do
+    {:ok, view, _html} =
+      live_isolated(conn, HandbeamWeb.AvailableModelsLive, session: %{"embedded" => "true"})
+
+    stale_socket = :sys.get_state(view.pid).socket
+
+    assert :ok =
+             ModelConfig.add_provider("added-later", %{
+               "name" => "Added Later",
+               "api" => "openai-chat-completions",
+               "models" => []
+             })
+
+    assert {:noreply, _socket} =
+             HandbeamWeb.AvailableModelsLive.handle_event(
+               "toggle_default_provider",
+               %{"id" => "stepfun", "value" => "true"},
+               stale_socket
+             )
+
+    assert {:ok, saved} = ModelConfig.read_config()
+    assert Map.has_key?(saved["providers"], "added-later")
+  end
+
   # LiveView drops cancelled task replies before handle_async/3. Exercise the
   # additional attempt guard directly for a reply racing a newer discovery.
   test "stale Cursor discovery callback cannot overwrite a newer attempt", %{conn: conn} do

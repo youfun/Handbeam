@@ -57,18 +57,3 @@ msgstr ""
 
 msgid "must be equal to %{number}"
 msgstr ""
-
-#: lib/sigil/agent/coordinator.ex:182
-#, elixir-autogen, elixir-format
-msgid "Model %{model} is not allowed in this workspace. Check Settings → Model / AI → Default model."
-msgstr ""
-
-#: lib/sigil/agent/coordinator.ex:205
-#, elixir-autogen, elixir-format
-msgid "Observational Memory observer model (%{model}) is not allowed in this workspace. Check Settings → Model / AI → Observational Memory → Observer model."
-msgstr ""
-
-#: lib/sigil/agent/coordinator.ex:218
-#, elixir-autogen, elixir-format
-msgid "Observational Memory reflector model (%{model}) is not allowed in this workspace. Check Settings → Model / AI → Observational Memory → Reflector model."
-msgstr ""

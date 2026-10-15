@@ -240,7 +240,7 @@ defmodule HandbeamWeb.AvailableModelsLive do
   @impl true
   def handle_event("toggle_default_provider", %{"id" => id, "value" => value}, socket) do
     if value == "true" do
-      case ModelConfig.write_config(Map.put(socket.assigns.config, "defaultProvider", id)) do
+      case ModelConfig.set_default_provider(id) do
         :ok ->
           toast = %{
             type: :success,

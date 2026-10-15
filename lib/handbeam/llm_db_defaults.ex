@@ -6,6 +6,8 @@ defmodule Handbeam.LlmDbDefaults do
   catalog provider id, display name, or base URL. Model fields match a model id.
   """
 
+  alias Handbeam.Agent.BuiltinModels
+
   @type provider_defaults :: %{
           optional(:provider_name) => String.t(),
           optional(:base_url) => String.t(),
@@ -196,12 +198,15 @@ defmodule Handbeam.LlmDbDefaults do
   end
 
   defp enriched_model(index, model_id, name) do
-    %{
-      "id" => model_id,
-      "name" => present_name(name, model_id),
-      "input" => ["text"]
-    }
-    |> Map.merge(catalog_fields(find_catalog_model(index, model_id)))
+    builtin_fields = model_id |> BuiltinModels.find() |> catalog_fields()
+    catalog_fields = index |> find_catalog_model(model_id) |> catalog_fields()
+
+    model =
+      %{"id" => model_id, "input" => ["text"]}
+      |> Map.merge(builtin_fields)
+      |> Map.merge(catalog_fields)
+
+    Map.put(model, "name", present_name(name, model["name"] || model_id))
   end
 
   # Built once per discovery. LLMDB.models/0 walks every provider, and calling
@@ -266,13 +271,39 @@ defmodule Handbeam.LlmDbDefaults do
 
     %{}
     |> maybe_put("name", model.name)
+    |> maybe_put("input", input_modalities(model.modalities))
     |> maybe_put("contextWindow", Map.get(limits, :context))
     |> maybe_put("maxTokens", Map.get(limits, :output))
     |> maybe_put_cost(model)
     |> Map.merge(reasoning)
   end
 
+  defp catalog_fields(%{} = model) do
+    Map.take(model, [
+      "name",
+      "input",
+      "reasoning",
+      "contextWindow",
+      "maxTokens",
+      "cost",
+      "reasoningLevels",
+      "defaultReasoning"
+    ])
+  end
+
   defp catalog_fields(_model), do: %{}
+
+  defp input_modalities(%{input: modalities}) when is_list(modalities) do
+    modalities
+    |> Enum.flat_map(fn
+      modality when is_atom(modality) -> [Atom.to_string(modality)]
+      modality when is_binary(modality) -> [modality]
+      _ -> []
+    end)
+    |> Enum.uniq()
+  end
+
+  defp input_modalities(_modalities), do: nil
 
   defp reasoning_fields(%{enabled: true} = reasoning) do
     effort = Map.get(reasoning, :effort) || %{}

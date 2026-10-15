@@ -52,6 +52,13 @@ defmodule HandbeamWeb.Live.Settings.ModelAIPanel do
                   {gettext("None (use provider default)")}
                 </option>
                 <option
+                  :if={missing_model?(@form.default_model, @available_models)}
+                  value={@form.default_model}
+                  selected
+                >
+                  {unavailable_model_label(@form.default_model)}
+                </option>
+                <option
                   :for={m <- @available_models}
                   value={model_value(m)}
                   selected={@form.default_model == model_value(m)}
@@ -112,6 +119,13 @@ defmodule HandbeamWeb.Live.Settings.ModelAIPanel do
                     else: gettext("No workspace model")}
                 </option>
                 <option
+                  :if={missing_model?(@form.advisor_model, @available_models)}
+                  value={@form.advisor_model}
+                  selected
+                >
+                  {unavailable_model_label(@form.advisor_model)}
+                </option>
+                <option
                   :for={m <- @available_models}
                   value={model_value(m)}
                   selected={@form.advisor_model == model_value(m)}
@@ -132,6 +146,19 @@ defmodule HandbeamWeb.Live.Settings.ModelAIPanel do
               <select name="advisor_reasoning" phx-change="update_field" class="settings-input">
                 <option value="" selected={is_nil(@form.advisor_reasoning)}>
                   {gettext("Model default")}
+                </option>
+                <option
+                  :if={
+                    missing_reasoning?(
+                      @form.advisor_reasoning,
+                      @available_models,
+                      @form.advisor_model
+                    )
+                  }
+                  value={@form.advisor_reasoning}
+                  selected
+                >
+                  {unavailable_reasoning_label(@form.advisor_reasoning)}
                 </option>
                 <option
                   :for={level <- reasoning_levels(@available_models, @form.advisor_model)}
@@ -215,6 +242,13 @@ defmodule HandbeamWeb.Live.Settings.ModelAIPanel do
                   {gettext("Same as default model")}
                 </option>
                 <option
+                  :if={missing_model?(@form.om_model, @available_models)}
+                  value={@form.om_model}
+                  selected
+                >
+                  {unavailable_model_label(@form.om_model)}
+                </option>
+                <option
                   :for={m <- @available_models}
                   value={model_value(m)}
                   selected={@form.om_model == model_value(m)}
@@ -239,6 +273,19 @@ defmodule HandbeamWeb.Live.Settings.ModelAIPanel do
               >
                 <option value="" selected={is_nil(@form.om_reasoning)}>
                   {gettext("Model default")}
+                </option>
+                <option
+                  :if={
+                    missing_reasoning?(
+                      @form.om_reasoning,
+                      @available_models,
+                      @form.om_model || @form.default_model
+                    )
+                  }
+                  value={@form.om_reasoning}
+                  selected
+                >
+                  {unavailable_reasoning_label(@form.om_reasoning)}
                 </option>
                 <option
                   :for={
@@ -374,6 +421,25 @@ defmodule HandbeamWeb.Live.Settings.ModelAIPanel do
       model -> Reasoning.supported_levels(model)
     end
   end
+
+  defp missing_model?(model_id, models) when is_binary(model_id) and model_id != "" do
+    Enum.all?(models, &(model_value(&1) != model_id))
+  end
+
+  defp missing_model?(_model_id, _models), do: false
+
+  defp missing_reasoning?(reasoning, models, model_id)
+       when is_binary(reasoning) and reasoning != "" do
+    reasoning not in reasoning_levels(models, model_id)
+  end
+
+  defp missing_reasoning?(_reasoning, _models, _model_id), do: false
+
+  defp unavailable_model_label(model_id),
+    do: gettext("%{model} (Unavailable)", model: model_id)
+
+  defp unavailable_reasoning_label(reasoning),
+    do: gettext("%{level} (Unavailable)", level: reasoning_label(reasoning))
 
   defp reasoning_label("xhigh"), do: "X-High"
   defp reasoning_label(level), do: String.capitalize(level)

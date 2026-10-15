@@ -224,7 +224,6 @@ defmodule HandbeamWeb.Live.SettingsPanel do
     errors = validate_form(form)
 
     if errors == %{} do
-      form = forget_unknown_memory_models(form)
       socket = socket |> assign(:form, form) |> assign(:saving, true)
 
       case save_current_scope(socket, form) do
@@ -392,11 +391,6 @@ defmodule HandbeamWeb.Live.SettingsPanel do
       _ ->
         form
     end
-  end
-
-  defp forget_unknown_memory_models(form) do
-    known? = &Handbeam.Agent.ModelConfig.model_in_catalog?/1
-    ModelAISettings.drop_unknown_memory_model(form, known?)
   end
 
   defp blank_to_nil(""), do: nil

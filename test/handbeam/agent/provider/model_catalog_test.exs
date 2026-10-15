@@ -95,6 +95,54 @@ defmodule Handbeam.Agent.Provider.ModelCatalogTest do
     assert gone["unavailable"] == true
   end
 
+  test "fresh discovery keeps explicit modalities and exact built-in capabilities" do
+    :ok =
+      ModelConfig.add_provider("magpie", %{
+        "name" => "Magpie",
+        "api" => "openai-responses",
+        "baseUrl" => "http://127.0.0.1:3425",
+        "apiKey" => "magpie",
+        "models" => []
+      })
+
+    Process.put(
+      :model_catalog_response,
+      {:ok,
+       %{
+         status: 200,
+         body: %{
+           "data" => [
+             %{"id" => "gpt-5.6-luna"},
+             %{"id" => "direct-vision", "input_modalities" => ["image", "text"]},
+             %{
+               "id" => "openrouter-vision",
+               "architecture" => %{"input_modalities" => ["text", "image", "audio"]}
+             },
+             %{"id" => "unknown-model"}
+           ]
+         }
+       }}
+    )
+
+    assert {:ok, %{added: 4, total: 4}} =
+             ModelCatalog.discover("magpie", req_module: ReqMock)
+
+    {:ok, config} = ModelConfig.read_config()
+    models = config["providers"]["magpie"]["models"]
+
+    assert Enum.find(models, &(&1["id"] == "gpt-5.6-luna"))["input"] == ["text", "image"]
+    assert Enum.find(models, &(&1["id"] == "direct-vision"))["input"] == ["text", "image"]
+    assert Enum.find(models, &(&1["id"] == "openrouter-vision"))["input"] == ["text", "image"]
+    assert Enum.find(models, &(&1["id"] == "unknown-model"))["input"] == ["text"]
+  end
+
+  test "llm_db input modalities are mapped into model input capabilities" do
+    assert Handbeam.LlmDbDefaults.enrich_model("openai/gpt-4o-mini")["input"] == [
+             "text",
+             "image"
+           ]
+  end
+
   test "catalog enrichment survives an llm_db app dir failure" do
     assert Handbeam.LlmDbDefaults.enrich_model("provider/unknown-model", nil, fn ->
              raise ArgumentError, "unknown application: :llm_db"
@@ -103,6 +151,10 @@ defmodule Handbeam.Agent.Provider.ModelCatalogTest do
              "name" => "provider/unknown-model",
              "input" => ["text"]
            }
+
+    assert Handbeam.LlmDbDefaults.enrich_model("gateway/gpt-5.6-luna", nil, fn ->
+             raise ArgumentError, "unknown application: :llm_db"
+           end)["input"] == ["text", "image"]
   end
 
   test "a failed list does not replace saved models" do

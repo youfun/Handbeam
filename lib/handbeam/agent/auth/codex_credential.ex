@@ -5,6 +5,7 @@ defmodule Handbeam.Agent.Auth.CodexCredential do
   """
 
   alias Handbeam.Agent.Auth.{CodexOAuth, Epoch, RefreshLock, Storage}
+  alias Handbeam.Agent.BuiltinModels
 
   def store_login(provider_id, credential, opts \\ []) do
     access = Handbeam.Utils.SafeMap.get_any(credential, :access, "access")
@@ -47,71 +48,7 @@ defmodule Handbeam.Agent.Auth.CodexCredential do
       # Offline fallback from the Codex CLI rust-v0.156.1 bundled catalog.
       # Refresh replaces this with the account's live /models response.
       # gpt-5.4 is visibility=hide there and was retired from ChatGPT Codex.
-      "models" => [
-        %{
-          "id" => "gpt-6-sol",
-          "name" => "GPT-6-Sol",
-          "reasoning" => true,
-          "input" => ["text", "image"],
-          "contextWindow" => 272_000,
-          "reasoningLevels" => ["low", "medium", "high", "xhigh", "max", "ultra"],
-          "defaultReasoning" => "medium"
-        },
-        %{
-          "id" => "gpt-6-luna",
-          "name" => "GPT-6-Luna",
-          "reasoning" => true,
-          "input" => ["text", "image"],
-          "contextWindow" => 272_000,
-          "reasoningLevels" => ["low", "medium", "high", "xhigh", "max"],
-          "defaultReasoning" => "medium"
-        },
-        %{
-          "id" => "gpt-6-astra",
-          "name" => "GPT-6-Astra",
-          "reasoning" => true,
-          "input" => ["text", "image"],
-          "contextWindow" => 272_000,
-          "reasoningLevels" => ["low", "medium", "high", "xhigh", "max", "ultra"],
-          "defaultReasoning" => "low"
-        },
-        %{
-          "id" => "gpt-5.6-sol",
-          "name" => "GPT-5.6-Sol",
-          "reasoning" => true,
-          "input" => ["text", "image"],
-          "contextWindow" => 272_000,
-          "reasoningLevels" => ["low", "medium", "high", "xhigh", "max", "ultra"],
-          "defaultReasoning" => "low"
-        },
-        %{
-          "id" => "gpt-5.6-terra",
-          "name" => "GPT-5.6-Terra",
-          "reasoning" => true,
-          "input" => ["text", "image"],
-          "contextWindow" => 272_000,
-          "reasoningLevels" => ["low", "medium", "high", "xhigh", "max", "ultra"],
-          "defaultReasoning" => "medium"
-        },
-        %{
-          "id" => "gpt-5.6-luna",
-          "name" => "GPT-5.6-Luna",
-          "reasoning" => true,
-          "input" => ["text", "image"],
-          "contextWindow" => 272_000,
-          "reasoningLevels" => ["low", "medium", "high", "xhigh", "max"],
-          "defaultReasoning" => "medium"
-        },
-        %{
-          "id" => "gpt-5.5",
-          "name" => "GPT-5.5",
-          "reasoning" => true,
-          "input" => ["text", "image"],
-          "contextWindow" => 272_000,
-          "reasoningLevels" => ["low", "medium", "high", "xhigh"],
-          "defaultReasoning" => "medium"
-        }
-      ]
+      "models" => BuiltinModels.codex()
     }
   end
 

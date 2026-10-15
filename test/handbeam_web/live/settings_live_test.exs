@@ -166,6 +166,42 @@ defmodule HandbeamWeb.SettingsLiveTest do
       assert saved.om_reasoning == "low"
     end
 
+    test "keeps configured advisor and memory models visible when the catalog is temporarily missing them",
+         %{conn: conn} do
+      assert :ok =
+               Handbeam.Settings.save_global(%{
+                 "advisor" => %{
+                   "model" => "anthropic/claude-opus-4-6",
+                   "reasoning" => "high"
+                 },
+                 "observational_memory" => %{
+                   "enabled" => true,
+                   "model" => "xai/grok-4-1-fast-non-reasoning",
+                   "reasoning" => "low"
+                 }
+               })
+
+      {:ok, view, _html} = live(conn, "/settings")
+
+      assert has_element?(
+               view,
+               ~s(select[name="advisor_model"] option[value="anthropic/claude-opus-4-6"][selected])
+             )
+
+      assert has_element?(
+               view,
+               ~s(select[name="om_model"] option[value="xai/grok-4-1-fast-non-reasoning"][selected])
+             )
+
+      view |> element(~s(button[phx-click="save_settings"])) |> render_click()
+
+      saved = Handbeam.Settings.global_model_ai()
+      assert saved.advisor_model == "anthropic/claude-opus-4-6"
+      assert saved.advisor_reasoning == "high"
+      assert saved.om_model == "xai/grok-4-1-fast-non-reasoning"
+      assert saved.om_reasoning == "low"
+    end
+
     test "first visit seeds default models into the Model / AI picker", %{conn: conn} do
       models_path = System.fetch_env!("HANDBEAM_MODELS_FILE")
       File.rm(models_path)

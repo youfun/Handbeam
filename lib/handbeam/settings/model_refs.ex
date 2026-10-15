@@ -193,23 +193,15 @@ defmodule Handbeam.Settings.ModelRefs do
   defp model_ai_values(_), do: []
 
   defp replace(%{source: :catalog_default_provider}, replacement) do
-    with {:ok, config} <- ModelConfig.read_config(),
-         [provider, _model] <- String.split(replacement, "/", parts: 2) do
-      ModelConfig.write_config(Map.put(config, "defaultProvider", provider))
-    else
+    case String.split(replacement, "/", parts: 2) do
+      [provider, _model] -> ModelConfig.set_default_provider(provider)
       _ -> {:error, :invalid_replacement}
     end
   end
 
   defp replace(%{source: :catalog_default_model}, replacement) do
-    with {:ok, config} <- ModelConfig.read_config(),
-         [provider, model] <- String.split(replacement, "/", parts: 2) do
-      ModelConfig.write_config(
-        config
-        |> Map.put("defaultProvider", provider)
-        |> Map.put("defaultModel", model)
-      )
-    else
+    case String.split(replacement, "/", parts: 2) do
+      [provider, model] -> ModelConfig.set_default_model(provider, model)
       _ -> {:error, :invalid_replacement}
     end
   end

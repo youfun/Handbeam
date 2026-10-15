@@ -1171,6 +1171,12 @@ defmodule Handbeam.Agent.ModelConfig do
   """
   @spec write_config(map()) :: :ok | {:error, String.t()}
   def write_config(config) when is_map(config) do
+    with_config_lock(fn -> write_config_unlocked(config) end)
+  end
+
+  def write_config(_other), do: {:error, "Config must be a JSON object (map)"}
+
+  defp write_config_unlocked(config) do
     with :ok <- validate_config(config) do
       path = config_file_path()
       File.mkdir_p(Path.dirname(path))
@@ -1186,8 +1192,6 @@ defmodule Handbeam.Agent.ModelConfig do
     end
   end
 
-  def write_config(_other), do: {:error, "Config must be a JSON object (map)"}
-
   @doc """
   Add a new provider to the global config.
 
@@ -1198,15 +1202,15 @@ defmodule Handbeam.Agent.ModelConfig do
     provider_attrs = Map.put_new(provider_attrs, "models", [])
 
     with :ok <- validate_provider_name(provider_id),
-         {:ok, config} <- load_or_default_config(),
-         :ok <- ensure_provider_not_exists(config, provider_id),
          :ok <- validate_provider_attrs(provider_attrs) do
-      updated_config =
-        config
-        |> Map.put("providers", Map.put(config["providers"], provider_id, provider_attrs))
-        |> ensure_default_provider(provider_id)
-
-      write_config(updated_config)
+      update_config(fn config ->
+        with :ok <- ensure_provider_not_exists(config, provider_id) do
+          {:ok,
+           config
+           |> Map.put("providers", Map.put(config["providers"], provider_id, provider_attrs))
+           |> ensure_default_provider(provider_id)}
+        end
+      end)
     end
   end
 
@@ -1218,17 +1222,16 @@ defmodule Handbeam.Agent.ModelConfig do
   """
   @spec remove_provider(String.t()) :: :ok | {:error, String.t()}
   def remove_provider(provider_id) do
-    with {:ok, config} <- load_or_default_config(),
-         :ok <- ensure_provider_exists(config, provider_id) do
-      updated_providers = Map.delete(config["providers"], provider_id)
+    update_config(fn config ->
+      with :ok <- ensure_provider_exists(config, provider_id) do
+        updated_providers = Map.delete(config["providers"], provider_id)
 
-      updated_config =
-        config
-        |> Map.put("providers", updated_providers)
-        |> reassign_default_provider(provider_id, updated_providers)
-
-      write_config(updated_config)
-    end
+        {:ok,
+         config
+         |> Map.put("providers", updated_providers)
+         |> reassign_default_provider(provider_id, updated_providers)}
+      end
+    end)
   end
 
   @doc """
@@ -1238,24 +1241,23 @@ defmodule Handbeam.Agent.ModelConfig do
   """
   @spec add_model(String.t(), String.t(), map()) :: :ok | {:error, String.t()}
   def add_model(provider_id, model_id, model_attrs) when is_map(model_attrs) do
-    with {:ok, config} <- load_or_default_config(),
-         :ok <- ensure_provider_exists(config, provider_id),
-         :ok <- validate_model_attrs(model_attrs),
-         :ok <- ensure_model_not_exists(config, provider_id, model_id) do
-      full_model = Map.put(model_attrs, "id", model_id)
-      provider = config["providers"][provider_id]
-      models = Map.get(provider, "models", [])
-      first_in_catalog? = catalog_has_no_models?(config)
-      updated_provider = Map.put(provider, "models", models ++ [full_model])
+    with :ok <- validate_model_attrs(model_attrs) do
+      update_config(fn config ->
+        with :ok <- ensure_provider_exists(config, provider_id),
+             :ok <- ensure_model_not_exists(config, provider_id, model_id) do
+          full_model = Map.put(model_attrs, "id", model_id)
+          provider = config["providers"][provider_id]
+          models = Map.get(provider, "models", [])
+          first_in_catalog? = catalog_has_no_models?(config)
+          updated_provider = Map.put(provider, "models", models ++ [full_model])
+          updated_providers = Map.put(config["providers"], provider_id, updated_provider)
 
-      updated_providers = Map.put(config["providers"], provider_id, updated_provider)
-
-      updated_config =
-        config
-        |> Map.put("providers", updated_providers)
-        |> maybe_assign_first_model_defaults(provider_id, model_id, first_in_catalog?)
-
-      write_config(updated_config)
+          {:ok,
+           config
+           |> Map.put("providers", updated_providers)
+           |> maybe_assign_first_model_defaults(provider_id, model_id, first_in_catalog?)}
+        end
+      end)
     end
   end
 
@@ -1266,23 +1268,62 @@ defmodule Handbeam.Agent.ModelConfig do
   """
   @spec remove_model(String.t(), String.t()) :: :ok | {:error, String.t()}
   def remove_model(provider_id, model_id) do
-    with {:ok, config} <- load_or_default_config(),
-         :ok <- ensure_provider_exists(config, provider_id),
-         :ok <- ensure_model_exists(config, provider_id, model_id) do
-      provider = config["providers"][provider_id]
-      models = Map.get(provider, "models", [])
-      updated_models = Enum.reject(models, &(&1["id"] == model_id))
-      updated_provider = Map.put(provider, "models", updated_models)
+    update_config(fn config ->
+      with :ok <- ensure_provider_exists(config, provider_id),
+           :ok <- ensure_model_exists(config, provider_id, model_id) do
+        provider = config["providers"][provider_id]
+        models = Map.get(provider, "models", [])
+        updated_models = Enum.reject(models, &(&1["id"] == model_id))
+        updated_provider = Map.put(provider, "models", updated_models)
+        updated_providers = Map.put(config["providers"], provider_id, updated_provider)
 
-      updated_providers = Map.put(config["providers"], provider_id, updated_provider)
+        {:ok,
+         config
+         |> Map.put("providers", updated_providers)
+         |> reassign_default_model(provider_id, model_id)}
+      end
+    end)
+  end
 
-      updated_config =
-        config
-        |> Map.put("providers", updated_providers)
-        |> reassign_default_model(provider_id, model_id)
+  @doc "Set the default provider using the latest persisted config."
+  @spec set_default_provider(String.t()) :: :ok | {:error, String.t()}
+  def set_default_provider(provider_id) when is_binary(provider_id) do
+    update_config(fn config ->
+      with :ok <- ensure_provider_exists(config, provider_id) do
+        models = get_in(config, ["providers", provider_id, "models"]) || []
+        current_model = config["defaultModel"]
 
-      write_config(updated_config)
-    end
+        default_model =
+          if Enum.any?(models, &(&1["id"] == current_model)) do
+            current_model
+          else
+            models |> List.first(%{}) |> Map.get("id")
+          end
+
+        updated_config = Map.put(config, "defaultProvider", provider_id)
+
+        {:ok,
+         if(default_model,
+           do: Map.put(updated_config, "defaultModel", default_model),
+           else: Map.delete(updated_config, "defaultModel")
+         )}
+      end
+    end)
+  end
+
+  @doc "Set the default provider and model using the latest persisted config."
+  @spec set_default_model(String.t(), String.t()) :: :ok | {:error, String.t()}
+  def set_default_model(provider_id, model_id)
+      when is_binary(provider_id) and is_binary(model_id) do
+    update_config(fn config ->
+      with :ok <- ensure_provider_exists(config, provider_id),
+           :ok <- ensure_model_exists(config, provider_id, model_id) do
+        {:ok,
+         config
+         |> Map.put("defaultProvider", provider_id)
+         |> Map.put("defaultModel", model_id)}
+      end
+    end)
   end
 
   @doc """
@@ -1290,15 +1331,14 @@ defmodule Handbeam.Agent.ModelConfig do
   """
   @spec update_provider(String.t(), map()) :: :ok | {:error, String.t()}
   def update_provider(provider_id, attrs) when is_map(attrs) do
-    with {:ok, config} <- load_or_default_config(),
-         :ok <- ensure_provider_exists(config, provider_id) do
-      provider = config["providers"][provider_id]
-      updated_provider = Map.merge(provider, attrs)
-      updated_providers = Map.put(config["providers"], provider_id, updated_provider)
-      updated_config = Map.put(config, "providers", updated_providers)
-
-      write_config(updated_config)
-    end
+    update_config(fn config ->
+      with :ok <- ensure_provider_exists(config, provider_id) do
+        provider = config["providers"][provider_id]
+        updated_provider = Map.merge(provider, attrs)
+        updated_providers = Map.put(config["providers"], provider_id, updated_provider)
+        {:ok, Map.put(config, "providers", updated_providers)}
+      end
+    end)
   end
 
   @doc """
@@ -1307,22 +1347,23 @@ defmodule Handbeam.Agent.ModelConfig do
   """
   @spec disable_provider_models(String.t()) :: :ok | {:error, String.t()}
   def disable_provider_models(provider_id) when is_binary(provider_id) do
-    with {:ok, config} <- load_or_default_config(),
-         :ok <- ensure_provider_exists(config, provider_id) do
-      provider = config["providers"][provider_id]
+    update_config(fn config ->
+      with :ok <- ensure_provider_exists(config, provider_id) do
+        provider = config["providers"][provider_id]
 
-      models =
-        provider
-        |> Map.get("models", [])
-        |> Enum.map(fn
-          model when is_map(model) -> Map.put(model, "enabled", false)
-          other -> other
-        end)
+        models =
+          provider
+          |> Map.get("models", [])
+          |> Enum.map(fn
+            model when is_map(model) -> Map.put(model, "enabled", false)
+            other -> other
+          end)
 
-      updated_provider = Map.put(provider, "models", models)
-      updated_providers = Map.put(config["providers"], provider_id, updated_provider)
-      write_config(Map.put(config, "providers", updated_providers))
-    end
+        updated_provider = Map.put(provider, "models", models)
+        updated_providers = Map.put(config["providers"], provider_id, updated_provider)
+        {:ok, Map.put(config, "providers", updated_providers)}
+      end
+    end)
   end
 
   @doc """
@@ -1330,24 +1371,23 @@ defmodule Handbeam.Agent.ModelConfig do
   """
   @spec update_model(String.t(), String.t(), map()) :: :ok | {:error, String.t()}
   def update_model(provider_id, model_id, attrs) when is_map(attrs) do
-    with {:ok, config} <- load_or_default_config(),
-         :ok <- ensure_provider_exists(config, provider_id),
-         :ok <- ensure_model_exists(config, provider_id, model_id) do
-      provider = config["providers"][provider_id]
-      models = Map.get(provider, "models", [])
+    update_config(fn config ->
+      with :ok <- ensure_provider_exists(config, provider_id),
+           :ok <- ensure_model_exists(config, provider_id, model_id) do
+        provider = config["providers"][provider_id]
+        models = Map.get(provider, "models", [])
 
-      updated_models =
-        Enum.map(models, fn
-          %{"id" => ^model_id} = model -> Map.merge(model, attrs)
-          other -> other
-        end)
+        updated_models =
+          Enum.map(models, fn
+            %{"id" => ^model_id} = model -> Map.merge(model, attrs)
+            other -> other
+          end)
 
-      updated_provider = Map.put(provider, "models", updated_models)
-      updated_providers = Map.put(config["providers"], provider_id, updated_provider)
-      updated_config = Map.put(config, "providers", updated_providers)
-
-      write_config(updated_config)
-    end
+        updated_provider = Map.put(provider, "models", updated_models)
+        updated_providers = Map.put(config["providers"], provider_id, updated_provider)
+        {:ok, Map.put(config, "providers", updated_providers)}
+      end
+    end)
   end
 
   @doc """
@@ -1363,6 +1403,24 @@ defmodule Handbeam.Agent.ModelConfig do
   # ──────────────────────────────────────────────────────────────
   # Write helpers: load / validate / write
   # ──────────────────────────────────────────────────────────────
+
+  defp update_config(update) when is_function(update, 1) do
+    with_config_lock(fn ->
+      with {:ok, config} <- load_or_default_config(),
+           {:ok, updated_config} <- update.(config) do
+        write_config_unlocked(updated_config)
+      end
+    end)
+  end
+
+  defp with_config_lock(fun) when is_function(fun, 0) do
+    lock = {{__MODULE__, config_file_path()}, self()}
+
+    case :global.trans(lock, fun, [Node.self()]) do
+      :aborted -> {:error, "Model config is busy. Try again."}
+      result -> result
+    end
+  end
 
   defp load_or_default_config do
     path = config_file_path()
