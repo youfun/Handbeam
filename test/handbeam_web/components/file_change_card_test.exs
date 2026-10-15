@@ -15,15 +15,17 @@ defmodule HandbeamWeb.FileChangeCardTest do
     {:ok, tmp: tmp}
   end
 
-  test "edit card labels stay untranslated in Chinese and English" do
+  test "edit and write card labels stay untranslated in Chinese and English" do
     for locale <- ["zh_CN", "en"] do
       Gettext.with_locale(HandbeamWeb.Gettext, locale, fn ->
-        html =
-          Phoenix.LiveViewTest.render_component(&FileChangeCard.card/1,
-            entry: %{"id" => "e1", "tool_name" => "edit", "file_path" => "lib/app.ex"}
-          )
+        for {tool, label} <- [{"edit", "edit"}, {"write", "Created"}] do
+          html =
+            Phoenix.LiveViewTest.render_component(&FileChangeCard.card/1,
+              entry: %{"id" => "e1", "tool_name" => tool, "file_path" => "lib/app.ex"}
+            )
 
-        assert html =~ ~s(<span class="file-change-label">edit</span>)
+          assert html =~ ~s(<span class="file-change-label">#{label}</span>)
+        end
       end)
     end
   end

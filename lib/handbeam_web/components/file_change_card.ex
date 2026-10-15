@@ -321,7 +321,7 @@ defmodule HandbeamWeb.FileChangeCard do
         count(lines, :remove) == 0
 
     if created?,
-      do: Gettext.gettext(HandbeamWeb.Gettext, "Created"),
+      do: "Created",
       else: "edit"
   end
 

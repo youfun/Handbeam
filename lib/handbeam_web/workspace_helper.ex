@@ -654,22 +654,22 @@ defmodule HandbeamWeb.WorkspaceHelper do
   defp work_verb(name) do
     cond do
       name in ~w(grep rg ripgrep) or String.contains?(name, "grep") ->
-        gettext("Grep")
+        "Grep"
 
       name in ~w(file_search glob glob_file_search) ->
-        gettext("Searched files")
+        "Searched files"
 
       name in ~w(code_search semantic_search codebase_search) ->
-        gettext("Searched")
+        "Searched"
 
       name in ~w(list_dir) or String.starts_with?(name, "list") ->
-        gettext("List")
+        "List"
 
       name in ~w(read read_file) or String.contains?(name, "read") ->
         "read"
 
       edit_tool?(name) and String.contains?(name, "write") ->
-        gettext("Created")
+        "Created"
 
       edit_tool?(name) ->
         "edit"

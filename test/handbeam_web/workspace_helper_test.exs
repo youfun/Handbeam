@@ -472,16 +472,33 @@ defmodule HandbeamWeb.WorkspaceHelperTest do
       refute first["work_collapsed"]
     end
 
-    test "read and edit labels stay untranslated in Chinese and English" do
+    test "tool detail labels stay untranslated in Chinese and English" do
       for locale <- ["zh_CN", "en"] do
         Gettext.with_locale(HandbeamWeb.Gettext, locale, fn ->
-          for tool <- ["read", "edit"] do
+          for {tool, label} <- [
+                {"read", "read"},
+                {"read_file", "read"},
+                {"edit", "edit"},
+                {"apply_patch", "edit"},
+                {"write", "Created"},
+                {"grep", "Grep"},
+                {"rg", "Grep"},
+                {"file_search", "Searched files"},
+                {"glob", "Searched files"},
+                {"code_search", "Searched"},
+                {"semantic_search", "Searched"},
+                {"list_dir", "List"},
+                {"bash", "$"},
+                {"web_fetch", "web_fetch"},
+                {"browser", "browser"},
+                {"mem_recall", "mem_recall"}
+              ] do
             [entry] =
               WorkspaceHelper.apply_tool_work_collapse([
                 %{"id" => "t1", "content_type" => "tool", "tool" => tool, "tool_status" => "done"}
               ])
 
-            assert entry["work_verb"] == tool
+            assert entry["work_verb"] == label
           end
         end)
       end
