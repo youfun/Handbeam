@@ -43,6 +43,7 @@ defmodule Handbeam.Agent.ModelConfig do
   """
 
   alias Handbeam.Agent.Auth.{CodexCredential, CursorCredential, XaiCredential}
+  alias Handbeam.Agent.ModelCapabilities
 
   require Logger
 
@@ -983,7 +984,6 @@ defmodule Handbeam.Agent.ModelConfig do
   # ──────────────────────────────────────────────────────────────
 
   @valid_provider_name_re ~r/^[a-z0-9_-]+$/
-  @valid_input_types ["text", "image", "audio"]
 
   @stepfun_preview_model %{
     "id" => "step-5-preview",
@@ -1618,16 +1618,17 @@ defmodule Handbeam.Agent.ModelConfig do
 
   defp validate_model_input_types(model) do
     input = Map.get(model, "input", ["text"])
+    valid_input_types = ModelCapabilities.supported_input_types()
 
     cond do
       not is_list(input) or input == [] ->
         {:error, "Model input must be a non-empty list"}
 
-      not Enum.all?(input, &(&1 in @valid_input_types)) ->
-        invalid = Enum.reject(input, &(&1 in @valid_input_types))
+      not Enum.all?(input, &(&1 in valid_input_types)) ->
+        invalid = Enum.reject(input, &(&1 in valid_input_types))
 
         {:error,
-         "Invalid input types: #{inspect(invalid)}. Valid types: #{inspect(@valid_input_types)}"}
+         "Invalid input types: #{inspect(invalid)}. Valid types: #{inspect(valid_input_types)}"}
 
       true ->
         :ok

@@ -3,6 +3,11 @@ defmodule Handbeam.Agent.ModelCapabilities do
 
   @type support :: :supported | :unsupported | :unknown
 
+  @supported_input_types ["text", "image", "audio"]
+
+  @spec supported_input_types() :: [String.t()]
+  def supported_input_types, do: @supported_input_types
+
   @spec input_support(map() | nil, String.t()) :: support()
   def input_support(%{input: inputs}, type) when is_list(inputs) and inputs != [] do
     if type in inputs, do: :supported, else: :unsupported

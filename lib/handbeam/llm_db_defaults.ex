@@ -6,7 +6,7 @@ defmodule Handbeam.LlmDbDefaults do
   catalog provider id, display name, or base URL. Model fields match a model id.
   """
 
-  alias Handbeam.Agent.BuiltinModels
+  alias Handbeam.Agent.{BuiltinModels, ModelCapabilities}
 
   @type provider_defaults :: %{
           optional(:provider_name) => String.t(),
@@ -300,6 +300,7 @@ defmodule Handbeam.LlmDbDefaults do
       modality when is_binary(modality) -> [modality]
       _ -> []
     end)
+    |> Enum.filter(&(&1 in ModelCapabilities.supported_input_types()))
     |> Enum.uniq()
   end
 
