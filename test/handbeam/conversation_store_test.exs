@@ -212,6 +212,16 @@ defmodule Handbeam.ConversationStoreTest do
                ConversationStore.list_free_summaries()
 
       assert free_id == free["id"]
+
+      assert {:ok, summaries} = ConversationStore.fetch_summaries()
+      assert MapSet.new(Enum.map(summaries, & &1["id"])) == MapSet.new([workspace_id, free_id])
+    end
+
+    test "combined sidebar summary reads preserve index errors", %{storage_path: storage_path} do
+      File.mkdir_p!(Path.dirname(storage_path))
+      File.write!(storage_path, "not json")
+
+      assert {:error, _reason} = ConversationStore.fetch_summaries()
     end
 
     test "transcript emptiness uses journal file state without parsing history" do

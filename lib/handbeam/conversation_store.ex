@@ -142,6 +142,20 @@ defmodule Handbeam.ConversationStore do
     list_metadata_matching(&free?/1)
   end
 
+  @doc "Read all public sidebar summaries in one index snapshot, preserving read errors."
+  def fetch_summaries do
+    case read_index() do
+      {:ok, index} ->
+        {:ok, index |> Map.get("conversations", []) |> Enum.reject(&internal?/1)}
+
+      {:error, :not_found} ->
+        {:ok, []}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
+  end
+
   @doc "Read workspace conversation summaries directly from the sidebar index."
   def list_summaries(workspace_id) do
     list_index_matching(&(&1["workspace_id"] == workspace_id and not free?(&1)))
