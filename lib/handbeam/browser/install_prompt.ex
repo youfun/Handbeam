@@ -5,7 +5,7 @@ defmodule Handbeam.Browser.InstallPrompt do
   This is presentation only. It never installs the binary.
   """
 
-  @command "npm install -g agent-browser && agent-browser install && sudo ln -sf \"$(command -v agent-browser)\" /usr/local/bin/agent-browser"
+  @command "npm install -g agent-browser && agent-browser install"
 
   @type t :: %{title: String.t(), command: String.t(), hint: String.t()}
 
@@ -21,7 +21,7 @@ defmodule Handbeam.Browser.InstallPrompt do
         title: "Install agent-browser to use the browser tool",
         command: @command,
         hint:
-          "Install once on each computer that runs Handbeam, on that computer's own PATH. A copy on another machine does not count. Then retry; Handbeam can keep running."
+          "Install once on each computer that runs Handbeam. Handbeam loads that computer's login-shell environment after restart; a copy on another machine does not count."
       }
     end
   end

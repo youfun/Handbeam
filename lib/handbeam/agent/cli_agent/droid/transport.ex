@@ -8,7 +8,7 @@ defmodule Handbeam.Agent.CliAgent.Droid.Transport do
   """
 
   alias Handbeam.Agent.CliAgent.Droid.Codec
-  alias Handbeam.Platform.ProcessManager
+  alias Handbeam.Platform.{CommandEnvironment, ProcessManager, WorkspaceEnvironment}
 
   @executable "droid"
 
@@ -17,7 +17,7 @@ defmodule Handbeam.Agent.CliAgent.Droid.Transport do
           {:ok, port(), pos_integer() | nil} | {:error, :not_available | String.t()}
   def open(opts) do
     with {:ok, executable} <- resolve(opts) do
-      spawn_port(executable, Codec.argv(opts))
+      spawn_port(executable, Codec.argv(opts), opts)
     end
   end
 
@@ -52,24 +52,36 @@ defmodule Handbeam.Agent.CliAgent.Droid.Transport do
         if File.regular?(path), do: {:ok, path}, else: {:error, :not_available}
 
       _ ->
-        case System.find_executable(@executable) do
+        case WorkspaceEnvironment.find_executable(@executable, opts[:cwd]) do
           nil -> {:error, :not_available}
           path -> {:ok, path}
         end
     end
   end
 
-  defp spawn_port(executable, argv) do
+  defp spawn_port(executable, argv, opts) do
+    cwd = Keyword.get(opts, :cwd)
+    env = WorkspaceEnvironment.port_env(cwd)
+
+    options = [
+      :binary,
+      :exit_status,
+      :use_stdio,
+      :stderr_to_stdout,
+      :hide,
+      {:args, Enum.map(argv, &String.to_charlist/1)},
+      {:line, 65_536}
+    ]
+
+    options = if is_binary(cwd), do: [{:cd, cwd} | options], else: options
+
+    options =
+      if env == [],
+        do: options,
+        else: [{:env, CommandEnvironment.encode_port_env(env)} | options]
+
     port =
-      Port.open({:spawn_executable, executable}, [
-        :binary,
-        :exit_status,
-        :use_stdio,
-        :stderr_to_stdout,
-        :hide,
-        {:args, Enum.map(argv, &String.to_charlist/1)},
-        {:line, 65_536}
-      ])
+      Port.open({:spawn_executable, executable}, options)
 
     {:ok, port, os_pid(port)}
   rescue

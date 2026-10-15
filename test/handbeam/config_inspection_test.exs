@@ -226,8 +226,8 @@ defmodule Handbeam.ConfigInspectionTest do
     assert prompt =~ "repository's documented command-line workflow"
     refute prompt =~ "machine's `mix`"
     assert prompt =~ "backend is agent-browser CLI"
-    assert prompt =~ "more than one computer"
-    assert prompt =~ "/usr/local/bin"
+    assert prompt =~ "installed on the computer running this conversation"
+    assert prompt =~ "login-shell and current workspace environments"
     assert prompt =~ "Web is an entry surface, not a Linux execution host"
     refute prompt =~ "There is no Unix shell"
 

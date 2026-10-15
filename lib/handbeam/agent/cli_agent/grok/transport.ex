@@ -7,7 +7,7 @@ defmodule Handbeam.Agent.CliAgent.Grok.Transport do
   """
 
   alias Handbeam.Agent.CliAgent.Grok.Codec
-  alias Handbeam.Platform.ProcessManager
+  alias Handbeam.Platform.{CommandEnvironment, ProcessManager, WorkspaceEnvironment}
 
   @executable "grok"
 
@@ -46,8 +46,13 @@ defmodule Handbeam.Agent.CliAgent.Grok.Transport do
   def models(opts) do
     with {:ok, executable} <- resolve(opts) do
       cwd = Keyword.get(opts, :cwd) || File.cwd!()
+      env = WorkspaceEnvironment.port_env(cwd)
 
-      case System.cmd(executable, ["models"], cd: cwd, stderr_to_stdout: true) do
+      case System.cmd(executable, ["models"],
+             cd: cwd,
+             env: system_env(env),
+             stderr_to_stdout: true
+           ) do
         {output, 0} ->
           {:ok, output}
 
@@ -63,7 +68,7 @@ defmodule Handbeam.Agent.CliAgent.Grok.Transport do
         if File.regular?(path), do: {:ok, path}, else: {:error, :not_available}
 
       _ ->
-        case System.find_executable(@executable) do
+        case WorkspaceEnvironment.find_executable(@executable, opts[:cwd]) do
           nil -> {:error, :not_available}
           path -> {:ok, path}
         end
@@ -71,6 +76,8 @@ defmodule Handbeam.Agent.CliAgent.Grok.Transport do
   end
 
   defp spawn_port(executable, argv, cwd) do
+    env = WorkspaceEnvironment.port_env(cwd)
+
     options = [
       :binary,
       :exit_status,
@@ -82,10 +89,23 @@ defmodule Handbeam.Agent.CliAgent.Grok.Transport do
     ]
 
     options = if is_binary(cwd) and cwd != "", do: [{:cd, cwd} | options], else: options
+
+    options =
+      if env == [],
+        do: options,
+        else: [{:env, CommandEnvironment.encode_port_env(env)} | options]
+
     port = Port.open({:spawn_executable, executable}, options)
     {:ok, port, os_pid(port)}
   rescue
     error -> {:error, Exception.message(error)}
+  end
+
+  defp system_env(environment) do
+    Enum.map(environment, fn
+      {key, false} -> {key, nil}
+      pair -> pair
+    end)
   end
 
   defp os_pid(port) do

@@ -15,6 +15,7 @@ defmodule Handbeam.Agent.CliAgent.Grok do
   alias Handbeam.Agent.CliAgent.Grok.{Codec, Session, Transport}
   alias Handbeam.Agent.CliAgent.Session, as: CliSession
   alias Handbeam.Host
+  alias Handbeam.Platform.WorkspaceEnvironment
 
   @id "grok"
   @executable "grok"
@@ -107,7 +108,7 @@ defmodule Handbeam.Agent.CliAgent.Grok do
   defp executable_path(opts) do
     case Keyword.get(opts, :executable) do
       path when is_binary(path) and path != "" -> true
-      _ -> not is_nil(System.find_executable(@executable))
+      _ -> not is_nil(WorkspaceEnvironment.find_executable(@executable, opts[:cwd]))
     end
   end
 

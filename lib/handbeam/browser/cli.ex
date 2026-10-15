@@ -8,7 +8,7 @@ defmodule Handbeam.Browser.Cli do
   """
 
   alias Handbeam.Browser.Policy
-  alias Handbeam.Platform.ProcessManager
+  alias Handbeam.Platform.{CommandEnvironment, ProcessManager, WorkspaceEnvironment}
 
   @default_timeout_ms 35_000
   @binary "agent-browser"
@@ -48,7 +48,17 @@ defmodule Handbeam.Browser.Cli do
           {:ok, map()} | {:error, :missing_binary, String.t()} | {:error, String.t()}
   def run(args, opts \\ []) when is_list(args) do
     timeout_ms = Keyword.get(opts, :timeout_ms, @default_timeout_ms)
-    find = Keyword.get(opts, :find_executable, &System.find_executable/1)
+
+    find =
+      Keyword.get_lazy(opts, :find_executable, fn ->
+        fn name ->
+          WorkspaceEnvironment.find_executable(
+            name,
+            Keyword.get(opts, :workspace_path)
+          )
+        end
+      end)
+
     runner = Keyword.get(opts, :runner)
 
     with {:ok, executable} <- resolve_executable(opts, find) do
@@ -59,7 +69,7 @@ defmodule Handbeam.Browser.Cli do
       if is_function(runner, 2) do
         runner.(argv, run_opts)
       else
-        spawn_cli(executable, argv, timeout_ms)
+        spawn_cli(executable, argv, timeout_ms, opts)
       end
     end
   end
@@ -84,18 +94,30 @@ defmodule Handbeam.Browser.Cli do
     end
   end
 
-  defp spawn_cli(executable, argv, timeout_ms) do
+  defp spawn_cli(executable, argv, timeout_ms, opts) do
+    workspace = Keyword.get(opts, :workspace_path)
+    env = WorkspaceEnvironment.port_env(workspace)
+
+    port_opts = [
+      :binary,
+      :exit_status,
+      :use_stdio,
+      :stderr_to_stdout,
+      :hide,
+      {:args, Enum.map(argv, &String.to_charlist/1)}
+    ]
+
+    port_opts = if is_binary(workspace), do: [{:cd, workspace} | port_opts], else: port_opts
+
+    port_opts =
+      if env == [],
+        do: port_opts,
+        else: [{:env, CommandEnvironment.encode_port_env(env)} | port_opts]
+
     port =
       Port.open(
         {:spawn_executable, executable},
-        [
-          :binary,
-          :exit_status,
-          :use_stdio,
-          :stderr_to_stdout,
-          :hide,
-          {:args, Enum.map(argv, &String.to_charlist/1)}
-        ]
+        port_opts
       )
 
     os_pid =

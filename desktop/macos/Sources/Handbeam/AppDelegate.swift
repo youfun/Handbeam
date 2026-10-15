@@ -14,6 +14,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var visibilityObservers: [NSObjectProtocol] = []
 
     static func main() {
+        if CommandLine.arguments.count == 2 && CommandLine.arguments[1] == "--printenv" {
+            if let data = DesktopEnvironment.encoded(ProcessInfo.processInfo.environment) {
+                FileHandle.standardOutput.write(data)
+                return
+            }
+            exit(1)
+        }
+        if CommandLine.arguments.count == 3 &&
+            CommandLine.arguments[1] == "--capture-shell-environment" {
+            let inherited = ProcessInfo.processInfo.environment
+            let helper = URL(fileURLWithPath: CommandLine.arguments[0]).standardizedFileURL.path
+            if let environment = DesktopEnvironment.capture(
+                directory: CommandLine.arguments[2],
+                inherited: inherited,
+                helper: helper
+            ), let data = DesktopEnvironment.encoded(environment) {
+                FileHandle.standardOutput.write(data)
+                return
+            }
+            exit(1)
+        }
         let application = NSApplication.shared
         let delegate = AppDelegate()
         application.delegate = delegate

@@ -13,8 +13,6 @@ defmodule Handbeam.Browser.UserSurface do
 
   use GenServer
 
-  import Bitwise
-
   require Logger
 
   alias Handbeam.Browser.{Cli, Policy, Registry, StreamClient, Supervisor}
@@ -22,7 +20,6 @@ defmodule Handbeam.Browser.UserSurface do
   @slot "user"
   @idle_ms 10 * 60 * 1000
   @max_marks 20
-  @fallback_dirs ["/usr/local/bin", "/usr/bin"]
 
   defstruct conversation_id: nil,
             session_name: nil,
@@ -805,19 +802,8 @@ defmodule Handbeam.Browser.UserSurface do
   defp num(value, _default) when is_float(value) and value == value, do: value
   defp num(_value, default), do: default
 
-  # A desktop app's PATH is /usr/bin:/bin. The install card links the binary into
-  # /usr/local/bin, which `System.find_executable/1` will not search.
   defp find_executable(name) when is_binary(name) do
-    System.find_executable(name) || Enum.find_value(@fallback_dirs, &executable_in(&1, name))
-  end
-
-  defp executable_in(dir, name) do
-    path = Path.join(dir, name)
-
-    case File.stat(path) do
-      {:ok, %File.Stat{type: :regular, mode: mode}} when band(mode, 0o111) != 0 -> path
-      _ -> nil
-    end
+    Handbeam.Platform.WorkspaceEnvironment.find_executable(name, nil)
   end
 
   defp format_error({:error, :missing_binary, _binary}), do: "agent-browser is not installed"

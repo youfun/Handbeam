@@ -6,7 +6,13 @@ defmodule Handbeam.Platform.ProcessRunner do
   timeout handling, and cross-platform process tree termination.
   """
 
-  alias Handbeam.Platform.{ProcessManager, ProcessSandbox, ShellResolver}
+  alias Handbeam.Platform.{
+    CommandEnvironment,
+    ProcessManager,
+    ProcessSandbox,
+    ShellResolver,
+    WorkspaceEnvironment
+  }
 
   @max_output_bytes 50_000
   @max_output_lines 2_000
@@ -19,6 +25,8 @@ defmodule Handbeam.Platform.ProcessRunner do
   Job cleanup must be registered before releasing the gate.
   """
   def open_gated_bash(command, cwd, opts \\ []) do
+    opts = put_workspace_environment(opts)
+
     script =
       "printf 'handbeam-ready\\n'; IFS= read -r gate && [ \"$gate\" = go ] || exit 125; eval \"$1\""
 
@@ -102,6 +110,8 @@ defmodule Handbeam.Platform.ProcessRunner do
   end
 
   def open_tracked(opts) do
+    opts = put_workspace_environment(opts)
+
     with {:ok, shell} <- ShellResolver.resolve(opts),
          {:ok, invocation} <- ProcessSandbox.wrap(shell, opts[:command], opts[:cwd], opts) do
       port =
@@ -121,9 +131,7 @@ defmodule Handbeam.Platform.ProcessRunner do
 
     env =
       Enum.map(@release_env, &{String.to_charlist(&1), false}) ++
-        Enum.map(child_env(invocation.env), fn {key, value} ->
-          {String.to_charlist(key), String.to_charlist(value)}
-        end)
+        CommandEnvironment.encode_port_env(child_env(invocation.env))
 
     options = [{:env, env} | options]
 
@@ -147,15 +155,24 @@ defmodule Handbeam.Platform.ProcessRunner do
   end
 
   defp child_env(extra) do
-    case sanitized_path() do
-      nil -> extra
-      path -> [{"PATH", path} | extra]
-    end
+    environment = Map.new(extra)
+
+    path =
+      case Map.get(environment, "PATH") do
+        value when is_binary(value) and value != "" ->
+          CommandEnvironment.strip_release_erts(value)
+
+        _ ->
+          sanitized_path()
+      end
+
+    environment = if path, do: Map.put(environment, "PATH", path), else: environment
+    environment |> Map.drop(@release_env) |> Map.to_list()
   end
 
   defp sanitized_path do
     case System.get_env("PATH") do
-      path when is_binary(path) and path != "" -> strip_release_erts(path)
+      path when is_binary(path) and path != "" -> CommandEnvironment.strip_release_erts(path)
       _ -> nil
     end
   end
@@ -164,23 +181,16 @@ defmodule Handbeam.Platform.ProcessRunner do
     "'" <> String.replace(str, "'", "'\\''") <> "'"
   end
 
-  defp strip_release_erts(path) do
-    path
-    |> String.split(":", trim: true)
-    |> Enum.reject(&release_erts_dir?/1)
-    |> Enum.join(":")
-  end
+  defp put_workspace_environment(opts) do
+    case Keyword.get(opts, :workspace_path) do
+      path when is_binary(path) and path != "" ->
+        project = WorkspaceEnvironment.port_env(path) |> Map.new()
+        explicit = Keyword.get(opts, :env, []) |> Map.new()
+        Keyword.put(opts, :env, project |> Map.merge(explicit) |> Map.to_list())
 
-  defp release_erts_dir?(dir) do
-    expanded = Path.expand(dir)
-    # <release>/erts-<vsn>/bin — the release root is the parent of erts-*, not of bin.
-    erts = Path.dirname(expanded)
-    release = Path.dirname(erts)
-
-    not Handbeam.Host.packaged_mix_toolchain?() and
-      Path.basename(expanded) == "bin" and
-      String.starts_with?(Path.basename(erts), "erts-") and
-      File.regular?(Path.join(release, "releases/start_erl.data"))
+      _ ->
+        opts
+    end
   end
 
   # Linux kills the PID namespace init. macOS verifies and kills the independent

@@ -22,7 +22,7 @@ defmodule Handbeam.Platform.ProcessSandbox do
           executable: Path.t(),
           args: [String.t()],
           cwd: Path.t() | nil,
-          env: [{String.t(), String.t()}],
+          env: [{String.t(), String.t() | false}],
           pid_namespace?: boolean(),
           process_group?: boolean()
         }
@@ -30,6 +30,8 @@ defmodule Handbeam.Platform.ProcessSandbox do
   @spec wrap(map(), String.t(), Path.t() | nil, keyword()) ::
           {:ok, command()} | {:error, String.t()}
   def wrap(shell, command, cwd, opts) do
+    env = Keyword.get(opts, :env, [])
+
     case Keyword.get(opts, :workspace_path) do
       nil ->
         {:ok,
@@ -37,7 +39,7 @@ defmodule Handbeam.Platform.ProcessSandbox do
            executable: shell.path,
            args: shell.args ++ [command],
            cwd: cwd,
-           env: [],
+           env: env,
            pid_namespace?: false,
            process_group?: false
          }}
@@ -140,7 +142,7 @@ defmodule Handbeam.Platform.ProcessSandbox do
              executable: sandbox,
              args: bwrap_args(shell, command, cwd, workspace, writable),
              cwd: nil,
-             env: [],
+             env: Keyword.get(opts, :env, []),
              pid_namespace?: true,
              process_group?: false
            }}
@@ -157,7 +159,7 @@ defmodule Handbeam.Platform.ProcessSandbox do
          executable: sandbox,
          args: seatbelt_args(shell, command, workspace, tmp_dir, writable),
          cwd: cwd,
-         env: [{"TMPDIR", tmp_dir}],
+         env: merge_env(Keyword.get(opts, :env, []), [{"TMPDIR", tmp_dir}]),
          pid_namespace?: false,
          process_group?: true
        }}
@@ -178,6 +180,13 @@ defmodule Handbeam.Platform.ProcessSandbox do
       {:error, reason} ->
         {:error, "Cannot create sandbox temp dir: #{inspect(reason)}"}
     end
+  end
+
+  defp merge_env(base, overrides) do
+    base
+    |> Map.new()
+    |> Map.merge(Map.new(overrides))
+    |> Map.to_list()
   end
 
   defp unsupported,

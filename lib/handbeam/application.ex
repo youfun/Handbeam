@@ -36,6 +36,7 @@ defmodule Handbeam.Application do
         Handbeam.Browser.Display,
         Handbeam.Tool.Registry,
         Handbeam.Workspace.MixOwner,
+        Handbeam.Platform.WorkspaceEnvironment,
         Handbeam.Jobs.Cleaner,
         {DynamicSupervisor, name: Handbeam.Jobs.BeamSupervisor, strategy: :one_for_one},
         Handbeam.Jobs.Server,

@@ -54,14 +54,13 @@ defmodule Handbeam.Browser.Result do
 
       Handbeam is installed on more than one computer. Install on the computer \
       running this conversation, not on a development machine that already has it. \
-      A GUI or desktop app only searches /usr/local/bin and /usr/bin, so a shell, \
-      mise, or npm global install is invisible until it is linked there.
+      Handbeam loads the login-shell environment and the current workspace's \
+      environment, including tools exposed by mise, asdf, or direnv.
 
       Run this on that computer:
       #{command}
 
       Then restart Handbeam on that computer and retry the same browser call. \
-      Handbeam can keep running while you install. \
       Do not install it with the bash tool unless the user approves. \
       Do not treat another computer's install as success.
       """,

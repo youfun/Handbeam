@@ -151,14 +151,27 @@ final class BackendController {
         rotateLogIfNeeded()
 
         let secret = try resolveSecret(path: support.secret)
-        let database = ProcessInfo.processInfo.environment["DATABASE_PATH"] ?? support.database.path
+        let processEnvironment = ProcessInfo.processInfo.environment
+        let helper = Bundle.main.executableURL?.path ?? CommandLine.arguments[0]
+        let home = fileManager.homeDirectoryForCurrentUser.path
+        let captured = await Task.detached(priority: .userInitiated) {
+            DesktopEnvironment.capture(
+                directory: home,
+                inherited: processEnvironment,
+                helper: helper
+            )
+        }.value
+        guard generation == startGeneration else { return }
+        var inherited = DesktopEnvironment.merged(inherited: processEnvironment, captured: captured)
+        inherited["HANDBEAM_DESKTOP_ENV_HELPER"] = helper
+        let database = processEnvironment["DATABASE_PATH"] ?? support.database.path
         let launch = BackendPlanner.launch(
             releaseRoot: root.path,
             port: port,
             secret: secret,
             databasePath: database,
             runtimeDir: support.runtime.path,
-            inherited: ProcessInfo.processInfo.environment
+            inherited: inherited
         )
 
         let process = Process()

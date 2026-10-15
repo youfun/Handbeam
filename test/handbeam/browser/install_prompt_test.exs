@@ -18,11 +18,10 @@ defmodule Handbeam.Browser.InstallPromptTest do
 
       assert prompt.title =~ "agent-browser"
       assert prompt.command == InstallPrompt.command()
-      assert prompt.command =~ "npm install -g agent-browser && agent-browser install"
-      assert prompt.command =~ "/usr/local/bin/agent-browser"
+      assert prompt.command == "npm install -g agent-browser && agent-browser install"
       assert prompt.hint =~ "each computer"
       assert prompt.hint =~ "another machine"
-      assert prompt.hint =~ "Handbeam"
+      assert prompt.hint =~ "login-shell environment"
     end
 
     test "accepts string-keyed details from transcript restore" do
@@ -33,7 +32,6 @@ defmodule Handbeam.Browser.InstallPromptTest do
         })
 
       assert prompt.command == InstallPrompt.command()
-      assert prompt.command =~ "/usr/local/bin/agent-browser"
     end
 
     test "returns nil for other failures and empty input" do
@@ -69,7 +67,7 @@ defmodule Handbeam.Browser.InstallPromptTest do
 
       assert parsed.content =~ "npm install -g agent-browser && agent-browser install"
       assert parsed.content =~ "more than one computer"
-      assert parsed.content =~ "/usr/local/bin"
+      assert parsed.content =~ "mise, asdf, or direnv"
       assert parsed.content =~ "Do not install it with the bash tool"
       assert parsed.content =~ "another computer"
     end
