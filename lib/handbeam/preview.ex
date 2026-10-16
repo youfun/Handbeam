@@ -99,6 +99,6 @@ defmodule Handbeam.Preview do
     "handbeam://c/#{conversation_id}"
   end
 
-  defp base_url(nil), do: HandbeamWeb.Endpoint.url()
+  defp base_url(nil), do: Handbeam.EndpointAdapter.url()
   defp base_url(base) when is_binary(base), do: String.trim_trailing(base, "/")
 end

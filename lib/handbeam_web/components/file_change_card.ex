@@ -65,8 +65,8 @@ defmodule HandbeamWeb.FileChangeCard do
           class="file-change-copy"
           phx-hook="CopyText"
           data-copy={@path}
-          title={Gettext.gettext(HandbeamWeb.Gettext, "Copy relative path")}
-          aria-label={Gettext.gettext(HandbeamWeb.Gettext, "Copy relative path")}
+          title={Gettext.gettext(Handbeam.Gettext, "Copy relative path")}
+          aria-label={Gettext.gettext(Handbeam.Gettext, "Copy relative path")}
         >
           <svg
             class="copy-idle"
@@ -130,31 +130,31 @@ defmodule HandbeamWeb.FileChangeCard do
             phx-click="confirm_revert_change"
             phx-value-change_id={@change["change_id"]}
           >
-            {Gettext.gettext(HandbeamWeb.Gettext, "Revert")}
+            {Gettext.gettext(Handbeam.Gettext, "Revert")}
           </button>
         </div>
         <p :if={not @reversible?} class="file-change-note">
           {Gettext.gettext(
-            HandbeamWeb.Gettext,
+            Handbeam.Gettext,
             "This change is review-only and cannot be reverted from Handbeam."
           )}
         </p>
         <p :if={@message} class={["file-change-note", @message["status"]]}>{@message["message"]}</p>
         <div :if={@confirming?} id={"#{@card_id}-confirm"} class="file-change-confirm">
-          <span>{Gettext.gettext(HandbeamWeb.Gettext, "Revert this recorded change?")}</span>
+          <span>{Gettext.gettext(Handbeam.Gettext, "Revert this recorded change?")}</span>
           <button
             type="button"
             phx-click="revert_change"
             phx-value-change_id={@change["change_id"]}
           >
-            {Gettext.gettext(HandbeamWeb.Gettext, "Confirm revert")}
+            {Gettext.gettext(Handbeam.Gettext, "Confirm revert")}
           </button>
           <button type="button" phx-click="cancel_revert_change">
-            {Gettext.gettext(HandbeamWeb.Gettext, "Cancel")}
+            {Gettext.gettext(Handbeam.Gettext, "Cancel")}
           </button>
         </div>
         <p :if={@lines == []} class="file-change-note">
-          {Gettext.gettext(HandbeamWeb.Gettext, "No diff content is available for this change.")}
+          {Gettext.gettext(Handbeam.Gettext, "No diff content is available for this change.")}
         </p>
         <div :for={line <- @lines} class={["diff-line", "diff-#{line.type}"]}>
           <span class="diff-lineno">{line.number}</span>

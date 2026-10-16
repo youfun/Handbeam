@@ -482,9 +482,9 @@ defmodule HandbeamWeb.CoreComponents do
   def translate_error({msg, opts}) do
     # Use gettext to translate validation errors
     if count = opts[:count] do
-      Gettext.dngettext(HandbeamWeb.Gettext, "errors", msg, msg, count, opts)
+      Gettext.dngettext(Handbeam.Gettext, "errors", msg, msg, count, opts)
     else
-      Gettext.dgettext(HandbeamWeb.Gettext, "errors", msg, opts)
+      Gettext.dgettext(Handbeam.Gettext, "errors", msg, opts)
     end
 
     # Apply interpolation for %{key} placeholders

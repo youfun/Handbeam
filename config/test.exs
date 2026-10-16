@@ -67,6 +67,6 @@ config :handbeam,
   recover_transcripts: false,
   extension_hot_reload: false
 
-config :handbeam, HandbeamWeb.Gettext,
+config :handbeam, Handbeam.Gettext,
   default_locale: "en",
   locales: ~w(zh_CN en)

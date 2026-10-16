@@ -312,8 +312,7 @@ defmodule Handbeam.ConfigInspection do
   end
 
   defp endpoint_server do
-    Application.get_env(:handbeam, HandbeamWeb.Endpoint, []) |> Keyword.get(:server, false) ==
-      true
+    Handbeam.EndpointAdapter.server?()
   end
 
   defp approval({:error, _}),

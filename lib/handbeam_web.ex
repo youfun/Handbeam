@@ -90,7 +90,7 @@ defmodule HandbeamWeb do
       alias HandbeamWeb.Layouts
 
       # Gettext i18n
-      use Gettext, backend: HandbeamWeb.Gettext
+      use Gettext, backend: Handbeam.Gettext
 
       # Routes generation with the ~p sigil
       unquote(verified_routes())

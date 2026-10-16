@@ -17,7 +17,7 @@ defmodule HandbeamWeb.FileChangeCardTest do
 
   test "edit and write card labels stay untranslated in Chinese and English" do
     for locale <- ["zh_CN", "en"] do
-      Gettext.with_locale(HandbeamWeb.Gettext, locale, fn ->
+      Gettext.with_locale(Handbeam.Gettext, locale, fn ->
         for {tool, label} <- [{"edit", "edit"}, {"write", "Created"}] do
           html =
             Phoenix.LiveViewTest.render_component(&FileChangeCard.card/1,

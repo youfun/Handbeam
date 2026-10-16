@@ -16,7 +16,7 @@ defmodule Handbeam.Application do
 
     children =
       [
-        HandbeamWeb.Telemetry,
+        Application.fetch_env!(:handbeam, :telemetry_adapter),
         Handbeam.Storage.Health,
         Handbeam.StorageLock,
         Handbeam.Repo,
@@ -65,7 +65,7 @@ defmodule Handbeam.Application do
           Handbeam.Schedule.Recorder
         ] ++
         mcp_children() ++
-        [HandbeamWeb.Endpoint] ++ recovery_children()
+        [Handbeam.EndpointAdapter.implementation()] ++ recovery_children()
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
@@ -77,7 +77,7 @@ defmodule Handbeam.Application do
   # whenever the application is updated.
   @impl true
   def config_change(changed, _new, removed) do
-    HandbeamWeb.Endpoint.config_change(changed, removed)
+    Handbeam.EndpointAdapter.config_change(changed, removed)
     :ok
   end
 

@@ -9,8 +9,10 @@ import Config
 
 config :handbeam,
   ecto_repos: [Handbeam.Repo],
+  endpoint_adapter: HandbeamWeb.Endpoint,
   generators: [timestamp_type: :utc_datetime],
-  session_store: Handbeam.SessionStore.SQLite
+  session_store: Handbeam.SessionStore.SQLite,
+  telemetry_adapter: HandbeamWeb.Telemetry
 
 config :error_tracker,
   repo: Handbeam.Repo,
@@ -51,7 +53,7 @@ config :logger, :default_formatter,
 config :phoenix, :json_library, Handbeam.JSON
 
 # ── Gettext i18n 配置 ──
-config :handbeam, HandbeamWeb.Gettext,
+config :handbeam, Handbeam.Gettext,
   default_locale: "zh_CN",
   locales: ~w(zh_CN en)
 

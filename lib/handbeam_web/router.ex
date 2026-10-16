@@ -25,7 +25,7 @@ defmodule HandbeamWeb.Router do
         List.first(get_req_header(conn, "accept-language"))
       )
 
-    Gettext.put_locale(HandbeamWeb.Gettext, locale)
+    Gettext.put_locale(Handbeam.Gettext, locale)
     put_session(conn, :locale, locale)
   end
 

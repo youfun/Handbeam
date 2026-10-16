@@ -270,7 +270,7 @@ defmodule Handbeam.Threads do
   defp position(cursor, _binding) when cursor in [nil, ""], do: {:ok, 0}
 
   defp position(token, binding) when is_binary(token) and byte_size(token) <= 2048 do
-    case Phoenix.Token.verify(HandbeamWeb.Endpoint, "thread-page", token, max_age: 3600) do
+    case Handbeam.EndpointAdapter.verify("thread-page", token, max_age: 3600) do
       {:ok, {^binding, offset}} when is_integer(offset) and offset >= 0 -> {:ok, offset}
       _ -> {:error, :stale_or_invalid_cursor}
     end
@@ -280,7 +280,7 @@ defmodule Handbeam.Threads do
   defp cursor(false, _, _), do: nil
 
   defp cursor(true, binding, offset),
-    do: Phoenix.Token.sign(HandbeamWeb.Endpoint, "thread-page", {binding, offset})
+    do: Handbeam.EndpointAdapter.sign("thread-page", {binding, offset})
 
   defp slice_messages(messages, offset, budget) do
     {parts, _, _left, consumed, remaining} =

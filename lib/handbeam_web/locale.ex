@@ -9,7 +9,7 @@ defmodule HandbeamWeb.Locale do
   end
 
   defp default_locale do
-    config = Application.get_env(:handbeam, HandbeamWeb.Gettext, [])
+    config = Application.get_env(:handbeam, Handbeam.Gettext, [])
     UI.valid_locale(config[:default_locale]) || "zh_CN"
   end
 

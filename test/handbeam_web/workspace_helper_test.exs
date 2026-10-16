@@ -312,7 +312,7 @@ defmodule HandbeamWeb.WorkspaceHelperTest do
     end
 
     test "translates the edit summary" do
-      Gettext.with_locale(HandbeamWeb.Gettext, "zh_CN", fn ->
+      Gettext.with_locale(Handbeam.Gettext, "zh_CN", fn ->
         assert WorkspaceHelper.tool_work_summary([%{"tool" => "write"}]) == "已编辑 1 个文件"
       end)
     end
@@ -379,7 +379,7 @@ defmodule HandbeamWeb.WorkspaceHelperTest do
 
     test "tool detail labels stay untranslated in Chinese and English" do
       for locale <- ["zh_CN", "en"] do
-        Gettext.with_locale(HandbeamWeb.Gettext, locale, fn ->
+        Gettext.with_locale(Handbeam.Gettext, locale, fn ->
           for {tool, label} <- [
                 {"read", "read"},
                 {"read_file", "read"},

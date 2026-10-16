@@ -1,7 +1,7 @@
 defmodule HandbeamWeb.WorkspaceLive.Composer do
   @moduledoc false
 
-  use Gettext, backend: HandbeamWeb.Gettext
+  use Gettext, backend: Handbeam.Gettext
 
   import Phoenix.Component, only: [assign: 3]
   import Phoenix.LiveView, only: [cancel_upload: 3, consume_uploaded_entries: 3, stream: 4]

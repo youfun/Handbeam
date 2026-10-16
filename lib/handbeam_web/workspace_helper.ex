@@ -6,7 +6,7 @@ defmodule HandbeamWeb.WorkspaceHelper do
   or assigns — they can be tested and used independently.
   """
 
-  use Gettext, backend: HandbeamWeb.Gettext
+  use Gettext, backend: Handbeam.Gettext
 
   alias Handbeam.TranscriptEntry
   alias HandbeamWeb.ChangeHelper
@@ -794,7 +794,7 @@ defmodule HandbeamWeb.WorkspaceHelper do
   defp maybe_count_part(parts, count, _one, _other) when count <= 0, do: parts
 
   defp maybe_count_part(parts, count, one, other) do
-    parts ++ [Gettext.ngettext(HandbeamWeb.Gettext, one, other, count)]
+    parts ++ [Gettext.ngettext(Handbeam.Gettext, one, other, count)]
   end
 
   @doc """
