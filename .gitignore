@@ -59,6 +59,8 @@ modejs.json
 
 # macOS
 .DS_Store
+handbeam-web-macos-*.tar.gz
+handbeam-web-macos-*.tar.gz.sha256
 
 # Local dev artifacts
 test_rendered.html
@@ -81,3 +83,4 @@ terminal-*.png
 
 # Editor / agent sidecar
 .antigravitycli/
+/.cursor/
