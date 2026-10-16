@@ -17,7 +17,7 @@
   display: block;
   width: 2rem;
   height: 1rem;
-  border-radius: 999px;
+  border-radius: var(--sig-radius-full);
   background: var(--color-text-tertiary);
   transition: background-color 150ms ease;
 }
@@ -27,7 +27,7 @@
   width: 0.75rem;
   height: 0.75rem;
   margin: 0.125rem;
-  border-radius: 999px;
+  border-radius: var(--sig-radius-full);
   background: var(--sig-bg-elevated);
   transition: transform 150ms ease;
 }
@@ -544,7 +544,7 @@ input:checked + .settings-toggle-track .settings-toggle-thumb {
   background: var(--accent-bg);
   color: var(--accent);
   padding: 1px 5px;
-  border-radius: 3px;
+  border-radius: var(--sig-radius-sm);
 }
 
 /* ── Overlay / Dialog ── */
@@ -921,14 +921,14 @@ select.settings-input {
   align-items: center;
   gap: 2px;
   padding: 2px;
-  border-radius: 9px;
+  border-radius: var(--sig-radius-lg);
   background: var(--sig-bg-input);
 }
 
 .settings-seg .settings-chip {
   border: 0;
   background: transparent;
-  border-radius: 7px;
+  border-radius: var(--sig-radius-md);
   min-height: 28px;
   color: var(--sig-text-secondary);
 }
@@ -1058,7 +1058,7 @@ select.settings-input {
     min-height: 44px;
     margin: 0;
     white-space: nowrap;
-    border-radius: 999px;
+    border-radius: var(--sig-radius-lg);
     padding: 6px 12px;
     font-size: 12px;
     scroll-snap-align: start;

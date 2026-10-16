@@ -93,7 +93,7 @@
   left: 5px;
   width: 34px;
   height: 18px;
-  border-radius: 999px;
+  border-radius: var(--sig-radius-full);
   background: var(--sig-border-default);
   transition: background 150ms ease;
 }
@@ -216,7 +216,7 @@
   min-height: 32px;
   padding: 5px 10px;
   border: 1px solid var(--sig-border-default);
-  border-radius: 999px;
+  border-radius: var(--sig-radius-full);
   background: transparent;
   color: var(--sig-text-secondary);
   font: inherit;
@@ -278,7 +278,7 @@
   align-items: center;
   padding: 2px 7px;
   border: 1px solid var(--sig-border-default);
-  border-radius: 999px;
+  border-radius: var(--sig-radius-full);
   color: var(--sig-text-secondary);
   font-size: 11px;
   line-height: 1.35;

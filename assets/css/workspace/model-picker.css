@@ -336,7 +336,7 @@
     width: 100%;
     max-height: min(78dvh, 680px);
     border-width: 1px 0 0;
-    border-radius: 18px 18px 0 0;
+    border-radius: var(--sig-radius-xl) var(--sig-radius-xl) 0 0;
     padding-bottom: env(safe-area-inset-bottom, 0px);
     box-shadow: 0 -12px 36px rgb(0 0 0 / 18%);
   }
