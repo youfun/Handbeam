@@ -5,6 +5,35 @@ defmodule Handbeam.Permissions.ToolPolicyTest do
 
   defp call(name, input \\ %{}), do: %{id: "call_#{name}", name: name, input: input}
 
+  @tag :tmp_dir
+  test "unreadable or malformed settings deny execution even with prior session grants", %{
+    tmp_dir: root
+  } do
+    path = Handbeam.WorkspaceSettings.path(root)
+    File.mkdir_p!(Path.dirname(path))
+
+    for contents <- ["{broken", "[]"] do
+      File.write!(path, contents)
+      policy = ToolPolicy.from_workspace(root, %{"bash" => :auto}, ["bash", "schedule"])
+      assert ToolPolicy.decision(policy, call("bash")) == :deny
+      assert ToolPolicy.decision(policy, call("schedule", %{"action" => "list"})) == :deny
+    end
+
+    File.rm!(path)
+    File.mkdir!(path)
+    assert ToolPolicy.from_workspace(root) |> ToolPolicy.decision(call("write")) == :deny
+
+    File.rmdir!(path)
+    assert ToolPolicy.from_workspace(root) |> ToolPolicy.decision(call("write")) == :auto
+  end
+
+  test "malformed permission sections cannot discard restrictions and grant auto access" do
+    for tools <- [nil, [], %{"deny" => "bash"}, %{"per_tool" => []}, %{"mcp" => "deny"}] do
+      policy = ToolPolicy.from_settings(%{"tools" => tools}, %{"bash" => :auto}, ["bash"])
+      assert ToolPolicy.decision(policy, call("bash")) == :deny
+    end
+  end
+
   # Failure list for bash `unsandboxed: true` (written before the implementation):
   #   - full-access workspaces (`default_mode: auto`) still prompt;
   #   - read-only workspaces (`default_mode: deny`) deny;
@@ -147,14 +176,14 @@ defmodule Handbeam.Permissions.ToolPolicyTest do
       assert ToolPolicy.decision(policy, call("bash", %{"command" => "git status"})) == :deny
     end
 
-    test "invalid approval modes fall back safely to auto" do
+    test "invalid approval modes deny rather than grant execution" do
       settings = %{
         "tools" => %{"default_mode" => "wat", "per_tool" => %{"bash" => "wat"}}
       }
 
       policy = ToolPolicy.from_settings(settings)
-      assert ToolPolicy.decision(policy, call("bash")) == :auto
-      assert ToolPolicy.decision(policy, call("other")) == :auto
+      assert ToolPolicy.decision(policy, call("bash")) == :deny
+      assert ToolPolicy.decision(policy, call("other")) == :deny
     end
 
     test "mount tools auto-run in full access and prompt in safe mode" do

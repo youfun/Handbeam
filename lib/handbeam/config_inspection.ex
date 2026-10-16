@@ -318,8 +318,8 @@ defmodule Handbeam.ConfigInspection do
   defp approval({:error, _}),
     do: %{
       status: :workspace_settings_error,
-      effective_default: ToolPolicy.from_settings(%{}).default_mode,
-      source: :tool_policy_error_fallback,
+      effective_default: :deny,
+      source: :tool_policy_settings_error,
       call_decision: :unknown
     }
 

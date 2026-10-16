@@ -55,7 +55,7 @@ defmodule Handbeam.ConfigInspectionTest do
     assert Settings.effective_model_ai(root).om_message_tokens == 8003
   end
 
-  test "malformed settings and invalid approval mode report fallback without exception data", %{
+  test "malformed settings and invalid approval mode report denial without exception data", %{
     root: root
   } do
     write(root, "global.json", %{"model_ai" => "private malformed content"})
@@ -67,7 +67,7 @@ defmodule Handbeam.ConfigInspectionTest do
     report = ConfigInspection.report(workspace: root)
     assert report.model_ai == %{status: :invalid_settings_shape, effective: :unknown}
     assert report.approval.source == :tool_policy_default
-    assert report.approval.effective_default == :auto
+    assert report.approval.effective_default == :deny
     refute Handbeam.JSON.encode!(report) =~ "private"
   end
 
@@ -155,6 +155,7 @@ defmodule Handbeam.ConfigInspectionTest do
     File.write!(Path.join(root, ".handbeam/settings.jsonc"), "{\"#{secret}\": broken")
     report = ConfigInspection.report(workspace: root)
     assert report.approval.status == :workspace_settings_error
+    assert report.approval.effective_default == :deny
     refute Handbeam.JSON.encode!(report) =~ secret
   end
 

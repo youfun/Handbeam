@@ -29,6 +29,9 @@ defmodule Handbeam.Agent.Tool.ExecutorTest do
     def execute(%{"mode" => "nonzero"}, _context),
       do: {:ok, "exited with code 42", %{exit_code: 42}}
 
+    def execute(%{"mode" => "contradictory_error", "status" => status}, _context),
+      do: {:error, "real failure", %{status: status, side_effect: :unknown}}
+
     def execute(_input, _context), do: {:ok, "hello", %{exit_code: 0}}
   end
 
@@ -192,6 +195,33 @@ defmodule Handbeam.Agent.Tool.ExecutorTest do
   end
 
   describe "ToolResult integration" do
+    test "error tuples cannot be made successful by metadata" do
+      for status <- [:succeeded, :running, :interrupted] do
+        state = State.init(%Config{}, "probe")
+
+        assert {:ok, message, [ui_block]} =
+                 Executor.execute_all_with_details(
+                   [
+                     %{
+                       id: "contradiction",
+                       name: "result_fixture",
+                       input: %{"mode" => "contradictory_error", "status" => status}
+                     }
+                   ],
+                   state
+                 )
+
+        assert [block] = message.content
+        assert block.is_error
+        assert block.content == "real failure"
+
+        assert ui_block.details.status ==
+                 if(status == :interrupted, do: :interrupted, else: :failed)
+
+        assert ui_block.details.side_effect == :unknown
+      end
+    end
+
     test "strips details from tool_result blocks before storing in state" do
       config = %Config{
         working_directory: @fixtures_dir
@@ -634,6 +664,12 @@ defmodule Handbeam.Agent.Tool.ExecutorTest do
   end
 
   describe "result_to_block/2" do
+    test "an explicit error flag wins over the struct's default success status" do
+      block = Executor.result_to_block(%Result{content: "failed", is_error: true}, "failed-call")
+      assert block.is_error
+      assert block.details.status == :failed
+    end
+
     test "maps ToolResult to provider-compatible map" do
       result = Result.new("ok", %{exit_code: 0})
       block = Executor.result_to_block(result, "tool_1")

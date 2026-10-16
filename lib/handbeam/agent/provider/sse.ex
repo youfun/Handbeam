@@ -55,7 +55,8 @@ defmodule Handbeam.Agent.Provider.SSE do
   the HTTP stream. The accumulator must contain a `:buffer` key (string)
   for SSE framing state.
 
-  The accumulator is stored in `resp.private.sse_acc`.
+  The accumulator is stored in `resp.private.sse_acc`. If the callback raises,
+  the stream halts with a bounded `:stream_error`; providers must return it.
   """
   @spec req_stream_handler(map(), (map(), sse_event() -> map() | {:halt, map()})) ::
           ({:data, String.t()}, {term(), term()} ->
@@ -75,11 +76,10 @@ defmodule Handbeam.Agent.Provider.SSE do
             end
           rescue
             e ->
-              Logger.warning(fn ->
-                "SSE event handler crashed: #{Exception.message(e)}\n#{Exception.format_stacktrace(__STACKTRACE__)}"
-              end)
+              error = "SSE event handler failed (#{inspect(e.__struct__)})"
+              Logger.warning(error)
 
-              {:cont, {:cont, acc}}
+              {:halt, {:halt, Map.put(acc, :stream_error, error)}}
           end
         end)
 

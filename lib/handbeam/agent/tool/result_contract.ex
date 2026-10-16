@@ -4,7 +4,8 @@ defmodule Handbeam.Agent.Tool.ResultContract do
 
   Large bodies live in artifacts. LLM content, PubSub, EventRecorder, and
   transcript details only carry a bounded summary plus opaque references.
-  `is_error` is derived from `status` so the two cannot disagree.
+  Explicit failure signals take precedence over success/running metadata.
+  `is_error` is derived from the reconciled status so the two cannot disagree.
   """
 
   alias Handbeam.Agent.Tool.Result
@@ -82,8 +83,9 @@ defmodule Handbeam.Agent.Tool.ResultContract do
   def project_details(_details, _opts), do: nil
 
   @spec status(Result.t()) :: atom()
-  def status(%Result{status: status}) when status in @statuses, do: status
+  def status(%Result{status: status}) when status in [:failed, :interrupted], do: status
   def status(%Result{is_error: true}), do: :failed
+  def status(%Result{status: status}) when status in @statuses, do: status
   def status(%Result{}), do: :succeeded
 
   @spec side_effect(atom() | nil) :: atom()

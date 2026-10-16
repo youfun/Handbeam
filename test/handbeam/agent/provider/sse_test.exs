@@ -133,6 +133,23 @@ defmodule Handbeam.Agent.Provider.SSETest do
   # ── req_stream_handler/2 ─────────────────────────────────────────────
 
   describe "req_stream_handler/2" do
+    test "halts and preserves a bounded failure when a callback raises" do
+      caller = self()
+
+      handler =
+        SSE.req_stream_handler(%{buffer: ""}, fn _acc, event ->
+          send(caller, {:handled, event.data})
+          raise "secret payload that must not escape"
+        end)
+
+      assert {:halt, {_, response}} =
+               handler.({:data, "data: first\n\ndata: second\n\n"}, {%{}, %{private: %{}}})
+
+      assert_received {:handled, "first"}
+      refute_received {:handled, "second"}
+      assert response.private.sse_acc.stream_error == "SSE event handler failed (RuntimeError)"
+    end
+
     test "builds a function that processes SSE chunks into accumulator" do
       initial_acc = %{events: [], buffer: ""}
 

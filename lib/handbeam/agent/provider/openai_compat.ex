@@ -303,43 +303,60 @@ defmodule Handbeam.Agent.Provider.OpenAICompat do
     {:error, get_error_message(error)}
   end
 
-  defp parse_response(%{"choices" => [choice | _]} = body) when is_map(choice) do
-    [choice | _] = body["choices"]
-    message = choice["message"]
+  defp parse_response(
+         %{"choices" => [%{"message" => message, "finish_reason" => reason} | _]} = body
+       )
+       when is_map(message) and reason in ["stop", "tool_calls"] do
+    with {:ok, stop_reason, messages} <- parse_message(message, reason) do
+      {:ok,
+       %{
+         stop_reason: stop_reason,
+         messages: messages,
+         usage: Handbeam.Agent.Provider.openai_usage(body["usage"] || %{}),
+         provider_state: %{},
+         response_metadata: %{id: body["id"], model: body["model"]}
+       }}
+    end
+  end
 
-    has_tool_calls = is_list(message["tool_calls"]) and message["tool_calls"] != []
-
-    {stop_reason, messages} =
-      if has_tool_calls do
-        tool_calls = Enum.map(message["tool_calls"], &parse_tool_call/1)
-        {:tool_use, [Message.tool_use(tool_calls)]}
-      else
-        text = message["content"] || ""
-        {:end_turn, [Message.assistant(text)]}
-      end
-
-    usage_body = body["usage"] || %{}
-
-    usage = Handbeam.Agent.Provider.openai_usage(usage_body)
-
-    {:ok,
-     %{
-       stop_reason: stop_reason,
-       messages: messages,
-       usage: usage,
-       provider_state: %{},
-       response_metadata: %{id: body["id"], model: body["model"]}
-     }}
+  defp parse_response(%{"choices" => [%{"finish_reason" => reason} | _]})
+       when reason not in ["stop", "tool_calls"] do
+    {:error, "OpenAI-compatible response did not complete successfully"}
   end
 
   defp parse_response(%{"choices" => []}) do
     {:error, "OpenAI-compatible response contained no choices"}
   end
 
-  defp parse_response(body) do
-    Logger.debug("[OpenAICompat] Unexpected response shape: #{inspect(body)}")
+  defp parse_response(_body) do
     {:error, "Unexpected OpenAI-compatible response shape"}
   end
+
+  defp parse_message(%{"tool_calls" => calls}, _reason) when is_list(calls) and calls != [] do
+    result =
+      Enum.reduce_while(calls, {:ok, []}, fn call, {:ok, acc} ->
+        case parse_tool_call(call) do
+          {:ok, block} -> {:cont, {:ok, [block | acc]}}
+          {:error, _} = error -> {:halt, error}
+        end
+      end)
+
+    with {:ok, blocks} <- result do
+      {:ok, :tool_use, [Message.tool_use(Enum.reverse(blocks))]}
+    end
+  end
+
+  defp parse_message(%{"tool_calls" => calls}, _reason) when calls not in [nil, []],
+    do: {:error, "Malformed OpenAI-compatible tool calls"}
+
+  defp parse_message(_message, "tool_calls"),
+    do: {:error, "OpenAI-compatible response announced tool calls but supplied none"}
+
+  defp parse_message(%{"content" => text}, _reason) when is_binary(text) or is_nil(text),
+    do: {:ok, :end_turn, [Message.assistant(text || "")]}
+
+  defp parse_message(_message, _reason),
+    do: {:error, "Malformed OpenAI-compatible assistant message"}
 
   defp get_error_message(error) when is_map(error) do
     Handbeam.Utils.SafeMap.get_any(error, "message", :message) || inspect(error)
@@ -386,32 +403,20 @@ defmodule Handbeam.Agent.Provider.OpenAICompat do
     end
   end
 
-  defp parse_tool_call(tc) do
-    function = Map.get(tc, "function", %{})
+  defp parse_tool_call(%{"id" => id, "function" => %{"name" => name, "arguments" => args}})
+       when is_binary(id) and id != "" and is_binary(name) and name != "" and is_binary(args) do
+    case Handbeam.JSON.decode(args) do
+      {:ok, input} when is_map(input) ->
+        if String.trim(name) == "",
+          do: {:error, "Malformed OpenAI-compatible tool call"},
+          else: {:ok, %{type: "tool_use", id: id, name: name, input: input}}
 
-    args =
-      case Handbeam.JSON.decode(function["arguments"] || "{}") do
-        {:ok, decoded} -> decoded
-        {:error, _} -> %{}
-      end
-
-    name = function["name"]
-
-    if (not is_binary(name) or String.trim(name) == "") and dev_env?() do
-      Logger.debug("[OpenAICompat] parsed tool_call with missing name: #{inspect(tc)}")
+      _ ->
+        {:error, "Invalid JSON in tool call arguments: expected an object"}
     end
-
-    %{
-      type: "tool_use",
-      id: tc["id"],
-      name: name,
-      input: args
-    }
   end
 
-  defp dev_env? do
-    function_exported?(Mix, :env, 0) and Mix.env() == :dev
-  end
+  defp parse_tool_call(_call), do: {:error, "Malformed OpenAI-compatible tool call"}
 
   # ── Retry logic ──
 

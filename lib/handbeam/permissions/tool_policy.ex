@@ -6,6 +6,8 @@ defmodule Handbeam.Permissions.ToolPolicy do
   alias Handbeam.Browser.Policy, as: BrowserPolicy
   alias Handbeam.Permissions.{ApprovalMode, Matcher}
 
+  require Logger
+
   defstruct default_mode: :auto,
             allow: [],
             deny: [],
@@ -13,6 +15,7 @@ defmodule Handbeam.Permissions.ToolPolicy do
             mcp: %{},
             overrides: %{},
             session_allow: [],
+            settings_error: nil,
             workspace_root: nil
 
   @type t :: %__MODULE__{
@@ -23,6 +26,7 @@ defmodule Handbeam.Permissions.ToolPolicy do
           mcp: %{String.t() => ApprovalMode.t()},
           overrides: %{String.t() => ApprovalMode.t()},
           session_allow: [String.t()],
+          settings_error: atom() | nil,
           workspace_root: String.t() | nil
         }
 
@@ -31,14 +35,17 @@ defmodule Handbeam.Permissions.ToolPolicy do
 
   def from_workspace(workspace_root, overrides, session_allow)
       when is_binary(workspace_root) and workspace_root != "" do
-    settings =
+    policy =
       case Handbeam.WorkspaceSettings.load(workspace_root) do
-        {:ok, settings} -> settings
-        {:error, _reason} -> %{}
+        {:ok, settings} ->
+          from_settings(settings, overrides, session_allow)
+
+        {:error, _reason} ->
+          Logger.error("[ToolPolicy] workspace settings unavailable; denying tool execution")
+          %__MODULE__{default_mode: :deny, settings_error: :unavailable}
       end
 
-    from_settings(settings, overrides, session_allow)
-    |> Map.put(:workspace_root, workspace_root)
+    Map.put(policy, :workspace_root, workspace_root)
   end
 
   def from_workspace(_workspace_root, overrides, session_allow) do
@@ -53,23 +60,29 @@ defmodule Handbeam.Permissions.ToolPolicy do
   @spec from_settings(map(), map(), [String.t()]) :: t()
   def from_settings(settings, overrides \\ %{}, session_allow \\ []) when is_map(settings) do
     tools = Map.get(settings, "tools", %{})
-    tools = if is_map(tools), do: tools, else: %{}
 
-    %__MODULE__{
-      default_mode: ApprovalMode.parse(Map.get(tools, "default_mode"), :auto),
-      allow: string_list(Map.get(tools, "allow", [])),
-      deny: string_list(Map.get(tools, "deny", [])),
-      per_tool: parse_mode_map(Map.get(tools, "per_tool", %{})),
-      mcp: parse_mode_map(Map.get(tools, "mcp", %{})),
-      overrides: normalize_overrides(overrides),
-      session_allow: string_list(session_allow)
-    }
+    if valid_tools_settings?(tools) do
+      %__MODULE__{
+        default_mode: ApprovalMode.parse(Map.get(tools, "default_mode", :auto), :deny),
+        allow: string_list(Map.get(tools, "allow", [])),
+        deny: string_list(Map.get(tools, "deny", [])),
+        per_tool: parse_mode_map(Map.get(tools, "per_tool", %{})),
+        mcp: parse_mode_map(Map.get(tools, "mcp", %{})),
+        overrides: normalize_overrides(overrides),
+        session_allow: string_list(session_allow)
+      }
+    else
+      %__MODULE__{default_mode: :deny, settings_error: :invalid_tools}
+    end
   end
 
   @builtin_prompt_tools MapSet.new(["ext__term_send"])
   @mount_prompt_tools MapSet.new(["ext__mount__apply", "ext__mount__drop"])
 
   @spec decision(t(), map()) :: ApprovalMode.t()
+  def decision(%__MODULE__{settings_error: error}, call) when not is_nil(error) and is_map(call),
+    do: :deny
+
   def decision(%__MODULE__{} = policy, call) when is_map(call) do
     name = to_string(Handbeam.Utils.SafeMap.get_any(call, :name, "name") || "")
 
@@ -388,14 +401,23 @@ defmodule Handbeam.Permissions.ToolPolicy do
   defp string_list(list) when is_list(list), do: Enum.filter(list, &is_binary/1)
   defp string_list(_), do: []
 
+  defp valid_tools_settings?(tools) when is_map(tools) do
+    Enum.all?(["allow", "deny"], fn key ->
+      list = Map.get(tools, key, [])
+      is_list(list) and Enum.all?(list, &is_binary/1)
+    end) and Enum.all?(["per_tool", "mcp"], &is_map(Map.get(tools, &1, %{})))
+  end
+
+  defp valid_tools_settings?(_tools), do: false
+
   defp parse_mode_map(map) when is_map(map) do
-    Map.new(map, fn {key, value} -> {to_string(key), ApprovalMode.parse(value, :auto)} end)
+    Map.new(map, fn {key, value} -> {to_string(key), ApprovalMode.parse(value, :deny)} end)
   end
 
   defp parse_mode_map(_), do: %{}
 
   defp normalize_overrides(overrides) when is_map(overrides) do
-    Map.new(overrides, fn {key, value} -> {to_string(key), ApprovalMode.parse(value, :auto)} end)
+    Map.new(overrides, fn {key, value} -> {to_string(key), ApprovalMode.parse(value, :deny)} end)
   end
 
   defp normalize_overrides(_), do: %{}

@@ -3,6 +3,98 @@ defmodule Handbeam.Agent.TranscriptPersistenceTest do
 
   alias Handbeam.Agent.TranscriptPersistence
 
+  test "message consumption failures are returned rather than acknowledged" do
+    {:ok, conversation} = Handbeam.ConversationStore.create("default", timeline: [])
+    id = conversation["id"]
+
+    assert {:ok, _} =
+             TranscriptPersistence.append_inbound(id, "pending", transcript_id: "pending")
+
+    for event <- [{:run_start, %{}}, {:candidate_message_injected, %{message_ids: ["pending"]}}] do
+      opts = [
+        transcript_store: __MODULE__.FailingStore,
+        origin: :test,
+        transcript_id: "pending",
+        run_id: "consumption"
+      ]
+
+      assert {:error, :eacces} =
+               TranscriptPersistence.handle_event(
+                 id,
+                 event,
+                 Keyword.put(opts, :fail_operation, :update)
+               )
+
+      assert :ok = TranscriptPersistence.handle_event(id, event, opts)
+    end
+
+    assert [%{"consumption" => "consumed", "consumed_run_id" => "consumption"}] =
+             Handbeam.ConversationStore.load_messages(id)
+  end
+
+  test "an explicit failed run cannot finalize partial text as completed without an error string" do
+    for status <- [:error, "error", :timeout, "timeout"] do
+      {:ok, conversation} = Handbeam.ConversationStore.create("default", timeline: [])
+      id = conversation["id"]
+      opts = [run_id: "failed-run"]
+      assert :ok = TranscriptPersistence.handle_event(id, {:run_start, %{}}, opts)
+
+      assert :ok =
+               TranscriptPersistence.handle_event(id, {:message_delta, %{chunk: "partial"}}, opts)
+
+      assert :ok = TranscriptPersistence.handle_event(id, {:run_end, %{status: status}}, opts)
+
+      assistant =
+        Enum.find(Handbeam.ConversationStore.load_messages(id), &(&1["role"] == "assistant"))
+
+      assert assistant["status"] == "error"
+    end
+  end
+
+  test "stop notice persistence failure is returned and retry remains possible" do
+    {:ok, conversation} = Handbeam.ConversationStore.create("default", timeline: [])
+    id = conversation["id"]
+    opts = [transcript_store: __MODULE__.FailingStore, run_id: "stop-notice"]
+    assert :ok = TranscriptPersistence.handle_event(id, {:run_start, %{}}, opts)
+
+    assert {:error, :enospc} =
+             TranscriptPersistence.handle_event(
+               id,
+               {:run_end, %{status: :max_turns, turns: 4}},
+               Keyword.put(opts, :fail_operation, :append)
+             )
+
+    assert [] = Handbeam.ConversationStore.load_messages(id)
+
+    assert :ok =
+             TranscriptPersistence.handle_event(
+               id,
+               {:run_end, %{status: :max_turns, turns: 4}},
+               opts
+             )
+
+    assert [%{"content_type" => "system_msg"}] = Handbeam.ConversationStore.load_messages(id)
+  end
+
+  test "explicit failed and interrupted tool status is durable even without an error string" do
+    {:ok, conversation} = Handbeam.ConversationStore.create("default", timeline: [])
+    id = conversation["id"]
+
+    for status <- [:failed, "failed", :interrupted, "interrupted"] do
+      tool_use_id = "#{status}-#{System.unique_integer([:positive])}"
+
+      assert :ok =
+               TranscriptPersistence.handle_event(
+                 id,
+                 {:tool_end, %{tool_use_id: tool_use_id, tool: "bash", status: status}}
+               )
+    end
+
+    entries = Handbeam.ConversationStore.load_messages(id)
+    assert length(entries) == 4
+    assert Enum.all?(entries, &(&1["tool_status"] == "error"))
+  end
+
   defmodule FailingStore do
     alias Handbeam.ConversationTranscriptStore.ConversationStore, as: Store
 

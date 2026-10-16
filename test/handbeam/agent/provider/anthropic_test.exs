@@ -10,6 +10,23 @@ defmodule Handbeam.Agent.Provider.AnthropicTest do
   end
 
   describe "complete/3 with text response" do
+    test "does not turn truncation or a missing stop reason into end_turn" do
+      for reason <- ["max_tokens", "pause_turn", nil, "unknown"] do
+        config =
+          config_with_response(%{
+            status: 200,
+            body:
+              Handbeam.JSON.encode!(%{
+                "type" => "message",
+                "content" => [%{"type" => "text", "text" => "partial"}],
+                "stop_reason" => reason
+              })
+          })
+
+        assert {:error, _} = Anthropic.complete([Message.user("Hi")], [], config)
+      end
+    end
+
     test "returns normalized end_turn response" do
       config =
         config_with_response(%{
@@ -43,6 +60,38 @@ defmodule Handbeam.Agent.Provider.AnthropicTest do
   end
 
   describe "complete/3 with tool_use response" do
+    test "malformed content or absent announced tool calls cannot become successful output" do
+      for block <- [
+            %{"type" => "tool_use", "id" => "bad", "input" => %{}},
+            %{"type" => "tool_use", "id" => "bad", "name" => "read", "input" => []},
+            %{"type" => "text", "text" => nil},
+            %{"type" => "text", "text" => "partial"}
+          ] do
+        config =
+          config_with_response(%{
+            status: 200,
+            body:
+              Handbeam.JSON.encode!(%{
+                "type" => "message",
+                "stop_reason" => "tool_use",
+                "content" => [block]
+              })
+          })
+
+        assert {:error, _} = Anthropic.complete([Message.user("Hi")], [], config)
+
+        config =
+          config_with_sse_stream([
+            ant_event("content_block_start", %{"index" => 0, "content_block" => block}),
+            ant_event("content_block_stop", %{"index" => 0}),
+            ant_event("message_delta", %{"delta" => %{"stop_reason" => "tool_use"}}),
+            ant_event("message_stop", %{})
+          ])
+
+        assert {:error, _} = Anthropic.stream([Message.user("Hi")], [], config, fn _ -> :ok end)
+      end
+    end
+
     test "returns normalized tool_use response" do
       config =
         config_with_response(%{
@@ -219,6 +268,72 @@ defmodule Handbeam.Agent.Provider.AnthropicTest do
   # ── stream/4 ──
 
   describe "stream/4" do
+    test "requires message_stop and does not accept provider errors as success" do
+      for chunks <- [
+            [],
+            [ant_event("message_delta", %{"delta" => %{"stop_reason" => "end_turn"}})],
+            [
+              ant_event("error", %{
+                "type" => "error",
+                "error" => %{
+                  "type" => "overloaded_error",
+                  "message" => "overloaded Bearer private-token " <> String.duplicate("x", 4_000)
+                }
+              }),
+              ant_event("message_stop", %{})
+            ],
+            ["event: message_delta\ndata: not-json\n\n", ant_event("message_stop", %{})]
+          ] do
+        config = config_with_sse_stream(chunks)
+
+        assert {:error, reason} =
+                 Anthropic.stream([Message.user("Hi")], [], config, fn _ -> :ok end)
+
+        assert is_binary(reason)
+        assert byte_size(reason) <= 2_000
+        refute reason =~ "private-token"
+      end
+    end
+
+    test "does not replace malformed or unfinished streamed tool JSON with initial empty input" do
+      for {args, block_stop} <- [{"not-json", true}, {"[]", true}, {"{\"path\":", false}] do
+        events = [
+          ant_event("content_block_start", %{
+            "index" => 0,
+            "content_block" => %{
+              "type" => "tool_use",
+              "id" => "bad",
+              "name" => "read",
+              "input" => %{}
+            }
+          }),
+          ant_event("content_block_delta", %{
+            "index" => 0,
+            "delta" => %{"type" => "input_json_delta", "partial_json" => args}
+          })
+        ]
+
+        events =
+          if block_stop,
+            do: events ++ [ant_event("content_block_stop", %{"index" => 0})],
+            else: events
+
+        config =
+          config_with_sse_stream(
+            events ++
+              [
+                ant_event("message_delta", %{"delta" => %{"stop_reason" => "tool_use"}}),
+                ant_event("message_stop", %{})
+              ]
+          )
+
+        assert {:error, reason} =
+                 Anthropic.stream([Message.user("Hi")], [], config, fn _ -> :ok end)
+
+        refute reason =~ args
+      end
+    end
+
     test "emits text chunks" do
       config =
         config_with_sse_stream([

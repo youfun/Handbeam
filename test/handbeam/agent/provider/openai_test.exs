@@ -228,6 +228,41 @@ defmodule Handbeam.Agent.Provider.OpenAITest do
   end
 
   describe "complete/3 error handling" do
+    test "rejects malformed known output items instead of returning partial success" do
+      for item <- [
+            %{"type" => "function_call", "call_id" => "call_bad", "arguments" => "{}"},
+            function_call_item("call_bad", "", "{}"),
+            function_call_item(nil, "read", "{}") |> Map.delete("id"),
+            function_call_item("call_bad", "read", "[1,2]"),
+            function_call_item("call_bad", "read", ""),
+            %{"type" => "message", "role" => "assistant"},
+            %{
+              "type" => "message",
+              "role" => "assistant",
+              "content" => [
+                %{"type" => "output_text", "text" => 42}
+              ]
+            }
+          ] do
+        config =
+          config_with_response(%{
+            status: 200,
+            body: Handbeam.JSON.encode!(response_payload([assistant_text_item("partial"), item]))
+          })
+
+        assert {:error, reason} = OpenAI.complete([Message.user("Hi")], [], config)
+        assert is_binary(reason)
+      end
+    end
+
+    test "does not accept failed or incomplete response output as success" do
+      for status <- ["failed", "incomplete", "in_progress", "cancelled"] do
+        body = response_payload([assistant_text_item("partial")]) |> Map.put("status", status)
+        config = config_with_response(%{status: 200, body: Handbeam.JSON.encode!(body)})
+        assert {:error, _reason} = OpenAI.complete([Message.user("Hi")], [], config)
+      end
+    end
+
     test "returns error on API error" do
       config =
         config_with_response(%{
@@ -244,6 +279,72 @@ defmodule Handbeam.Agent.Provider.OpenAITest do
   end
 
   describe "stream/4" do
+    test "requires response.completed even when partial text and valid or invalid tool calls exist" do
+      for output <- [
+            [function_call_item("call_bad", "read", "not JSON")],
+            [],
+            [function_call_item("call_ok", "read", "{}")]
+          ] do
+        events =
+          Enum.map(output, fn item ->
+            "event: response.output_item.done\ndata: #{Handbeam.JSON.encode!(%{"item" => item})}\n\n"
+          end)
+
+        config =
+          config_with_sse_stream(
+            [sse_response_output_text_delta("partial") | events] ++ ["data: [DONE]\n\n"]
+          )
+
+        assert {:error, reason} =
+                 OpenAI.stream([Message.user("Hi")], [], config, fn _ -> :ok end)
+
+        assert reason in [
+                 "OpenAI stream ended without response.completed",
+                 "Invalid JSON in tool call arguments: expected an object"
+               ]
+      end
+    end
+
+    test "does not lose malformed JSON events or callback failures before completion" do
+      for {event, on_chunk} <- [
+            {"event: response.output_text.delta\ndata: not-json\n\n", fn _ -> :ok end},
+            {sse_response_output_text_delta("partial"), fn _ -> raise "private callback data" end}
+          ] do
+        config =
+          config_with_sse_stream([
+            event,
+            sse_response_completed([assistant_text_item("done")], %{})
+          ])
+
+        assert {:error, reason} = OpenAI.stream([Message.user("Hi")], [], config, on_chunk)
+        refute reason =~ "private callback data"
+        assert byte_size(reason) < 200
+      end
+    end
+
+    test "preserves invalid tool arguments errors in a completed stream" do
+      config =
+        config_with_sse_stream([
+          sse_response_completed([function_call_item("call_bad", "read", "not JSON")], %{})
+        ])
+
+      assert {:error, reason} = OpenAI.stream([Message.user("Hi")], [], config, fn _ -> :ok end)
+      assert reason =~ "Invalid JSON in tool call arguments"
+    end
+
+    test "malformed completed items cannot disappear behind a later completed response" do
+      item = %{"type" => "function_call", "call_id" => "bad", "arguments" => "{}"}
+
+      config =
+        config_with_sse_stream([
+          "event: response.output_item.done\ndata: #{Handbeam.JSON.encode!(%{"item" => item})}\n\n",
+          sse_response_completed([assistant_text_item("done")], %{})
+        ])
+
+      assert {:error, "Malformed OpenAI function_call"} =
+               OpenAI.stream([Message.user("Hi")], [], config, fn _ -> :ok end)
+    end
+
     test "emits text chunks and returns correct response" do
       config =
         config_with_sse_stream([
@@ -399,7 +500,11 @@ defmodule Handbeam.Agent.Provider.OpenAITest do
 
       config =
         config_with_sse_stream(
-          Enum.map(chunks, &sse_response_output_text_delta/1) ++ ["data: [DONE]\n\n"]
+          Enum.map(chunks, &sse_response_output_text_delta/1) ++
+            [
+              sse_response_completed([assistant_text_item(Enum.join(chunks))], %{}),
+              "data: [DONE]\n\n"
+            ]
         )
 
       assert {:ok, result} =
@@ -442,6 +547,7 @@ defmodule Handbeam.Agent.Provider.OpenAITest do
         config_with_sse_stream([
           "event: response.output_item.done\ndata: #{Jason.encode!(%{"type" => "response.output_item.done", "item" => reasoning})}\n\n",
           sse_response_output_text_delta("visible"),
+          sse_response_completed([reasoning, assistant_text_item("visible")], %{}),
           "data: [DONE]\n\n"
         ])
 
@@ -459,7 +565,11 @@ defmodule Handbeam.Agent.Provider.OpenAITest do
 
       config =
         config_with_sse_stream(
-          Enum.map(chunks, &sse_response_output_text_delta/1) ++ ["data: [DONE]\n\n"]
+          Enum.map(chunks, &sse_response_output_text_delta/1) ++
+            [
+              sse_response_completed([assistant_text_item(Enum.join(chunks))], %{}),
+              "data: [DONE]\n\n"
+            ]
         )
 
       assert {:ok, result} =
@@ -476,7 +586,11 @@ defmodule Handbeam.Agent.Provider.OpenAITest do
 
       config =
         config_with_sse_stream(
-          Enum.map(chunks, &sse_response_output_text_delta/1) ++ ["data: [DONE]\n\n"]
+          Enum.map(chunks, &sse_response_output_text_delta/1) ++
+            [
+              sse_response_completed([assistant_text_item(Enum.join(chunks))], %{}),
+              "data: [DONE]\n\n"
+            ]
         )
 
       assert {:ok, result} =

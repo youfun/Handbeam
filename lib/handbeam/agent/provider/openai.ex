@@ -440,12 +440,12 @@ defmodule Handbeam.Agent.Provider.OpenAI do
 
   defp handle_stream_event(acc, %{event: event_name, data: data}) do
     case Handbeam.JSON.decode(data) do
-      {:ok, parsed} ->
+      {:ok, parsed} when is_map(parsed) ->
         event_type = event_name || Map.get(parsed, "type")
         process_stream_event(acc, event_type, parsed)
 
-      {:error, _} ->
-        acc
+      _ ->
+        {:halt, %{acc | stream_error: "Invalid JSON object in OpenAI stream event"}}
     end
   end
 
@@ -493,7 +493,10 @@ defmodule Handbeam.Agent.Provider.OpenAI do
         "role=#{inspect(item["role"])} name=#{inspect(item["name"])}"
     )
 
-    %{acc | output: upsert_stream_output_item(acc.output, item)}
+    case parse_output_item(item) do
+      {:ok, _blocks} -> %{acc | output: upsert_stream_output_item(acc.output, item)}
+      {:error, reason} -> {:halt, %{acc | stream_error: reason}}
+    end
   end
 
   defp process_stream_event(acc, "response.completed", %{"response" => response})
@@ -508,11 +511,15 @@ defmodule Handbeam.Agent.Provider.OpenAI do
   end
 
   defp process_stream_event(acc, "response.failed", payload) do
-    %{acc | stream_error: parse_stream_event_error(payload)}
+    {:halt, %{acc | stream_error: parse_stream_event_error(payload)}}
+  end
+
+  defp process_stream_event(acc, "response.incomplete", _payload) do
+    {:halt, %{acc | stream_error: "OpenAI response incomplete"}}
   end
 
   defp process_stream_event(acc, "error", payload) do
-    %{acc | stream_error: parse_stream_event_error(payload)}
+    {:halt, %{acc | stream_error: parse_stream_event_error(payload)}}
   end
 
   defp process_stream_event(acc, _event_type, _payload), do: acc
@@ -560,39 +567,9 @@ defmodule Handbeam.Agent.Provider.OpenAI do
     parse_response(response)
   end
 
-  defp build_stream_response(%{content: content, output: output}) do
-    case parse_response(%{"output" => output || []}) do
-      {:ok, parsed} ->
-        {:ok, put_streamed_text(parsed, content)}
-
-      {:error, _} ->
-        text_blocks = if content == "", do: [], else: [%{type: "text", text: content}]
-
-        {:ok,
-         %{
-           stop_reason: :end_turn,
-           messages: [%Message{role: :assistant, content: text_blocks}],
-           usage: %{input_tokens: 0, output_tokens: 0}
-         }}
-    end
+  defp build_stream_response(_acc) do
+    {:error, "OpenAI stream ended without response.completed"}
   end
-
-  defp put_streamed_text(
-         %{messages: [%Message{content: blocks} = message | rest]} = parsed,
-         content
-       )
-       when is_binary(content) and content != "" and is_list(blocks) do
-    if Enum.any?(blocks, &(is_map(&1) and (&1[:type] == "text" or &1["type"] == "text"))) do
-      parsed
-    else
-      %{
-        parsed
-        | messages: [%{message | content: blocks ++ [%{type: "text", text: content}]} | rest]
-      }
-    end
-  end
-
-  defp put_streamed_text(parsed, _content), do: parsed
 
   defp parse_stream_event_error(payload) do
     error = Map.get(payload, "error") || get_in(payload, ["response", "error"])
@@ -690,6 +667,14 @@ defmodule Handbeam.Agent.Provider.OpenAI do
     end
   end
 
+  def parse_response(%{"error" => error}) when not is_nil(error) do
+    {:error, format_error_payload(error)}
+  end
+
+  def parse_response(%{"status" => status}) when status not in [nil, "completed"] do
+    {:error, "OpenAI response did not complete successfully"}
+  end
+
   def parse_response(%{"output" => output} = resp) when is_list(output) do
     usage = resp["usage"] || %{}
     provider_state = provider_state_from_response(resp)
@@ -743,12 +728,8 @@ defmodule Handbeam.Agent.Provider.OpenAI do
      }}
   end
 
-  def parse_response(%{"error" => error}) do
-    {:error, format_error_payload(error)}
-  end
-
-  def parse_response(resp) do
-    {:error, "Unexpected OpenAI response payload: #{inspect(resp)}"}
+  def parse_response(_resp) do
+    {:error, "Unexpected OpenAI response payload"}
   end
 
   defp parse_output_to_blocks(output) do
@@ -788,7 +769,9 @@ defmodule Handbeam.Agent.Provider.OpenAI do
 
   defp parse_output_item(%{"type" => "message", "role" => "assistant", "content" => content})
        when is_list(content) do
-    {:ok, parse_assistant_content(content)}
+    if Enum.any?(content, &malformed_assistant_part?/1),
+      do: {:error, "Malformed OpenAI assistant content"},
+      else: {:ok, parse_assistant_content(content)}
   end
 
   defp parse_output_item(%{"type" => "message", "role" => "assistant", "content" => text})
@@ -802,13 +785,16 @@ defmodule Handbeam.Agent.Provider.OpenAI do
     {:ok, blocks}
   end
 
-  defp parse_output_item(%{"type" => "function_call", "name" => name} = call) do
-    case decode_function_call_arguments(call) do
-      {:ok, input} ->
-        {:ok, [%{type: "tool_use", id: call["call_id"] || call["id"], name: name, input: input}]}
+  defp parse_output_item(%{"type" => "function_call", "name" => name} = call)
+       when is_binary(name) and name != "" do
+    id = call["call_id"] || call["id"]
 
-      {:error, _} = err ->
-        err
+    if is_binary(id) and id != "" and String.trim(name) != "" do
+      with {:ok, input} <- decode_function_call_arguments(call) do
+        {:ok, [%{type: "tool_use", id: id, name: name, input: input}]}
+      end
+    else
+      {:error, "Malformed OpenAI function_call"}
     end
   end
 
@@ -823,7 +809,18 @@ defmodule Handbeam.Agent.Provider.OpenAI do
      ]}
   end
 
+  defp parse_output_item(%{"type" => type}) when type in ["function_call", "message"],
+    do: {:error, "Malformed OpenAI #{type}"}
+
   defp parse_output_item(_item), do: {:ok, []}
+
+  defp malformed_assistant_part?(%{"type" => type} = part)
+       when type in ["text", "output_text"], do: not is_binary(part["text"])
+
+  defp malformed_assistant_part?(%{"type" => "refusal"} = part),
+    do: not is_binary(part["refusal"] || part["text"])
+
+  defp malformed_assistant_part?(part), do: not is_map(part)
 
   defp parse_assistant_content(content) when is_list(content) do
     content
@@ -852,24 +849,21 @@ defmodule Handbeam.Agent.Provider.OpenAI do
     if Enum.any?(content_blocks, &(&1.type == "tool_use")), do: :tool_use, else: :end_turn
   end
 
-  defp decode_function_call_arguments(%{"name" => name} = call) do
-    args = Map.get(call, "arguments", "")
+  defp decode_function_call_arguments(call) do
+    args = call["arguments"]
 
     case args do
-      "" ->
-        {:ok, %{}}
-
       encoded when is_binary(encoded) ->
         case Handbeam.JSON.decode(encoded) do
-          {:ok, input} -> {:ok, input}
-          {:error, _} -> {:error, "Invalid JSON in tool call arguments for #{name}"}
+          {:ok, input} when is_map(input) -> {:ok, input}
+          _ -> {:error, "Invalid JSON in tool call arguments: expected an object"}
         end
 
       decoded when is_map(decoded) ->
         {:ok, decoded}
 
       _other ->
-        {:error, "Invalid tool call arguments payload for #{name}"}
+        {:error, "Invalid tool call arguments payload: expected an object"}
     end
   end
 

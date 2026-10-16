@@ -18,8 +18,6 @@ defmodule Handbeam.Agent.Provider.OpenAIStream do
   `complete/3`.
   """
 
-  require Logger
-
   alias Handbeam.Agent.Message
   alias Handbeam.Agent.Provider.SSE
 
@@ -101,8 +99,8 @@ defmodule Handbeam.Agent.Provider.OpenAIStream do
 
   def handle_event(acc, %{data: data}) do
     case Handbeam.JSON.decode(data) do
-      {:ok, parsed} -> process_event(acc, parsed)
-      {:error, _} -> acc
+      {:ok, parsed} when is_map(parsed) -> process_event(acc, parsed)
+      _ -> {:halt, Map.put(acc, :stream_error, "Invalid JSON object in provider stream event")}
     end
   end
 
@@ -224,6 +222,9 @@ defmodule Handbeam.Agent.Provider.OpenAIStream do
     {:error, error}
   end
 
+  def build_response(%{finish_reason: "tool_calls", tool_calls: calls}) when map_size(calls) == 0,
+    do: {:error, "Provider response announced tool calls but supplied none"}
+
   def build_response(acc) do
     reasoning_blocks =
       if acc.reasoning_content != "",
@@ -245,7 +246,7 @@ defmodule Handbeam.Agent.Provider.OpenAIStream do
         name = resolved_tool_name(tc, input_result, acc)
 
         case {input_result, name} do
-          {{:ok, input}, name} when is_binary(name) and name != "" ->
+          {{:ok, input}, name} when is_map(input) and is_binary(name) and name != "" ->
             # Streaming tool_call deltas from some providers (StepFun)
             # omit the top-level id and function name. Generate an id when
             # missing. Recover a name only when the arguments match exactly
@@ -254,16 +255,14 @@ defmodule Handbeam.Agent.Provider.OpenAIStream do
             block = %{type: "tool_use", id: id, name: name, input: input}
             {:cont, [block | blocks]}
 
+          {{:ok, input}, _} when not is_map(input) ->
+            {:halt, {:error, "Invalid tool call JSON: expected an object"}}
+
           {{:ok, _input}, _} ->
-            dev_log(
-              "[OpenAIStream] dropping tool_call with missing name " <>
-                "index=#{inspect(index)} id=#{inspect(tc.id)} args=#{inspect(tc.arguments_buffer)}"
-            )
+            {:halt, {:error, "Missing or ambiguous tool call name"}}
 
-            {:cont, blocks}
-
-          {{:error, reason}, _} ->
-            {:halt, {:error, "Invalid tool call JSON for #{tc.name}: #{inspect(reason)}"}}
+          {{:error, _reason}, _} ->
+            {:halt, {:error, "Invalid tool call JSON: expected an object"}}
         end
       end)
 
@@ -384,14 +383,6 @@ defmodule Handbeam.Agent.Provider.OpenAIStream do
 
   defp parse_finish_reason("stop"), do: :end_turn
   defp parse_finish_reason("tool_calls"), do: :tool_use
-
-  defp dev_log(message) do
-    if dev_env?(), do: Logger.debug(message)
-  end
-
-  defp dev_env? do
-    function_exported?(Mix, :env, 0) and Mix.env() == :dev
-  end
 
   defp parse_error(status, body) when is_binary(body) do
     case Handbeam.JSON.decode(body) do

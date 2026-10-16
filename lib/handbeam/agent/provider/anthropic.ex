@@ -130,6 +130,8 @@ defmodule Handbeam.Agent.Provider.Anthropic do
       content_blocks: %{},
       input_json_buffers: %{},
       stop_reason: nil,
+      message_stopped?: false,
+      stream_error: nil,
       usage: %{},
       on_chunk: on_chunk,
       on_event: on_event
@@ -177,8 +179,8 @@ defmodule Handbeam.Agent.Provider.Anthropic do
   # Bridge from SSE module's raw events to Anthropic's typed event handler.
   defp handle_sse_raw_event(acc, %{event: event_type, data: data}) when is_binary(event_type) do
     case Handbeam.JSON.decode(data) do
-      {:ok, parsed} -> handle_sse_event(acc, event_type, parsed)
-      {:error, _} -> acc
+      {:ok, parsed} when is_map(parsed) -> handle_sse_event(acc, event_type, parsed)
+      _ -> {:halt, %{acc | stream_error: "Invalid JSON object in Anthropic stream event"}}
     end
   end
 
@@ -237,18 +239,37 @@ defmodule Handbeam.Agent.Provider.Anthropic do
   end
 
   defp handle_sse_event(acc, "content_block_stop", %{"index" => index}) do
-    with json_str when is_binary(json_str) <- Map.get(acc.input_json_buffers, index),
-         {:ok, input} <- Handbeam.JSON.decode(json_str) do
-      current = Map.get(acc.content_blocks, index, %{})
-      updated = Map.put(current, "input", input)
+    case Map.fetch(acc.input_json_buffers, index) do
+      :error ->
+        acc
 
-      acc
-      |> put_in([Access.key(:content_blocks), index], updated)
-      |> Map.put(:input_json_buffers, Map.delete(acc.input_json_buffers, index))
-    else
-      _ -> acc
+      {:ok, json_str} ->
+        case Handbeam.JSON.decode(json_str) do
+          {:ok, input} when is_map(input) ->
+            current = Map.fetch!(acc.content_blocks, index)
+            updated = Map.put(current, "input", input)
+
+            acc
+            |> put_in([Access.key(:content_blocks), index], updated)
+            |> Map.put(:input_json_buffers, Map.delete(acc.input_json_buffers, index))
+
+          _ ->
+            {:halt, %{acc | stream_error: "Invalid JSON in Anthropic tool call arguments"}}
+        end
     end
   end
+
+  defp handle_sse_event(acc, "error", payload) do
+    error =
+      payload
+      |> Handbeam.Log.Redactor.redact()
+      |> then(&parse_error(200, &1))
+      |> String.slice(0, 2_000)
+
+    {:halt, %{acc | stream_error: error}}
+  end
+
+  defp handle_sse_event(acc, "message_stop", _payload), do: %{acc | message_stopped?: true}
 
   defp handle_sse_event(acc, "message_delta", %{"delta" => delta, "usage" => usage}) do
     stop_reason = Map.get(delta, "stop_reason")
@@ -268,28 +289,26 @@ defmodule Handbeam.Agent.Provider.Anthropic do
     end)
   end
 
+  defp build_stream_response(%{stream_error: error}) when is_binary(error), do: {:error, error}
+
+  defp build_stream_response(%{message_stopped?: false}),
+    do: {:error, "Anthropic stream ended without message_stop"}
+
+  defp build_stream_response(%{input_json_buffers: buffers}) when map_size(buffers) > 0,
+    do: {:error, "Anthropic stream ended with unfinished tool call arguments"}
+
   defp build_stream_response(acc) do
-    # Sort content blocks by index and convert to normalized format
-    content_blocks =
+    blocks =
       acc.content_blocks
       |> Enum.sort_by(fn {index, _} -> index end)
       |> Enum.map(fn {_index, block} -> block end)
-      |> parse_content_blocks()
 
-    stop_reason = parse_stop_reason(acc.stop_reason)
-    usage = parse_usage(acc.usage)
-
-    message = %Message{
-      role: :assistant,
-      content: content_blocks
-    }
-
-    {:ok,
-     %{
-       stop_reason: stop_reason,
-       messages: [message],
-       usage: usage
-     }}
+    parse_response(%{
+      "type" => "message",
+      "content" => blocks,
+      "stop_reason" => acc.stop_reason,
+      "usage" => acc.usage
+    })
   end
 
   # --- Request Building ---
@@ -590,22 +609,25 @@ defmodule Handbeam.Agent.Provider.Anthropic do
     end
   end
 
-  defp parse_response(%{"type" => "message"} = resp) do
-    stop_reason = parse_stop_reason(resp["stop_reason"])
-    content_blocks = parse_content_blocks(resp["content"] || [])
-    usage = parse_usage(resp["usage"] || %{})
+  defp parse_response(%{"type" => "message", "stop_reason" => reason} = resp)
+       when reason in ["end_turn", "tool_use", "stop_sequence", "refusal"] do
+    with {:ok, content_blocks} <- parse_content_blocks(resp["content"]),
+         true <- reason != "tool_use" or Enum.any?(content_blocks, &(&1.type == "tool_use")) do
+      message = %Message{
+        role: :assistant,
+        content: content_blocks
+      }
 
-    message = %Message{
-      role: :assistant,
-      content: content_blocks
-    }
-
-    {:ok,
-     %{
-       stop_reason: stop_reason,
-       messages: [message],
-       usage: usage
-     }}
+      {:ok,
+       %{
+         stop_reason: parse_stop_reason(reason),
+         messages: [message],
+         usage: parse_usage(resp["usage"] || %{})
+       }}
+    else
+      false -> {:error, "Anthropic response announced tool use but supplied none"}
+      {:error, _} = error -> error
+    end
   end
 
   defp parse_response(%{"type" => "error"} = resp) do
@@ -613,15 +635,35 @@ defmodule Handbeam.Agent.Provider.Anthropic do
     {:error, "#{error["type"]}: #{error["message"]}"}
   end
 
+  defp parse_response(_resp), do: {:error, "Anthropic response did not complete successfully"}
+
   defp parse_stop_reason("end_turn"), do: :end_turn
   defp parse_stop_reason("tool_use"), do: :tool_use
-  defp parse_stop_reason("max_tokens"), do: :end_turn
   defp parse_stop_reason("stop_sequence"), do: :end_turn
-  defp parse_stop_reason(_), do: :end_turn
+  defp parse_stop_reason("refusal"), do: :end_turn
 
-  defp parse_content_blocks(blocks) do
-    Enum.map(blocks, &parse_content_block/1)
+  defp parse_content_blocks(blocks) when is_list(blocks) do
+    if Enum.all?(blocks, &valid_content_block?/1),
+      do: {:ok, Enum.map(blocks, &parse_content_block/1)},
+      else: {:error, "Malformed Anthropic response content"}
   end
+
+  defp parse_content_blocks(_blocks), do: {:error, "Malformed Anthropic response content"}
+
+  defp valid_content_block?(%{"type" => "text", "text" => text}), do: is_binary(text)
+
+  defp valid_content_block?(%{"type" => "thinking", "thinking" => thinking}),
+    do: is_binary(thinking)
+
+  defp valid_content_block?(%{"type" => type, "id" => id, "name" => name, "input" => input})
+       when type in ["tool_use", "server_tool_use"] do
+    is_binary(id) and id != "" and is_binary(name) and String.trim(name) != "" and is_map(input)
+  end
+
+  defp valid_content_block?(%{"type" => type})
+       when type in ["text", "thinking", "tool_use", "server_tool_use"], do: false
+
+  defp valid_content_block?(block), do: is_map(block)
 
   defp parse_content_block(%{"type" => "thinking", "thinking" => thinking} = block) do
     %{type: "thinking", thinking: thinking}

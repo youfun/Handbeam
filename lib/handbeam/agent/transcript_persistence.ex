@@ -110,17 +110,13 @@ defmodule Handbeam.Agent.TranscriptPersistence do
     Process.put(run_opts_key(conversation_id), opts)
     Process.put(run_payload_key(conversation_id), payload)
 
-    if opts[:origin] && opts[:transcript_id] do
-      Handbeam.ConversationTranscriptStore.update(
-        conversation_id,
-        opts[:transcript_id],
-        %{"consumption" => "consumed", "consumed_run_id" => opts[:run_id]},
-        opts
-      )
-    end
-
     Logger.debug("[TranscriptPersistence] run_start conversation=#{conversation_id}")
-    :ok
+
+    if opts[:origin] && opts[:transcript_id] do
+      consume_messages(conversation_id, [opts[:transcript_id]], opts)
+    else
+      :ok
+    end
   end
 
   def handle_event(conversation_id, {:message_delta, %{chunk: chunk} = payload}, opts)
@@ -243,56 +239,51 @@ defmodule Handbeam.Agent.TranscriptPersistence do
       Process.put(assistant_key(conversation_id), nil)
     end
 
-    for id <- ids do
-      Handbeam.ConversationTranscriptStore.update(
-        conversation_id,
-        id,
-        %{"consumption" => "consumed", "consumed_run_id" => opts[:run_id]},
-        opts
-      )
-    end
-
-    :ok
+    consume_messages(conversation_id, ids, opts)
   end
 
   def handle_event(conversation_id, {:stall_check_requested, payload}, opts)
       when is_binary(conversation_id) do
     evidence = payload_value(payload, :evidence) || "检测到没有进展"
     write_notice(conversation_id, "msg-stall-#{opts[:run_id] || "legacy"}", evidence, opts)
-    :ok
   end
 
   def handle_event(conversation_id, {:run_end, payload}, opts) when is_binary(conversation_id) do
     flush!(conversation_id, opts)
-    record_stop_notice(conversation_id, payload, opts)
 
-    run_error = payload_value(payload, :error)
-    terminal_opts = Keyword.put(opts, :terminal_usage, terminal_usage(payload))
+    with :ok <- record_stop_notice(conversation_id, payload, opts) do
+      run_error = payload_value(payload, :error)
+      terminal_opts = Keyword.put(opts, :terminal_usage, terminal_usage(payload))
 
-    result =
-      cond do
-        cancelled_run?(payload) ->
-          settle_unfinished(conversation_id, "cancelled", nil, terminal_opts)
+      result =
+        cond do
+          cancelled_run?(payload) ->
+            settle_unfinished(conversation_id, "cancelled", nil, terminal_opts)
 
-        not is_nil(run_error) ->
-          with :ok <- persist_run_error(conversation_id, run_error, opts) do
-            settle_unfinished(conversation_id, "error", run_error, terminal_opts)
-          end
+          is_nil(run_error) and
+              payload_value(payload, :status) in [:error, "error", :timeout, "timeout"] ->
+            settle_unfinished(conversation_id, "error", nil, terminal_opts)
 
-        true ->
-          finalize_successful_run(conversation_id, terminal_opts)
+          not is_nil(run_error) ->
+            with :ok <- persist_run_error(conversation_id, run_error, opts) do
+              settle_unfinished(conversation_id, "error", run_error, terminal_opts)
+            end
+
+          true ->
+            finalize_successful_run(conversation_id, terminal_opts)
+        end
+
+      with :ok <- result do
+        Process.put(assistant_key(conversation_id), nil)
+        Process.delete(assistant_segments_key(conversation_id))
+        Process.delete(segment_phases_key(conversation_id))
+        clear_buffer(conversation_id)
+        clear_thinking_buffer(conversation_id)
+        Process.delete(run_opts_key(conversation_id))
+        Process.delete(run_payload_key(conversation_id))
+        Handbeam.Agent.TranscriptRecovery.clear(conversation_id)
+        :ok
       end
-
-    with :ok <- result do
-      Process.put(assistant_key(conversation_id), nil)
-      Process.delete(assistant_segments_key(conversation_id))
-      Process.delete(segment_phases_key(conversation_id))
-      clear_buffer(conversation_id)
-      clear_thinking_buffer(conversation_id)
-      Process.delete(run_opts_key(conversation_id))
-      Process.delete(run_payload_key(conversation_id))
-      Handbeam.Agent.TranscriptRecovery.clear(conversation_id)
-      :ok
     end
   end
 
@@ -357,6 +348,20 @@ defmodule Handbeam.Agent.TranscriptPersistence do
 
         {:error, reason}
     end
+  end
+
+  defp consume_messages(conversation_id, ids, opts) do
+    Enum.reduce_while(ids, :ok, fn id, :ok ->
+      case Handbeam.ConversationTranscriptStore.update(
+             conversation_id,
+             id,
+             %{"consumption" => "consumed", "consumed_run_id" => opts[:run_id]},
+             opts
+           ) do
+        {:ok, _entry} -> {:cont, :ok}
+        {:error, _reason} = error -> {:halt, error}
+      end
+    end)
   end
 
   defp buffer_key(conversation_id), do: {__MODULE__, :buffer, conversation_id}
@@ -524,7 +529,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
           "[TranscriptPersistence] stop notice failed conversation=#{conversation_id} reason=#{inspect(reason)}"
         )
 
-        :ok
+        {:error, reason}
     end
   end
 
@@ -962,6 +967,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
   defp tool_status(payload, error) do
     case payload_value(payload, :status) do
       status when status in [:cancelled, "cancelled"] -> "cancelled"
+      status when status in [:failed, "failed", :interrupted, "interrupted"] -> "error"
       _status when not is_nil(error) -> "error"
       _status -> "done"
     end

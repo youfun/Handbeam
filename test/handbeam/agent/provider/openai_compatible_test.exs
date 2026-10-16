@@ -9,7 +9,7 @@ defmodule Handbeam.Agent.Provider.OpenAICompatibleTest do
     - Base URL concatenation to /chat/completions
     - Simple assistant text response (end_turn)
     - Tool calls response (tool_use) with arguments parsing
-    - Invalid tool arguments JSON fallback to empty map
+    - Invalid tool arguments JSON returns an error
     - tool_result message → OpenAI role=tool mapping
     - 401 no retry
     - 429 retry → success
@@ -516,7 +516,7 @@ defmodule Handbeam.Agent.Provider.OpenAICompatibleTest do
   # ── Invalid tool arguments JSON ──
 
   describe "invalid tool arguments JSON" do
-    test "returns empty map for malformed JSON arguments" do
+    test "returns an error for malformed JSON arguments" do
       body = %{
         "id" => "chatcmpl-005",
         "choices" => [
@@ -546,10 +546,32 @@ defmodule Handbeam.Agent.Provider.OpenAICompatibleTest do
 
       result = OpenAICompat.complete([user_msg()], tool_defs(), base_config())
 
-      assert {:ok, %{stop_reason: :tool_use, messages: [msg]}} = result
-      tc = List.first(msg.content)
-      assert tc[:name] == "read"
-      assert tc[:input] == %{}
+      assert {:error, reason} = result
+      assert reason =~ "Invalid JSON in tool call arguments"
+      refute reason =~ "not valid json"
+    end
+
+    test "rejects malformed calls and non-object arguments without partial execution" do
+      for call <- [
+            %{"id" => "bad", "function" => %{"arguments" => "{}"}},
+            %{"id" => "bad", "function" => %{"name" => "read", "arguments" => "[]"}},
+            %{"id" => "bad", "function" => %{"name" => "read"}},
+            %{"function" => %{"name" => "read", "arguments" => "{}"}}
+          ] do
+        body =
+          put_in(tool_calls_body(), ["choices", Access.at(0), "message", "tool_calls"], [call])
+
+        set_responses([mock_response(200, body)])
+        assert {:error, _reason} = OpenAICompat.complete([user_msg()], [], base_config())
+      end
+    end
+
+    test "rejects truncation, missing completion reason, or announced but absent tool calls" do
+      for reason <- ["length", "content_filter", nil, "tool_calls"] do
+        body = put_in(success_body(), ["choices", Access.at(0), "finish_reason"], reason)
+        set_responses([mock_response(200, body)])
+        assert {:error, _reason} = OpenAICompat.complete([user_msg()], [], base_config())
+      end
     end
   end
 

@@ -10,6 +10,48 @@ defmodule Handbeam.Agent.Provider.OpenAIStreamTest do
 
   alias Handbeam.Agent.Provider.OpenAIStream
 
+  test "stream/5 rejects malformed events and unresolvable tool calls instead of returning success" do
+    tool_events =
+      for function <- [%{"arguments" => "{}"}, %{"name" => "read", "arguments" => "[]"}] do
+        Handbeam.JSON.encode!(%{
+          "choices" => [
+            %{
+              "delta" => %{
+                "tool_calls" => [%{"index" => 0, "id" => "bad", "function" => function}]
+              }
+            }
+          ]
+        })
+      end
+
+    finish =
+      Handbeam.JSON.encode!(%{
+        "choices" => [%{"delta" => %{}, "finish_reason" => "tool_calls"}]
+      })
+
+    for data <- ["not-json", "{}" | tool_events] do
+      body = "data: #{data}\n\ndata: #{finish}\n\ndata: [DONE]\n\n"
+
+      Req.Test.stub(__MODULE__, fn conn ->
+        conn = Plug.Conn.send_chunked(conn, 200)
+        {:ok, conn} = Plug.Conn.chunk(conn, body)
+        conn
+      end)
+
+      assert {:error, reason} =
+               OpenAIStream.stream(
+                 "https://provider.test/chat/completions",
+                 [],
+                 %{},
+                 fn _ -> :ok end,
+                 plug: {Req.Test, __MODULE__}
+               )
+
+      assert is_binary(reason)
+      assert byte_size(reason) < 200
+    end
+  end
+
   defp new_acc do
     %{
       buffer: "",
@@ -467,7 +509,7 @@ defmodule Handbeam.Agent.Provider.OpenAIStreamTest do
       assert Enum.find(msg.content, &(&1[:type] == "tool_use"))[:name] == "web_fetch"
     end
 
-    test "drops a missing tool name when more than one definition matches" do
+    test "rejects a missing tool name when more than one definition matches" do
       args = Jason.encode!(%{url: "https://example.com"})
 
       url_tool = fn name ->
@@ -491,8 +533,7 @@ defmodule Handbeam.Agent.Provider.OpenAIStreamTest do
           tool_defs: [url_tool.("web_fetch"), url_tool.("open_url")]
       }
 
-      assert {:ok, %{messages: [msg]}} = OpenAIStream.build_response(acc)
-      refute Enum.any?(msg.content, &(&1[:type] == "tool_use"))
+      assert {:error, "Missing or ambiguous tool call name"} = OpenAIStream.build_response(acc)
     end
 
     test "returns error for invalid tool call JSON" do
@@ -512,7 +553,7 @@ defmodule Handbeam.Agent.Provider.OpenAIStreamTest do
       assert {:ok, %{stop_reason: :end_turn}} =
                OpenAIStream.build_response(%{new_acc() | finish_reason: "stop"})
 
-      assert {:ok, %{stop_reason: :tool_use}} =
+      assert {:error, "Provider response announced tool calls but supplied none"} =
                OpenAIStream.build_response(%{new_acc() | finish_reason: "tool_calls"})
 
       assert {:error, "Provider output truncated (finish_reason=length)"} =
