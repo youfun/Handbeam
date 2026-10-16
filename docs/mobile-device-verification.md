@@ -55,7 +55,7 @@ mix test --seed 48172
 
 记录 root/mobile 锁文件、OTP/Elixir、Mob、Zig、NDK/Xcode、设备 OS/ABI、构建模式、应用版本和安装包 SHA256。
 
-macOS 上 `mix test` 会排除 `:linux_jobs` 与 `:linux_sandbox`（见 `test/test_helper.exs`）。这些 **bwrap / 桌面 Bash job** 测试要单列，它们不是手机验收项目。手机无 shell，不要求在设备安装 bwrap。
+macOS 上 `mix test` 会运行桌面 Bash job 测试，但仍排除 `:linux_sandbox`（见 `test/test_helper.exs`）。这些 **bwrap / 桌面 Bash job** 测试要单列，它们不是手机验收项目。手机无 shell，不要求在设备安装 bwrap。
 
 Zig 必须是 `mobile/.tool-versions` 锁定的精确版本（当前 pin：`0.17.0-dev.269+ebff43698`）。`mix mob.doctor` 失败时先修工具链，不要用错版本的 Zig 打包后宣称 NIF 通过。
 

@@ -2,8 +2,8 @@
 # Run by Mix from the Ghostty dependency directory.
 set -euo pipefail
 
-if [[ "$(zig version)" != "0.16.0" ]]; then
-  echo "Ghostty source builds require Zig 0.16.0 (see mise.toml)." >&2
+if [[ "$(zig version)" != "0.17.0-dev.269+ebff43698" ]]; then
+  echo "Ghostty source builds require Zig 0.17.0-dev.269+ebff43698 (see mise.toml)." >&2
   exit 1
 fi
 
