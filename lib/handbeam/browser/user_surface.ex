@@ -803,7 +803,10 @@ defmodule Handbeam.Browser.UserSurface do
   defp num(_value, default), do: default
 
   defp find_executable(name) when is_binary(name) do
-    Handbeam.Platform.WorkspaceEnvironment.find_executable(name, nil)
+    case Handbeam.Platform.WorkspaceEnvironment.find_executable(name, nil) do
+      {:ok, executable} -> executable
+      {:error, _reason} -> nil
+    end
   end
 
   defp format_error({:error, :missing_binary, _binary}), do: "agent-browser is not installed"

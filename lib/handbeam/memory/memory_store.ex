@@ -484,17 +484,26 @@ defmodule Handbeam.Memory.MemoryStore do
     workspace_id = Keyword.get(opts, :workspace_id)
 
     cond do
-      privacy_mode == :local_only and is_binary(workspace_id) ->
+      privacy_mode == :local_only and valid_workspace_id?(workspace_id) ->
         where_workspace(query, workspace_id)
 
-      memory_scope == :workspace and is_binary(workspace_id) ->
+      privacy_mode == :local_only ->
+        where_none(query)
+
+      memory_scope == :workspace and valid_workspace_id?(workspace_id) ->
         where_workspace(query, workspace_id)
+
+      memory_scope == :workspace ->
+        where_none(query)
 
       memory_scope == :global ->
         where_global(query)
 
-      memory_scope == :both and is_binary(workspace_id) ->
+      memory_scope == :both and valid_workspace_id?(workspace_id) ->
         where_workspace_or_global(query, workspace_id)
+
+      memory_scope == :both ->
+        where_shareable_global(query)
 
       true ->
         query
@@ -513,6 +522,20 @@ defmodule Handbeam.Memory.MemoryStore do
   defp where_global(query) do
     where(query, [e], fragment("json_extract(?, '$.scope')", e.metadata) == "global")
   end
+
+  defp where_shareable_global(query) do
+    where(
+      query,
+      [e],
+      fragment("json_extract(?, '$.scope')", e.metadata) == "global" and
+        fragment("coalesce(json_extract(?, '$.privacy_mode'), '')", e.metadata) != "local_only"
+    )
+  end
+
+  defp where_none(query), do: where(query, [e], e.id < 0)
+
+  defp valid_workspace_id?(workspace_id),
+    do: is_binary(workspace_id) and String.trim(workspace_id) != ""
 
   defp where_workspace_or_global(query, workspace_id) do
     where(

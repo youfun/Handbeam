@@ -22,6 +22,7 @@ defmodule Handbeam.Extension.HotReloader do
   alias Handbeam.Agent.ExtensionBridge
   alias Handbeam.Extension.Loader
   alias Handbeam.Extension.Registry, as: ExtRegistry
+  alias Handbeam.ProjectTrust
 
   @default_debounce_ms 200
 
@@ -32,7 +33,7 @@ defmodule Handbeam.Extension.HotReloader do
   end
 
   defp reload_unlocked(opts) do
-    project = Keyword.get(opts, :project, ".")
+    project = trusted_project(opts)
     user_home = Keyword.get(opts, :user_home, default_user_home())
     ext_registry = Keyword.get(opts, :ext_registry, ExtRegistry)
 
@@ -118,11 +119,9 @@ defmodule Handbeam.Extension.HotReloader do
 
   @impl true
   def init(opts) do
-    project =
-      if Handbeam.ProjectTrust.enabled?(opts),
-        do: Keyword.get(opts, :project, File.cwd!()),
-        else: nil
-
+    configured_project = Keyword.get(opts, :project, File.cwd!())
+    project = trusted_project(opts)
+    trust_opts = Keyword.take(opts, [:trusted_project?])
     user_home = Keyword.get(opts, :user_home, default_user_home())
     ext_registry = Keyword.get(opts, :ext_registry, ExtRegistry)
     debounce_ms = Keyword.get(opts, :debounce_ms, @default_debounce_ms)
@@ -154,7 +153,10 @@ defmodule Handbeam.Extension.HotReloader do
     if preload? do
       {elapsed_us, result} =
         :timer.tc(fn ->
-          reload(project: project, user_home: user_home, ext_registry: ext_registry)
+          reload(
+            [project: configured_project, user_home: user_home, ext_registry: ext_registry] ++
+              trust_opts
+          )
         end)
 
       log_reload_result(elapsed_us, result)
@@ -163,6 +165,8 @@ defmodule Handbeam.Extension.HotReloader do
     {:ok,
      %{
        project: project,
+       configured_project: configured_project,
+       trust_opts: trust_opts,
        user_home: user_home,
        ext_registry: ext_registry,
        debounce_ms: debounce_ms,
@@ -179,13 +183,11 @@ defmodule Handbeam.Extension.HotReloader do
   end
 
   def handle_cast({:path_changed, path}, state) do
-    case project_from_extension_path(path) do
-      {:ok, discovered} ->
-        reload_project = reload_project_for(path, discovered, state)
-        {:noreply, schedule_reload(%{state | pending_project: reload_project})}
-
-      :error ->
-        {:noreply, state}
+    with {:ok, discovered} <- project_from_extension_path(path),
+         {:ok, reload_project} <- reload_project_for(path, discovered, state) do
+      {:noreply, schedule_reload(%{state | pending_project: reload_project})}
+    else
+      :error -> {:noreply, state}
     end
   end
 
@@ -208,9 +210,11 @@ defmodule Handbeam.Extension.HotReloader do
     {elapsed_us, result} =
       :timer.tc(fn ->
         reload(
-          project: project,
-          user_home: state.user_home,
-          ext_registry: state.ext_registry
+          [
+            project: project,
+            user_home: state.user_home,
+            ext_registry: state.ext_registry
+          ] ++ state.trust_opts
         )
       end)
 
@@ -238,11 +242,22 @@ defmodule Handbeam.Extension.HotReloader do
     user_dir = Path.expand(Path.join(state.user_home, ".handbeam/extensions"))
     expanded = Path.expand(path)
 
-    if expanded == user_dir or String.starts_with?(expanded, user_dir <> "/") do
-      state.project
-    else
-      discovered
+    cond do
+      expanded == user_dir or String.starts_with?(expanded, user_dir <> "/") ->
+        {:ok, state.configured_project}
+
+      ProjectTrust.enabled?(state.trust_opts) ->
+        {:ok, discovered}
+
+      true ->
+        :error
     end
+  end
+
+  defp trusted_project(opts) do
+    if ProjectTrust.enabled?(opts),
+      do: Keyword.get(opts, :project, File.cwd!()),
+      else: nil
   end
 
   defp default_user_home, do: Handbeam.Home.path()

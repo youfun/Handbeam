@@ -22,9 +22,16 @@ defmodule Handbeam.Extension.HotReloadTest do
     {:ok, tmp} = Handbeam.Security.PathValidator.canonicalize(tmp)
     old_home = System.get_env("HOME")
     System.put_env("HOME", tmp)
+    old_trust = Application.get_env(:handbeam, :trust_project_code)
+    Application.put_env(:handbeam, :trust_project_code, true)
 
     on_exit(fn ->
       if old_home, do: System.put_env("HOME", old_home), else: System.delete_env("HOME")
+
+      if is_nil(old_trust),
+        do: Application.delete_env(:handbeam, :trust_project_code),
+        else: Application.put_env(:handbeam, :trust_project_code, old_trust)
+
       File.rm_rf!(tmp)
     end)
 
@@ -157,6 +164,64 @@ defmodule Handbeam.Extension.HotReloadTest do
         preload: true,
         trusted_project?: false
       )
+
+    assert {:error, :not_found} = ExtRegistry.get(registry, "hotdemo")
+  end
+
+  test "explicit reload skips project extensions when project code is untrusted", %{
+    tmp: tmp,
+    registry: registry
+  } do
+    write_entry_extension!(tmp, "hotdemo", version: "0.1.0", result: ":v1")
+
+    assert {:ok, _diagnostics} =
+             HotReloader.reload(
+               project: tmp,
+               user_home: Path.join(tmp, "no-user"),
+               ext_registry: registry,
+               trusted_project?: false
+             )
+
+    assert {:error, :not_found} = ExtRegistry.get(registry, "hotdemo")
+  end
+
+  test "pending path reload rechecks project trust before compiling", %{
+    tmp: tmp,
+    registry: registry
+  } do
+    previous_trust = Application.get_env(:handbeam, :trust_project_code)
+    Application.put_env(:handbeam, :trust_project_code, true)
+
+    on_exit(fn ->
+      if is_nil(previous_trust),
+        do: Application.delete_env(:handbeam, :trust_project_code),
+        else: Application.put_env(:handbeam, :trust_project_code, previous_trust)
+    end)
+
+    other = Path.join(tmp, "untrusted-after-notify")
+    File.mkdir_p!(other)
+    write_entry_extension!(other, "hotdemo", version: "0.1.0", result: ":untrusted")
+
+    {:ok, pid} =
+      HotReloader.start_link(
+        name: :"hot_reload_recheck_#{System.unique_integer([:positive])}",
+        project: tmp,
+        user_home: Path.join(tmp, "no-user"),
+        ext_registry: registry,
+        enabled: true,
+        preload: false,
+        debounce_ms: 60_000
+      )
+
+    HotReloader.notify_path(
+      Path.join(other, ".handbeam/extensions/hotdemo/extension.json"),
+      pid
+    )
+
+    assert %{pending_project: ^other} = :sys.get_state(pid)
+    Application.put_env(:handbeam, :trust_project_code, false)
+    send(pid, :reload)
+    assert %{timer: nil, pending_project: nil} = :sys.get_state(pid)
 
     assert {:error, :not_found} = ExtRegistry.get(registry, "hotdemo")
   end
