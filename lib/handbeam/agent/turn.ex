@@ -17,17 +17,16 @@ defmodule Handbeam.Agent.Turn do
   }
 
   alias Handbeam.Agent.Middleware
+  alias Handbeam.Agent.Middleware.ToolGuard
   alias Handbeam.Agent.Provider.Retry
-  alias Handbeam.Agent.Tool.Executor
+  alias Handbeam.Agent.Tool.{Catalog, Executor}
+  alias Handbeam.Agent.Turn.StreamTracker
   alias Handbeam.Extension.HookPipeline
   alias Handbeam.Utils.SafeMap
 
   require Logger
 
   @max_tool_event_output 16_000
-  @final_turn_prompt """
-  You have reached the final agent step. Do not call tools. Give the user the best complete answer you can now. Summarize completed work, verification, unresolved items, and the next concrete action when anything remains.
-  """
 
   @doc """
   Resume agent loop from an interrupted tool-approval state.
@@ -50,47 +49,15 @@ defmodule Handbeam.Agent.Turn do
   """
   @spec resume_after_tool_approval(State.t(), [map()], keyword()) :: State.t()
   def resume_after_tool_approval(%State{status: :interrupted} = state, decisions, opts) do
-    interrupt_data = state.interrupt_data || %{}
-    hitl_ids = interrupt_id_list(interrupt_data, :hitl_tool_call_ids, "hitl_tool_call_ids")
+    resolution = ToolGuard.resolve_approval(state, decisions)
 
-    auto_ids =
-      interrupt_id_list(
-        interrupt_data,
-        :auto_approved_tool_call_ids,
-        "auto_approved_tool_call_ids"
-      )
-      |> MapSet.new()
-
-    tool_calls = last_tool_calls_from_state(state)
-    decision_by_id = decision_lookup(decisions)
-
-    {_denied_calls, decision_blocks, remembered_overrides, _denied_ids, approved_hitl_ids} =
-      partition_hitl_decisions(hitl_ids, tool_calls, decision_by_id)
-
-    classified_denied_blocks = (state.tool_guard_result_blocks || []) ++ decision_blocks
-
-    denied_ids =
-      MapSet.new(classified_denied_blocks, fn block ->
-        Handbeam.Utils.SafeMap.get_any(block, :tool_use_id, "tool_use_id")
-      end)
-
-    permitted_ids =
-      auto_ids
-      |> MapSet.union(approved_hitl_ids)
-      |> MapSet.difference(denied_ids)
-
-    denied_blocks =
-      total_denied_blocks(tool_calls, permitted_ids, classified_denied_blocks)
-
-    executable_calls =
-      Enum.filter(tool_calls, fn call ->
-        MapSet.member?(permitted_ids, Handbeam.Utils.SafeMap.get_any(call, :id, "id"))
-      end)
-
-    state = apply_approval_resume_state(state, denied_blocks, remembered_overrides)
-
-    state
-    |> continue_after_approval(executable_calls, tool_calls, denied_blocks, opts)
+    resolution.state
+    |> continue_after_approval(
+      resolution.executable_calls,
+      resolution.tool_calls,
+      resolution.denied_blocks,
+      opts
+    )
     |> finish_run(opts)
   end
 
@@ -102,102 +69,7 @@ defmodule Handbeam.Agent.Turn do
     state
   end
 
-  # ── Resume helpers ──
-
-  defp interrupt_id_list(interrupt_data, atom_key, string_key) do
-    Handbeam.Utils.SafeMap.get_any(interrupt_data, atom_key, string_key) || []
-  end
-
-  defp decision_lookup(decisions) do
-    Map.new(decisions, fn d ->
-      {Handbeam.Utils.SafeMap.get_any(d, ["tool_call_id", :tool_call_id]), d}
-    end)
-  end
-
-  defp partition_hitl_decisions(hitl_ids, tool_calls, decision_by_id) do
-    Enum.reduce(hitl_ids, {[], [], %{}, MapSet.new(), MapSet.new()}, fn call_id, acc ->
-      call =
-        Enum.find(
-          tool_calls,
-          &(Handbeam.Utils.SafeMap.get_any(&1, :id, "id") == call_id)
-        )
-
-      decision = Map.get(decision_by_id, call_id, %{})
-      fold_hitl_decision(acc, call_id, call, decision)
-    end)
-  end
-
-  defp fold_hitl_decision({calls, blocks, overrides, denied, approved}, call_id, call, decision) do
-    action =
-      Handbeam.Utils.SafeMap.get_any(decision, "action", :action) || "deny"
-
-    if to_string(action) == "approve" do
-      {calls, blocks, remember_session_grant(overrides, decision, call), denied,
-       MapSet.put(approved, call_id)}
-    else
-      deny_hitl_call(%{
-        calls: calls,
-        blocks: blocks,
-        overrides: overrides,
-        denied: denied,
-        approved: approved,
-        call_id: call_id,
-        call: call,
-        decision: decision,
-        action: action
-      })
-    end
-  end
-
-  defp deny_hitl_call(hitl) do
-    tool_name =
-      (hitl.call && Handbeam.Utils.SafeMap.get_any(hitl.call, [:name, "name"])) ||
-        Handbeam.Utils.SafeMap.get_any(hitl.decision, ["tool_name", :tool_name]) || "unknown"
-
-    block = denied_result_block(hitl.call_id, tool_name, hitl.action)
-    new_overrides = remember_deny_override(hitl.overrides, hitl.decision, tool_name)
-
-    {[hitl.call | hitl.calls], [block | hitl.blocks], new_overrides,
-     MapSet.put(hitl.denied, hitl.call_id), hitl.approved}
-  end
-
-  defp remember_deny_override(overrides, decision, tool_name) do
-    if Handbeam.Utils.SafeMap.get_any(decision, "remember", :remember) do
-      Map.put(overrides, tool_name, :deny)
-    else
-      overrides
-    end
-  end
-
-  defp total_denied_blocks(tool_calls, permitted_ids, blocks) do
-    by_id =
-      Map.new(blocks, fn block ->
-        {Handbeam.Utils.SafeMap.get_any(block, :tool_use_id, "tool_use_id"), block}
-      end)
-
-    tool_calls
-    |> Enum.reject(fn call ->
-      MapSet.member?(permitted_ids, Handbeam.Utils.SafeMap.get_any(call, :id, "id"))
-    end)
-    |> Enum.map(fn call ->
-      id = Handbeam.Utils.SafeMap.get_any(call, :id, "id")
-      name = Handbeam.Utils.SafeMap.get_any(call, :name, "name") || "unknown"
-      Map.get(by_id, id) || denied_result_block(id, name, "deny")
-    end)
-  end
-
-  defp apply_approval_resume_state(state, denied_blocks, remembered_overrides) do
-    {remembered_overrides, session_allow} = split_session_grants(remembered_overrides)
-    merged_overrides = Map.merge(state.tool_guard_overrides || %{}, remembered_overrides)
-    session_allow = Enum.uniq((state.tool_guard_session_allow || []) ++ session_allow)
-
-    state
-    |> Map.put(:status, :running)
-    |> Map.put(:interrupt_data, nil)
-    |> Map.put(:tool_guard_result_blocks, denied_blocks)
-    |> Map.put(:tool_guard_overrides, merged_overrides)
-    |> Map.put(:tool_guard_session_allow, session_allow)
-  end
+  # ── Approval execution ──
 
   defp continue_after_approval(state, [], _batch_calls, denied_blocks, opts) do
     result_msg = Message.tool_results(denied_blocks)
@@ -244,71 +116,6 @@ defmodule Handbeam.Agent.Turn do
     |> mw_run(:after_tool_execution)
     |> inject_candidate_messages(execution.opts, :steer)
     |> do_turn(execution.opts)
-  end
-
-  # "This session" remembers the suggested pattern, not `bash => :auto`.
-  # A tool-name grant sits under the unsandboxed gate and would still skip every
-  # later sandboxed prompt, including ones auto-review should see.
-  defp remember_session_grant(overrides, decision, call) do
-    if Handbeam.Utils.SafeMap.get_any(decision, ["remember", :remember]) do
-      pattern =
-        (call && Handbeam.Permissions.Remember.pattern(call)) ||
-          Handbeam.Utils.SafeMap.get_any(decision, ["suggested_pattern", :suggested_pattern])
-
-      if is_binary(pattern) and String.trim(pattern) != "" do
-        Map.put(overrides, {:session_allow, pattern}, :auto)
-      else
-        overrides
-      end
-    else
-      overrides
-    end
-  end
-
-  defp split_session_grants(overrides) do
-    {grants, rest} =
-      Enum.split_with(overrides, fn
-        {{:session_allow, _pattern}, :auto} -> true
-        _other -> false
-      end)
-
-    patterns =
-      Enum.map(grants, fn {{:session_allow, pattern}, :auto} -> pattern end)
-
-    {Map.new(rest), patterns}
-  end
-
-  defp last_tool_calls_from_state(%State{messages: messages}) do
-    messages
-    |> Enum.reverse()
-    |> Enum.find_value([], fn
-      %Message{role: :assistant} = message ->
-        case Message.tool_calls(message) do
-          [] -> nil
-          calls -> calls
-        end
-
-      _ ->
-        nil
-    end)
-  end
-
-  defp denied_result_block(tool_call_id, tool_name, action) do
-    {content, permission} =
-      case to_string(action) do
-        "skip" ->
-          {"Not selected this round. Request this action again.", :skipped}
-
-        _ ->
-          {"Tool call denied by user", :denied}
-      end
-
-    Message.tool_result_block(
-      tool_call_id,
-      content,
-      true,
-      %{permission: permission, tool: tool_name}
-    )
   end
 
   defp blocked_tool_result_block(call, block_source) do
@@ -841,7 +648,7 @@ defmodule Handbeam.Agent.Turn do
 
   defp do_provider_completion(state, opts, outbound_messages, provider_config) do
     provider = state.config.provider
-    {provider_config, tool_defs} = completion_tool_defs(state, opts, provider_config)
+    {provider_config, tool_defs} = Catalog.for_completion(state, opts, provider_config)
 
     estimated_tokens =
       Compactor.request_tokens(outbound_messages, state.usage_anchor,
@@ -878,8 +685,13 @@ defmodule Handbeam.Agent.Turn do
          tool_defs
        ) do
     streaming? = Keyword.get(opts, :streaming, false)
-    {chunk_tracker, streamed_text_tracker} = start_stream_trackers(streaming?)
-    on_chunk = completion_on_chunk(opts, streaming?, chunk_tracker, streamed_text_tracker)
+    stream_tracker = StreamTracker.start(streaming?)
+
+    on_chunk =
+      StreamTracker.callback(stream_tracker, streaming?, opts, fn payload ->
+        emit(opts, :message_delta, payload)
+      end)
+
     provider_config = prepare_completion_config(provider_config, opts, streaming?, on_chunk)
 
     Logger.debug(
@@ -897,8 +709,7 @@ defmodule Handbeam.Agent.Turn do
       provider_config: provider_config,
       streaming?: streaming?,
       on_chunk: on_chunk,
-      chunk_tracker: chunk_tracker,
-      streamed_text_tracker: streamed_text_tracker,
+      stream_tracker: stream_tracker,
       opts: opts
     }
 
@@ -959,44 +770,6 @@ defmodule Handbeam.Agent.Turn do
 
   defp append_block_budget(block, _trailer), do: block
 
-  defp start_stream_trackers(false), do: {nil, nil}
-
-  defp start_stream_trackers(true) do
-    tracker = Agent.start_link(fn -> %{text: "", phases: %{}} end)
-    {:counters.new(1, []), elem(tracker, 1)}
-  end
-
-  defp completion_on_chunk(opts, streaming?, chunk_tracker, streamed_text_tracker) do
-    cond do
-      is_function(Keyword.get(opts, :on_chunk), 1) ->
-        user_on_chunk = Keyword.fetch!(opts, :on_chunk)
-        user_completion_chunk(opts, chunk_tracker, streamed_text_tracker, user_on_chunk)
-
-      streaming? ->
-        streamed_completion_chunk(opts, chunk_tracker, streamed_text_tracker)
-
-      true ->
-        nil
-    end
-  end
-
-  defp user_completion_chunk(opts, chunk_tracker, streamed_text_tracker, user_on_chunk) do
-    fn chunk ->
-      track_chunk(chunk_tracker, chunk_text(chunk))
-      track_streamed_text(streamed_text_tracker, chunk)
-      notify_progress(opts, :message_delta)
-      user_on_chunk.(chunk_text(chunk))
-    end
-  end
-
-  defp streamed_completion_chunk(opts, chunk_tracker, streamed_text_tracker) do
-    fn chunk ->
-      track_chunk(chunk_tracker, chunk_text(chunk))
-      track_streamed_text(streamed_text_tracker, chunk)
-      emit_stream_chunk(opts, chunk)
-    end
-  end
-
   defp prepare_completion_config(provider_config, opts, streaming?, on_chunk) do
     provider_config
     |> Map.put(:stream, streaming?)
@@ -1011,69 +784,14 @@ defmodule Handbeam.Agent.Turn do
       else: provider_config
   end
 
-  defp completion_tool_defs(state, opts, provider_config) do
-    tool_defs = active_tool_defs(state, opts)
-    max_turns = state.config.max_turns
-    final_turn? = is_integer(max_turns) and state.turn + 1 >= max_turns
-    provider_config = maybe_require_final_answer(provider_config, final_turn?)
-    tool_defs = if final_turn?, do: [], else: tool_defs
-    {provider_config, tool_defs}
-  end
-
-  defp active_tool_defs(state, opts) do
-    authorized_tools = Executor.authorized_tools(state.config)
-    context = state.config.context || %{}
-
-    eager =
-      opts
-      |> Keyword.get(:session_id)
-      |> session_tool_defs()
-      |> Handbeam.MCP.Access.filter(context)
-      |> Enum.filter(&(&1.name in authorized_tools))
-      |> omit_idle_tool_search(context, authorized_tools)
-      |> Enum.map(
-        &Handbeam.Tool.Builtin.Task.contextualize_def(&1, state.config, authorized_tools)
-      )
-
-    (eager ++ loaded_tool_defs(state, context, authorized_tools, eager))
-    |> Handbeam.Agent.Provider.filter_context_tools(state.config.provider)
-  end
-
-  defp omit_idle_tool_search(defs, context, authorized_tools) do
-    if Enum.any?(defs, &(&1.name == "tool_search")) and
-         not Handbeam.Tool.Deferred.any?(context, authorized_tools) do
-      Enum.reject(defs, &(&1.name == "tool_search"))
-    else
-      defs
-    end
-  end
-
-  defp loaded_tool_defs(state, context, authorized_tools, eager) do
-    conversation_id = context[:conversation_id]
-    eager_names = MapSet.new(eager, & &1.name)
-    catalog = Map.new(Handbeam.Tool.Registry.deferred_catalog(), &{&1.name, &1})
-
-    conversation_id
-    |> Handbeam.Tool.Deferred.loaded_names()
-    |> Enum.filter(&(Map.has_key?(catalog, &1) and &1 in authorized_tools))
-    |> Enum.map(&Map.fetch!(catalog, &1))
-    |> Handbeam.MCP.Access.filter(context)
-    |> Enum.reject(&MapSet.member?(eager_names, &1.name))
-    |> Enum.map(&Map.take(&1, [:name, :description, :input_schema]))
-    |> Enum.map(&Handbeam.Tool.Builtin.Task.contextualize_def(&1, state.config, authorized_tools))
-  end
-
   defp compaction_call_opts(state, opts) do
     provider_config =
       state
       |> build_provider_config()
       |> Map.delete(:provider_state)
 
-    [tool_defs: active_tool_defs(state, opts), provider_config: provider_config]
+    [tool_defs: Catalog.active_defs(state, opts), provider_config: provider_config]
   end
-
-  defp session_tool_defs(nil), do: Handbeam.Tool.Registry.tool_defs()
-  defp session_tool_defs(sid), do: Handbeam.Tool.Registry.tool_defs_for_session(sid)
 
   defp invoke_provider_completion(completion) do
     try do
@@ -1086,14 +804,14 @@ defmodule Handbeam.Agent.Turn do
           completion.provider_config,
           completion.streaming?,
           completion.on_chunk,
-          completion.chunk_tracker,
+          completion.stream_tracker,
           0,
           completion.opts
         )
 
-      {result, take_streamed_text(completion.streamed_text_tracker)}
+      {result, StreamTracker.snapshot(completion.stream_tracker)}
     after
-      stop_streamed_text_tracker(completion.streamed_text_tracker)
+      StreamTracker.stop(completion.stream_tracker)
     end
   end
 
@@ -1157,12 +875,13 @@ defmodule Handbeam.Agent.Turn do
         length(completion.outbound_messages)
       )
 
-    emit_completion_messages(
-      completion.opts,
-      new_msgs,
+    StreamTracker.emit_completion(
       completion.streaming?,
-      completion.chunk_tracker,
-      streamed_text
+      completion.stream_tracker,
+      streamed_text,
+      new_msgs,
+      fn payload -> emit(completion.opts, :message_delta, payload) end,
+      &emit_assistant_messages(completion.opts, &1)
     )
 
     continue_after_end_turn(state, new_msgs, completion.opts)
@@ -1444,7 +1163,7 @@ defmodule Handbeam.Agent.Turn do
           retry_config = retry_config(state, provider_config)
 
           case {Retry.should_retry_error?(reason, attempt, retry_config),
-                chunks_emitted?(chunk_tracker)} do
+                StreamTracker.emitted?(chunk_tracker)} do
             {{:retry, _delay_ms}, false} ->
               if uncertain_cursor_error?(reason) do
                 result
@@ -1633,181 +1352,11 @@ defmodule Handbeam.Agent.Turn do
     )
   end
 
-  defp track_chunk(nil, _chunk), do: :ok
-  defp track_chunk(_counter, ""), do: :ok
-  defp track_chunk(counter, chunk) when is_binary(chunk), do: :counters.add(counter, 1, 1)
-
-  defp chunk_text(%{text: text}) when is_binary(text), do: text
-  defp chunk_text(text) when is_binary(text), do: text
-  defp chunk_text(_chunk), do: ""
-
-  defp emit_stream_chunk(opts, %{text: text, phase: phase, output_index: index})
-       when is_binary(text) and text != "" and is_integer(index) do
-    emit(opts, :message_delta, %{chunk: text, phase: phase, output_index: index})
-  end
-
-  defp emit_stream_chunk(opts, chunk) when is_binary(chunk) and chunk != "" do
-    emit(opts, :message_delta, %{chunk: chunk})
-  end
-
-  defp emit_stream_chunk(_opts, _chunk), do: :ok
-
-  defp track_streamed_text(nil, _chunk), do: :ok
-  defp track_streamed_text(_agent, ""), do: :ok
-
-  defp track_streamed_text(agent, chunk) when is_binary(chunk) do
-    Agent.update(agent, fn streamed ->
-      %{streamed | text: streamed.text <> chunk}
-    end)
-  end
-
-  defp track_streamed_text(agent, %{text: text, phase: phase, output_index: index})
-       when is_binary(text) and is_integer(index) do
-    Agent.update(agent, fn streamed ->
-      phases =
-        Map.update(streamed.phases, index, %{phase: phase, text: text}, fn current ->
-          %{current | phase: phase, text: current.text <> text}
-        end)
-
-      %{streamed | text: streamed.text <> text, phases: phases}
-    end)
-  end
-
-  defp track_streamed_text(_agent, _chunk), do: :ok
-
-  defp take_streamed_text(nil), do: %{text: "", phases: %{}}
-
-  defp take_streamed_text(agent) do
-    case Agent.get(agent, & &1) do
-      %{text: text, phases: phases} = streamed when is_binary(text) and is_map(phases) -> streamed
-      text when is_binary(text) -> %{text: text, phases: %{}}
-      _ -> %{text: "", phases: %{}}
-    end
-  end
-
-  defp stop_streamed_text_tracker(nil), do: :ok
-
-  defp stop_streamed_text_tracker(agent) do
-    Agent.stop(agent)
-  catch
-    :exit, _reason -> :ok
-  end
-
-  defp chunks_emitted?(nil), do: false
-  defp chunks_emitted?(counter), do: :counters.get(counter, 1) > 0
-
   defp maybe_put_provider_event_callback(provider_config, opts) do
     case Keyword.get(opts, :on_event) do
       fun when is_function(fun, 1) -> Map.put(provider_config, :on_event, fun)
       _ -> provider_config
     end
-  end
-
-  defp emit_completion_messages(opts, new_msgs, false, _chunk_tracker, _streamed_text) do
-    Logger.debug("[Turn] emitting completion messages non_streaming count=#{length(new_msgs)}")
-    emit_assistant_messages(opts, new_msgs)
-  end
-
-  defp emit_completion_messages(opts, new_msgs, true, chunk_tracker, streamed_text) do
-    if chunks_emitted?(chunk_tracker) do
-      maybe_emit_streaming_completion_tail(opts, new_msgs, streamed_text)
-    else
-      Logger.debug(
-        "[Turn] streaming produced no chunks; emitting final messages count=#{length(new_msgs)}"
-      )
-
-      emit_assistant_messages(opts, new_msgs)
-    end
-  end
-
-  defp maybe_emit_streaming_completion_tail(opts, new_msgs, %{phases: phases})
-       when map_size(phases) > 0 do
-    new_msgs
-    |> Enum.filter(&match?(%Message{role: :assistant}, &1))
-    |> Enum.flat_map(&text_blocks/1)
-    |> Enum.with_index()
-    |> Enum.each(fn {block, index} ->
-      streamed_block = Map.get(phases, index, %{text: "", phase: nil})
-      emit_unstreamed_tail(opts, block, streamed_block, index)
-    end)
-  end
-
-  defp maybe_emit_streaming_completion_tail(opts, new_msgs, %{text: streamed}) do
-    final_text =
-      new_msgs
-      |> Enum.filter(&match?(%Message{role: :assistant}, &1))
-      |> Enum.map_join(fn msg -> Message.text(msg) || "" end)
-
-    emit_text_tail(opts, final_text, streamed, nil)
-  end
-
-  defp text_blocks(%Message{content: blocks}) when is_list(blocks) do
-    Enum.filter(blocks, &(is_map(&1) and &1[:type] == "text" and is_binary(&1[:text])))
-  end
-
-  defp text_blocks(%Message{content: text}) when is_binary(text),
-    do: [%{type: "text", text: text}]
-
-  defp text_blocks(_), do: []
-
-  defp emit_unstreamed_tail(opts, block, streamed_block, index) do
-    phase = block[:phase] || streamed_block[:phase]
-
-    cond do
-      streamed_block.text == "" ->
-        emit(opts, :message_delta, stream_payload(block.text, phase, index))
-
-      streamed_block.text == block.text ->
-        :ok
-
-      String.starts_with?(block.text, streamed_block.text) ->
-        tail =
-          binary_part(
-            block.text,
-            byte_size(streamed_block.text),
-            byte_size(block.text) - byte_size(streamed_block.text)
-          )
-
-        emit(opts, :message_delta, stream_payload(tail, phase, index))
-
-      true ->
-        Logger.debug(
-          "[Turn] streaming assistant text diverged from chunks; keeping streamed text"
-        )
-    end
-  end
-
-  defp emit_text_tail(_opts, "", _streamed, _phase), do: :ok
-
-  defp emit_text_tail(_opts, final_text, streamed, _phase) when final_text == streamed do
-    Logger.debug("[Turn] streaming chunks already match final assistant text; skip replay")
-  end
-
-  defp emit_text_tail(opts, final_text, streamed, phase) when is_binary(streamed) do
-    cond do
-      String.starts_with?(final_text, streamed) ->
-        tail =
-          binary_part(
-            final_text,
-            byte_size(streamed),
-            byte_size(final_text) - byte_size(streamed)
-          )
-
-        emit(opts, :message_delta, stream_payload(tail, phase, nil))
-
-      true ->
-        Logger.debug(
-          "[Turn] streaming final assistant text diverged from streamed chunks; keeping streamed text"
-        )
-    end
-  end
-
-  defp emit_text_tail(_opts, _final_text, _streamed, _phase), do: :ok
-
-  defp stream_payload(text, phase, index) do
-    payload = %{chunk: text}
-    payload = if is_binary(phase), do: Map.put(payload, :phase, phase), else: payload
-    if is_integer(index), do: Map.put(payload, :output_index, index), else: payload
   end
 
   defp inject_candidate_messages(%State{} = state, opts, deliver_as) do
@@ -2161,18 +1710,6 @@ defmodule Handbeam.Agent.Turn do
     |> Map.put(:working_directory, config.working_directory)
     |> maybe_put_context(config)
     |> apply_reasoning_level(config)
-  end
-
-  defp maybe_require_final_answer(provider_config, false), do: provider_config
-
-  defp maybe_require_final_answer(provider_config, true) do
-    prompt = Map.get(provider_config, :system_prompt) || ""
-
-    Map.put(
-      provider_config,
-      :system_prompt,
-      String.trim_trailing(prompt) <> "\n\n" <> @final_turn_prompt
-    )
   end
 
   defp apply_reasoning_level(provider_config, config) do

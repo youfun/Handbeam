@@ -140,6 +140,43 @@ defmodule Handbeam.Agent.Middleware.ToolGuardTest do
     assert is_binary(data.approval_batch_id)
   end
 
+  test "approval resolution preserves hard denials and permits only classified calls" do
+    settings = %{
+      "tools" => %{
+        "deny" => ["bash(rm:*)"],
+        "per_tool" => %{"read" => "prompt", "web_fetch" => "auto"}
+      }
+    }
+
+    calls = [
+      %{type: "tool_use", id: "deny-1", name: "bash", input: %{"command" => "rm tmp"}},
+      %{type: "tool_use", id: "prompt-1", name: "read", input: %{"file_path" => "x"}},
+      %{
+        type: "tool_use",
+        id: "auto-1",
+        name: "web_fetch",
+        input: %{"url" => "https://example.com"}
+      },
+      %{type: "tool_use", id: "unknown-1", name: "read", input: %{"file_path" => "y"}}
+    ]
+
+    assert {:interrupt, interrupted, _data} =
+             ToolGuard.call(:after_tool_request, state(settings, calls))
+
+    resolution =
+      ToolGuard.resolve_approval(interrupted, [
+        %{"tool_call_id" => "prompt-1", "action" => "approve"}
+      ])
+
+    assert Enum.map(resolution.executable_calls, & &1.id) == ["prompt-1", "auto-1"]
+
+    assert MapSet.new(Enum.map(resolution.denied_blocks, & &1.tool_use_id)) ==
+             MapSet.new(["deny-1", "unknown-1"])
+
+    assert resolution.state.status == :running
+    assert resolution.state.interrupt_data == nil
+  end
+
   test "after_tool_request auto-approves browser eval in full access" do
     settings = %{"tools" => %{"default_mode" => "auto"}}
 

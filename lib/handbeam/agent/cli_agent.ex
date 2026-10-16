@@ -22,6 +22,7 @@ defmodule Handbeam.Agent.CliAgent do
 
   @type start_opts :: keyword()
   @type event :: Event.t()
+  @type input :: String.t() | Handbeam.Agent.Message.t()
 
   @doc "Stable backend id, such as `\"droid\"`."
   @callback id() :: String.t()
@@ -37,6 +38,9 @@ defmodule Handbeam.Agent.CliAgent do
   """
   @callback list_models(keyword()) :: {:ok, [model()]} | {:error, term()}
 
+  @doc "Explicit input capabilities exposed at the adapter boundary."
+  @callback capabilities() :: %{optional(:attachments) => boolean()}
+
   @doc """
   Start a long-lived session in a workspace cwd.
 
@@ -51,7 +55,7 @@ defmodule Handbeam.Agent.CliAgent do
 
   `on_event` receives each `Event.t()`. The return value is the same list.
   """
-  @callback send_message(Session.t(), String.t(), (event() -> term())) ::
+  @callback send_message(Session.t(), input(), (event() -> term())) ::
               {:ok, Session.t(), [event()]} | {:error, term()}
 
   @doc "Stop the current turn without killing the session, when the protocol supports it."
@@ -68,4 +72,6 @@ defmodule Handbeam.Agent.CliAgent do
 
   @doc "Close the process."
   @callback stop_session(Session.t()) :: :ok
+
+  @optional_callbacks capabilities: 0
 end

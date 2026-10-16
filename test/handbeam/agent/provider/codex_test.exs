@@ -432,8 +432,13 @@ defmodule Handbeam.Agent.Provider.CodexTest do
     alias Handbeam.Agent.{Config, State, Turn}
     registry = Handbeam.Tool.Registry
     registry_state = :sys.get_state(registry)
+    snapshot_sync_id = "codex-registry-sync-#{System.unique_integer([:positive])}"
     assert :ok = registry.register(Handbeam.Tool.Builtin.Read)
-    on_exit(fn -> :sys.replace_state(registry, fn _ -> registry_state end) end)
+
+    on_exit(fn ->
+      :sys.replace_state(registry, fn _ -> registry_state end)
+      assert :ok = registry.set_active_for_session(snapshot_sync_id, nil)
+    end)
 
     dir = Path.join(System.tmp_dir!(), "codex-turn-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)

@@ -29,6 +29,17 @@ defmodule Handbeam.Agent.Auth.XaiCredentialTest do
     end
   end
 
+  defmodule BlockingReq do
+    def post(url, opts) do
+      test_pid = Application.fetch_env!(:handbeam, :xai_refresh_test_pid)
+      send(test_pid, {:xai_refresh_started, self(), url, opts})
+
+      receive do
+        {:release_xai_refresh, reply} -> reply
+      end
+    end
+  end
+
   setup do
     tmp_dir =
       Path.join(System.tmp_dir!(), "sigil_xai_cred_#{System.unique_integer([:positive])}")
@@ -41,6 +52,7 @@ defmodule Handbeam.Agent.Auth.XaiCredentialTest do
     old_auth = System.get_env("HANDBEAM_AUTH_FILE")
     old_xai = System.get_env("XAI_API_KEY")
     old_openai = System.get_env("OPENAI_API_KEY")
+    old_refresh_test_pid = Application.fetch_env(:handbeam, :xai_refresh_test_pid)
 
     System.put_env("HANDBEAM_MODELS_FILE", models_path)
     System.put_env("HANDBEAM_AUTH_FILE", auth_path)
@@ -56,6 +68,7 @@ defmodule Handbeam.Agent.Auth.XaiCredentialTest do
       restore_env("HANDBEAM_AUTH_FILE", old_auth)
       restore_env("XAI_API_KEY", old_xai)
       restore_env("OPENAI_API_KEY", old_openai)
+      restore_config(:xai_refresh_test_pid, old_refresh_test_pid)
     end)
 
     {:ok, models_path: models_path, auth_path: auth_path}
@@ -63,6 +76,8 @@ defmodule Handbeam.Agent.Auth.XaiCredentialTest do
 
   defp restore_env(key, nil), do: System.delete_env(key)
   defp restore_env(key, value), do: System.put_env(key, value)
+  defp restore_config(key, {:ok, value}), do: Application.put_env(:handbeam, key, value)
+  defp restore_config(key, :error), do: Application.delete_env(:handbeam, key)
 
   defp write_xai_provider(models_path, overrides \\ %{}) do
     provider =
@@ -158,6 +173,43 @@ defmodule Handbeam.Agent.Auth.XaiCredentialTest do
     assert stored["access"] == "refreshed-access"
     assert stored["refresh"] == "refreshed-refresh"
     assert Process.get(:xai_oauth_calls) != []
+  end
+
+  test "refresh lock distinguishes concurrent callers", %{auth_path: auth_path} do
+    put_oauth(auth_path, %{"expires" => 1})
+    Application.put_env(:handbeam, :xai_refresh_test_pid, self())
+
+    opts = [req_module: BlockingReq, auth_path: auth_path]
+    first = Task.async(fn -> XaiCredential.resolve_transport_key("xai", opts) end)
+    assert_receive {:xai_refresh_started, first_refresh, _url, _request_opts}
+
+    parent = self()
+
+    second =
+      Task.async(fn ->
+        send(parent, {:second_refresh_attempted, self()})
+        XaiCredential.resolve_transport_key("xai", opts)
+      end)
+
+    assert_receive {:second_refresh_attempted, second_pid}
+    assert second.pid == second_pid
+    refute_receive {:xai_refresh_started, ^second_pid, _url, _request_opts}, 100
+
+    send(first_refresh, {
+      :release_xai_refresh,
+      {:ok,
+       %{
+         status: 200,
+         body: %{
+           "access_token" => "single-flight-access",
+           "refresh_token" => "single-flight-refresh",
+           "expires_in" => 21_600
+         }
+       }}
+    })
+
+    assert {:ok, %{api_key: "single-flight-access"}} = Task.await(first)
+    assert {:ok, %{api_key: "single-flight-access"}} = Task.await(second)
   end
 
   test "refresh failure requires reconnect and does not use env keys", %{

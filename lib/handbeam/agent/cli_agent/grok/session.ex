@@ -248,7 +248,7 @@ defmodule Handbeam.Agent.CliAgent.Grok.Session do
   end
 
   defp apply_permission(state, request) do
-    event = {:permission_request, Map.drop(request, [:id])}
+    event = {:permission_request, request}
 
     decision =
       cond do

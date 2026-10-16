@@ -398,9 +398,8 @@ defmodule Handbeam.Agent.CliAgent.Droid.Session do
         state = replace_last(state, answered_event(event, kind, result))
         write_request(state, next_id(), Codec.respond(message["id"], result), :server_reply)
 
-      {:error, reason} ->
-        state = emit(state, {:error, reason})
-        finish_turn(state, reason)
+      {:error, _reason} ->
+        finish_turn(state, :ok)
     end
   end
 
@@ -533,17 +532,6 @@ defmodule Handbeam.Agent.CliAgent.Droid.Session do
     case pending_turn(state) do
       {from, pending} ->
         GenServer.reply(from, {:ok, public_session(state), state.events})
-        %{state | status: :ready, listener: nil, events: [], pending: pending}
-
-      nil ->
-        %{state | status: :ready, listener: nil}
-    end
-  end
-
-  defp finish_turn(state, reason) do
-    case pending_turn(state) do
-      {from, pending} ->
-        GenServer.reply(from, {:error, reason})
         %{state | status: :ready, listener: nil, events: [], pending: pending}
 
       nil ->

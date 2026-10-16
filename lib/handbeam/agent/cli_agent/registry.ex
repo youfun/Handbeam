@@ -68,6 +68,23 @@ defmodule Handbeam.Agent.CliAgent.Registry do
     end
   end
 
+  @doc "Return explicitly declared backend capabilities. Missing declarations fail closed."
+  @spec capabilities(String.t()) :: {:ok, map()} | {:error, :unknown_backend}
+  def capabilities(id) when is_binary(id) do
+    with {:ok, module} <- fetch(id) do
+      capabilities =
+        if function_exported?(module, :capabilities, 0), do: module.capabilities(), else: %{}
+
+      {:ok, %{attachments: Map.get(capabilities, :attachments, false) == true}}
+    end
+  end
+
+  @doc "Whether a backend explicitly accepts prepared attachment-bearing messages."
+  @spec attachments?(String.t()) :: boolean()
+  def attachments?(id) when is_binary(id) do
+    match?({:ok, %{attachments: true}}, capabilities(id))
+  end
+
   defp available?(module) do
     Code.ensure_loaded?(module) and function_exported?(module, :available?, 0) and
       module.available?()

@@ -7,8 +7,10 @@ defmodule Handbeam.Agent.CliAgent.Run do
   Handbeam tool definitions, or pass CLI tool events to
   `Handbeam.Agent.Tool.Executor`.
 
-  This module is unused unless a caller selects a backend id. The default
-  chat path remains `Handbeam.Agent.Turn`.
+  A supervised `Handbeam.Agent.CliAgent.Runner` passes an `:event_sink`, so the
+  task only talks to the CLI and the Runner remains the sole persistence and
+  broadcast owner. Direct callers without a sink retain the standalone
+  persistence behavior.
   """
 
   alias Handbeam.Agent.CliAgent.{Event, Registry}
@@ -27,46 +29,52 @@ defmodule Handbeam.Agent.CliAgent.Run do
     * `:reasoning_effort` — a level that CLI accepts
     * `:session_id` — resume a backend session
     * `:auto` — `:low`, `:medium`, or `:high`; omitted means the backend default
-    * `:conversation_id` — when set, events are persisted and broadcast
+    * `:conversation_id` — when set, standalone events are persisted and broadcast
     * `:decision` — explicit permission or ask-user answer; never invented here
+    * `:event_sink` — Runner-owned normalized event sink
+    * `:session_observer` — asynchronous session lifecycle observer
   """
-  @spec turn(String.t(), keyword()) ::
+  @spec turn(Handbeam.Agent.CliAgent.input(), keyword()) ::
           {:ok, String.t(), map()}
           | {:awaiting, :permission | :ask_user, map()}
           | {:error, term()}
-  def turn(text, opts) when is_binary(text) and is_list(opts) do
+  def turn(input, opts)
+      when (is_binary(input) or is_struct(input, Handbeam.Agent.Message)) and is_list(opts) do
+    conversation_id = Keyword.get(opts, :conversation_id)
+
+    result =
+      with {:ok, module} <- validate_input(input, opts),
+           {:ok, session} <- module.start_session(start_opts(opts)),
+           session <- maybe_decision(module, session, opts) do
+        run_session(module, session, input, conversation_id, opts)
+      else
+        {:error, reason} -> {:error, reason}
+      end
+
+    persist_standalone_result(conversation_id, result, opts)
+    result
+  end
+
+  @doc "Validate host, backend, and input capability before a run is admitted."
+  @spec validate_input(Handbeam.Agent.CliAgent.input(), keyword()) ::
+          {:ok, module()} | {:error, term()}
+  def validate_input(input, opts)
+      when (is_binary(input) or is_struct(input, Handbeam.Agent.Message)) and is_list(opts) do
     backend = Keyword.get(opts, :backend)
 
     with :ok <- host_available(),
          {:ok, module} <- Registry.fetch(backend),
-         {:ok, session} <- module.start_session(start_opts(opts)),
-         session <- maybe_decision(module, session, opts) do
-      try do
-        conversation_id = Keyword.get(opts, :conversation_id)
-        on_event = fn event -> project(conversation_id, event, opts) end
-
-        case module.send_message(session, text, on_event) do
-          {:ok, session, events} ->
-            finish_turn(session, events)
-
-          {:error, reason} ->
-            project(conversation_id, {:error, reason_text(reason)}, opts)
-            {:error, reason}
-        end
-      after
-        module.stop_session(session)
-      end
-    else
-      {:error, reason} -> {:error, reason}
+         :ok <- validate_attachments(backend, input, opts) do
+      {:ok, module}
     end
   end
 
   @doc """
   Project one normalized event into the transcript and session bus.
 
-  Tool events are recorded as child activity. They are not executed.
-  A permission or ask-user request that arrives here has already stopped the
-  turn unless the caller answered it; this function does not approve it.
+  The caller of this function owns event ordering. Runner calls it from its
+  GenServer loop, ensuring run start, deltas, tools, and run end all use the
+  same TranscriptPersistence process dictionary.
   """
   @spec project(String.t() | nil, Event.t(), keyword()) :: :ok
   def project(nil, event, _opts) when is_tuple(event) do
@@ -76,10 +84,36 @@ defmodule Handbeam.Agent.CliAgent.Run do
   def project(conversation_id, event, opts) when is_binary(conversation_id) do
     if Event.normalized?(event) do
       persist(conversation_id, event, opts)
-      broadcast(conversation_id, event, opts)
+      projected = projected_event(conversation_id, event)
+      broadcast(conversation_id, projected, opts)
     end
 
     :ok
+  end
+
+  defp run_session(module, session, input, conversation_id, opts) do
+    # The try begins immediately after start_session succeeds. Observer bugs or
+    # cancellation can therefore never bypass backend cleanup.
+    try do
+      observe_session(opts, {:started, module, session})
+      persist_standalone_run_start(conversation_id, opts)
+      on_event = fn event -> dispatch_event(conversation_id, event, opts) end
+
+      case module.send_message(session, input, on_event) do
+        {:ok, session, events} -> finish_turn(session, events)
+        {:error, reason} -> {:error, reason}
+      end
+    after
+      safe_stop_session(module, session)
+      observe_session(opts, {:stopped, module, session})
+    end
+  end
+
+  defp dispatch_event(conversation_id, event, opts) do
+    case Keyword.get(opts, :event_sink) do
+      sink when is_function(sink, 1) -> safe_notify(sink, event)
+      _ -> project(conversation_id, event, opts)
+    end
   end
 
   defp finish_turn(session, events) do
@@ -110,6 +144,23 @@ defmodule Handbeam.Agent.CliAgent.Run do
   defp host_available do
     if Host.shell?(), do: :ok, else: {:error, :not_available}
   end
+
+  defp validate_attachments(backend, input, opts) do
+    attachments? = Keyword.get(opts, :attachments, []) != [] or attachment_blocks?(input)
+
+    if attachments? and not Registry.attachments?(backend),
+      do: {:error, :attachments_not_supported},
+      else: :ok
+  end
+
+  defp attachment_blocks?(%Handbeam.Agent.Message{content: blocks}) when is_list(blocks) do
+    Enum.any?(blocks, fn block ->
+      type = Handbeam.Utils.SafeMap.get_any(block, :type, "type")
+      type in ["image", "audio", "video", "document"]
+    end)
+  end
+
+  defp attachment_blocks?(_input), do: false
 
   defp start_opts(opts) do
     Keyword.take(opts, [
@@ -175,31 +226,98 @@ defmodule Handbeam.Agent.CliAgent.Run do
     TranscriptPersistence.handle_event(conversation_id, {:delegation_usage, usage}, opts)
   end
 
-  defp persist(conversation_id, {:turn_end, done}, opts) do
-    TranscriptPersistence.handle_event(
-      conversation_id,
-      {:run_end, %{status: done[:stop_reason] || :end_turn, session_id: done[:session_id]}},
-      opts
-    )
-  end
-
-  defp persist(conversation_id, {:error, reason}, opts) do
-    TranscriptPersistence.handle_event(
-      conversation_id,
-      {:run_end, %{status: :error, error: reason_text(reason)}},
-      opts
-    )
-  end
-
+  defp persist(_conversation_id, {:turn_end, _done}, _opts), do: :ok
+  defp persist(_conversation_id, {:error, _reason}, _opts), do: :ok
   defp persist(_conversation_id, _event, _opts), do: :ok
 
-  defp broadcast(conversation_id, {tag, payload}, opts) do
-    PubSubSession.broadcast_event(conversation_id, tag, broadcast_payload(tag, payload, opts))
+  defp projected_event(conversation_id, {:text_delta, text}) do
+    TranscriptPersistence.project_event(conversation_id, {:message_delta, %{chunk: text}})
   end
 
-  defp broadcast_payload(:text_delta, text, opts), do: stamp(%{chunk: text}, opts)
-  defp broadcast_payload(_tag, payload, opts) when is_map(payload), do: stamp(payload, opts)
-  defp broadcast_payload(_tag, payload, opts), do: stamp(%{reason: payload}, opts)
+  defp projected_event(_conversation_id, event), do: event
+
+  defp persist_standalone_run_start(conversation_id, opts) when is_binary(conversation_id) do
+    if runner_owned?(opts) do
+      :ok
+    else
+      TranscriptPersistence.handle_event(
+        conversation_id,
+        {:run_start, lifecycle_payload(opts)},
+        opts
+      )
+    end
+  end
+
+  defp persist_standalone_run_start(_conversation_id, _opts), do: :ok
+
+  defp persist_standalone_result(conversation_id, result, opts) when is_binary(conversation_id) do
+    if runner_owned?(opts) do
+      :ok
+    else
+      payload = standalone_terminal_payload(result, opts)
+
+      if payload do
+        TranscriptPersistence.handle_event(conversation_id, {:run_end, payload}, opts)
+        PubSubSession.broadcast_event(conversation_id, :run_end, payload)
+      end
+    end
+  end
+
+  defp persist_standalone_result(_conversation_id, _result, _opts), do: :ok
+
+  defp standalone_terminal_payload({:ok, _text, meta}, opts) do
+    lifecycle_payload(opts)
+    |> Map.merge(%{status: :completed, turns: 1, session_id: meta[:session_id]})
+  end
+
+  defp standalone_terminal_payload({:awaiting, _kind, _meta}, _opts), do: nil
+
+  defp standalone_terminal_payload({:error, reason}, opts) do
+    lifecycle_payload(opts)
+    |> Map.merge(%{status: :error, turns: 0, error: reason_text(reason)})
+  end
+
+  defp lifecycle_payload(opts) do
+    %{
+      run_id: opts[:run_id],
+      loop_owner: :cli_agent,
+      backend: opts[:backend],
+      model: opts[:model]
+    }
+  end
+
+  defp runner_owned?(opts), do: is_function(Keyword.get(opts, :event_sink), 1)
+
+  defp observe_session(opts, event) do
+    case Keyword.get(opts, :session_observer) do
+      observer when is_function(observer, 1) -> safe_notify(observer, event)
+      _ -> :ok
+    end
+  end
+
+  defp safe_notify(observer, event) do
+    observer.(event)
+    :ok
+  rescue
+    _error -> :ok
+  catch
+    _kind, _reason -> :ok
+  end
+
+  defp safe_stop_session(module, session) do
+    module.stop_session(session)
+  rescue
+    _error -> :ok
+  catch
+    _kind, _reason -> :ok
+  end
+
+  defp broadcast(conversation_id, {tag, payload}, opts) do
+    PubSubSession.broadcast_event(conversation_id, tag, broadcast_payload(payload, opts))
+  end
+
+  defp broadcast_payload(payload, opts) when is_map(payload), do: stamp(payload, opts)
+  defp broadcast_payload(payload, opts), do: stamp(%{reason: payload}, opts)
 
   defp stamp(payload, opts) do
     payload

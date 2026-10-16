@@ -9,7 +9,7 @@ defmodule Handbeam.Agent.CliAgentTest do
     * a missing executable returns `:not_available` and is not installed
     * a second backend registers without changing the Droid module
     * behaviour callbacks return normalized events, never Droid JSON-RPC
-    * a permission request is answered on stdin, or the turn stops
+    * a permission request is answered on stdin, or the turn suspends
     * `list_models` reads the executable's catalog, not a hardcoded list
     * model and reasoning effort are the CLI's flags, not a Provider switch
   """
@@ -94,13 +94,14 @@ defmodule Handbeam.Agent.CliAgentTest do
     refute written =~ "skip-permissions"
   end
 
-  test "an unanswered permission stops the turn and does not approve" do
+  test "an unanswered permission suspends the turn and does not approve" do
     script = fake_droid(permission_script())
     assert {:ok, session} = Droid.start_session(cwd: File.cwd!(), executable: script)
 
-    assert {:error, :permission_unanswered} =
+    assert {:ok, _session, events} =
              Droid.send_message(session, "edit the file", fn _event -> :ok end)
 
+    assert Enum.any?(events, &match?({:permission_request, _request}, &1))
     written = File.read!(stdin_log(script))
     refute written =~ "selectedOption"
   end
@@ -174,6 +175,38 @@ defmodule Handbeam.Agent.CliAgentTest do
         do: System.put_env("PATH", original_path),
         else: System.delete_env("PATH")
     end
+  end
+
+  test "attachment capability is explicit and supported backends receive the prepared message" do
+    Registry.register(Handbeam.Agent.CliAgentTest.FakeBackend)
+    Registry.register(Handbeam.Agent.CliAgentTest.AttachmentBackend)
+    Application.put_env(:handbeam, :fake_cli_notify, self())
+
+    on_exit(fn -> Application.delete_env(:handbeam, :fake_cli_notify) end)
+
+    message = %Handbeam.Agent.Message{
+      role: :user,
+      content: [
+        %{type: "text", text: "inspect"},
+        %{type: "image", mime_type: "image/png", data: "aW1hZ2U="}
+      ]
+    }
+
+    assert {:error, :attachments_not_supported} =
+             Run.turn(message,
+               backend: "fake-cli",
+               cwd: File.cwd!(),
+               attachments: [%{"id" => "image"}]
+             )
+
+    assert {:ok, "", %{backend: "attachment-cli", session_id: "attachment-session"}} =
+             Run.turn(message,
+               backend: "attachment-cli",
+               cwd: File.cwd!(),
+               attachments: [%{"id" => "image"}]
+             )
+
+    assert_receive {:attachment_cli_input, ^message}
   end
 
   test "grok ACP session projects text and answers only an explicit permission" do

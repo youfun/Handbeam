@@ -60,7 +60,9 @@ defmodule Handbeam.Agent.RunSupervisor do
           significant: true
         ),
         Supervisor.child_spec({Task.Supervisor, name: task_supervisor_name},
-          id: Handbeam.Agent.RunTaskSupervisor
+          id: Handbeam.Agent.RunTaskSupervisor,
+          restart: :temporary,
+          significant: true
         ),
         Supervisor.child_spec({Handbeam.Agent.Runner, runner_opts},
           id: Handbeam.Agent.Runner,

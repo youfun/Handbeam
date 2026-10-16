@@ -445,6 +445,63 @@ defmodule Handbeam.Agent.RunnerTest do
     refute File.exists?(marker)
   end
 
+  test "Coordinator.cancel terminates RunElixirScript worker and IO capture" do
+    sid = "runner-elixir-script-cancel-#{System.unique_integer([:positive])}"
+    workspace = Path.join(Handbeam.Host.data_dir(), "run-elixir-cancel-workspace")
+    probe = Handbeam.Agent.RunnerTest.RunElixirCancelProbe
+    true = Process.register(self(), probe)
+    File.mkdir_p!(workspace)
+
+    File.write!(Path.join(workspace, "cancel.exs"), """
+    send(String.to_existing_atom(hd(args)),
+      {:run_elixir_script_started, self(), Process.group_leader()})
+
+    receive do
+      :finish -> :ok
+    end
+    """)
+
+    scenario =
+      {:script,
+       fn _messages, _tool_defs ->
+         {:tools,
+          [
+            %{
+              name: "run_elixir_script",
+              input: %{
+                "path" => "cancel.exs",
+                "args" => [Atom.to_string(probe)],
+                "timeout_ms" => 30_000
+              }
+            }
+          ]}
+       end}
+
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
+
+    assert {:ok, %{action: :started}} =
+             Coordinator.add_message(
+               sid,
+               "run the script",
+               opts(
+                 workspace_path: workspace,
+                 provider_config: %{scenario: scenario},
+                 tools: [Handbeam.Tool.Builtin.RunElixirScript],
+                 middleware: []
+               )
+             )
+
+    assert_receive {:run_elixir_script_started, worker, io}, 1_000
+    worker_ref = Process.monitor(worker)
+    io_ref = Process.monitor(io)
+
+    assert :ok = Coordinator.cancel(sid)
+    assert_receive {:DOWN, ^worker_ref, :process, ^worker, _reason}, 1_000
+    assert_receive {:DOWN, ^io_ref, :process, ^io, _reason}, 1_000
+    refute Process.alive?(worker)
+    refute Process.alive?(io)
+  end
+
   test "Runner validates run and approval batch identities atomically" do
     sid = "runner-approval-identity-#{System.unique_integer([:positive])}"
     workspace = approval_workspace()

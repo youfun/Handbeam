@@ -52,6 +52,172 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
 
   def call(_hook, %State{} = state), do: state
 
+  @doc false
+  @spec resolve_approval(State.t(), [map()]) :: %{
+          state: State.t(),
+          tool_calls: [map()],
+          executable_calls: [map()],
+          denied_blocks: [map()]
+        }
+  def resolve_approval(%State{status: :interrupted} = state, decisions) when is_list(decisions) do
+    interrupt_data = state.interrupt_data || %{}
+    hitl_ids = interrupt_id_list(interrupt_data, :hitl_tool_call_ids, "hitl_tool_call_ids")
+
+    auto_ids =
+      interrupt_data
+      |> interrupt_id_list(:auto_approved_tool_call_ids, "auto_approved_tool_call_ids")
+      |> MapSet.new()
+
+    tool_calls = last_tool_calls(state)
+    decision_by_id = decision_lookup(decisions)
+
+    {decision_blocks, remembered_overrides, approved_hitl_ids} =
+      partition_hitl_decisions(hitl_ids, tool_calls, decision_by_id)
+
+    classified_denied_blocks = (state.tool_guard_result_blocks || []) ++ decision_blocks
+
+    denied_ids =
+      MapSet.new(classified_denied_blocks, fn block ->
+        Handbeam.Utils.SafeMap.get_any(block, :tool_use_id, "tool_use_id")
+      end)
+
+    permitted_ids =
+      auto_ids
+      |> MapSet.union(approved_hitl_ids)
+      |> MapSet.difference(denied_ids)
+
+    denied_blocks = total_denied_blocks(tool_calls, permitted_ids, classified_denied_blocks)
+
+    executable_calls =
+      Enum.filter(tool_calls, fn call ->
+        MapSet.member?(permitted_ids, Handbeam.Utils.SafeMap.get_any(call, :id, "id"))
+      end)
+
+    %{
+      state: apply_approval_resume_state(state, denied_blocks, remembered_overrides),
+      tool_calls: tool_calls,
+      executable_calls: executable_calls,
+      denied_blocks: denied_blocks
+    }
+  end
+
+  defp interrupt_id_list(interrupt_data, atom_key, string_key) do
+    Handbeam.Utils.SafeMap.get_any(interrupt_data, atom_key, string_key) || []
+  end
+
+  defp decision_lookup(decisions) do
+    Map.new(decisions, fn decision ->
+      {Handbeam.Utils.SafeMap.get_any(decision, ["tool_call_id", :tool_call_id]), decision}
+    end)
+  end
+
+  defp partition_hitl_decisions(hitl_ids, tool_calls, decision_by_id) do
+    Enum.reduce(hitl_ids, {[], %{}, MapSet.new()}, fn call_id, {blocks, overrides, approved} ->
+      call =
+        Enum.find(
+          tool_calls,
+          &(Handbeam.Utils.SafeMap.get_any(&1, :id, "id") == call_id)
+        )
+
+      decision = Map.get(decision_by_id, call_id, %{})
+      action = Handbeam.Utils.SafeMap.get_any(decision, "action", :action) || "deny"
+
+      if to_string(action) == "approve" do
+        {blocks, remember_session_grant(overrides, decision, call), MapSet.put(approved, call_id)}
+      else
+        tool_name =
+          (call && Handbeam.Utils.SafeMap.get_any(call, [:name, "name"])) ||
+            Handbeam.Utils.SafeMap.get_any(decision, ["tool_name", :tool_name]) || "unknown"
+
+        block = approval_result_block(call_id, tool_name, action)
+        overrides = remember_deny_override(overrides, decision, tool_name)
+        {[block | blocks], overrides, approved}
+      end
+    end)
+  end
+
+  defp remember_deny_override(overrides, decision, tool_name) do
+    if Handbeam.Utils.SafeMap.get_any(decision, "remember", :remember) do
+      Map.put(overrides, tool_name, :deny)
+    else
+      overrides
+    end
+  end
+
+  defp total_denied_blocks(tool_calls, permitted_ids, blocks) do
+    by_id =
+      Map.new(blocks, fn block ->
+        {Handbeam.Utils.SafeMap.get_any(block, :tool_use_id, "tool_use_id"), block}
+      end)
+
+    tool_calls
+    |> Enum.reject(fn call ->
+      MapSet.member?(permitted_ids, Handbeam.Utils.SafeMap.get_any(call, :id, "id"))
+    end)
+    |> Enum.map(fn call ->
+      id = Handbeam.Utils.SafeMap.get_any(call, :id, "id")
+      name = Handbeam.Utils.SafeMap.get_any(call, :name, "name") || "unknown"
+      Map.get(by_id, id) || approval_result_block(id, name, "deny")
+    end)
+  end
+
+  defp apply_approval_resume_state(state, denied_blocks, remembered_overrides) do
+    {remembered_overrides, session_allow} = split_session_grants(remembered_overrides)
+    merged_overrides = Map.merge(state.tool_guard_overrides || %{}, remembered_overrides)
+    session_allow = Enum.uniq((state.tool_guard_session_allow || []) ++ session_allow)
+
+    state
+    |> Map.put(:status, :running)
+    |> Map.put(:interrupt_data, nil)
+    |> Map.put(:tool_guard_result_blocks, denied_blocks)
+    |> Map.put(:tool_guard_overrides, merged_overrides)
+    |> Map.put(:tool_guard_session_allow, session_allow)
+  end
+
+  # "This session" remembers the suggested pattern rather than granting every
+  # future call with the same tool name.
+  defp remember_session_grant(overrides, decision, call) do
+    if Handbeam.Utils.SafeMap.get_any(decision, ["remember", :remember]) do
+      pattern =
+        (call && Handbeam.Permissions.Remember.pattern(call)) ||
+          Handbeam.Utils.SafeMap.get_any(decision, ["suggested_pattern", :suggested_pattern])
+
+      if is_binary(pattern) and String.trim(pattern) != "" do
+        Map.put(overrides, {:session_allow, pattern}, :auto)
+      else
+        overrides
+      end
+    else
+      overrides
+    end
+  end
+
+  defp split_session_grants(overrides) do
+    {grants, rest} =
+      Enum.split_with(overrides, fn
+        {{:session_allow, _pattern}, :auto} -> true
+        _other -> false
+      end)
+
+    patterns = Enum.map(grants, fn {{:session_allow, pattern}, :auto} -> pattern end)
+    {Map.new(rest), patterns}
+  end
+
+  defp approval_result_block(tool_call_id, tool_name, action) do
+    {content, permission} =
+      case to_string(action) do
+        "skip" -> {"Not selected this round. Request this action again.", :skipped}
+        _ -> {"Tool call denied by user", :denied}
+      end
+
+    Message.tool_result_block(
+      tool_call_id,
+      content,
+      true,
+      %{permission: permission, tool: tool_name}
+    )
+  end
+
   defp put_denied(state, [], _policy), do: state
 
   defp put_denied(state, denied, policy) do

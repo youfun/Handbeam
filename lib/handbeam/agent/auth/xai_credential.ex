@@ -95,8 +95,8 @@ defmodule Handbeam.Agent.Auth.XaiCredential do
   defp with_refresh_lock(provider_id, fun) do
     lock_id = {:handbeam_xai_oauth_refresh, provider_id}
 
-    case :global.trans(lock_id, fun, [Node.self()], 30_000) do
-      {:error, :aborted} ->
+    case :global.trans({lock_id, self()}, fun, [Node.self()]) do
+      :aborted ->
         {:error, "xAI token refresh is already in progress"}
 
       result ->
