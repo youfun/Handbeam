@@ -61,6 +61,40 @@ defmodule HandbeamProbe.HomeScreenTest do
     defp wait_for_gate(_gate, _turn), do: :ok
   end
 
+  defmodule ApprovalFileProvider do
+    @behaviour Handbeam.Agent.Provider
+    alias Handbeam.Agent.Message
+
+    def complete(messages, _tools, _config) do
+      if Enum.any?(messages, &(&1.role == :tool_result)) do
+        {:ok,
+         %{
+           stop_reason: :end_turn,
+           messages: [Message.assistant("file approval finished")],
+           usage: %{input_tokens: 1, output_tokens: 1}
+         }}
+      else
+        {:ok,
+         %{
+           stop_reason: :tool_use,
+           messages: [
+             Message.tool_use([
+               %{
+                 type: "tool_use",
+                 id: "approval-file-0",
+                 name: "open_file",
+                 input: %{"path" => "approval.txt"}
+               }
+             ])
+           ],
+           usage: %{input_tokens: 1, output_tokens: 1}
+         }}
+      end
+    end
+
+    def stream(messages, tools, config, _callback), do: complete(messages, tools, config)
+  end
+
   defmodule ProviderFixture do
     def init(owner), do: owner
 
@@ -1099,6 +1133,87 @@ defmodule HandbeamProbe.HomeScreenTest do
     refute text(view) =~ gettext("Thinking…")
   end
 
+  test "reopening an active file approval reconciles the missing export", %{view: view} do
+    parent = self()
+    workspace = assigns(view).workspace
+    path = workspace["path"]
+    File.mkdir_p!(Path.join(path, ".handbeam"))
+    File.write!(Path.join(path, "approval.txt"), "approval snapshot")
+
+    File.write!(
+      Handbeam.WorkspaceSettings.path(path),
+      Jason.encode!(%{"tools" => %{"default_mode" => "prompt"}})
+    )
+
+    install_platform_fake(fn req, _opts ->
+      send(parent, {:approval_platform, req})
+      {:ok, :async}
+    end)
+
+    {:ok, conversation} = Handbeam.ConversationStore.create("default")
+    view = info(view, {:tap, {:conversation, conversation["id"]}})
+
+    {:ok, %{run_pid: runner}} =
+      Handbeam.Agent.Coordinator.add_message(conversation["id"], "open approval.txt",
+        provider: ApprovalFileProvider,
+        provider_config: %{},
+        source: :native,
+        model: "fixture",
+        streaming: false,
+        workspace_path: path,
+        tools: [Handbeam.Tool.Builtin.OpenFile],
+        max_turns: 3
+      )
+
+    on_exit(fn -> Handbeam.Agent.Coordinator.cancel(conversation["id"]) end)
+    assert_receive {:agent_event, %{kind: :tool_approval_requested} = request}, 5_000
+    await_approval(runner)
+
+    view = info(view, {:agent_event, request})
+
+    assert_receive {:approval_platform,
+                    %{op: "platform_export", request_id: first_id, generation: first_generation}},
+                   1_000
+
+    view = info(view, {:tap, :new_chat})
+
+    assert_receive {:approval_platform,
+                    %{
+                      op: "platform_cancel",
+                      payload: %{"target_request_id" => ^first_id}
+                    }},
+                   1_000
+
+    view =
+      info(
+        view,
+        {:engine_result,
+         %{
+           request_id: first_id,
+           generation: first_generation,
+           result: Handbeam.JSON.encode!(%{"snapshot_id" => "snapshot-late-after-navigation"})
+         }}
+      )
+
+    assert_receive {:approval_platform,
+                    %{
+                      op: "platform_cleanup",
+                      generation: ^first_generation,
+                      payload: %{
+                        "snapshot_id" => "snapshot-late-after-navigation",
+                        "owner_request_id" => ^first_id
+                      }
+                    }},
+                   1_000
+
+    view = info(view, {:tap, {:conversation, conversation["id"]}})
+
+    assert assigns(view).chat.pending_approval
+    assert_receive {:approval_platform, %{op: "platform_export", request_id: second_id}}, 1_000
+    assert second_id != first_id
+    refute_received {:approval_platform, %{op: "platform_export"}}
+  end
+
   for {action, scope} <- [
         {:approve, :once},
         {:approve, :session},
@@ -1352,6 +1467,91 @@ defmodule HandbeamProbe.HomeScreenTest do
     refute assigns(view).chat.pending_approval
     refute assigns(view).chat.running
     refute text(view) =~ gettext("Tool action needs approval")
+  end
+
+  test "external approval cancellation clears snapshots, bindings, and unfinished exports", %{
+    view: view
+  } do
+    parent = self()
+    workspace = assigns(view).workspace
+    path = workspace["path"]
+    File.write!(Path.join(path, "external-a.txt"), "a")
+    File.write!(Path.join(path, "external-b.txt"), "b")
+
+    install_platform_fake(fn req, _opts ->
+      send(parent, {:external_cancel_platform, req})
+      {:ok, :async}
+    end)
+
+    {:ok, conversation} = Handbeam.ConversationStore.create("default")
+    view = info(view, {:tap, {:conversation, conversation["id"]}})
+
+    payload = %{
+      "action_requests" => [
+        %{
+          "tool_call_id" => "external-a",
+          "tool_name" => "open_file",
+          "arguments" => %{"path" => "external-a.txt"}
+        },
+        %{
+          "tool_call_id" => "external-b",
+          "tool_name" => "open_file",
+          "arguments" => %{"path" => "external-b.txt"}
+        }
+      ]
+    }
+
+    topic = "session:#{conversation["id"]}"
+    requested = AgentEvent.new(topic, :tool_approval_requested, payload, 1)
+    view = info(view, {:agent_event, requested})
+
+    assert_receive {:external_cancel_platform,
+                    %{op: "platform_export", payload: %{"relative_path" => "external-a.txt"}} =
+                      export_a},
+                   1_000
+
+    assert_receive {:external_cancel_platform,
+                    %{op: "platform_export", payload: %{"relative_path" => "external-b.txt"}} =
+                      export_b},
+                   1_000
+
+    view =
+      info(
+        view,
+        {:engine_result,
+         %{
+           request_id: export_a.request_id,
+           generation: export_a.generation,
+           result: Handbeam.JSON.encode!(%{"snapshot_id" => "snapshot-external-a"})
+         }}
+      )
+
+    assert {:ok, %{snapshot_id: "snapshot-external-a"}} =
+             Handbeam.ExportSnapshot.Binding.fetch(conversation["id"], "external-a")
+
+    cancelled = AgentEvent.run_end(topic, :cancelled, 1, 2)
+    view = info(view, {:agent_event, cancelled})
+
+    refute assigns(view).chat.pending_approval
+    assert assigns(view).approval_snapshots == %{}
+    assert assigns(view).approval_export_inflight == MapSet.new()
+    assert :error = Handbeam.ExportSnapshot.Binding.fetch(conversation["id"], "external-a")
+
+    assert_receive {:external_cancel_platform,
+                    %{
+                      op: "platform_cleanup",
+                      payload: %{"snapshot_id" => "snapshot-external-a"}
+                    }},
+                   1_000
+
+    assert_receive {:external_cancel_platform,
+                    %{
+                      op: "platform_cancel",
+                      payload: %{"target_request_id" => unfinished_request_id}
+                    }},
+                   1_000
+
+    assert unfinished_request_id == export_b.request_id
   end
 
   test "workspace switch isolates drafts, models, running events, and Coordinator path", %{

@@ -12,10 +12,10 @@ defmodule HandbeamProbe.NativeArtifactDelivery do
     * UI tap (`HomeScreen.Delivery`, `NativeWorkspaceOpen`): `start_file_action/3`
       exports, the `:delivery_export` reply continues into `present/6`.
     * Agent tool (`open_file` / `share_file`):
-      `start_approval_exports/2` exports at approval time and stores the
-      snapshot in `Handbeam.ExportSnapshot.Binding`; `HandbeamProbe.AndroidIntent`
-      later builds the present step with `Platform.present_request/6` from
-      that snapshot.
+      `reconcile_approval_exports/2` restores or exports at approval time and
+      stores the snapshot in `Handbeam.ExportSnapshot.Binding`;
+      `HandbeamProbe.AndroidIntent` later builds the present step with
+      `Platform.present_request/6` from that snapshot.
 
   HomeScreen routes taps; this module owns copy and request construction.
   Requests are tracked in `HandbeamProbe.PendingRequests` through
@@ -32,7 +32,7 @@ defmodule HandbeamProbe.NativeArtifactDelivery do
   alias Handbeam.TranscriptEntry
   alias HandbeamProbe.Bridge.{Inbound, Payload}
   alias HandbeamProbe.HomeScreen.{Notice, Requests}
-  alias HandbeamProbe.{NativeComposer, Platform}
+  alias HandbeamProbe.{NativeComposer, PendingRequests, Platform}
 
   @delivery_kinds [
     :approval_export,
@@ -186,58 +186,172 @@ defmodule HandbeamProbe.NativeArtifactDelivery do
   end
 
   @doc """
-  Export step of the artifact sequence for the Agent tool path: pin one
-  snapshot per pending `open_file` / `share_file` request so
-  approval never reads a source file that is rewritten afterwards.
+  Reconcile export snapshots for the active approval batch.
+
+  A matching supervised `Binding` is projected back into screen assigns after
+  navigation. Missing or stale bindings start exactly one export for the
+  `{conversation_id, approval_seq, tool_call_id}` identity.
   """
-  def start_approval_exports(socket, chat) do
-    workspace = socket.assigns.workspace["path"]
-    conversation_id = chat.conversation["id"]
+  def reconcile_approval_exports(socket) do
+    reconcile_approval_exports(socket, socket.assigns[:chat])
+  end
+
+  def reconcile_approval_exports(socket, nil), do: socket
+
+  def reconcile_approval_exports(
+        %{assigns: %{workspace: %{"path" => workspace}}} = socket,
+        %{conversation: %{"id" => conversation_id}, pending_approval: pending} = chat
+      )
+      when is_binary(workspace) and not is_nil(pending) do
     seq = chat.approval_seq
 
-    chat.pending_approval
+    pending
     |> requests()
     |> Enum.filter(&file_tool?/1)
     |> Enum.reduce(socket, fn req, acc ->
+      reconcile_approval_export(acc, req, conversation_id, seq, workspace)
+    end)
+  end
+
+  def reconcile_approval_exports(socket, _chat), do: socket
+
+  @doc "Cancel old approval exports while retaining their correlation for self-cleaning late replies."
+  def supersede_approval_batch(socket) do
+    socket
+    |> Requests.table()
+    |> PendingRequests.by_kind(:approval_export)
+    |> Enum.each(fn entry ->
+      _ = Platform.cancel(self(), entry.ref, entry.generation)
+    end)
+
+    cleanup_bindings(socket, :force)
+  end
+
+  @doc "Clean snapshots for Android requests skipped when one batch action is selected."
+  def cleanup_skipped_approval_bindings(socket, conversation_id, requests)
+      when is_binary(conversation_id) and is_list(requests) do
+    Enum.reduce(requests, socket, fn req, acc ->
       tool_call_id = req["tool_call_id"]
-      key = export_key(conversation_id, seq, tool_call_id)
-      inflight = acc.assigns[:approval_export_inflight] || MapSet.new()
       snapshots = acc.assigns[:approval_snapshots] || %{}
 
-      cond do
-        not is_binary(tool_call_id) ->
-          acc
-
-        MapSet.member?(inflight, key) ->
-          acc
-
-        Map.has_key?(snapshots, tool_call_id) ->
-          acc
-
-        true ->
-          args = req["arguments"] || %{}
-          path = args["path"]
-          request_id = Ecto.UUID.generate()
-          generation = Requests.composer_generation(acc)
-
-          case Platform.export_file(self(), request_id, generation, workspace, path || "") do
-            {:ok, _} ->
-              acc
-              |> assign_socket(approval_export_inflight: MapSet.put(inflight, key))
-              |> track(request_id, :approval_export, %{
-                tool_call_id: tool_call_id,
-                conversation_id: conversation_id,
-                approval_seq: seq,
-                workspace_path: workspace,
-                relative_path: path,
-                action: file_action(req["tool_name"])
-              })
-
-            {:error, reason} ->
-              assign_error(acc, reason)
+      meta =
+        Map.get(snapshots, tool_call_id) ||
+          case Binding.fetch(conversation_id, tool_call_id) do
+            {:ok, bound} -> bound
+            :error -> nil
           end
-      end
+
+      :ok = Binding.delete(conversation_id, tool_call_id)
+      if is_map(meta), do: cleanup_snapshot(acc, meta)
+
+      assign_socket(acc,
+        approval_snapshots: Map.delete(snapshots, tool_call_id),
+        approval_export_inflight:
+          drop_inflight_tool(acc.assigns[:approval_export_inflight], tool_call_id)
+      )
     end)
+  end
+
+  def cleanup_skipped_approval_bindings(socket, _conversation_id, _requests), do: socket
+
+  defp reconcile_approval_export(socket, req, conversation_id, seq, workspace) do
+    tool_call_id = req["tool_call_id"]
+    key = export_key(conversation_id, seq, tool_call_id)
+    inflight = socket.assigns[:approval_export_inflight] || MapSet.new()
+
+    cond do
+      not is_binary(tool_call_id) ->
+        socket
+
+      MapSet.member?(inflight, key) ->
+        socket
+
+      true ->
+        target = approval_export_target(req, seq, workspace)
+
+        case Binding.fetch(conversation_id, tool_call_id) do
+          {:ok, meta} ->
+            if matching_approval_snapshot?(meta, target) do
+              snapshots = socket.assigns[:approval_snapshots] || %{}
+              assign_socket(socket, approval_snapshots: Map.put(snapshots, tool_call_id, meta))
+            else
+              socket
+              |> discard_stale_approval_snapshot(conversation_id, tool_call_id, meta)
+              |> start_approval_export(req, conversation_id, seq, workspace, key)
+            end
+
+          :error ->
+            start_approval_export(socket, req, conversation_id, seq, workspace, key)
+        end
+    end
+  end
+
+  defp start_approval_export(socket, req, conversation_id, seq, workspace, key) do
+    path = get_in(req, ["arguments", "path"])
+    request_id = Ecto.UUID.generate()
+    generation = Requests.composer_generation(socket)
+
+    case Platform.export_file(self(), request_id, generation, workspace, path || "") do
+      {:ok, _} ->
+        inflight = socket.assigns[:approval_export_inflight] || MapSet.new()
+
+        socket
+        |> assign_socket(approval_export_inflight: MapSet.put(inflight, key))
+        |> track(request_id, :approval_export, %{
+          tool_call_id: req["tool_call_id"],
+          conversation_id: conversation_id,
+          approval_seq: seq,
+          workspace_path: workspace,
+          relative_path: path,
+          action: file_action(req["tool_name"])
+        })
+
+      {:error, reason} ->
+        assign_error(socket, reason)
+    end
+  end
+
+  defp approval_export_target(req, seq, workspace) do
+    %{
+      approval_seq: seq,
+      relative_path: get_in(req, ["arguments", "path"]),
+      workspace_path: workspace,
+      action: file_action(req["tool_name"])
+    }
+  end
+
+  defp matching_approval_snapshot?(meta, target) do
+    is_binary(field(meta, :snapshot_id)) and
+      is_binary(field(meta, :owner_request_id)) and
+      field(meta, :approval_seq) == target.approval_seq and
+      same_workspace?(field(meta, :workspace_path), target.workspace_path) and
+      same_target_path?(field(meta, :relative_path), target.relative_path, target.workspace_path) and
+      normalize_action(field(meta, :action)) == target.action
+  end
+
+  defp discard_stale_approval_snapshot(socket, conversation_id, tool_call_id, meta) do
+    :ok = Binding.delete(conversation_id, tool_call_id)
+    cleanup_snapshot(socket, meta)
+    snapshots = Map.delete(socket.assigns[:approval_snapshots] || %{}, tool_call_id)
+    assign_socket(socket, approval_snapshots: snapshots)
+  end
+
+  defp cleanup_snapshot(socket, meta) do
+    snapshot_id = field(meta, :snapshot_id)
+    owner_request_id = field(meta, :owner_request_id)
+
+    if is_binary(snapshot_id) and is_binary(owner_request_id) do
+      _ =
+        Platform.cleanup_snapshot(
+          self(),
+          Ecto.UUID.generate(),
+          Requests.composer_generation(socket),
+          snapshot_id,
+          owner_request_id
+        )
+    end
+
+    :ok
   end
 
   def export_key(conversation_id, seq, tool_call_id),
@@ -349,32 +463,38 @@ defmodule HandbeamProbe.NativeArtifactDelivery do
     snap = Inbound.snapshot(doc)
     snapshots = socket.assigns[:approval_snapshots] || %{}
 
-    cond do
-      not current_export_target?(socket, ctx) ->
-        socket
+    if is_binary(snap.snapshot_id) and is_binary(ctx.tool_call_id) do
+      meta = %{
+        snapshot_id: snap.snapshot_id,
+        owner_request_id: snap.owner_request_id || ctx.request_id,
+        approval_seq: ctx[:approval_seq],
+        relative_path: ctx[:relative_path] || snap.relative_path,
+        workspace_path: ctx[:workspace_path],
+        action: ctx[:action],
+        display_name: snap.display_name,
+        size_bytes: snap.size_bytes
+      }
 
-      Map.has_key?(snapshots, ctx.tool_call_id) ->
-        socket
+      cond do
+        not current_export_target?(socket, ctx) ->
+          cleanup_snapshot(socket, meta)
+          socket
 
-      is_binary(snap.snapshot_id) and is_binary(ctx.tool_call_id) ->
-        meta = %{
-          snapshot_id: snap.snapshot_id,
-          owner_request_id: snap.owner_request_id || ctx.request_id,
-          relative_path: ctx[:relative_path] || snap.relative_path,
-          workspace_path: ctx[:workspace_path],
-          action: ctx[:action],
-          display_name: snap.display_name,
-          size_bytes: snap.size_bytes
-        }
+        Map.has_key?(snapshots, ctx.tool_call_id) ->
+          cleanup_snapshot(socket, meta)
+          socket
 
-        _ = Binding.put(ctx.conversation_id, ctx.tool_call_id, meta)
+        true ->
+          _ = Binding.put(ctx.conversation_id, ctx.tool_call_id, meta)
 
-        socket
-        |> assign_socket(approval_snapshots: Map.put(snapshots, ctx.tool_call_id, meta))
-        |> clear_error()
-
-      true ->
-        assign_error(socket, :file_unavailable)
+          socket
+          |> assign_socket(approval_snapshots: Map.put(snapshots, ctx.tool_call_id, meta))
+          |> clear_error()
+      end
+    else
+      if current_export_target?(socket, ctx),
+        do: assign_error(socket, :file_unavailable),
+        else: socket
     end
   end
 
@@ -415,7 +535,6 @@ defmodule HandbeamProbe.NativeArtifactDelivery do
     |> clear_error()
   end
 
-  defp requests(nil), do: []
   defp requests(pending), do: pending["action_requests"] || []
 
   defp file_tool?(req), do: Handbeam.ArtifactDelivery.file_tool?(req["tool_name"] || "")
@@ -428,10 +547,33 @@ defmodule HandbeamProbe.NativeArtifactDelivery do
 
   defp same_workspace?(_, _), do: false
 
+  defp same_target_path?(a, b, workspace)
+       when is_binary(a) and is_binary(b) and is_binary(workspace),
+       do: Path.expand(a, workspace) == Path.expand(b, workspace)
+
+  defp same_target_path?(_, _, _), do: false
+
+  defp normalize_action(action) when action in [:open_file, :share_file], do: action
+  defp normalize_action("open_file"), do: :open_file
+  defp normalize_action("share_file"), do: :share_file
+  defp normalize_action(_), do: nil
+
+  defp field(map, key) when is_map(map),
+    do: Map.get(map, key, Map.get(map, Atom.to_string(key)))
+
   defp clear_inflight(socket, ctx) do
     key = export_key(ctx[:conversation_id], ctx[:approval_seq], ctx[:tool_call_id])
     inflight = MapSet.delete(socket.assigns[:approval_export_inflight] || MapSet.new(), key)
     assign_socket(socket, approval_export_inflight: inflight)
+  end
+
+  defp drop_inflight_tool(nil, _tool_call_id), do: MapSet.new()
+
+  defp drop_inflight_tool(inflight, tool_call_id) do
+    Enum.reduce(inflight, MapSet.new(), fn
+      {_conversation_id, _seq, ^tool_call_id}, acc -> acc
+      key, acc -> MapSet.put(acc, key)
+    end)
   end
 
   defp drop_bindings(socket) do

@@ -9,7 +9,12 @@ config :handbeam_probe, ecto_repos: [HandbeamProbe.Repo]
 # Mix still starts `:handbeam` because it is a runtime dep; give it a host DB
 # and a disabled Endpoint so `mix test` does not crash the Repo pool.
 config :phoenix, :json_library, Handbeam.JSON
-config :handbeam, ecto_repos: [Handbeam.Repo]
+
+config :handbeam,
+  ecto_repos: [Handbeam.Repo],
+  telemetry_adapter: HandbeamWeb.Telemetry,
+  endpoint_adapter: HandbeamWeb.Endpoint
+
 config :handbeam, :extension_hot_reload, false
 
 config :handbeam, Handbeam.Repo,

@@ -135,6 +135,8 @@ defmodule HandbeamProbe.App do
     Application.put_env(:mob, :host_url, "http://127.0.0.1:#{liveview_port}/")
 
     Application.put_env(:phoenix, :json_library, Handbeam.JSON)
+    Application.put_env(:handbeam, :telemetry_adapter, HandbeamWeb.Telemetry)
+    Application.put_env(:handbeam, :endpoint_adapter, HandbeamWeb.Endpoint)
     configure_error_tracker!()
     Application.put_env(:handbeam, :ecto_repos, [Handbeam.Repo])
     Application.put_env(:handbeam, :extension_hot_reload, false)

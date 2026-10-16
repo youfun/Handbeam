@@ -1515,9 +1515,17 @@ object MobBridge {
     external fun nativeSendDrag(handle: Int, x: Double, y: Double, dx: Double, dy: Double,
                                 phase: String)
 
-    /** Called from Compose onChange — routes change value back to BEAM via C. */
+    /**
+     * Called from Compose onChange. Convert the JVM UTF-16 string with Kotlin's
+     * standard UTF-8 encoder before JNI; GetStringUTFChars would yield Modified
+     * UTF-8 and corrupt non-BMP characters such as emoji.
+     */
     @JvmStatic
-    external fun nativeSendChangeStr(handle: Int, value: String)
+    fun nativeSendChangeStr(handle: Int, value: String) =
+        nativeSendChangeStrBytes(handle, TextChangeEncoding.utf8(value))
+
+    @JvmStatic
+    private external fun nativeSendChangeStrBytes(handle: Int, value: ByteArray)
     @JvmStatic
     external fun nativeSendChangeBool(handle: Int, value: Boolean)
     @JvmStatic

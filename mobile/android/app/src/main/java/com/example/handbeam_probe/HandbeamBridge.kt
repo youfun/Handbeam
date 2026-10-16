@@ -64,21 +64,23 @@ object HandbeamBridge {
         AgentKeepAliveService.start(activity)
     }
 
-    private val closeGate = CloseCycleGate()
+    private val closeBridge =
+        CloseCycleRunStopBridge(cancelRuns = { MobBridge.nativeCancelRuns() })
 
     /** Keep close idempotent for the runs visible when the close was claimed. */
     @JvmStatic
     fun observeActiveRuns(runIds: Collection<String>) {
-        closeGate.observeActiveRuns(runIds)
+        closeBridge.observeActiveRuns(runIds)
     }
 
     /** Record close before the process goes away. Elixir may not run. */
     @JvmStatic
     fun recordClose() {
-        try {
-            closeGate.runOnce { MobBridge.nativeCancelRuns() }
-        } catch (_: Throwable) {
-        }
+        closeBridge.recordClose()
+    }
+
+    internal fun recordClose(cancelRuns: () -> Unit) {
+        closeBridge.recordClose(cancelRuns)
     }
 
     // ── Runtime env ───────────────────────────────────────────────────────
@@ -226,10 +228,35 @@ object HandbeamBridge {
     }
 }
 
+internal interface AgentRunStopBridge {
+    fun observeActiveRuns(runIds: Collection<String>)
+    fun recordClose()
+}
+
+internal class CloseCycleRunStopBridge(
+    private val cancelRuns: () -> Unit,
+    private val closeGate: CloseCycleGate = CloseCycleGate(),
+) : AgentRunStopBridge {
+    override fun observeActiveRuns(runIds: Collection<String>) {
+        closeGate.observeActiveRuns(runIds)
+    }
+
+    override fun recordClose() {
+        recordClose(cancelRuns)
+    }
+
+    fun recordClose(action: () -> Unit) {
+        try {
+            closeGate.runOnce(action)
+        } catch (_: Throwable) {
+        }
+    }
+}
+
 /**
  * Deduplicates close signals for one observed set of active runs. A new run id
- * opens a new close cycle; updates and completion of already-claimed runs do
- * not. The native action runs outside the monitor because it can call BEAM.
+ * opens a new close cycle; an empty update has no stable identity and therefore
+ * cannot hold a permanent claim. The native action runs outside the monitor.
  */
 internal class CloseCycleGate {
     private data class Claim(val runIds: Set<String>)
@@ -242,25 +269,34 @@ internal class CloseCycleGate {
         val observed = runIds.filterTo(mutableSetOf()) { it.isNotBlank() }
         synchronized(lock) {
             val currentClaim = claim
-            if (currentClaim != null && observed.any { it !in currentClaim.runIds }) {
-                claim = null
-            }
+            claim =
+                when {
+                    observed.isEmpty() -> null
+                    currentClaim != null && observed.any { it !in currentClaim.runIds } -> null
+                    else -> currentClaim
+                }
             activeRunIds = observed
         }
     }
 
     fun runOnce(action: () -> Unit): Boolean {
         val acquired = synchronized(lock) {
-            if (claim != null) return false
-            Claim(activeRunIds).also { claim = it }
+            if (activeRunIds.isEmpty()) {
+                null
+            } else {
+                if (claim != null) return false
+                Claim(activeRunIds).also { claim = it }
+            }
         }
 
         try {
             action()
             return true
         } catch (error: Throwable) {
-            synchronized(lock) {
-                if (claim === acquired) claim = null
+            if (acquired != null) {
+                synchronized(lock) {
+                    if (claim === acquired) claim = null
+                }
             }
             throw error
         }

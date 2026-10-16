@@ -78,14 +78,13 @@ class AgentKeepAliveService : Service() {
     private var title: String? = null
     private var text: String? = null
     private var tap: Intent? = null
+    private val commandController = AgentServiceCommandController(HandbeamServiceRunStopBridge)
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) {
+        val activeRunIds = intent?.getStringArrayListExtra(EXTRA_ACTIVE_RUN_IDS)
+        if (commandController.handle(intent?.action, activeRunIds)) {
             shutdown()
             return START_NOT_STICKY
-        }
-        intent?.getStringArrayListExtra(EXTRA_ACTIVE_RUN_IDS)?.let {
-            HandbeamBridge.observeActiveRuns(it)
         }
         intent?.getStringExtra(EXTRA_TITLE)?.let { title = it }
         intent?.getStringExtra(EXTRA_TEXT)?.let { text = it }
@@ -105,10 +104,6 @@ class AgentKeepAliveService : Service() {
     }
 
     private fun shutdown() {
-        try {
-            HandbeamBridge.recordClose()
-        } catch (_: Throwable) {
-        }
         running.set(false)
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
@@ -175,5 +170,31 @@ class AgentKeepAliveService : Service() {
                 enableVibration(false)
             }
         nm.createNotificationChannel(channel)
+    }
+}
+
+internal object HandbeamServiceRunStopBridge : AgentRunStopBridge {
+    override fun observeActiveRuns(runIds: Collection<String>) {
+        HandbeamBridge.observeActiveRuns(runIds)
+    }
+
+    override fun recordClose() {
+        HandbeamBridge.recordClose()
+    }
+}
+
+/** Pure command boundary shared by Service.onStartCommand and JVM regression tests. */
+internal class AgentServiceCommandController(
+    private val bridge: AgentRunStopBridge,
+) {
+    /** Returns true when the service should remove its foreground notification and stop. */
+    fun handle(action: String?, activeRunIds: Collection<String>?): Boolean {
+        if (action == AgentKeepAliveService.ACTION_STOP) {
+            bridge.recordClose()
+            return true
+        }
+
+        activeRunIds?.let(bridge::observeActiveRuns)
+        return false
     }
 }

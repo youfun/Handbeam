@@ -1,6 +1,30 @@
 defmodule Mix.Tasks.Mob.PackApkTest do
   use ExUnit.Case, async: false
 
+  test "packaging includes the manually-started shared runtime closure" do
+    build = Path.join(System.tmp_dir!(), "pack_runtime_#{System.unique_integer([:positive])}")
+    shared = Path.join([build, "lib", "handbeam", "ebin"])
+    phoenix_ecto = Path.join([build, "lib", "phoenix_ecto", "ebin"])
+    File.mkdir_p!(shared)
+    File.mkdir_p!(phoenix_ecto)
+
+    File.write!(
+      Path.join(shared, "handbeam.app"),
+      "{application,handbeam,[{applications,[kernel,stdlib,phoenix_ecto]}]}."
+    )
+
+    File.write!(
+      Path.join(phoenix_ecto, "phoenix_ecto.app"),
+      "{application,phoenix_ecto,[{applications,[kernel,stdlib]}]}."
+    )
+
+    on_exit(fn -> File.rm_rf(build) end)
+
+    dirs = Mix.Tasks.Mob.PackApk.runtime_beam_dirs(build, [])
+    assert shared in dirs
+    assert phoenix_ecto in dirs
+  end
+
   test "default assemble args do not select the foundation test app" do
     assert Mix.Tasks.Mob.PackApk.gradle_assemble_args("x86_64") ==
              ["assembleDebug", "--no-daemon", "-PmobAbi=x86_64"]

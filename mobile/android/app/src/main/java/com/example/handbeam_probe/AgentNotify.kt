@@ -59,13 +59,7 @@ object AgentNotify {
         val waiting = payload.optInt("waiting_count", 0)
         val tasks = payload.optJSONArray("tasks")
         val first = tasks?.optJSONObject(0)
-        val activeRunIds = mutableSetOf<String>()
-        for (index in 0 until (tasks?.length() ?: 0)) {
-            tasks?.optJSONObject(index)
-                ?.optString("run_id", "")
-                ?.takeIf { it.isNotBlank() }
-                ?.let(activeRunIds::add)
-        }
+        val activeRunIds = activeRunIds(payload)
         ensureChannels(context)
 
         if (running + waiting <= 0) {
@@ -83,6 +77,21 @@ object AgentNotify {
                 )
             }
         AgentKeepAliveService.update(context, runningCopy(running, waiting), tap, activeRunIds)
+    }
+
+    internal fun activeRunIds(json: ByteArray): Set<String> =
+        runCatching { activeRunIds(JSONObject(String(json, Charsets.UTF_8))) }.getOrDefault(emptySet())
+
+    private fun activeRunIds(payload: JSONObject): Set<String> {
+        val tasks = payload.optJSONArray("tasks")
+        val activeRunIds = mutableSetOf<String>()
+        for (index in 0 until (tasks?.length() ?: 0)) {
+            tasks?.optJSONObject(index)
+                ?.optString("run_id", "")
+                ?.takeIf { it.isNotBlank() }
+                ?.let(activeRunIds::add)
+        }
+        return activeRunIds
     }
 
     /** Called from handbeam_notify.c; [json] is UTF-8 encoded JSON. */

@@ -203,7 +203,7 @@ defmodule Mix.Tasks.Mob.PackApk do
         dest = Path.join(staging, app_name)
         File.mkdir_p!(dest)
 
-        Enum.each(MobDev.HotPush.runtime_beam_dirs(), fn dir ->
+        Enum.each(runtime_beam_dirs(), fn dir ->
           cp!("#{Path.expand(dir)}/.", dest)
         end)
 
@@ -217,6 +217,54 @@ defmodule Mix.Tasks.Mob.PackApk do
       {out, _} ->
         {:error, "copy OTP failed: #{out}"}
     end
+  end
+
+  @doc false
+  def runtime_beam_dirs(build_path \\ Mix.Project.build_path(), mob_dirs \\ nil) do
+    mob_dirs = mob_dirs || mob_runtime_beam_dirs()
+
+    (shared_runtime_beam_dirs(build_path) ++ mob_dirs)
+    |> Enum.uniq()
+    |> Enum.filter(&File.dir?/1)
+  end
+
+  defp shared_runtime_beam_dirs(build_path) do
+    lib_path = Path.join(build_path, "lib")
+    collect_runtime_apps(lib_path, ["handbeam"], MapSet.new(), [])
+  end
+
+  defp collect_runtime_apps(_lib_path, [], _seen, dirs), do: Enum.reverse(dirs)
+
+  defp collect_runtime_apps(lib_path, [app | rest], seen, dirs) do
+    if MapSet.member?(seen, app) do
+      collect_runtime_apps(lib_path, rest, seen, dirs)
+    else
+      seen = MapSet.put(seen, app)
+      ebin = Path.join([lib_path, app, "ebin"])
+
+      if File.dir?(ebin) do
+        dependencies = application_dependencies(Path.join(ebin, "#{app}.app"))
+        collect_runtime_apps(lib_path, rest ++ dependencies, seen, [ebin | dirs])
+      else
+        collect_runtime_apps(lib_path, rest, seen, dirs)
+      end
+    end
+  end
+
+  defp application_dependencies(app_file) do
+    with {:ok, [{:application, _name, spec}]} <- :file.consult(String.to_charlist(app_file)) do
+      spec
+      |> Keyword.get(:applications, [])
+      |> Enum.map(&to_string/1)
+    else
+      _ -> []
+    end
+  end
+
+  defp mob_runtime_beam_dirs do
+    if Code.ensure_loaded?(MobDev.HotPush),
+      do: apply(MobDev.HotPush, :runtime_beam_dirs, []),
+      else: []
   end
 
   defp merge_priv!(dest) do

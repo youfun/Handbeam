@@ -37,6 +37,21 @@ class HandbeamBridgeTest {
     }
 
     @Test
+    fun twoNotificationStopCyclesReachTheCancelBridgeOnceEach() {
+        val cancels = CopyOnWriteArrayList<String>()
+
+        HandbeamBridge.observeActiveRuns(setOf("notification-run-a"))
+        HandbeamBridge.recordClose { cancels.add("run-a") }
+        HandbeamBridge.recordClose { cancels.add("duplicate-a") }
+
+        HandbeamBridge.observeActiveRuns(setOf("notification-run-b"))
+        HandbeamBridge.recordClose { cancels.add("run-b") }
+        HandbeamBridge.recordClose { cancels.add("duplicate-b") }
+
+        assertEquals(listOf("run-a", "run-b"), cancels.toList())
+    }
+
+    @Test
     fun serialDispatcherRunsInOrderOnOneThreadAndSurvivesFailures() {
         val seen = CopyOnWriteArrayList<Int>()
         val threads = CopyOnWriteArrayList<Thread>()

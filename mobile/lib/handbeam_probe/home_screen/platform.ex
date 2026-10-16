@@ -112,7 +112,7 @@ defmodule HandbeamProbe.HomeScreen.Platform do
 
       {:error, reason, socket} ->
         Logger.debug("[platform] result for #{request_id} dropped: #{inspect(reason)}")
-        discard_stale(result)
+        discard_stale(socket, request_id, wire_generation, result)
         socket
     end
   end
@@ -195,9 +195,36 @@ defmodule HandbeamProbe.HomeScreen.Platform do
 
   defp owned_path(_), do: nil
 
-  defp discard_stale({:ok, attachment}), do: cleanup_draft_files([attachment])
-  defp discard_stale({:ok_batch, attachments, _}), do: cleanup_draft_files(attachments)
-  defp discard_stale(_), do: :ok
+  defp discard_stale(socket, request_id, wire_generation, {:ok, result})
+       when is_map(result) do
+    snapshot = Inbound.snapshot(result)
+    owner_request_id = snapshot.owner_request_id || request_id
+
+    generation =
+      if is_integer(wire_generation),
+        do: wire_generation,
+        else: Requests.composer_generation(socket)
+
+    if is_binary(snapshot.snapshot_id) and is_binary(owner_request_id) do
+      _ =
+        HandbeamProbe.Platform.cleanup_snapshot(
+          self(),
+          Ecto.UUID.generate(),
+          generation,
+          snapshot.snapshot_id,
+          owner_request_id
+        )
+
+      :ok
+    else
+      cleanup_draft_files([result])
+    end
+  end
+
+  defp discard_stale(_socket, _request_id, _wire_generation, {:ok_batch, attachments, _}),
+    do: cleanup_draft_files(attachments)
+
+  defp discard_stale(_socket, _request_id, _wire_generation, _result), do: :ok
 
   # ── copy ──
 

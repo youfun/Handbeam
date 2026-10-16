@@ -68,7 +68,7 @@ defmodule HandbeamProbe.HomeScreen.Chat do
   def handle({:tap, :stop}, socket), do: socket
 
   def handle({:tap, :new_chat}, socket) do
-    socket = Nav.blank(socket) |> Nav.reset_composer()
+    socket = socket |> Nav.reset_composer() |> Nav.blank()
     a = socket.assigns
 
     assign(socket,
@@ -78,7 +78,7 @@ defmodule HandbeamProbe.HomeScreen.Chat do
   end
 
   def handle({:tap, :new_free_chat}, socket) do
-    socket = Nav.blank(socket) |> Nav.reset_composer()
+    socket = socket |> Nav.reset_composer() |> Nav.blank()
     a = socket.assigns
 
     socket
@@ -188,12 +188,18 @@ defmodule HandbeamProbe.HomeScreen.Chat do
     socket = assign(socket, :chat, projected)
 
     socket =
-      if projected.approval_seq != chat.approval_seq && projected.pending_approval do
-        socket
-        |> assign(approval_open: true, approval_snapshots: %{})
-        |> NativeArtifactDelivery.start_approval_exports(projected)
-      else
-        socket
+      cond do
+        projected.approval_seq != chat.approval_seq && projected.pending_approval ->
+          socket
+          |> NativeArtifactDelivery.supersede_approval_batch()
+          |> assign(approval_open: true, approval_snapshots: %{})
+          |> NativeArtifactDelivery.reconcile_approval_exports(projected)
+
+        chat.pending_approval && is_nil(projected.pending_approval) ->
+          NativeArtifactDelivery.supersede_approval_batch(socket)
+
+        true ->
+          socket
       end
 
     settle_stopping(socket, projected)
@@ -576,14 +582,13 @@ defmodule HandbeamProbe.HomeScreen.Chat do
     case NativeApproval.decide(chat, approval_workspace(a), action, scope, a.approval_snapshots) do
       :ok ->
         socket
-        |> then(
-          &if(action == :deny, do: NativeArtifactDelivery.cleanup_bindings(&1, :force), else: &1)
-        )
+        |> cleanup_after_decision(chat, action)
         |> assign(:chat, cleared)
         |> Notice.clear()
 
       {:ok, :rule_not_saved} ->
         socket
+        |> cleanup_after_decision(chat, action)
         |> assign(:chat, cleared)
         |> Notice.put_error(
           gettext("Approval submitted, but the rule could not be saved to the workspace.")
@@ -593,6 +598,32 @@ defmodule HandbeamProbe.HomeScreen.Chat do
         Notice.put_error(
           socket,
           gettext("Approval was not submitted. Please try again or reopen the conversation.")
+        )
+    end
+  end
+
+  defp cleanup_after_decision(socket, _chat, :deny) do
+    NativeArtifactDelivery.cleanup_bindings(socket, :force)
+  end
+
+  defp cleanup_after_decision(socket, chat, :approve) do
+    requests = chat.pending_approval["action_requests"] || []
+
+    case Enum.find(requests, &Handbeam.ArtifactDelivery.tool?(&1["tool_name"] || "")) do
+      nil ->
+        socket
+
+      selected ->
+        skipped =
+          NativeApproval.skipped_android_requests(
+            chat.pending_approval,
+            selected["tool_call_id"]
+          )
+
+        NativeArtifactDelivery.cleanup_skipped_approval_bindings(
+          socket,
+          chat.conversation["id"],
+          skipped
         )
     end
   end

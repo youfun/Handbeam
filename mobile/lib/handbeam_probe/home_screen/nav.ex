@@ -420,6 +420,7 @@ defmodule HandbeamProbe.HomeScreen.Nav do
         file_viewer: NativeFileViewer.new()
       ] ++ State.chat_reset()
     )
+    |> NativeArtifactDelivery.reconcile_approval_exports()
     |> bump_workspace_open()
     |> Settings.load_models()
     |> sync_bean_clock()
@@ -472,6 +473,7 @@ defmodule HandbeamProbe.HomeScreen.Nav do
           draft: NativeWorkspaces.get_draft(drafts, selected.workspace, conversation)
         )
     end
+    |> NativeArtifactDelivery.reconcile_approval_exports()
     |> sync_bean_clock()
   end
 
@@ -573,6 +575,7 @@ defmodule HandbeamProbe.HomeScreen.Nav do
       merged_intake_ids: MapSet.new(),
       share_send: nil,
       approval_snapshots: %{},
+      approval_export_inflight: MapSet.new(),
       deliver_mode: :steer,
       composer_mode: :chat,
       review_place: "",

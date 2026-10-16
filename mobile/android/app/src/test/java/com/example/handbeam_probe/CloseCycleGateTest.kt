@@ -11,7 +11,7 @@ import java.util.concurrent.atomic.AtomicInteger
 
 class CloseCycleGateTest {
     @Test
-    fun oneObservedRunSetCanCloseOnlyOnce() {
+    fun oneObservedRunSetClosesOnceAndEmptyUpdateReleasesTheClaim() {
         val gate = CloseCycleGate()
         val closes = AtomicInteger(0)
         gate.observeActiveRuns(setOf("run-a"))
@@ -20,8 +20,18 @@ class CloseCycleGateTest {
         assertFalse(gate.runOnce { closes.incrementAndGet() })
         gate.observeActiveRuns(setOf("run-a"))
         gate.observeActiveRuns(emptySet())
-        assertFalse(gate.runOnce { closes.incrementAndGet() })
-        assertEquals(1, closes.get())
+        assertTrue(gate.runOnce { closes.incrementAndGet() })
+        assertEquals(2, closes.get())
+    }
+
+    @Test
+    fun unknownEmptyRunSetNeverBecomesAPermanentLatch() {
+        val gate = CloseCycleGate()
+        val closes = AtomicInteger(0)
+
+        assertTrue(gate.runOnce { closes.incrementAndGet() })
+        assertTrue(gate.runOnce { closes.incrementAndGet() })
+        assertEquals(2, closes.get())
     }
 
     @Test
