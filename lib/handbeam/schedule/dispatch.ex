@@ -75,6 +75,8 @@ defmodule Handbeam.Schedule.Dispatch do
   defp build_opts(schedule, run) do
     with :ok <- model_gate(schedule),
          {:ok, workspace_path} <- workspace_path(schedule),
+         {:ok, checkout_path} <-
+           ConversationStore.effective_checkout_path(schedule.conversation_id),
          {:ok, built} <-
            RunOpts.for_workspace(workspace_path, schedule.model,
              reasoning_level: schedule.reasoning_level
@@ -89,7 +91,7 @@ defmodule Handbeam.Schedule.Dispatch do
           request_id: run.request_id,
           workspace_id: schedule.workspace_id,
           workspace_path: workspace_path,
-          working_directory: workspace_path,
+          working_directory: checkout_path,
           streaming: true,
           origin: %{
             "kind" => "automatic",

@@ -1178,7 +1178,7 @@ defmodule Handbeam.Agent.Provider.Cursor.Session do
     %{
       model: config[:model],
       provider_key: config[:provider_key] || config[:provider] || "cursor",
-      workspace: config[:working_directory] || config[:workspace_path],
+      workspace: config[:working_directory],
       conversation_id: config[:conversation_id] || fallback_id,
       run_id: config[:run_id],
       auth_generation: config[:auth_generation]

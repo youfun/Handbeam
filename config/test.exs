@@ -65,7 +65,8 @@ config :handbeam,
   event_recorder_enabled?: false,
   session_store_enabled?: false,
   recover_transcripts: false,
-  extension_hot_reload: false
+  extension_hot_reload: false,
+  allow_unbound_test_conversations: true
 
 config :handbeam, Handbeam.Gettext,
   default_locale: "en",

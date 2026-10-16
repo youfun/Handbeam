@@ -123,7 +123,8 @@ defmodule Handbeam.Agent.Delegation.Policy do
 
       opts =
         [
-          workspace_path: context.working_directory,
+          workspace_path: policy_workspace(context),
+          working_directory: context.working_directory,
           workspace_id: context[:workspace_id],
           model: model,
           provider: provider,
@@ -217,7 +218,7 @@ defmodule Handbeam.Agent.Delegation.Policy do
     do: configured_model(context, provider_id, model_id)
 
   defp configured_model(context, provider_id, model_id, selected_reasoning \\ nil) do
-    case ModelConfig.provider_config_for(context.working_directory, provider_id, model_id) do
+    case ModelConfig.provider_config_for(policy_workspace(context), provider_id, model_id) do
       {:ok, provider_config} ->
         entry =
           Enum.find(ModelConfig.all_global_models(), &(&1.id == "#{provider_id}/#{model_id}"))
@@ -246,6 +247,11 @@ defmodule Handbeam.Agent.Delegation.Policy do
   defp inherit_model(context) do
     config = context.delegation_config
     {:ok, config.model, config.provider, config.provider_config, config.reasoning_level}
+  end
+
+  defp policy_workspace(context) do
+    context[:workspace_path] || context.delegation_config.workspace_path ||
+      context.working_directory
   end
 
   defp model_error(reason) when is_binary(reason), do: reason

@@ -217,20 +217,22 @@ defmodule Handbeam.Agent.Coordinator do
       {content, opts} = stamp_message_ids(content, opts)
       run_opts = agent_run_opts(conversation_id, opts)
 
-      case Handbeam.Agent.Runner.start_run(conversation_id, content, run_opts) do
-        {:ok, pid} ->
-          runner_pid = wait_until_registered(conversation_id)
+      with :ok <- runtime_checkout_available(run_opts) do
+        case Handbeam.Agent.Runner.start_run(conversation_id, content, run_opts) do
+          {:ok, pid} ->
+            runner_pid = wait_until_registered(conversation_id)
 
-          ack = %{
-            action: :started,
-            run_id: Keyword.fetch!(run_opts, :run_id),
-            run_pid: runner_pid || pid
-          }
+            ack = %{
+              action: :started,
+              run_id: Keyword.fetch!(run_opts, :run_id),
+              run_pid: runner_pid || pid
+            }
 
-          {:ok, ack}
+            {:ok, ack}
 
-        {:error, reason} ->
-          normalize_start_run_error(reason)
+          {:error, reason} ->
+            normalize_start_run_error(reason)
+        end
       end
     else
       {:error, reason} -> {:error, reason}
@@ -411,6 +413,20 @@ defmodule Handbeam.Agent.Coordinator do
 
   defp pending_tool_ids(_info), do: []
 
+  defp runtime_checkout_available(opts) do
+    if free_chat?(opts) do
+      :ok
+    else
+      case Keyword.get(opts, :working_directory) do
+        path when is_binary(path) and path != "" ->
+          if File.dir?(path), do: :ok, else: {:error, :checkout_unavailable}
+
+        _ ->
+          {:error, :checkout_unavailable}
+      end
+    end
+  end
+
   defp validate_required_opts(opts) do
     missing = Enum.reject(@required_opts, &Keyword.has_key?(opts, &1))
 
@@ -550,6 +566,7 @@ defmodule Handbeam.Agent.Coordinator do
             opts
             |> Keyword.put_new(:workspace_id, meta["workspace_id"])
             |> put_created_by(meta)
+            |> put_checkout_path(meta)
 
           if get_in(meta, ["collaboration", "read_only"]) == true,
             do: Keyword.put(opts, :delegated_read_only, true),
@@ -569,6 +586,23 @@ defmodule Handbeam.Agent.Coordinator do
     |> put_builtin_memory()
     |> put_skills()
     |> put_advisor_pin()
+  end
+
+  defp put_checkout_path(opts, meta) do
+    if Keyword.has_key?(opts, :working_directory) do
+      opts
+    else
+      case meta["checkout_path"] do
+        path when is_binary(path) and path != "" ->
+          case Handbeam.ConversationStore.effective_checkout_path(meta) do
+            {:ok, checkout_path} -> Keyword.put(opts, :working_directory, checkout_path)
+            {:error, _reason} -> Keyword.put(opts, :working_directory, nil)
+          end
+
+        _missing ->
+          opts
+      end
+    end
   end
 
   defp put_created_by(opts, meta) do
@@ -618,7 +652,10 @@ defmodule Handbeam.Agent.Coordinator do
         Keyword.delete(opts, :working_directory)
 
       true ->
-        Keyword.put(opts, :working_directory, Keyword.fetch!(opts, :workspace_path))
+        case Keyword.fetch(opts, :working_directory) do
+          {:ok, _value} -> opts
+          :error -> Keyword.put(opts, :working_directory, Keyword.fetch!(opts, :workspace_path))
+        end
     end
   end
 
@@ -721,7 +758,7 @@ defmodule Handbeam.Agent.Coordinator do
   end
 
   defp history_workspace_path(opts) do
-    if free_chat?(opts), do: nil, else: opts[:workspace_path]
+    if free_chat?(opts), do: nil, else: opts[:working_directory]
   end
 
   defp transcript_history_messages(conversation_id, current_run_id, workspace_path) do

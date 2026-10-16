@@ -31,9 +31,14 @@ defmodule Handbeam.Permissions.ToolPolicy do
         }
 
   @spec from_workspace(Path.t() | nil, map(), [String.t()]) :: t()
-  def from_workspace(workspace_root, overrides \\ %{}, session_allow \\ [])
+  def from_workspace(workspace_root, overrides \\ %{}, session_allow \\ []) do
+    from_workspace(workspace_root, workspace_root, overrides, session_allow)
+  end
 
-  def from_workspace(workspace_root, overrides, session_allow)
+  @spec from_workspace(Path.t() | nil, Path.t() | nil, map(), [String.t()]) :: t()
+  def from_workspace(workspace_root, checkout_root, overrides, session_allow)
+
+  def from_workspace(workspace_root, checkout_root, overrides, session_allow)
       when is_binary(workspace_root) and workspace_root != "" do
     policy =
       case Handbeam.WorkspaceSettings.load(workspace_root) do
@@ -45,15 +50,16 @@ defmodule Handbeam.Permissions.ToolPolicy do
           %__MODULE__{default_mode: :deny, settings_error: :unavailable}
       end
 
-    Map.put(policy, :workspace_root, workspace_root)
+    Map.put(policy, :workspace_root, checkout_root)
   end
 
-  def from_workspace(_workspace_root, overrides, session_allow) do
+  def from_workspace(_workspace_root, checkout_root, overrides, session_allow) do
     %__MODULE__{
       default_mode: :deny,
       allow: ["mem_*", "web_fetch", "browser", "open_url"],
       overrides: normalize_overrides(overrides),
-      session_allow: string_list(session_allow)
+      session_allow: string_list(session_allow),
+      workspace_root: checkout_root
     }
   end
 

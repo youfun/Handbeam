@@ -83,7 +83,7 @@ defmodule Handbeam.Tool.Builtin.ListModels do
 
   defp workspace_path(context) do
     opts = context[:thread_run_opts] || []
-    context[:working_directory] || Keyword.get(opts, :workspace_path)
+    context[:workspace_path] || Keyword.get(opts, :workspace_path)
   end
 
   defp filter(models, ""), do: models

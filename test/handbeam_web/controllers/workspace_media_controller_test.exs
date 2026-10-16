@@ -19,6 +19,11 @@ defmodule HandbeamWeb.WorkspaceMediaControllerTest do
     Application.put_env(:handbeam, :workspaces_file, Path.join(root, "workspaces.json"))
     {:ok, ws} = WorkspaceStore.add(workspace)
 
+    {:ok, conversation} =
+      Handbeam.ConversationStore.create(ws["id"], checkout_path: workspace)
+
+    Process.put(:workspace_media_conversation_id, conversation["id"])
+
     on_exit(fn ->
       restore_config(:workspaces_file, previous_config)
       File.rm_rf!(root)
@@ -128,6 +133,12 @@ defmodule HandbeamWeb.WorkspaceMediaControllerTest do
     File.ln_s!(sensitive, Path.join(context.root, "alias"))
     {:ok, ws} = WorkspaceStore.add(Path.join(context.root, "alias/project"))
 
+    {:ok, conversation} =
+      Handbeam.ConversationStore.create(ws["id"],
+        checkout_path: Path.join(context.root, "alias/project")
+      )
+
+    Process.put(:workspace_media_conversation_id, conversation["id"])
     conn = get(context.conn, media_url(ws["id"], "picture.png"))
     assert response(conn, 404) == "Not Found"
   end
@@ -180,7 +191,10 @@ defmodule HandbeamWeb.WorkspaceMediaControllerTest do
     encoded_path =
       path |> String.split("/") |> Enum.map_join("/", &URI.encode(&1, fn _ -> false end))
 
-    "/workspace-files/#{workspace_id}/#{encoded_path}"
+    conversation_id =
+      Process.get(:workspace_media_conversation_id) || raise "missing media conversation"
+
+    "/workspace-files/#{workspace_id}/#{encoded_path}?conversation_id=#{conversation_id}"
   end
 
   defp write_image(root, path, bytes) do

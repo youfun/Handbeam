@@ -121,6 +121,38 @@ defmodule Handbeam.Agent.OperationReceiptTest do
     assert Enum.all?(results -- [:ok], &(&1 == {:unknown, :delivery_unknown}))
   end
 
+  test "reserve survives a competing SQLite writer beyond the current busy timeout" do
+    scope = {:message, unique_id("conversation")}
+    fingerprint = OperationReceipt.fingerprint({"lock contention", :new_run})
+    {:ok, lock_connection} = Exqlite.Sqlite3.open(Repo.database_path())
+
+    on_exit(fn ->
+      _ = Exqlite.Sqlite3.execute(lock_connection, "ROLLBACK")
+      _ = Exqlite.Sqlite3.close(lock_connection)
+    end)
+
+    assert :ok = Exqlite.Sqlite3.execute(lock_connection, "BEGIN IMMEDIATE")
+    test_process = self()
+
+    assert {:ok, _pid} =
+             Task.start(fn ->
+               outcome =
+                 try do
+                   {:returned, OperationReceipt.reserve(scope, "busy-1", fingerprint)}
+                 rescue
+                   exception -> {:raised, Exception.message(exception)}
+                 end
+
+               send(test_process, {:reserve_outcome, outcome})
+             end)
+
+    Process.send_after(self(), :release_competing_writer, 2_500)
+    assert_receive :release_competing_writer, 3_000
+    assert :ok = Exqlite.Sqlite3.execute(lock_connection, "COMMIT")
+    assert_receive {:reserve_outcome, outcome}, 3_000
+    assert outcome == {:returned, :ok}
+  end
+
   test "mark_unknown clears a completed receipt" do
     scope = {:message, unique_id("conversation")}
     fingerprint = OperationReceipt.fingerprint("completed")

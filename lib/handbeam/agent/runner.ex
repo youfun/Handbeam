@@ -785,16 +785,20 @@ defmodule Handbeam.Agent.Runner do
   end
 
   defp prewarm_search(state) do
-    workspace = state.opts[:working_directory] || state.opts[:workspace_path]
+    case state.opts[:working_directory] do
+      workspace when is_binary(workspace) and workspace != "" ->
+        case Handbeam.Search.prewarm(workspace) do
+          :ok -> :ok
+          {:error, reason} -> Logger.warning("[Runner] search prewarm failed: #{inspect(reason)}")
+        end
 
-    case Handbeam.Search.prewarm(workspace) do
-      :ok -> :ok
-      {:error, reason} -> Logger.warning("[Runner] search prewarm failed: #{inspect(reason)}")
+      _ ->
+        :ok
     end
   end
 
   defp job_context_present?(state) do
-    dir = state.opts[:working_directory] || state.opts[:workspace_path]
+    dir = state.opts[:working_directory]
     is_binary(dir) and dir != ""
   end
 
@@ -802,7 +806,7 @@ defmodule Handbeam.Agent.Runner do
     %{
       conversation_id: state.conversation_id,
       run_id: state.opts[:run_id],
-      working_directory: state.opts[:working_directory] || state.opts[:workspace_path]
+      working_directory: state.opts[:working_directory]
     }
   end
 
@@ -894,7 +898,7 @@ defmodule Handbeam.Agent.Runner do
   defp track_search_access({:tool_end, payload}, opts) do
     tool = Handbeam.Utils.SafeMap.get_any(payload, :tool, "tool")
     path = Handbeam.Utils.SafeMap.get_any(payload, :file_path, "file_path")
-    workspace = opts[:working_directory] || opts[:workspace_path]
+    workspace = opts[:working_directory]
     successful? = is_nil(payload[:error]) and is_nil(payload["error"])
     normalized_tool = if is_binary(tool), do: String.downcase(tool), else: ""
 

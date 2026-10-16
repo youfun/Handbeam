@@ -7,6 +7,7 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
 
   alias Handbeam.Agent.{Message, State}
   alias Handbeam.Permissions.{AutoReview, InterruptData, ToolPolicy}
+  alias Handbeam.Utils.SafeMap
 
   @impl true
   def call(:after_tool_request, %State{} = state) do
@@ -24,8 +25,9 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
     tool_calls = last_tool_calls(state)
 
     policy =
-      state.config.working_directory
-      |> ToolPolicy.from_workspace(
+      ToolPolicy.from_workspace(
+        policy_workspace(state),
+        state.config.working_directory,
         state.tool_guard_overrides || %{},
         state.tool_guard_session_allow || []
       )
@@ -61,25 +63,22 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
         }
   def resolve_approval(%State{status: :interrupted} = state, decisions) when is_list(decisions) do
     interrupt_data = state.interrupt_data || %{}
-    hitl_ids = interrupt_id_list(interrupt_data, :hitl_tool_call_ids, "hitl_tool_call_ids")
+    hitl_ids = Map.get(interrupt_data, :hitl_tool_call_ids, [])
 
     auto_ids =
       interrupt_data
-      |> interrupt_id_list(:auto_approved_tool_call_ids, "auto_approved_tool_call_ids")
+      |> Map.get(:auto_approved_tool_call_ids, [])
       |> MapSet.new()
 
     tool_calls = last_tool_calls(state)
-    decision_by_id = decision_lookup(decisions)
+    decision_by_id = decisions |> Enum.map(&normalize_decision/1) |> decision_lookup()
 
     {decision_blocks, remembered_overrides, approved_hitl_ids} =
       partition_hitl_decisions(hitl_ids, tool_calls, decision_by_id)
 
     classified_denied_blocks = (state.tool_guard_result_blocks || []) ++ decision_blocks
 
-    denied_ids =
-      MapSet.new(classified_denied_blocks, fn block ->
-        Handbeam.Utils.SafeMap.get_any(block, :tool_use_id, "tool_use_id")
-      end)
+    denied_ids = MapSet.new(classified_denied_blocks, & &1.tool_use_id)
 
     permitted_ids =
       auto_ids
@@ -89,9 +88,7 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
     denied_blocks = total_denied_blocks(tool_calls, permitted_ids, classified_denied_blocks)
 
     executable_calls =
-      Enum.filter(tool_calls, fn call ->
-        MapSet.member?(permitted_ids, Handbeam.Utils.SafeMap.get_any(call, :id, "id"))
-      end)
+      Enum.filter(tool_calls, &MapSet.member?(permitted_ids, &1.id))
 
     %{
       state: apply_approval_resume_state(state, denied_blocks, remembered_overrides),
@@ -101,33 +98,30 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
     }
   end
 
-  defp interrupt_id_list(interrupt_data, atom_key, string_key) do
-    Handbeam.Utils.SafeMap.get_any(interrupt_data, atom_key, string_key) || []
+  defp normalize_decision(decision) do
+    %{
+      tool_call_id: SafeMap.get(decision, "tool_call_id"),
+      tool_name: SafeMap.get(decision, "tool_name"),
+      action: SafeMap.get(decision, "action") || "deny",
+      remember: SafeMap.get(decision, "remember", false) == true,
+      suggested_pattern: SafeMap.get(decision, "suggested_pattern")
+    }
   end
 
   defp decision_lookup(decisions) do
-    Map.new(decisions, fn decision ->
-      {Handbeam.Utils.SafeMap.get_any(decision, ["tool_call_id", :tool_call_id]), decision}
-    end)
+    Map.new(decisions, &{&1.tool_call_id, &1})
   end
 
   defp partition_hitl_decisions(hitl_ids, tool_calls, decision_by_id) do
     Enum.reduce(hitl_ids, {[], %{}, MapSet.new()}, fn call_id, {blocks, overrides, approved} ->
-      call =
-        Enum.find(
-          tool_calls,
-          &(Handbeam.Utils.SafeMap.get_any(&1, :id, "id") == call_id)
-        )
-
-      decision = Map.get(decision_by_id, call_id, %{})
-      action = Handbeam.Utils.SafeMap.get_any(decision, "action", :action) || "deny"
+      call = Enum.find(tool_calls, &(&1.id == call_id))
+      decision = Map.get(decision_by_id, call_id, normalize_decision(%{}))
+      action = decision.action
 
       if to_string(action) == "approve" do
         {blocks, remember_session_grant(overrides, decision, call), MapSet.put(approved, call_id)}
       else
-        tool_name =
-          (call && Handbeam.Utils.SafeMap.get_any(call, [:name, "name"])) ||
-            Handbeam.Utils.SafeMap.get_any(decision, ["tool_name", :tool_name]) || "unknown"
+        tool_name = (call && call.name) || decision.tool_name || "unknown"
 
         block = approval_result_block(call_id, tool_name, action)
         overrides = remember_deny_override(overrides, decision, tool_name)
@@ -137,7 +131,7 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
   end
 
   defp remember_deny_override(overrides, decision, tool_name) do
-    if Handbeam.Utils.SafeMap.get_any(decision, "remember", :remember) do
+    if decision.remember do
       Map.put(overrides, tool_name, :deny)
     else
       overrides
@@ -145,19 +139,12 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
   end
 
   defp total_denied_blocks(tool_calls, permitted_ids, blocks) do
-    by_id =
-      Map.new(blocks, fn block ->
-        {Handbeam.Utils.SafeMap.get_any(block, :tool_use_id, "tool_use_id"), block}
-      end)
+    by_id = Map.new(blocks, &{&1.tool_use_id, &1})
 
     tool_calls
-    |> Enum.reject(fn call ->
-      MapSet.member?(permitted_ids, Handbeam.Utils.SafeMap.get_any(call, :id, "id"))
-    end)
+    |> Enum.reject(&MapSet.member?(permitted_ids, &1.id))
     |> Enum.map(fn call ->
-      id = Handbeam.Utils.SafeMap.get_any(call, :id, "id")
-      name = Handbeam.Utils.SafeMap.get_any(call, :name, "name") || "unknown"
-      Map.get(by_id, id) || approval_result_block(id, name, "deny")
+      Map.get(by_id, call.id) || approval_result_block(call.id, call.name || "unknown", "deny")
     end)
   end
 
@@ -177,10 +164,9 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
   # "This session" remembers the suggested pattern rather than granting every
   # future call with the same tool name.
   defp remember_session_grant(overrides, decision, call) do
-    if Handbeam.Utils.SafeMap.get_any(decision, ["remember", :remember]) do
+    if decision.remember do
       pattern =
-        (call && Handbeam.Permissions.Remember.pattern(call)) ||
-          Handbeam.Utils.SafeMap.get_any(decision, ["suggested_pattern", :suggested_pattern])
+        (call && Handbeam.Permissions.Remember.pattern(call)) || decision.suggested_pattern
 
       if is_binary(pattern) and String.trim(pattern) != "" do
         Map.put(overrides, {:session_allow, pattern}, :auto)
@@ -232,7 +218,7 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
   # rewrites allow rules or session overrides, and a failed review is the
   # existing human interrupt — not a deny.
   defp review_or_interrupt(state, pending, auto_approved) do
-    if auto_review?(state) and not Enum.any?(pending, &(&1[:name] == "computer")) do
+    if auto_review?(state) and not Enum.any?(pending, &(&1.name == "computer")) do
       case AutoReview.review(state, pending) do
         {:ok, %State{status: :halted} = reviewed} ->
           {:tool_guard_denied, merge_prior_denials(reviewed, state)}
@@ -257,12 +243,12 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
       | tool_guard_denied_calls:
           Enum.uniq_by(
             (prior.tool_guard_denied_calls || []) ++ (reviewed.tool_guard_denied_calls || []),
-            &Handbeam.Utils.SafeMap.get_any(&1, :id, "id")
+            & &1.id
           ),
         tool_guard_result_blocks:
           Enum.uniq_by(
             (prior.tool_guard_result_blocks || []) ++ (reviewed.tool_guard_result_blocks || []),
-            &Handbeam.Utils.SafeMap.get_any(&1, :tool_use_id, "tool_use_id")
+            & &1.tool_use_id
           )
     }
   end
@@ -274,15 +260,19 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
   end
 
   defp auto_review?(%State{} = state) do
-    AutoReview.enabled?(state.config.working_directory) or
+    AutoReview.enabled?(policy_workspace(state)) or
       state.config.context[:delegated_approval] == :auto_review
+  end
+
+  defp policy_workspace(%State{config: config}) do
+    config.workspace_path || config.working_directory
   end
 
   defp interrupt(%{config: %{source: :schedule}} = state, pending, _auto_approved) do
     tool =
       pending
       |> List.first()
-      |> then(&Handbeam.Utils.SafeMap.get_any(&1 || %{}, :name, "name"))
+      |> then(&(&1 || %{})[:name])
       |> case do
         name when is_binary(name) and name != "" -> name
         _ -> "tool"
@@ -325,10 +315,10 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
       end
 
     Message.tool_result_block(
-      Handbeam.Utils.SafeMap.get_any(call, :id, "id"),
+      call.id,
       reason,
       true,
-      %{permission: :denied, tool: Handbeam.Utils.SafeMap.get_any(call, :name, "name")}
+      %{permission: :denied, tool: call.name}
     )
   end
 end

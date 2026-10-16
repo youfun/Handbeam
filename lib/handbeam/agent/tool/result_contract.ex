@@ -37,7 +37,11 @@ defmodule Handbeam.Agent.Tool.ResultContract do
     :artifact_unavailable,
     :indexing,
     :truncated,
-    :partial
+    :partial,
+    :started_at,
+    :completed_at,
+    :duration_ms,
+    :timing_fidelity
   ]
   @max_detail_string 2_000
   @max_diff_lines 80
@@ -252,7 +256,11 @@ defmodule Handbeam.Agent.Tool.ResultContract do
         :artifact_ref,
         :artifact_unavailable,
         :spill_path,
-        :exit_code
+        :exit_code,
+        :started_at,
+        :completed_at,
+        :duration_ms,
+        :timing_fidelity
       ])
     end
   end

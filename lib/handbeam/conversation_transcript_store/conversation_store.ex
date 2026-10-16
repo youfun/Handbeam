@@ -12,9 +12,9 @@ defmodule Handbeam.ConversationTranscriptStore.ConversationStore do
 
   alias Ecto.Changeset
   alias Handbeam.Repo
-  alias Handbeam.Storage.{Conversation, ConversationEntry}
+  alias Handbeam.Storage.{Conversation, ConversationEntry, ConversationRun}
 
-  @envelope_keys ~w(id conversation_id sequence revision role content_type message_type direction phase status run_id tool_call_id tool_status content created_at updated_at)
+  @envelope_keys ~w(id conversation_id sequence revision role content_type message_type direction phase status run_id turn_number tool_call_id tool_status content created_at updated_at)
   @entry_fields [
     :conversation_id,
     :entry_id,
@@ -27,6 +27,7 @@ defmodule Handbeam.ConversationTranscriptStore.ConversationStore do
     :phase,
     :status,
     :run_id,
+    :turn_number,
     :tool_call_id,
     :tool_status,
     :content,
@@ -234,20 +235,39 @@ defmodule Handbeam.ConversationTranscriptStore.ConversationStore do
       )
       |> Repo.all()
 
-    Enum.uniq(assistant_runs ++ tool_runs)
+    lifecycle_runs =
+      from(run in ConversationRun,
+        where: run.status in ["running", "interrupted"],
+        select: {run.conversation_id, run.run_id}
+      )
+      |> Repo.all()
+
+    Enum.uniq(assistant_runs ++ tool_runs ++ lifecycle_runs)
   end
 
   @doc false
   def unfinished_runs(conversation_id) do
-    from(entry in ConversationEntry,
-      where:
-        entry.conversation_id == ^conversation_id and
-          ((entry.role == "assistant" and entry.status == "streaming") or
-             (entry.content_type == "tool" and entry.tool_status == "running")),
-      group_by: entry.run_id,
-      select: entry.run_id
-    )
-    |> Repo.all()
+    entry_runs =
+      from(entry in ConversationEntry,
+        where:
+          entry.conversation_id == ^conversation_id and
+            ((entry.role == "assistant" and entry.status == "streaming") or
+               (entry.content_type == "tool" and entry.tool_status == "running")),
+        group_by: entry.run_id,
+        select: entry.run_id
+      )
+      |> Repo.all()
+
+    lifecycle_runs =
+      from(run in ConversationRun,
+        where:
+          run.conversation_id == ^conversation_id and
+            run.status in ["running", "interrupted"],
+        select: run.run_id
+      )
+      |> Repo.all()
+
+    Enum.uniq(entry_runs ++ lifecycle_runs)
   end
 
   @doc false
@@ -465,6 +485,7 @@ defmodule Handbeam.ConversationTranscriptStore.ConversationStore do
       phase: string_or_nil(entry["phase"]),
       status: string_or_nil(entry["status"]),
       run_id: string_or_nil(entry["run_id"]),
+      turn_number: integer_or_nil(entry["turn_number"]),
       tool_call_id: string_or_nil(entry["tool_call_id"]),
       tool_status: string_or_nil(entry["tool_status"]),
       content: if(is_binary(content), do: content),
@@ -474,7 +495,8 @@ defmodule Handbeam.ConversationTranscriptStore.ConversationStore do
     }
   end
 
-  defp public_entry(row) do
+  @doc false
+  def public_entry(row) do
     envelope = %{
       "id" => row.entry_id,
       "conversation_id" => row.conversation_id,
@@ -487,6 +509,7 @@ defmodule Handbeam.ConversationTranscriptStore.ConversationStore do
       "phase" => row.phase,
       "status" => row.status,
       "run_id" => row.run_id,
+      "turn_number" => row.turn_number,
       "tool_call_id" => row.tool_call_id,
       "tool_status" => row.tool_status,
       "content" => content_value(row),
@@ -607,6 +630,9 @@ defmodule Handbeam.ConversationTranscriptStore.ConversationStore do
   defp string_or_nil(nil), do: nil
   defp string_or_nil(value) when is_binary(value), do: value
   defp string_or_nil(value), do: to_string(value)
+
+  defp integer_or_nil(value) when is_integer(value), do: value
+  defp integer_or_nil(_value), do: nil
 
   defp normalize_timestamp(value, fallback),
     do: value |> parse_time() |> then(&iso8601(&1 || fallback))

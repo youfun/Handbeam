@@ -9,7 +9,7 @@ defmodule Handbeam.Threads.Collaboration do
   """
   alias Handbeam.{ConversationStore, ConversationTranscriptStore, Threads}
 
-  @read_tools ~w(read file_search grep code_search list_models find_thread read_thread get_thread_status reply_to_parent_thread send_thread_message)
+  @read_tools ~w(read file_search grep code_search list_models list_threads find_thread read_thread get_thread_status get_thread_trajectory reply_to_parent_thread send_thread_message)
 
   def completed(id, result, _opts) do
     status = if is_map(result), do: Map.get(result, :status, :error), else: :error
@@ -168,6 +168,7 @@ defmodule Handbeam.Threads.Collaboration do
           parent_conversation_id: source["id"],
           parent_run_id: context[:run_id],
           parent_tool_call_id: context[:tool_call_id],
+          checkout_path: source["checkout_path"],
           collaboration: spec
         )
     end

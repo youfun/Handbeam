@@ -2,7 +2,6 @@ defmodule HandbeamWeb.UploadsController do
   use HandbeamWeb, :controller
 
   alias Handbeam.Uploads
-  alias Handbeam.WorkspaceStore
 
   @doc """
   Serve a previously uploaded file for a given conversation.
@@ -28,8 +27,8 @@ defmodule HandbeamWeb.UploadsController do
 
   defp served_upload_path(ws_id, conversation_id, file)
        when is_binary(ws_id) and ws_id != "" do
-    with {:ok, workspace_path} <- workspace_path_from_ws_id(ws_id) do
-      Uploads.validate_served_upload_path(workspace_path, conversation_id, file)
+    with {:ok, checkout_path} <- conversation_checkout(ws_id, conversation_id) do
+      Uploads.validate_served_upload_path(checkout_path, conversation_id, file)
     end
   end
 
@@ -44,12 +43,14 @@ defmodule HandbeamWeb.UploadsController do
     end
   end
 
-  defp workspace_path_from_ws_id(ws_id) when is_binary(ws_id) and ws_id != "" do
-    case WorkspaceStore.get(ws_id) do
-      {:ok, ws} -> {:ok, ws["path"]}
-      {:error, _} -> {:error, :not_found}
+  defp conversation_checkout(ws_id, conversation_id) do
+    with {:ok, meta} <- Handbeam.ConversationStore.get_metadata(conversation_id),
+         true <- meta["workspace_id"] == ws_id,
+         false <- Handbeam.ConversationStore.free?(meta),
+         {:ok, checkout_path} <- Handbeam.ConversationStore.effective_checkout_path(meta) do
+      {:ok, checkout_path}
+    else
+      _ -> {:error, :not_found}
     end
   end
-
-  defp workspace_path_from_ws_id(_), do: {:error, :missing_workspace_id}
 end

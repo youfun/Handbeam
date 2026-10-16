@@ -93,7 +93,11 @@ defmodule Handbeam.Agent.Tool.Executor do
       |> Map.take(authorized_tools(state.config))
 
     session_id = context[:conversation_id] || context[:session_id] || "nested"
-    hook_payload = tool_hook_payload(call, session_id, parent_tool_call_id)
+
+    hook_payload =
+      call
+      |> tool_hook_payload(session_id, parent_tool_call_id)
+      |> Map.put(:turn_number, state.turn)
 
     case authorize_nested(name, tool_fns, context, state) do
       :ok ->
@@ -118,7 +122,7 @@ defmodule Handbeam.Agent.Tool.Executor do
             emit_nested(
               opts,
               :tool_end,
-              nested_end_payload(call, block, parent_tool_call_id)
+              nested_end_payload(call, block, parent_tool_call_id, state.turn)
               |> Map.update(:details, %{}, &Handbeam.Agent.Tool.ResultContract.project_details/1)
               |> Map.update(:output, nil, &String.slice(to_string(&1), 0, 16_000))
               |> Map.update(:error, nil, fn
@@ -230,6 +234,7 @@ defmodule Handbeam.Agent.Tool.Executor do
 
   defp execute_one_with_revision(%{name: name, input: input, id: id}, tool_fns, context) do
     name = normalize_tool_name(name)
+    started_at = DateTime.utc_now() |> DateTime.truncate(:microsecond)
     t0 = System.monotonic_time(:millisecond)
     Logger.debug("[Executor] start tool=#{name} id=#{id}")
 
@@ -259,13 +264,31 @@ defmodule Handbeam.Agent.Tool.Executor do
     max_chars = get_max_result_chars(tool_fns, name)
     truncated = bound_result(result, max_chars, context)
     duration_ms = System.monotonic_time(:millisecond) - t0
+    completed_at = DateTime.utc_now() |> DateTime.truncate(:microsecond)
 
     Logger.debug(
       "[Executor] end tool=#{name} id=#{id} duration_ms=#{duration_ms} " <>
         "is_error=#{truncated.is_error}"
     )
 
-    {result_to_block(truncated, id), revised}
+    block =
+      truncated
+      |> result_to_block(id)
+      |> put_execution_timing(started_at, completed_at, duration_ms)
+
+    {block, revised}
+  end
+
+  defp put_execution_timing(block, started_at, completed_at, duration_ms) do
+    details =
+      Map.merge(block[:details] || %{}, %{
+        started_at: DateTime.to_iso8601(started_at),
+        completed_at: DateTime.to_iso8601(completed_at),
+        duration_ms: duration_ms,
+        timing_fidelity: "exact"
+      })
+
+    Map.put(block, :details, details)
   end
 
   defp detach_context_edit(%Result{is_error: true} = result), do: {result, nil}
@@ -783,14 +806,18 @@ defmodule Handbeam.Agent.Tool.Executor do
     end
   end
 
-  defp nested_end_payload(call, block, parent_tool_call_id) do
+  defp nested_end_payload(call, block, parent_tool_call_id, turn_number) do
     details = block[:details] || %{}
 
     payload = %{
       tool_use_id: call.id,
       tool: call.name,
       parent_tool_call_id: parent_tool_call_id,
-      duration_ms: 0,
+      turn_number: turn_number,
+      duration_ms: detail_value(details, :duration_ms, nil),
+      started_at: detail_value(details, :started_at, nil),
+      completed_at: detail_value(details, :completed_at, nil),
+      timing_fidelity: detail_value(details, :timing_fidelity, nil),
       details: Handbeam.Agent.Tool.ResultContract.project_details(details) || %{},
       output: String.slice(to_string(block[:content] || ""), 0, 16_000)
     }
@@ -854,6 +881,8 @@ defmodule Handbeam.Agent.Tool.Executor do
     context
     |> Map.merge(%{
       working_directory: config.working_directory,
+      checkout_path: config.working_directory,
+      workspace_path: config.workspace_path,
       approval_mode: effective_approval_mode(config, overrides, session_allow),
       skill_paths: config.skill_paths,
       tool_timeout: config.tool_timeout,
@@ -874,7 +903,8 @@ defmodule Handbeam.Agent.Tool.Executor do
       session_id: Map.get(metadata, :session_id) || Map.get(context, :session_id),
       workspace_id: Map.get(context, :workspace_id),
       thread_run_opts: [
-        workspace_path: config.working_directory,
+        workspace_path: config.workspace_path || config.working_directory,
+        working_directory: config.working_directory,
         model: config.model,
         provider: config.provider,
         provider_config: config.provider_config
@@ -895,8 +925,12 @@ defmodule Handbeam.Agent.Tool.Executor do
     if delegated in [:yolo, "yolo"] do
       :yolo
     else
-      config.working_directory
-      |> ToolPolicy.from_workspace(overrides || %{}, session_allow || [])
+      ToolPolicy.from_workspace(
+        config.workspace_path || config.working_directory,
+        config.working_directory,
+        overrides || %{},
+        session_allow || []
+      )
       |> Map.fetch!(:default_mode)
     end
   end

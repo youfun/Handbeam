@@ -51,9 +51,10 @@ defmodule Handbeam.Permissions.AutoReview do
   resets the consecutive deny counter and must be shown to the user.
   """
   def review(%Handbeam.Agent.State{} = state, pending) when is_list(pending) do
-    workspace = state.config.working_directory
-    requests = InterruptData.build(pending, [], workspace).action_requests
-    prompt = build_prompt(state.messages, requests, workspace)
+    checkout = state.config.working_directory
+    workspace = state.config.workspace_path || checkout
+    requests = InterruptData.build(pending, [], checkout).action_requests
+    prompt = build_prompt(state.messages, requests, checkout)
     timeout = timeout_ms(workspace)
 
     request = %{
@@ -61,6 +62,7 @@ defmodule Handbeam.Permissions.AutoReview do
       action_requests: requests,
       timeout_ms: timeout,
       workspace_path: workspace,
+      checkout_path: checkout,
       run_provider: state.config.provider,
       run_provider_config: state.config.provider_config || %{},
       run_model: state.config.model
@@ -83,7 +85,7 @@ defmodule Handbeam.Permissions.AutoReview do
     #{@policy}
 
     This batch is out of bounds. These calls were not auto-approved. Review only this batch.
-    Workspace: #{workspace_path || "(none)"}
+    Current checkout: #{workspace_path || "(none)"}
 
     Recent visible conversation (hidden reasoning omitted):
     #{visible_excerpt(messages)}
@@ -272,11 +274,16 @@ defmodule Handbeam.Permissions.AutoReview do
            request.run_provider_config,
            request.run_model,
            timeout,
-           request.workspace_path
+           request.checkout_path
          )}
 
       true ->
-        resolve_configured_model(request.workspace_path, configured, timeout)
+        resolve_configured_model(
+          request.workspace_path,
+          request.checkout_path,
+          configured,
+          timeout
+        )
     end
   end
 
@@ -307,7 +314,7 @@ defmodule Handbeam.Permissions.AutoReview do
     |> Map.put(:working_directory, workspace)
   end
 
-  defp resolve_configured_model(workspace, model, timeout) do
+  defp resolve_configured_model(workspace, checkout, model, timeout) do
     model =
       if blank_model?(model), do: ModelConfig.default_model_for_workspace(workspace), else: model
 
@@ -315,7 +322,7 @@ defmodule Handbeam.Permissions.AutoReview do
          {:ok, provider_config, model_id} <-
            ModelConfig.resolve_model_for_workspace(workspace, model),
          {:ok, provider} <- provider_module(provider_config) do
-      {:ok, provider, call_config(provider_config, model_id, timeout, workspace)}
+      {:ok, provider, call_config(provider_config, model_id, timeout, checkout)}
     else
       false -> {:error, :model_unavailable}
       {:error, reason} -> {:error, {:model_unavailable, reason}}

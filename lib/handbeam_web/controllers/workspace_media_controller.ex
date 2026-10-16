@@ -22,7 +22,8 @@ defmodule HandbeamWeb.WorkspaceMediaController do
 
     with %{"workspace_id" => workspace_id, "path" => segments} when is_list(segments) <- params,
          relative_path = Enum.join(segments, "/"),
-         {:ok, %{"path" => root}} <- WorkspaceStore.get(workspace_id),
+         {:ok, workspace} <- WorkspaceStore.get(workspace_id),
+         {:ok, root} <- media_root(params, workspace),
          {:ok, path} <- WorkspaceFiles.resolve(root, relative_path, :file),
          :ok <- PathValidator.validate_within_workspace(path, root),
          :ok <- PathValidator.reject_resolved(path),
@@ -39,4 +40,17 @@ defmodule HandbeamWeb.WorkspaceMediaController do
       _ -> send_resp(conn, 404, "Not Found")
     end
   end
+
+  defp media_root(%{"conversation_id" => conversation_id}, workspace)
+       when is_binary(conversation_id) and conversation_id != "" do
+    with {:ok, meta} <- Handbeam.ConversationStore.get_metadata(conversation_id),
+         true <- meta["workspace_id"] == workspace["id"],
+         {:ok, checkout_path} <- Handbeam.ConversationStore.effective_checkout_path(meta) do
+      {:ok, checkout_path}
+    else
+      _ -> {:error, :not_found}
+    end
+  end
+
+  defp media_root(_params, _workspace), do: {:error, :conversation_required}
 end

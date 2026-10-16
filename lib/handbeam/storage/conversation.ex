@@ -8,6 +8,7 @@ defmodule Handbeam.Storage.Conversation do
   schema "conversations" do
     field :scope, :string
     field :workspace_id, :string
+    field :checkout_path, :string
     field :visibility, :string, default: "user"
     field :parent_conversation_id, :string
     field :parent_run_id, :string

@@ -19,6 +19,7 @@ defmodule Handbeam.Agent.Config do
     :provider,
     :system_prompt,
     :working_directory,
+    :workspace_path,
     :model,
     :max_turns,
     :max_budget_cents,
@@ -49,7 +50,8 @@ defmodule Handbeam.Agent.Config do
   @type t :: %__MODULE__{
           provider: module(),
           system_prompt: String.t() | nil,
-          working_directory: String.t(),
+          working_directory: String.t() | nil,
+          workspace_path: String.t() | nil,
           model: String.t(),
           max_turns: pos_integer() | nil,
           max_budget_cents: pos_integer() | nil,
@@ -125,6 +127,7 @@ defmodule Handbeam.Agent.Config do
       builtin_memory_enabled: builtin_memory_enabled,
       system_prompt: build_system_prompt(opts, provider),
       working_directory: working_directory(opts),
+      workspace_path: Keyword.get(opts, :workspace_path),
       model: Keyword.get(opts, :model, @default_model),
       max_turns: Keyword.get(opts, :max_turns),
       max_budget_cents: Keyword.get(opts, :max_budget_cents),
@@ -261,6 +264,8 @@ defmodule Handbeam.Agent.Config do
     |> Keyword.get(:context, @default_context)
     |> Map.merge(%{
       workspace_id: Keyword.get(opts, :workspace_id),
+      workspace_path: Keyword.get(opts, :workspace_path),
+      checkout_path: Keyword.get(opts, :working_directory),
       conversation_id: Keyword.get(opts, :conversation_id),
       created_by_conversation_id: Keyword.get(opts, :created_by_conversation_id),
       run_id: Keyword.get(opts, :run_id),
@@ -292,7 +297,7 @@ defmodule Handbeam.Agent.Config do
   defp working_directory(opts) do
     case Keyword.get(opts, :working_directory) do
       path when is_binary(path) and path != "" -> path
-      _ -> if Keyword.get(opts, :chat_scope) == :free, do: nil, else: File.cwd!()
+      _ -> nil
     end
   end
 

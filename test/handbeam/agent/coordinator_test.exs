@@ -204,6 +204,25 @@ defmodule Handbeam.Agent.CoordinatorTest do
     )
   end
 
+  test "deleted conversation checkout never falls back to workspace policy root" do
+    checkout =
+      Path.join(System.tmp_dir!(), "deleted-checkout-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(checkout)
+    sid = "coord-deleted-checkout-#{System.unique_integer([:positive])}"
+
+    assert {:ok, _conversation} =
+             Handbeam.ConversationStore.create("default", id: sid, checkout_path: checkout)
+
+    File.rm_rf!(checkout)
+    policy_root = tmp_no_policy_workspace()
+
+    assert {:error, :checkout_unavailable} =
+             Coordinator.start_run(sid, "do not run in main", opts(workspace_path: policy_root))
+
+    assert {:error, :not_found} = Handbeam.Agent.Runner.status(sid)
+  end
+
   test "require_idle admission ignores a stale Session projection and uses Runner ownership" do
     sid = "coord-stale-session-#{System.unique_integer([:positive])}"
     {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)

@@ -71,6 +71,29 @@ defmodule Handbeam.Agent.Middleware.ToolGuardTest do
     assert [%{id: "r1"}] = guarded.tool_guard_denied_calls
   end
 
+  test "loads policy from canonical workspace while evaluating paths from checkout" do
+    workspace = tmp_workspace(%{"tools" => %{"deny" => ["read"]}})
+    checkout = tmp_workspace(%{"tools" => %{"per_tool" => %{"read" => "auto"}}})
+
+    config = %Config{
+      workspace_path: workspace,
+      working_directory: checkout,
+      model: "fake",
+      middleware: []
+    }
+
+    state =
+      %State{State.init(config, "hi") | tool_guard_overrides: %{}}
+      |> State.append_messages([
+        Message.tool_use([
+          %{type: "tool_use", id: "r1", name: "read", input: %{"file_path" => "README.md"}}
+        ])
+      ])
+
+    assert {:tool_guard_denied, guarded} = ToolGuard.call(:after_tool_request, state)
+    assert [%{id: "r1"}] = guarded.tool_guard_denied_calls
+  end
+
   test "after_tool_request passes through when all tools are auto approved" do
     settings = %{"tools" => %{"per_tool" => %{"read" => "auto"}}}
     state = state(settings, [%{type: "tool_use", id: "r1", name: "read", input: %{}}])
@@ -175,6 +198,22 @@ defmodule Handbeam.Agent.Middleware.ToolGuardTest do
 
     assert resolution.state.status == :running
     assert resolution.state.interrupt_data == nil
+  end
+
+  test "approval resolution normalizes atom-key decisions at its boundary" do
+    settings = %{"tools" => %{"per_tool" => %{"read" => "prompt"}}}
+    calls = [%{type: "tool_use", id: "prompt-1", name: "read", input: %{"file_path" => "x"}}]
+
+    assert {:interrupt, interrupted, _data} =
+             ToolGuard.call(:after_tool_request, state(settings, calls))
+
+    resolution =
+      ToolGuard.resolve_approval(interrupted, [
+        %{tool_call_id: "prompt-1", action: "approve", remember: false}
+      ])
+
+    assert Enum.map(resolution.executable_calls, & &1.id) == ["prompt-1"]
+    assert resolution.denied_blocks == []
   end
 
   test "after_tool_request auto-approves browser eval in full access" do

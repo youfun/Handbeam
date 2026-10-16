@@ -223,6 +223,82 @@ defmodule Handbeam.ConversationStoreTest do
     assert {:error, :not_found} = ConversationStore.replace_messages("missing", [])
   end
 
+  test "workspace creation fails without a resolvable checkout outside the test escape hatch" do
+    previous = Application.fetch_env(:handbeam, :allow_unbound_test_conversations)
+    Application.delete_env(:handbeam, :allow_unbound_test_conversations)
+
+    on_exit(fn ->
+      case previous do
+        {:ok, value} -> Application.put_env(:handbeam, :allow_unbound_test_conversations, value)
+        :error -> Application.delete_env(:handbeam, :allow_unbound_test_conversations)
+      end
+    end)
+
+    assert {:error, {:invalid_checkout_path, :not_found}} =
+             ConversationStore.create("unknown-workspace", id: "strict-checkout")
+
+    refute ConversationStore.exists?("strict-checkout")
+  end
+
+  test "workspace checkout is canonical, exposed in summaries, and immutable" do
+    root =
+      Path.join(System.tmp_dir!(), "conversation-checkout-#{System.unique_integer([:positive])}")
+
+    other = root <> "-other"
+    File.mkdir_p!(root)
+    File.mkdir_p!(other)
+
+    on_exit(fn ->
+      File.rm_rf(root)
+      File.rm_rf(other)
+    end)
+
+    assert {:ok, conversation} =
+             ConversationStore.create("workspace-a", id: "checkout", checkout_path: root)
+
+    expected = Handbeam.Security.PathValidator.resolve_symlink(root)
+    assert conversation["checkout_path"] == expected
+    assert {:ok, ^expected} = ConversationStore.effective_checkout_path(conversation)
+
+    assert Enum.find(ConversationStore.list_summaries("workspace-a"), &(&1["id"] == "checkout"))[
+             "checkout_path"
+           ] == conversation["checkout_path"]
+
+    assert {:ok, _metadata} =
+             ConversationStore.update_meta("checkout", checkout_path: other, title: "Still here")
+
+    assert {:ok, unchanged} = ConversationStore.get_metadata("checkout")
+    assert unchanged["checkout_path"] == conversation["checkout_path"]
+
+    assert {:ok, upserted} =
+             ConversationStore.upsert(%{
+               "id" => "checkout",
+               "scope" => "workspace",
+               "workspace_id" => "workspace-a",
+               "checkout_path" => other,
+               "title" => "Upserted"
+             })
+
+    assert upserted["checkout_path"] == conversation["checkout_path"]
+  end
+
+  test "free chats have no checkout and missing checkouts never fall back" do
+    assert {:ok, free} = ConversationStore.create_free(id: "free-checkout")
+    assert free["checkout_path"] == nil
+    assert {:error, :checkout_path_missing} = ConversationStore.effective_checkout_path(free)
+
+    root = Path.join(System.tmp_dir!(), "deleted-checkout-#{System.unique_integer([:positive])}")
+    File.mkdir_p!(root)
+
+    assert {:ok, conversation} =
+             ConversationStore.create("workspace-a", id: "deleted-checkout", checkout_path: root)
+
+    File.rm_rf!(root)
+
+    assert {:error, :checkout_unavailable} =
+             ConversationStore.effective_checkout_path(conversation)
+  end
+
   test "ensure_for_workspaces creates only missing conversations" do
     {:ok, existing} = ConversationStore.create("workspace-a", id: "existing")
     workspaces = [%{"id" => "workspace-a"}, %{"id" => "workspace-b"}]

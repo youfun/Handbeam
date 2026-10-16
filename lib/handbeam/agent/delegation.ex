@@ -644,6 +644,7 @@ defmodule Handbeam.Agent.Delegation do
              parent_conversation_id: context.conversation_id,
              parent_run_id: context.run_id,
              parent_tool_call_id: context[:tool_call_id],
+             checkout_path: workspace,
              title: "Subagent #{job.profile.name}"
            ),
          {:ok, child_opts} <-
@@ -858,7 +859,8 @@ defmodule Handbeam.Agent.Delegation do
         {:error, reason}
 
       {:ok, entries} ->
-        workspace = session.child_opts[:workspace_path]
+        workspace = session.child_opts[:working_directory]
+
         Handbeam.Attachments.History.to_messages(entries, workspace, session.id)
     end
   end
@@ -873,12 +875,16 @@ defmodule Handbeam.Agent.Delegation do
           :id,
           :parent_id,
           :workspace,
+          :workspace_id,
           :worktree,
           :worktree_base,
           :status,
           :run_id,
           :runs
         ])
+        |> Map.put(:checkout_path, session.workspace)
+        |> Map.put(:parent_checkout_path, session.workspace)
+        |> Map.put(:workspace_path, session.child_opts && session.child_opts[:workspace_path])
         |> Map.put(:profile, session.profile.name)
         |> Handbeam.JsonSafe.normalize()
         |> Handbeam.JSON.encode!()

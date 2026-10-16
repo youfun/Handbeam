@@ -95,9 +95,16 @@ defmodule Handbeam.Agent.Subagent.Worktree do
       case File.read(path) do
         {:ok, body} ->
           case Handbeam.JSON.decode(body) do
-            {:ok, %{"workspace" => ^workspace, "id" => id, "status" => status}}
-            when status not in ["applied", "discarded"] ->
-              [id]
+            {:ok, artifact} when is_map(artifact) ->
+              id = artifact["id"]
+              status = artifact["status"]
+
+              if artifact_checkout(artifact) == workspace and is_binary(id) and
+                   status not in ["applied", "discarded"] do
+                [id]
+              else
+                []
+              end
 
             _ ->
               []
@@ -107,6 +114,10 @@ defmodule Handbeam.Agent.Subagent.Worktree do
           []
       end
     end)
+  end
+
+  defp artifact_checkout(artifact) do
+    artifact["parent_checkout_path"] || artifact["checkout_path"] || artifact["workspace"]
   end
 
   defp old?(path, now) do

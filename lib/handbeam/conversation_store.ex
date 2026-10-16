@@ -18,6 +18,7 @@ defmodule Handbeam.ConversationStore do
   @metadata_fields [
     :scope,
     :workspace_id,
+    :checkout_path,
     :visibility,
     :parent_conversation_id,
     :parent_run_id,
@@ -36,7 +37,14 @@ defmodule Handbeam.ConversationStore do
     :updated_at
   ]
   @mutable_fields @metadata_fields --
-                    [:scope, :workspace_id, :next_entry_sequence, :created_at, :updated_at]
+                    [
+                      :scope,
+                      :workspace_id,
+                      :checkout_path,
+                      :next_entry_sequence,
+                      :created_at,
+                      :updated_at
+                    ]
   @owned_on_upsert ~w(collaboration visibility last_run_result parent_conversation_id parent_run_id parent_tool_call_id pinned_at)
   @usage_meta_keys ~w(token_usage run_usage usage_legacy run_usage_replace delegated_usage)
 
@@ -73,6 +81,31 @@ defmodule Handbeam.ConversationStore do
     |> Repo.all()
     |> Enum.map(&metadata_map/1)
   end
+
+  @doc "List thread summaries with aggregate transcript/run counts in one query."
+  def list_thread_summaries(workspace_id) when is_binary(workspace_id) do
+    Handbeam.ConversationStore.Trajectory.list_thread_summaries(workspace_id)
+  end
+
+  @doc false
+  def record_run_start(conversation_id, attrs),
+    do: Handbeam.ConversationStore.Trajectory.record_run_start(conversation_id, attrs)
+
+  @doc false
+  def record_run_end(conversation_id, attrs),
+    do: Handbeam.ConversationStore.Trajectory.record_run_end(conversation_id, attrs)
+
+  @doc false
+  def record_turn_start(conversation_id, attrs),
+    do: Handbeam.ConversationStore.Trajectory.record_turn_start(conversation_id, attrs)
+
+  @doc false
+  def record_turn_end(conversation_id, attrs),
+    do: Handbeam.ConversationStore.Trajectory.record_turn_end(conversation_id, attrs)
+
+  @doc "Read one consistent durable trajectory page. Authorization belongs to Handbeam.Threads."
+  def trajectory_snapshot(conversation_id, opts),
+    do: Handbeam.ConversationStore.Trajectory.snapshot(conversation_id, opts)
 
   def list_free_metadata do
     Conversation
@@ -180,6 +213,29 @@ defmodule Handbeam.ConversationStore do
 
   def create_free(opts \\ []), do: create_conversation("free", nil, opts)
 
+  @doc "Resolve a conversation's immutable checkout without falling back to a workspace default."
+  @spec effective_checkout_path(map() | String.t()) :: {:ok, String.t()} | {:error, atom()}
+  def effective_checkout_path(id) when is_binary(id) do
+    with {:ok, conversation} <- get_metadata(id) do
+      effective_checkout_path(conversation)
+    end
+  end
+
+  def effective_checkout_path(conversation) when is_map(conversation) do
+    case map_value(conversation, "checkout_path") do
+      path when is_binary(path) and path != "" ->
+        case Handbeam.RepoIdentity.canonical_directory(path) do
+          {:ok, canonical} -> {:ok, canonical}
+          {:error, _reason} -> {:error, :checkout_unavailable}
+        end
+
+      _missing ->
+        {:error, :checkout_path_missing}
+    end
+  end
+
+  def effective_checkout_path(_conversation), do: {:error, :checkout_path_missing}
+
   def free?(%{"scope" => "free"}), do: true
   def free?(%{scope: scope}) when scope in ["free", :free], do: true
 
@@ -266,19 +322,22 @@ defmodule Handbeam.ConversationStore do
   def upsert(conversation) when is_map(conversation) do
     id = string_value(conversation, "id") || Ecto.UUID.generate()
     existing = Repo.get(Conversation, id)
-    normalized = normalize_conversation(conversation, id, existing)
 
-    Repo.transaction(fn ->
-      row = persist_conversation(existing, normalized)
-      persist_editor(row.id, conversation)
+    with :ok <- validate_upsert_checkout(existing, conversation) do
+      normalized = normalize_conversation(conversation, id, existing)
 
-      ensure_transaction!(
-        maybe_replace_timeline(row.id, list_value(conversation, "timeline"), existing)
-      )
+      Repo.transaction(fn ->
+        row = persist_conversation(existing, normalized)
+        persist_editor(row.id, conversation)
 
-      conversation_map(row, include_timeline?: true)
-    end)
-    |> unwrap_transaction()
+        ensure_transaction!(
+          maybe_replace_timeline(row.id, list_value(conversation, "timeline"), existing)
+        )
+
+        conversation_map(row, include_timeline?: true)
+      end)
+      |> unwrap_transaction()
+    end
   rescue
     error in Ecto.ConstraintError -> {:error, constraint_reason(error)}
   end
@@ -290,7 +349,7 @@ defmodule Handbeam.ConversationStore do
       conversations =
         case list_for_workspace(id) do
           [] ->
-            {:ok, conversation} = create(id)
+            {:ok, conversation} = create(id, checkout_path: workspace["default_checkout_path"])
             [conversation]
 
           existing ->
@@ -490,54 +549,91 @@ defmodule Handbeam.ConversationStore do
   end
 
   defp create_conversation(scope, workspace_id, opts) do
-    id = Keyword.get(opts, :id, Ecto.UUID.generate())
-    timestamp = now()
+    with {:ok, checkout_path} <- checkout_path_for_create(scope, workspace_id, opts) do
+      id = Keyword.get(opts, :id, Ecto.UUID.generate())
+      timestamp = now()
 
-    attrs = %{
-      id: id,
-      scope: scope,
-      workspace_id: workspace_id,
-      visibility: Keyword.get(opts, :visibility, "user"),
-      parent_conversation_id: Keyword.get(opts, :parent_conversation_id),
-      parent_run_id: Keyword.get(opts, :parent_run_id),
-      parent_tool_call_id: Keyword.get(opts, :parent_tool_call_id),
-      title: Keyword.get(opts, :title, "New chat"),
-      title_source: Keyword.get(opts, :title_source, "manual"),
-      selected_model: Keyword.get(opts, :selected_model),
-      selected_reasoning_level: Keyword.get(opts, :selected_reasoning_level),
-      collaboration: Keyword.get(opts, :collaboration),
-      last_run_result: Keyword.get(opts, :last_run_result),
-      loaded_tools: encode_json!(Keyword.get(opts, :loaded_tools, [])),
-      archived_at: parse_time(Keyword.get(opts, :archived_at)),
-      pinned_at: parse_time(Keyword.get(opts, :pinned_at)),
-      next_entry_sequence: 1,
-      created_at: timestamp,
-      updated_at: timestamp
-    }
-
-    Repo.transaction(fn ->
-      row =
-        %Conversation{}
-        |> Changeset.cast(attrs, [:id | @metadata_fields])
-        |> Repo.insert!()
-
-      editor = %{
-        "editor_files" => Keyword.get(opts, :editor_files, []),
-        "active_file" => Keyword.get(opts, :active_file),
-        "file_preview_error" => Keyword.get(opts, :file_preview_error)
+      attrs = %{
+        id: id,
+        scope: scope,
+        workspace_id: workspace_id,
+        checkout_path: checkout_path,
+        visibility: Keyword.get(opts, :visibility, "user"),
+        parent_conversation_id: Keyword.get(opts, :parent_conversation_id),
+        parent_run_id: Keyword.get(opts, :parent_run_id),
+        parent_tool_call_id: Keyword.get(opts, :parent_tool_call_id),
+        title: Keyword.get(opts, :title, "New chat"),
+        title_source: Keyword.get(opts, :title_source, "manual"),
+        selected_model: Keyword.get(opts, :selected_model),
+        selected_reasoning_level: Keyword.get(opts, :selected_reasoning_level),
+        collaboration: Keyword.get(opts, :collaboration),
+        last_run_result: Keyword.get(opts, :last_run_result),
+        loaded_tools: encode_json!(Keyword.get(opts, :loaded_tools, [])),
+        archived_at: parse_time(Keyword.get(opts, :archived_at)),
+        pinned_at: parse_time(Keyword.get(opts, :pinned_at)),
+        next_entry_sequence: 1,
+        created_at: timestamp,
+        updated_at: timestamp
       }
 
-      :ok = save_files(row.id, editor)
+      Repo.transaction(fn ->
+        row =
+          %Conversation{}
+          |> Changeset.cast(attrs, [:id | @metadata_fields])
+          |> Repo.insert!()
 
-      timeline = Keyword.get(opts, :timeline, [])
-      ensure_transaction!(Handbeam.ConversationTranscriptStore.replace_all(row.id, timeline))
-      conversation_map(row, include_timeline?: true)
-    end)
-    |> unwrap_transaction()
+        editor = %{
+          "editor_files" => Keyword.get(opts, :editor_files, []),
+          "active_file" => Keyword.get(opts, :active_file),
+          "file_preview_error" => Keyword.get(opts, :file_preview_error)
+        }
+
+        :ok = save_files(row.id, editor)
+
+        timeline = Keyword.get(opts, :timeline, [])
+        ensure_transaction!(Handbeam.ConversationTranscriptStore.replace_all(row.id, timeline))
+        conversation_map(row, include_timeline?: true)
+      end)
+      |> unwrap_transaction()
+    end
   rescue
     error in Ecto.ConstraintError -> {:error, constraint_reason(error)}
     error in Ecto.InvalidChangesetError -> {:error, error.changeset}
   end
+
+  defp checkout_path_for_create("free", _workspace_id, _opts), do: {:ok, nil}
+
+  defp checkout_path_for_create("workspace", workspace_id, opts) do
+    case Keyword.get(opts, :checkout_path) do
+      path when is_binary(path) and path != "" -> canonical_checkout_path(path)
+      _missing -> default_workspace_checkout(workspace_id)
+    end
+  end
+
+  defp default_workspace_checkout(workspace_id) do
+    case Handbeam.WorkspaceStore.get(workspace_id) do
+      {:ok, workspace} ->
+        canonical_checkout_path(workspace["default_checkout_path"])
+
+      {:error, reason} ->
+        if allow_unbound_test_conversation?(),
+          do: {:ok, nil},
+          else: {:error, {:invalid_checkout_path, reason}}
+    end
+  end
+
+  defp allow_unbound_test_conversation? do
+    Application.get_env(:handbeam, :allow_unbound_test_conversations, false) == true
+  end
+
+  defp canonical_checkout_path(path) when is_binary(path) do
+    case Handbeam.RepoIdentity.resolve(path) do
+      {:ok, identity} -> {:ok, identity.checkout_path}
+      {:error, reason} -> {:error, {:invalid_checkout_path, reason}}
+    end
+  end
+
+  defp canonical_checkout_path(_path), do: {:error, {:invalid_checkout_path, :missing}}
 
   defp persist_conversation(nil, attrs) do
     %Conversation{}
@@ -556,7 +652,7 @@ defmodule Handbeam.ConversationStore do
       end)
 
     existing
-    |> Changeset.cast(attrs, @metadata_fields)
+    |> Changeset.cast(attrs, @mutable_fields)
     |> Repo.update!()
   end
 
@@ -629,6 +725,7 @@ defmodule Handbeam.ConversationStore do
       "id" => row.id,
       "scope" => row.scope,
       "workspace_id" => row.workspace_id,
+      "checkout_path" => row.checkout_path,
       "visibility" => row.visibility,
       "parent_conversation_id" => parent_conversation_id(row),
       "parent_run_id" => row.parent_run_id,
@@ -651,7 +748,7 @@ defmodule Handbeam.ConversationStore do
   defp summary_map(row) do
     metadata_map(row)
     |> Map.take(
-      ~w(id visibility parent_conversation_id parent_run_id parent_tool_call_id scope workspace_id title title_source archived_at pinned_at created_at updated_at)
+      ~w(id visibility parent_conversation_id parent_run_id parent_tool_call_id scope workspace_id checkout_path title title_source archived_at pinned_at created_at updated_at)
     )
   end
 
@@ -676,6 +773,8 @@ defmodule Handbeam.ConversationStore do
       id: id,
       scope: scope,
       workspace_id: string_value(conversation, "workspace_id"),
+      checkout_path:
+        immutable_checkout_path(existing, string_value(conversation, "checkout_path"), scope),
       visibility: string_value(conversation, "visibility") || "user",
       parent_conversation_id: string_value(conversation, "parent_conversation_id"),
       parent_run_id: string_value(conversation, "parent_run_id"),
@@ -698,6 +797,44 @@ defmodule Handbeam.ConversationStore do
       updated_at: timestamp
     }
   end
+
+  defp validate_upsert_checkout(%Conversation{}, _conversation), do: :ok
+
+  defp validate_upsert_checkout(nil, conversation) do
+    scope =
+      string_value(conversation, "scope") ||
+        if(string_value(conversation, "workspace_id"), do: "workspace", else: "free")
+
+    case {scope, string_value(conversation, "checkout_path")} do
+      {"free", _path} ->
+        :ok
+
+      {"workspace", path} when is_binary(path) and path != "" ->
+        case canonical_checkout_path(path) do
+          {:ok, _canonical} -> :ok
+          {:error, _reason} = error -> error
+        end
+
+      {"workspace", _missing} ->
+        if allow_unbound_test_conversation?(),
+          do: :ok,
+          else: {:error, {:invalid_checkout_path, :missing}}
+    end
+  end
+
+  defp immutable_checkout_path(%Conversation{} = existing, _incoming, _scope),
+    do: existing.checkout_path
+
+  defp immutable_checkout_path(nil, _incoming, "free"), do: nil
+
+  defp immutable_checkout_path(nil, incoming, "workspace") when is_binary(incoming) do
+    case canonical_checkout_path(incoming) do
+      {:ok, path} -> path
+      {:error, _reason} -> nil
+    end
+  end
+
+  defp immutable_checkout_path(_existing, _incoming, _scope), do: nil
 
   defp editor_attrs(id, files_data) do
     %{
