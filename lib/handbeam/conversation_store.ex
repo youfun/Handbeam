@@ -156,6 +156,12 @@ defmodule Handbeam.ConversationStore do
 
   def internal?(_value), do: false
 
+  @doc "Returns the conversation that created this one."
+  def parent_conversation_id(conversation) when is_map(conversation),
+    do: string_value(conversation, "parent_conversation_id")
+
+  def parent_conversation_id(_conversation), do: nil
+
   def authorize_read(id, opts) do
     with {:ok, meta} <- get_metadata(id),
          true <- accessible?(meta, opts),
@@ -624,7 +630,7 @@ defmodule Handbeam.ConversationStore do
       "scope" => row.scope,
       "workspace_id" => row.workspace_id,
       "visibility" => row.visibility,
-      "parent_conversation_id" => row.parent_conversation_id,
+      "parent_conversation_id" => parent_conversation_id(row),
       "parent_run_id" => row.parent_run_id,
       "parent_tool_call_id" => row.parent_tool_call_id,
       "title" => row.title,

@@ -546,7 +546,10 @@ defmodule Handbeam.Agent.Coordinator do
     opts =
       case Handbeam.ConversationStore.get_metadata(conversation_id) do
         {:ok, meta} ->
-          opts = Keyword.put_new(opts, :workspace_id, meta["workspace_id"])
+          opts =
+            opts
+            |> Keyword.put_new(:workspace_id, meta["workspace_id"])
+            |> put_created_by(meta)
 
           if get_in(meta, ["collaboration", "read_only"]) == true,
             do: Keyword.put(opts, :delegated_read_only, true),
@@ -566,6 +569,16 @@ defmodule Handbeam.Agent.Coordinator do
     |> put_builtin_memory()
     |> put_skills()
     |> put_advisor_pin()
+  end
+
+  defp put_created_by(opts, meta) do
+    case Handbeam.ConversationStore.parent_conversation_id(meta) do
+      parent_id when is_binary(parent_id) ->
+        Keyword.put(opts, :created_by_conversation_id, parent_id)
+
+      _ ->
+        opts
+    end
   end
 
   # A composite model id is the saved catalog entry. Load that provider so a

@@ -206,21 +206,19 @@ defmodule HandbeamWeb.ThreadHandoffTest do
     {:ok, writer} =
       ConversationStore.create(c.ws,
         title: "Writer",
+        parent_conversation_id: c.parent,
         collaboration: %{
-          "parent" => c.parent,
           "read_only" => false,
-          "approval" => "yolo",
-          "handoff_id" => "write-a"
+          "approval" => "yolo"
         }
       )
 
     {:ok, reader} =
       ConversationStore.create(c.ws,
         title: "Reader",
+        parent_conversation_id: c.parent,
         collaboration: %{
-          "parent" => c.parent,
-          "read_only" => true,
-          "handoff_id" => "read-a"
+          "read_only" => true
         }
       )
 

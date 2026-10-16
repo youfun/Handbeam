@@ -208,10 +208,13 @@ defmodule Handbeam.Agent.ConfigTest do
       File.mkdir_p!(workspace)
 
       try do
-        config = Config.from_opts(working_directory: workspace)
+        config = Config.from_opts(working_directory: workspace, conversation_id: "root-thread")
 
         assert config.working_directory == workspace
         assert config.system_prompt =~ "Current workspace: #{workspace}"
+        assert config.system_prompt =~ "## Current thread"
+        assert config.system_prompt =~ "conversation_id: root-thread"
+        refute config.system_prompt =~ "created_by_conversation_id:"
         assert config.system_prompt =~ "Prefer workspace-relative file paths"
         assert config.system_prompt =~ "`bash`, `grep`, `file_search`"
         assert config.system_prompt =~ "Use `file_search` to find files by name or path"

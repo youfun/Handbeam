@@ -11,59 +11,10 @@ defmodule Handbeam.Threads.Collaboration do
 
   @read_tools ~w(read file_search grep code_search list_models find_thread read_thread get_thread_status reply_to_parent_thread send_thread_message)
 
-  def completed(id, result, opts) do
+  def completed(id, result, _opts) do
     status = if is_map(result), do: Map.get(result, :status, :error), else: :error
     ConversationStore.update_meta(id, last_run_result: to_string(status))
-
-    with {:ok, %{"collaboration" => %{"parent" => _}} = meta} <-
-           ConversationStore.get_metadata(id),
-         {:ok, entries} <- ConversationTranscriptStore.list(id),
-         handoff_id when is_binary(handoff_id) <-
-           get_in(opts[:origin] || %{}, ["handoff_id"]) ||
-             get_in(meta, ["collaboration", "handoff_id"]),
-         false <-
-           Enum.any?(
-             entries,
-             &(&1["important"] == true and &1["source_run"] == opts[:run_id] and
-                 &1["handoff_id"] == handoff_id)
-           ) do
-      mixed_run? =
-        Enum.any?(entries, fn entry ->
-          entry["consumed_run_id"] == opts[:run_id] and
-            get_in(entry, ["origin", "kind"]) == "thread" and
-            get_in(entry, ["origin", "handoff_id"]) != handoff_id
-        end)
-
-      text =
-        if mixed_run? do
-          "Run ended (#{status}). Multiple handoffs shared this run; no task-specific result inferred. Open the task thread or send an explicitly associated report."
-        else
-          result_text =
-            entries
-            |> Enum.filter(&(&1["role"] == "assistant" and &1["run_id"] == opts[:run_id]))
-            |> Enum.map_join("\n", &(&1["content"] || ""))
-            |> String.slice(0, 7500)
-
-          "Task ended (#{status}).\n" <> result_text
-        end
-
-      reply(
-        %{
-          "message" => text,
-          "request_id" => "final-" <> (opts[:run_id] || id),
-          "handoff_id" => handoff_id
-        },
-        %{
-          conversation_id: id,
-          workspace_id: meta["workspace_id"],
-          run_id: opts[:run_id],
-          thread_run_opts:
-            Keyword.take(opts, [:workspace_path, :model, :provider, :provider_config])
-        }
-      )
-    else
-      _ -> :ok
-    end
+    :ok
   end
 
   def tool_allowed?(name, context) do
@@ -88,17 +39,15 @@ defmodule Handbeam.Threads.Collaboration do
 
     with :ok <- Threads.validate(input, ~w(message request_id handoff_id)),
          {:ok, source} <- Threads.identity(context),
-         parent when is_binary(parent) <- get_in(source, ["collaboration", "parent"]),
+         parent when is_binary(parent) <- ConversationStore.parent_conversation_id(source),
          {:ok, target} <- Threads.authorize(context, parent) do
-      handoff_id =
-        input["handoff_id"] || context[:thread_handoff_id] ||
-          get_in(source, ["collaboration", "handoff_id"])
+      input =
+        case input["handoff_id"] || context[:thread_handoff_id] do
+          handoff_id when is_binary(handoff_id) -> Map.put(input, "handoff_id", handoff_id)
+          _ -> input
+        end
 
-      locked(source, fn ->
-        if handoff_id,
-          do: deliver(Map.put(input, "handoff_id", handoff_id), context, source, target, true),
-          else: {:error, :missing_handoff_id}
-      end)
+      locked(source, fn -> deliver(input, context, source, target, true) end)
     else
       nil -> {:error, :no_parent}
       error -> error
@@ -122,9 +71,9 @@ defmodule Handbeam.Threads.Collaboration do
         with {:ok, target} <-
                child(
                  source,
+                 context,
                  id,
                  title,
-                 "handoff-" <> digest({source["id"], key}),
                  read_only,
                  approval,
                  pinned
@@ -199,21 +148,26 @@ defmodule Handbeam.Threads.Collaboration do
     Keyword.get(opts, :workspace_path) || Keyword.get(opts, :working_directory)
   end
 
-  defp child(source, id, title, handoff_id, read_only, approval, pinned) do
+  defp child(source, context, id, title, read_only, approval, pinned) do
     spec =
-      %{"parent" => source["id"], "read_only" => read_only, "handoff_id" => handoff_id}
+      %{"read_only" => read_only}
       |> maybe_put("approval", approval)
       |> maybe_put("provider", pinned && pinned["provider"])
       |> maybe_put("model", pinned && pinned["model"])
 
     case ConversationStore.get_metadata(id) do
       {:ok, target} ->
-        if child_matches?(target, spec), do: {:ok, target}, else: {:error, :idempotency_conflict}
+        if child_matches?(target, source["id"], spec),
+          do: {:ok, target},
+          else: {:error, :idempotency_conflict}
 
       _ ->
         ConversationStore.create(source["workspace_id"],
           id: id,
           title: title,
+          parent_conversation_id: source["id"],
+          parent_run_id: context[:run_id],
+          parent_tool_call_id: context[:tool_call_id],
           collaboration: spec
         )
     end
@@ -229,12 +183,13 @@ defmodule Handbeam.Threads.Collaboration do
 
   defp normalize_optional_handoff(input), do: input
 
-  defp child_matches?(target, spec) do
+  defp child_matches?(target, parent_id, spec) do
     collab = target["collaboration"] || %{}
 
-    Enum.all?(~w(parent read_only handoff_id approval provider model), fn key ->
-      Map.get(collab, key) == Map.get(spec, key)
-    end)
+    ConversationStore.parent_conversation_id(target) == parent_id and
+      Enum.all?(~w(read_only approval provider model), fn key ->
+        Map.get(collab, key) == Map.get(spec, key)
+      end)
   end
 
   defp deliver(input, context, source, target, important) do
@@ -245,7 +200,6 @@ defmodule Handbeam.Threads.Collaboration do
          mode <- Map.get(input, "deliver_as", "steer"),
          true <- mode in ["follow_up", "steer"],
          true <- source["id"] != target["id"],
-         true <- permitted_route?(source, target),
          {:ok, entries} <- ConversationTranscriptStore.list(source["id"]) do
       id = "handoff-" <> digest({source["id"], key})
 
@@ -280,28 +234,21 @@ defmodule Handbeam.Threads.Collaboration do
     end
   end
 
-  defp permitted_route?(%{"collaboration" => %{"parent" => parent}}, target)
-       when is_binary(parent) do
-    parent == target["id"] or get_in(target, ["collaboration", "parent"]) == parent
-  end
-
-  defp permitted_route?(_, _), do: true
-
-  defp association(input, entries, source, peer, id) do
+  defp association(input, entries, _source, peer, id) do
     case input["handoff_id"] do
       nil ->
         {:ok, id}
 
       handoff_id when is_binary(handoff_id) and byte_size(handoff_id) <= 128 ->
-        if (get_in(source, ["collaboration", "parent"]) == peer and
-              get_in(source, ["collaboration", "handoff_id"]) == handoff_id) or
-             Enum.any?(entries, fn entry ->
-               (entry["content_type"] == "thread_handoff" and entry["target"] == peer and
-                  entry["handoff_id"] == handoff_id) or
-                 (get_in(entry, ["origin", "kind"]) == "thread" and
-                    get_in(entry, ["origin", "conversation_id"]) == peer and
-                    get_in(entry, ["origin", "handoff_id"]) == handoff_id)
-             end), do: {:ok, handoff_id}, else: {:error, :invalid_handoff_id}
+        if Enum.any?(entries, fn entry ->
+             (entry["content_type"] == "thread_handoff" and entry["target"] == peer and
+                entry["handoff_id"] == handoff_id) or
+               (get_in(entry, ["origin", "kind"]) == "thread" and
+                  get_in(entry, ["origin", "conversation_id"]) == peer and
+                  get_in(entry, ["origin", "handoff_id"]) == handoff_id)
+           end),
+           do: {:ok, handoff_id},
+           else: {:error, :invalid_handoff_id}
 
       _ ->
         {:error, :invalid_handoff_id}
@@ -384,7 +331,7 @@ defmodule Handbeam.Threads.Collaboration do
 
         Handbeam.Agent.Coordinator.add_message(
           target["id"],
-          "[Task from another thread. Carry out the requested work and reply with the result. Do not send an empty acknowledgment.]\n" <>
+          "[Task from another thread. Source conversation_id: #{source["id"]}. Handoff_id: #{handoff_id}. Carry out the requested work. If you choose to respond, call send_thread_message with that explicit source id and handoff_id. No response is automatic or required. Do not send an empty acknowledgment.]\n" <>
             message,
           opts
         )

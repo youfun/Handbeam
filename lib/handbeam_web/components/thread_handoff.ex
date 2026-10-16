@@ -126,13 +126,17 @@ defmodule HandbeamWeb.ThreadHandoff do
 
   defp delegated_child(viewer, target) do
     cond do
-      delegated?(viewer) -> viewer
       delegated?(target) -> target
+      delegated?(viewer) -> viewer
       true -> nil
     end
   end
 
-  defp delegated?(%{"collaboration" => %{"parent" => parent}}) when is_binary(parent), do: true
+  defp delegated?(meta) when is_map(meta) do
+    is_binary(Handbeam.ConversationStore.parent_conversation_id(meta)) and
+      is_boolean(get_in(meta, ["collaboration", "read_only"]))
+  end
+
   defp delegated?(_), do: false
 
   defp format_local_time(value, time_zone) when is_binary(value) do

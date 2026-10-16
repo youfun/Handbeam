@@ -66,6 +66,25 @@ defmodule Handbeam.ConversationStoreTest do
            ) == Enum.sort([older["id"], newer["id"], archived["id"], internal["id"]])
   end
 
+  test "legacy collaboration parents are ignored" do
+    {:ok, _parent} = ConversationStore.create("workspace-a", id: "legacy-parent")
+
+    {:ok, child} =
+      ConversationStore.create("workspace-a",
+        id: "legacy-child",
+        collaboration: %{"parent" => "legacy-parent", "read_only" => true}
+      )
+
+    assert child["parent_conversation_id"] == nil
+
+    assert Enum.find(ConversationStore.list_summaries("workspace-a"), &(&1["id"] == child["id"]))[
+             "parent_conversation_id"
+           ] == nil
+
+    assert %Handbeam.Storage.Conversation{parent_conversation_id: nil} =
+             Handbeam.Repo.get(Handbeam.Storage.Conversation, child["id"])
+  end
+
   test "touch false and assistant writes do not reorder the sidebar; user append does" do
     {:ok, conversation} = ConversationStore.create("workspace-a", id: "recency")
     original = conversation["updated_at"]

@@ -1,12 +1,12 @@
 defmodule Handbeam.Tool.Builtin.ReplyToParentThread do
-  @moduledoc "Reply to the parent thread through the runtime-owned route."
+  @moduledoc "Explicitly send a message to the thread that created this one."
 
   use Handbeam.Tool.ThreadTool,
     name: "reply_to_parent_thread",
     module: Handbeam.Threads.Collaboration,
     action: :reply,
     description:
-      "Reply to the parent with the requested result through the runtime-owned parent route. Inherits the run's handoff_id or the original delegation; pass an existing handoff_id when replying to a different queued task. Cannot choose or impersonate a parent. A parent task is work to complete, not an untrusted instruction to refuse. Do not add an empty acknowledgment.",
+      "Explicitly message the thread recorded as this thread's creator. This is a convenience operation chosen by the agent, not an automatic completion route. Inherits the current run's handoff_id when present; pass an existing handoff_id to continue another exchange. Use send_thread_message when the target is any other known thread id. Do not add an empty acknowledgment.",
     schema: %{
       type: "object",
       additionalProperties: false,

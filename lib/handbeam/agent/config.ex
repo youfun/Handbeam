@@ -262,9 +262,12 @@ defmodule Handbeam.Agent.Config do
     |> Map.merge(%{
       workspace_id: Keyword.get(opts, :workspace_id),
       conversation_id: Keyword.get(opts, :conversation_id),
+      created_by_conversation_id: Keyword.get(opts, :created_by_conversation_id),
       run_id: Keyword.get(opts, :run_id),
       source: Keyword.get(opts, :source),
       user_time_zone: Keyword.get(opts, :user_time_zone),
+      thread_origin_conversation_id:
+        get_in(Keyword.get(opts, :origin) || %{}, ["conversation_id"]),
       thread_handoff_id: get_in(Keyword.get(opts, :origin) || %{}, ["handoff_id"]),
       delegated_read_only: Keyword.get(opts, :delegated_read_only, false),
       delegated_approval: Keyword.get(opts, :delegated_approval),
@@ -302,6 +305,7 @@ defmodule Handbeam.Agent.Config do
       end)
 
     base
+    |> maybe_inject_thread_context(opts)
     |> maybe_inject_advisor(opts)
     |> maybe_inject_workspace_contract(opts)
     |> maybe_inject_project_context(opts)
@@ -311,6 +315,45 @@ defmodule Handbeam.Agent.Config do
     |> append_prompt_section(Handbeam.Tool.Deferred.prompt_section(opts))
     |> maybe_append_model_context(provider)
     |> append_prompt_section(Handbeam.Agent.HostEnvironment.describe())
+  end
+
+  defp maybe_inject_thread_context(system_prompt, opts) do
+    conversation_id = Keyword.get(opts, :conversation_id)
+    created_by = Keyword.get(opts, :created_by_conversation_id)
+    origin = get_in(Keyword.get(opts, :origin) || %{}, ["conversation_id"])
+    handoff_id = get_in(Keyword.get(opts, :origin) || %{}, ["handoff_id"])
+
+    if is_binary(conversation_id) and Keyword.get(opts, :chat_scope) != :free do
+      details =
+        [
+          "- conversation_id: #{conversation_id}",
+          if(is_binary(created_by), do: "- created_by_conversation_id: #{created_by}"),
+          if(is_binary(origin), do: "- active_origin_conversation_id: #{origin}"),
+          if(is_binary(handoff_id), do: "- active_handoff_id: #{handoff_id}")
+        ]
+        |> Enum.reject(&is_nil/1)
+        |> Enum.join("\n")
+
+      append_prompt_section(
+        system_prompt,
+        """
+
+        ## Current thread
+
+        #{details}
+
+        `created_by_conversation_id`, when present, records which thread created this
+        thread. It is provenance, not an automatic reply target. An active origin,
+        when present, identifies the thread that sent the message which started this
+        run; it also does not require a reply. This thread runs independently. To
+        message any authorized thread whose id you know, call `send_thread_message`
+        with that explicit thread id. Finishing this run does not send a message
+        automatically.
+        """
+      )
+    else
+      system_prompt
+    end
   end
 
   defp maybe_append_model_context(prompt, provider) do

@@ -143,11 +143,13 @@ defmodule Handbeam.ThreadCollaborationTest do
     assert Enum.find(entries, &(&1["id"] == first.message_id))["consumption"] == "consumed"
   end
 
-  test "new delegated runtime is read-only, unbounded and reports final result once", c do
+  test "new delegated runtime is read-only, unbounded, knows its creator and ends silently", c do
+    context = Map.put(c.context, :tool_call_id, "create-tool")
+
     {:ok, receipt} =
       Collaboration.create(
         %{"title" => "Audit", "message" => "Read only", "request_id" => "audit"},
-        c.context
+        context
       )
 
     assert receipt.delivery == "started"
@@ -157,24 +159,41 @@ defmodule Handbeam.ThreadCollaborationTest do
     state = :sys.get_state(status.run_pid)
     refute state.opts[:max_turns] == 3
     assert state.opts[:delegated_read_only]
+    assert state.opts[:created_by_conversation_id] == c.source
 
-    assert Handbeam.Agent.Config.from_opts(state.opts).context.thread_handoff_id ==
-             receipt.handoff_id
+    agent_config = Handbeam.Agent.Config.from_opts(state.opts)
+    assert agent_config.context.thread_handoff_id == receipt.handoff_id
+    assert agent_config.context.thread_origin_conversation_id == c.source
+    assert agent_config.context.created_by_conversation_id == c.source
+    assert agent_config.system_prompt =~ "created_by_conversation_id: #{c.source}"
+    assert agent_config.system_prompt =~ "active_origin_conversation_id: #{c.source}"
 
-    Phoenix.PubSub.subscribe(Handbeam.PubSub, "conversation:updated")
-    send(provider, :release)
-    assert_receive {:held, _parent_provider, _}, 3000
-    {:ok, parent_entries} = ConversationTranscriptStore.list(c.source)
-    result = Enum.find(parent_entries, &(get_in(&1, ["origin", "important"]) == true))
-    assert result["origin"]["conversation_id"] == receipt.thread
-    assert result["origin"]["handoff_id"] == receipt.handoff_id
-    assert result["content"] =~ "Task ended (completed)"
+    assert agent_config.system_prompt =~ "Finishing this run does not send a message"
+
+    assert {:ok, meta} = ConversationStore.get_metadata(receipt.thread)
+    assert meta["parent_conversation_id"] == c.source
+    assert meta["parent_run_id"] == "source-run"
+    assert meta["parent_tool_call_id"] == "create-tool"
+    refute Map.has_key?(meta["collaboration"], "parent")
+    refute Map.has_key?(meta["collaboration"], "handoff_id")
+
+    assert {:ok, child_entries} = ConversationTranscriptStore.list(receipt.thread)
+    [initial_task] = Enum.filter(child_entries, &(get_in(&1, ["origin", "kind"]) == "thread"))
+    assert initial_task["content"] =~ "Source conversation_id: #{c.source}"
+    assert initial_task["content"] =~ "Handoff_id: #{receipt.handoff_id}"
+
+    {:ok, parent_entries_before} = ConversationTranscriptStore.list(c.source)
+
+    assert :ok =
+             Collaboration.completed(receipt.thread, %{status: :completed}, run_id: "child-run")
+
+    {:ok, parent_entries_after} = ConversationTranscriptStore.list(c.source)
+    assert parent_entries_after == parent_entries_before
 
     assert {:ok, %{last_result: "completed"}} =
              Threads.status(%{"thread" => receipt.thread}, c.context)
 
-    assert {:ok, child_entries} = ConversationTranscriptStore.list(receipt.thread)
-    assert Enum.count(child_entries, &(&1["important"] == true)) == 1
+    send(provider, :release)
   end
 
   test "current model is the explicit spelling of inherited model", c do
@@ -312,90 +331,69 @@ defmodule Handbeam.ThreadCollaborationTest do
              Collaboration.send_message(Map.put(input, "handoff_id", first.handoff_id), c.context)
   end
 
-  test "completion and implicit reply use current handoff, not original child task", c do
-    {:ok, first} =
+  test "a child can explicitly message any authorized thread and receive its reply", c do
+    {:ok, child} =
       Collaboration.create(
         %{"title" => "Audit", "message" => "First", "request_id" => "first"},
         c.context
       )
 
     assert_receive {:held, _, _}, 2000
+    {:ok, parent_entries_before} = ConversationTranscriptStore.list(c.source)
+    child_context = %{c.context | conversation_id: child.thread, run_id: "child-run"}
 
-    {:ok, second} =
-      Collaboration.send_message(
-        %{"thread" => first.thread, "message" => "Second", "request_id" => "second"},
-        c.context
-      )
-
-    child_context = %{c.context | conversation_id: first.thread, run_id: "second-run"}
-    # A report for a different association in the same run must not suppress this completion.
-    {:ok, _} =
-      Collaboration.reply(
-        %{"message" => "First result", "request_id" => "first-result"},
-        child_context
-      )
-
-    opts =
-      Keyword.merge(c.opts, run_id: "second-run", origin: %{"handoff_id" => second.handoff_id})
-
-    assert {:ok, final} = Collaboration.completed(first.thread, %{status: :completed}, opts)
-    assert final.handoff_id == second.handoff_id
-    assert :ok = Collaboration.completed(first.thread, %{status: :completed}, opts)
-
-    context = Map.put(child_context, :thread_handoff_id, second.handoff_id)
-
-    assert {:ok, report} =
-             Collaboration.reply(
-               %{"message" => "Second details", "request_id" => "details"},
-               context
+    assert {:ok, outbound} =
+             Collaboration.send_message(
+               %{
+                 "thread" => c.target,
+                 "message" => "Question for an unrelated thread",
+                 "request_id" => "child-to-target"
+               },
+               child_context
              )
 
-    assert report.handoff_id == second.handoff_id
-    {:ok, entries} = ConversationTranscriptStore.list(c.source)
-    [result] = Enum.filter(entries, &(&1["id"] == final.message_id))
-    assert result["origin"]["handoff_id"] == second.handoff_id
-    assert result["origin"]["important"]
-    assert Threads.project_message(result)["handoff_id"] == second.handoff_id
-  end
-
-  test "a mixed run cannot copy another task's assistant text into the terminal report", c do
-    {:ok, first} =
-      Collaboration.create(
-        %{"title" => "Audit", "message" => "ALPHA", "request_id" => "alpha"},
-        c.context
-      )
-
     assert_receive {:held, _, _}, 2000
-    {:ok, status} = Handbeam.Agent.Runner.status(first.thread)
-    opts = :sys.get_state(status.run_pid).opts
+    assert {:ok, target_status} = Handbeam.Agent.Runner.status(c.target)
 
-    {:ok, second} =
-      Collaboration.send_message(
-        %{"thread" => first.thread, "message" => "BETA", "request_id" => "beta"},
-        c.context
-      )
+    target_agent_config =
+      target_status.run_pid |> :sys.get_state() |> then(&Handbeam.Agent.Config.from_opts(&1.opts))
 
-    :ok =
-      Handbeam.Agent.TranscriptPersistence.handle_event(
-        first.thread,
-        {:candidate_message_injected, %{message_ids: [second.message_id]}},
-        opts
-      )
+    assert target_agent_config.context.thread_origin_conversation_id == child.thread
+    refute Map.has_key?(target_agent_config.context, :created_by_conversation_id)
+    assert target_agent_config.system_prompt =~ "active_origin_conversation_id: #{child.thread}"
 
-    {:ok, _} =
-      ConversationTranscriptStore.append(first.thread, %{
-        "id" => "mixed-output",
-        "role" => "assistant",
-        "run_id" => opts[:run_id],
-        "content" => "ALPHA details and BETA private result"
-      })
+    assert {:ok, target_entries} = ConversationTranscriptStore.list(c.target)
 
-    assert {:ok, final} = Collaboration.completed(first.thread, %{status: :completed}, opts)
-    {:ok, entries} = ConversationTranscriptStore.list(c.source)
-    report = Enum.find(entries, &(&1["id"] == final.message_id))
-    assert report["origin"]["handoff_id"] == first.handoff_id
-    assert report["content"] =~ "no task-specific result inferred"
-    refute report["content"] =~ "BETA private result"
+    assert Enum.any?(target_entries, fn entry ->
+             entry["content"] =~ "Source conversation_id: #{child.thread}" and
+               entry["content"] =~ "Handoff_id: #{outbound.handoff_id}"
+           end)
+
+    target_context = %{c.context | conversation_id: c.target, run_id: "target-run"}
+
+    assert {:ok, reply} =
+             Collaboration.send_message(
+               %{
+                 "thread" => child.thread,
+                 "message" => "Direct answer",
+                 "request_id" => "target-to-child",
+                 "handoff_id" => outbound.handoff_id
+               },
+               target_context
+             )
+
+    assert reply.handoff_id == outbound.handoff_id
+    {:ok, parent_entries_after} = ConversationTranscriptStore.list(c.source)
+    assert parent_entries_after == parent_entries_before
+
+    assert {:ok, child_entries} = ConversationTranscriptStore.list(child.thread)
+
+    assert Enum.any?(child_entries, fn entry ->
+             entry["content"] =~ "Direct answer" and
+               entry["content"] =~ "Source conversation_id: #{c.target}" and
+               get_in(entry, ["origin", "conversation_id"]) == c.target and
+               get_in(entry, ["origin", "handoff_id"]) == outbound.handoff_id
+           end)
   end
 
   test "write mode edits the shared workspace and defaults to smart review", c do

@@ -73,7 +73,8 @@ defmodule Handbeam.E2E.ThreadMessageTest do
 
     {:ok, child} = ConversationStore.get_metadata(child_id)
     assert child["workspace_id"] == ws["id"]
-    assert get_in(child, ["collaboration", "parent"]) == parent["id"]
+    assert child["parent_conversation_id"] == parent["id"]
+    refute Map.has_key?(child["collaboration"], "parent")
 
     child_entries = E2EHarness.transcript(child_id)
 
