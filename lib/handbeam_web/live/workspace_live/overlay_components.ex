@@ -20,6 +20,8 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
   attr :show_reasoning_sheet, :any, required: true
   attr :show_settings_sheet, :any, required: true
   attr :show_workspace_sheet, :any, required: true
+  attr :show_schedules, :boolean, default: false
+  attr :schedule_count, :integer, default: 0
   attr :skills_count, :any, required: true
   attr :status_info, :any, required: true
   attr :workspace_label, :any, required: true
@@ -29,6 +31,7 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
     ~H"""
     <div
       id="mobile-backdrop"
+      aria-hidden="true"
       class={[
         "mobile-backdrop",
         if(
@@ -50,9 +53,46 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
     <div
       id="workspace-sheet"
       class={["bottom-sheet", if(@show_workspace_sheet, do: "open", else: "")]}
+      aria-hidden={to_string(not @show_workspace_sheet)}
+      inert={!@show_workspace_sheet}
     >
       <div class="sheet-handle"></div>
       <div class="bottom-sheet-inner">
+        <button
+          :if={@chat_scope == :workspace}
+          id="mobile-schedule-nav"
+          type="button"
+          phx-click="toggle_schedules"
+          class={["sheet-primary-row", @show_schedules && "active"]}
+          aria-current={if(@show_schedules, do: "page", else: nil)}
+        >
+          <span class="sheet-primary-icon" aria-hidden="true">
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="1.8"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            >
+              <circle cx="12" cy="12" r="8.5" />
+              <path d="M12 7.5V12l3 2" />
+            </svg>
+          </span>
+          <span class="flex-1">{gettext("定时任务")}</span>
+          <span :if={@schedule_count > 0} class="sheet-primary-count">{@schedule_count}</span>
+          <svg
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <polyline points="9 18 15 12 9 6" />
+          </svg>
+        </button>
         <div :if={pinned_conversations(@workspaces, @conversations_by_workspace) != []}>
           <div class="sheet-section-title">{gettext("已置顶")}</div>
           <div
@@ -270,7 +310,12 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
     </div>
 
     <!-- Model Picker Sheet -->
-    <div id="model-sheet" class={["bottom-sheet", if(@show_model_sheet, do: "open", else: "")]}>
+    <div
+      id="model-sheet"
+      class={["bottom-sheet", if(@show_model_sheet, do: "open", else: "")]}
+      aria-hidden={to_string(not @show_model_sheet)}
+      inert={!@show_model_sheet}
+    >
       <div class="sheet-handle"></div>
       <div class="bottom-sheet-inner">
         <%= if is_nil(@selected_cli) do %>
@@ -310,6 +355,8 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
     <div
       id="reasoning-sheet"
       class={["bottom-sheet", if(@show_reasoning_sheet, do: "open", else: "")]}
+      aria-hidden={to_string(not @show_reasoning_sheet)}
+      inert={!@show_reasoning_sheet}
     >
       <div class="sheet-handle"></div>
       <div class="bottom-sheet-inner">
@@ -339,6 +386,8 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
     <div
       id="settings-sheet"
       class={["bottom-sheet", if(@show_settings_sheet, do: "open", else: "")]}
+      aria-hidden={to_string(not @show_settings_sheet)}
+      inert={!@show_settings_sheet}
     >
       <div class="sheet-handle"></div>
       <div class="bottom-sheet-inner">

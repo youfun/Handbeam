@@ -12,35 +12,64 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
   attr :terminal_available?, :any, required: true
   attr :workspace_label, :any, required: true
   attr :workspaces, :any, required: true
+  attr :show_schedules, :boolean, default: false
+  attr :schedule_count, :integer, default: 0
 
   def mobile_header(assigns) do
     ~H"""
     <div class="mobile-header-v2">
       <button
-        phx-click="open_sheet"
-        phx-value-type="workspace"
+        id={if(@show_schedules, do: "mobile-schedule-back", else: nil)}
+        phx-click={if(@show_schedules, do: "toggle_schedules", else: "open_sheet")}
+        phx-value-type={if(@show_schedules, do: nil, else: "workspace")}
         class="mobile-header-workspace-btn"
+        aria-label={if(@show_schedules, do: gettext("返回对话"), else: nil)}
       >
         <div class="mobile-header-title">
-          <img src={~p"/images/logo.svg"} class="brand-mark" width="18" height="18" alt="" />
+          <img
+            :if={not @show_schedules}
+            src={~p"/images/logo.svg"}
+            class="brand-mark"
+            width="18"
+            height="18"
+            alt=""
+          />
+          <svg
+            :if={@show_schedules}
+            class="mobile-schedule-back-icon"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            aria-hidden="true"
+          >
+            <polyline points="15 18 9 12 15 6" />
+          </svg>
           <span class="mobile-brand">Handbeam</span>
           <span class="mobile-workspace truncate">
-            {if(@chat_scope == :free, do: gettext("对话"), else: @workspace_label)}
+            {mobile_header_label(@show_schedules, @chat_scope, @workspace_label)}
           </span>
         </div>
         <span
           id="mobile-workspace-count"
           class="mobile-workspace-count"
-          title={gettext("会话数量")}
+          title={if(@show_schedules, do: gettext("任务数量"), else: gettext("会话数量"))}
         >
-          {scoped_conversation_count(
-            @conversations_by_workspace,
-            @chat_scope,
-            @current_workspace_id,
-            @workspaces
+          {if(@show_schedules,
+            do: @schedule_count,
+            else:
+              scoped_conversation_count(
+                @conversations_by_workspace,
+                @chat_scope,
+                @current_workspace_id,
+                @workspaces
+              )
           )}
         </span>
         <svg
+          :if={not @show_schedules}
           class="mobile-chevron"
           width="10"
           height="10"
@@ -55,7 +84,7 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
       </button>
       <div class="mobile-header-actions">
         <button
-          :if={@chat_scope != :free}
+          :if={@chat_scope != :free and not @show_schedules}
           id="mobile-open-files"
           phx-click="select_mobile_right_panel_view"
           phx-value-view="files"
@@ -78,7 +107,7 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
           </svg>
         </button>
         <button
-          :if={@terminal_available?}
+          :if={@terminal_available? and not @show_schedules}
           id="mobile-open-terminal"
           phx-click="select_mobile_right_panel_view"
           phx-value-view="terminal"
@@ -89,6 +118,7 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
           <span aria-hidden="true">›_</span>
         </button>
         <button
+          :if={not @show_schedules}
           phx-click="open_sheet"
           phx-value-type="settings"
           class="mobile-header-info-btn"
@@ -150,6 +180,8 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
   attr :conversation_list_loaded, :boolean, default: false
   attr :conversation_list_error, :any, default: nil
   attr :runtime_tasks, :map, default: %{tasks: []}
+  attr :show_schedules, :boolean, default: false
+  attr :schedule_count, :integer, default: 0
 
   def projects_sidebar(assigns) do
     assigns =
@@ -716,6 +748,21 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
           </div>
         </div>
       </div>
+      <nav :if={@chat_scope == :workspace} class="sidebar-primary-nav" aria-label={gettext("工具")}>
+        <button
+          id="schedule-nav"
+          type="button"
+          phx-click="toggle_schedules"
+          class={["sidebar-primary-nav-item", @show_schedules && "is-active"]}
+          aria-current={if(@show_schedules, do: "page", else: nil)}
+        >
+          <span class="sidebar-primary-nav-icon" aria-hidden="true">
+            <.clock_icon />
+          </span>
+          <span>{gettext("定时任务")}</span>
+          <span :if={@schedule_count > 0} class="sidebar-primary-nav-count">{@schedule_count}</span>
+        </button>
+      </nav>
       <.conversation_hover_card workspaces={@workspaces} />
       <.workspace_hover_card />
     </div>
@@ -1110,6 +1157,27 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
   defp menu_scope_id(%{scope: "free"}), do: "free"
   defp menu_scope_id(%{workspace_id: id}) when is_binary(id) and id != "", do: id
   defp menu_scope_id(_), do: "free"
+
+  defp mobile_header_label(true, _chat_scope, _workspace_label), do: gettext("定时任务")
+  defp mobile_header_label(false, :free, _workspace_label), do: gettext("对话")
+  defp mobile_header_label(false, _chat_scope, workspace_label), do: workspace_label
+
+  defp clock_icon(assigns) do
+    ~H"""
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.8"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 7.5V12l3 2" />
+    </svg>
+    """
+  end
 
   defp archived_conversation_active?(conv, current_id, current_workspace_id, chat_scope) do
     current_id == conv.id and

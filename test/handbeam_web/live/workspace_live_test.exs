@@ -1903,7 +1903,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       assert rendered =~ "tool-work-collapsed"
     end
 
-    test "one-shot controls persist changes and cards follow the current conversation", %{
+    test "schedule center owns one-shot controls and follows the current conversation", %{
       conn: conn
     } do
       {:ok, conversation} = Handbeam.ConversationStore.create("default", title: "Scheduled check")
@@ -1925,25 +1925,37 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         })
 
       {:ok, view, _html} = live(conn, "/w/default/c/#{conversation["id"]}")
-      card = "#once-dock-#{schedule.id}"
-      assert has_element?(view, "#{card} [role='switch'][aria-checked='true']")
+      card = "#schedule-#{schedule.id}"
 
-      view |> element("#{card} [role='switch']") |> render_click()
-      assert has_element?(view, "#{card} [role='switch'][aria-checked='false']")
+      assert has_element?(view, "#activity-bar #schedule-nav")
+      refute has_element?(view, ".schedule-launcher")
+      refute has_element?(view, "#once-schedule-dock")
+      refute has_element?(view, "#schedule-center")
+
+      view |> element("#schedule-nav") |> render_click()
+
+      assert has_element?(view, "#schedule-center #{card}")
+      refute has_element?(view, "#ai-input-area")
+      refute has_element?(view, "#workspace-panel")
+      assert has_element?(view, "#{card} [phx-click='schedule_pause']")
+
+      view |> element("#{card} [phx-click='schedule_pause']") |> render_click()
+      assert has_element?(view, "#{card} [phx-click='schedule_resume']")
       assert {:ok, %{status: "paused"}} = Handbeam.Schedule.Store.get(schedule.id)
 
-      view |> element("#{card} [role='switch']") |> render_click()
-      assert has_element?(view, "#{card} [role='switch'][aria-checked='true']")
+      view |> element("#{card} [phx-click='schedule_resume']") |> render_click()
+      assert has_element?(view, "#{card} [phx-click='schedule_pause']")
       assert {:ok, %{status: "active"}} = Handbeam.Schedule.Store.get(schedule.id)
 
       create_default_conversation(view)
-      refute has_element?(view, "#once-schedule-dock")
+      refute has_element?(view, "#schedule-center")
       send(view.pid, {:schedule_changed, conversation["id"]})
-      refute has_element?(view, "#once-schedule-dock")
+      refute has_element?(view, card)
 
       render_patch(view, "/w/default/c/#{conversation["id"]}")
+      view |> element("#schedule-nav") |> render_click()
       assert has_element?(view, card)
-      assert has_element?(view, "#{card} button[phx-click='schedule_delete'][aria-label] svg")
+      assert has_element?(view, "#{card} button[phx-click='schedule_delete']")
       view |> element("#{card} [phx-click='schedule_delete']") |> render_click()
       refute has_element?(view, card)
       assert {:error, :not_found} = Handbeam.Schedule.Store.get(schedule.id)
@@ -1954,16 +1966,15 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         |> Handbeam.Schedule.Store.create()
 
       send(view.pid, {:schedule_changed, conversation["id"]})
-      assert has_element?(view, "#once-dock-#{pending.id}")
+      assert has_element?(view, "#schedule-#{pending.id}")
       assert {:ok, claim} = Handbeam.Schedule.Store.claim(pending, pending.next_run_at)
       send(view.pid, {:schedule_changed, conversation["id"]})
-      refute has_element?(view, "#once-schedule-dock")
+      assert has_element?(view, "#schedule-#{pending.id}")
 
       assert {:ok, _} = Handbeam.Schedule.Store.finish_run(claim.run, "completed")
       send(view.pid, {:schedule_changed, conversation["id"]})
+      assert has_element?(view, "#schedule-#{pending.id}", "已完成")
       refute has_element?(view, "#once-schedule-dock")
-      {:ok, refreshed, _html} = live(conn, "/w/default/c/#{conversation["id"]}")
-      refute has_element?(refreshed, "#once-schedule-dock")
     end
 
     test "deleted one-shots and recurring tools do not leave cards in the composer dock",
@@ -4888,14 +4899,29 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
     } do
       {:ok, view, _html} = live(conn, "/")
 
+      assert has_element?(view, "#workspace-sheet[aria-hidden='true'][inert]")
+
       view
       |> element("button[phx-click='open_sheet'][phx-value-type='workspace']")
       |> render_click()
 
       html = render(view)
       assert html =~ ~s(id="workspace-sheet")
+      assert has_element?(view, "#workspace-sheet.open[aria-hidden='false']:not([inert])")
       assert html =~ "sheet-new-conv-btn"
       refute html =~ "sheet-ws-row"
+      assert has_element?(view, "#workspace-sheet #mobile-schedule-nav")
+
+      view |> element("#mobile-schedule-nav") |> render_click()
+      assert has_element?(view, "#schedule-center")
+      refute has_element?(view, "#ai-input-area")
+      refute has_element?(view, "#workspace-sheet.open")
+
+      view |> element("#mobile-schedule-back") |> render_click()
+
+      view
+      |> element("button[phx-click='open_sheet'][phx-value-type='workspace']")
+      |> render_click()
 
       view
       |> element(

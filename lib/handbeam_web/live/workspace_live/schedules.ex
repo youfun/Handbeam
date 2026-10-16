@@ -109,242 +109,205 @@ defmodule HandbeamWeb.WorkspaceLive.Schedules do
   end
 
   attr :chat_scope, :any, required: true
-  attr :show, :boolean, required: true
   attr :schedules, :list, required: true
   attr :runs, :map, required: true
   attr :request, :string, default: ""
   attr :error, :any, default: nil
   attr :time_zone, :any, default: nil
+  attr :workspace_label, :string, required: true
 
-  def panel(assigns) do
+  def center(assigns) do
     ~H"""
-    <div :if={@chat_scope == :workspace} class="schedule-launcher">
-      <button
-        id="schedule-toggle"
-        type="button"
-        phx-click="toggle_schedules"
-        class="text-xs border rounded px-2 py-1 bg-surface text-secondary hover:text-primary"
-      >
-        {gettext("定时任务")}
-      </button>
-    </div>
-    <aside
-      :if={@show and @chat_scope == :workspace}
-      id="schedule-panel"
-      class="schedule-panel overflow-y-auto bg-surface border rounded-xl shadow-xl p-4 space-y-3"
-    >
-      <div class="flex items-center justify-between">
-        <h3 class="text-sm font-semibold">{gettext("定时任务")}</h3>
-        <button type="button" phx-click="toggle_schedules" class="text-xs text-secondary">
-          {gettext("关闭")}
+    <section :if={@chat_scope == :workspace} id="schedule-center" class="schedule-center">
+      <header class="schedule-center-header">
+        <div class="schedule-center-heading">
+          <span class="schedule-center-icon" aria-hidden="true">
+            <.clock_icon />
+          </span>
+          <div>
+            <h1>{gettext("定时任务")}</h1>
+            <p>{gettext("管理当前对话的自动运行")} · {@workspace_label}</p>
+          </div>
+        </div>
+        <button
+          id="schedule-center-close"
+          type="button"
+          phx-click="toggle_schedules"
+          class="schedule-secondary-button"
+        >
+          <span aria-hidden="true">←</span>
+          {gettext("返回对话")}
         </button>
-      </div>
-      <p :if={@error} class="text-xs text-error">{@error}</p>
-      <div
-        :for={entry <- @schedules}
-        id={"schedule-#{entry.id}"}
-        class="border rounded-lg p-3 space-y-2"
-      >
-        <div class="text-sm font-medium">{entry.name}</div>
-        <div class="text-xs text-secondary">
-          {sidebar_summary(entry, @runs)}
-        </div>
-        <div class="text-xs">
-          {sidebar_status(entry, @runs, @time_zone)}
-        </div>
-        <% view = once_view(entry, Map.get(@runs, entry.id, [])) %>
-        <div :if={view} class="flex flex-wrap gap-2 text-xs">
-          <button
-            :if={view.action == :pause}
-            type="button"
-            phx-click="schedule_pause"
-            phx-value-id={entry.id}
-          >
-            {gettext("暂停")}
-          </button>
-          <button
-            :if={view.action == :resume}
-            type="button"
-            phx-click="schedule_resume"
-            phx-value-id={entry.id}
-          >
-            {gettext("恢复")}
-          </button>
-          <button type="button" phx-click="schedule_delete" phx-value-id={entry.id}>
-            {gettext("删除")}
-          </button>
-        </div>
-        <div :if={!view} class="flex flex-wrap gap-2 text-xs">
-          <button type="button" phx-click="schedule_pause" phx-value-id={entry.id}>{gettext("暂停")}</button>
-          <button type="button" phx-click="schedule_resume" phx-value-id={entry.id}>{gettext("恢复")}</button>
-          <button type="button" phx-click="schedule_run_now" phx-value-id={entry.id}>{gettext("立即运行")}</button>
-          <button type="button" phx-click="schedule_revise" phx-value-id={entry.id}>{gettext("改一下")}</button>
-          <button type="button" phx-click="schedule_delete" phx-value-id={entry.id}>{gettext("删除")}</button>
-        </div>
-        <ul class="text-xs text-secondary space-y-1">
-          <li :for={run <- Map.get(@runs, entry.id, [])}>
-            {run_label(run, entry.time_zone)} · {run.kind} · {run.status}
-            <span :if={run.reason}> · {run.reason}</span>
-            <button
-              :if={run.run_id}
-              type="button"
-              phx-click={
-                JS.dispatch("phx:scroll-to-run", to: "window", detail: %{run_id: run.run_id})
-              }
-              class="underline"
-            >
-              {run.run_id}
+      </header>
+
+      <div class="schedule-center-body">
+        <form
+          id="schedule-ask"
+          phx-submit="schedule_ask"
+          phx-change="schedule_request"
+          class="schedule-create-card"
+        >
+          <div>
+            <h2>{gettext("新建任务")}</h2>
+            <p>{gettext("用一句话说明何时运行、要做什么。后续修改时间、频率或语言，也可以直接说。")}</p>
+          </div>
+          <textarea
+            id="schedule-request"
+            name="request"
+            rows="3"
+            value={@request}
+            placeholder={gettext("工作日每天 09:00，把项目摘要发到这个聊天")}
+          ></textarea>
+          <p :if={@error} class="schedule-error" role="alert">{@error}</p>
+          <div class="schedule-create-actions">
+            <span>{gettext("任务会在当前对话中运行并返回结果")}</span>
+            <button type="submit" class="schedule-primary-button">
+              {gettext("交给 Agent")}
             </button>
-          </li>
-        </ul>
-      </div>
-      <form
-        id="schedule-ask"
-        phx-submit="schedule_ask"
-        phx-change="schedule_request"
-        class="space-y-2"
-      >
-        <p class="text-xs text-secondary">
-          {gettext("在这个对话里用一句话说何时、做什么。改频率、时间或语言，也直接说。")}
-        </p>
-        <textarea
-          id="schedule-request"
-          name="request"
-          rows="3"
-          value={@request}
-          placeholder={gettext("工作日每天 09:00，把摘要发到这个聊天")}
-          class="w-full text-xs border rounded px-2 py-1"
-        ></textarea>
-        <button type="submit" class="text-xs bg-user text-white rounded px-3 py-1">
-          {gettext("发给这个对话")}
-        </button>
-      </form>
-    </aside>
-    """
-  end
+          </div>
+        </form>
 
-  attr :schedules, :list, default: []
-  attr :runs, :map, default: %{}
+        <div class="schedule-list-heading">
+          <div>
+            <h2>{gettext("任务")}</h2>
+            <p>{ngettext("当前对话有 1 个任务", "当前对话有 %{count} 个任务", length(@schedules))}</p>
+          </div>
+        </div>
 
-  def composer_once_cards(assigns) do
-    assigns =
-      assign(assigns, :cards, dock_cards(assigns.schedules, assigns.runs))
+        <div :if={@schedules == []} id="schedule-empty" class="schedule-empty">
+          <span aria-hidden="true"><.clock_icon /></span>
+          <h3>{gettext("还没有定时任务")}</h3>
+          <p>{gettext("在上方描述一个任务，Agent 会确认时间和执行内容。")}</p>
+        </div>
 
-    ~H"""
-    <div :if={@cards != []} id="once-schedule-dock" class="once-schedule-dock">
-      <.once_card :for={card <- @cards} card={card} />
-    </div>
-    """
-  end
-
-  attr :card, :map, required: true
-
-  def once_card(assigns) do
-    ~H"""
-    <div
-      id={@card.dom_id}
-      class="once-schedule-card mt-2 rounded border border-edge px-3 py-2 space-y-1"
-    >
-      <div class="flex items-center justify-between gap-2">
-        <div class="text-sm font-medium">{@card.name}</div>
-        <div class="flex items-center gap-2">
-          <button
-            :if={@card.switch}
-            type="button"
-            role="switch"
-            aria-checked={to_string(@card.switch == :on)}
-            aria-label={gettext("定时任务")}
-            title={if(@card.switch == :on, do: gettext("暂停"), else: gettext("恢复"))}
-            disabled={!@card.enabled}
-            phx-click={@card.event}
-            phx-value-id={@card.id}
-            class="schedule-switch"
+        <div :if={@schedules != []} id="schedule-list" class="schedule-list">
+          <article
+            :for={entry <- @schedules}
+            id={"schedule-#{entry.id}"}
+            class="schedule-card"
           >
-            <span class="schedule-switch-thumb" aria-hidden="true"></span>
-          </button>
-          <button
-            :if={@card.id}
-            type="button"
-            phx-click="schedule_delete"
-            phx-value-id={@card.id}
-            class="schedule-delete"
-            aria-label={gettext("Delete")}
-            title={gettext("Delete")}
-          >
-            <svg
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              aria-hidden="true"
-            >
-              <path
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                d="M4 7h16M10 11v6m4-6v6M6 7l1 13h10l1-13M9 7V4h6v3"
-              />
-            </svg>
-          </button>
+            <% view = once_view(entry, Map.get(@runs, entry.id, [])) %>
+            <div class="schedule-card-main">
+              <div class="schedule-card-title-row">
+                <h3>{entry.name}</h3>
+                <span class={["schedule-status", "is-#{entry.status}"]}>
+                  {status_label(entry.status)}
+                </span>
+              </div>
+              <p class="schedule-card-rule">{sidebar_summary(entry, @runs)}</p>
+              <p class="schedule-card-next">{sidebar_status(entry, @runs, @time_zone)}</p>
+              <p class="schedule-card-instruction">{entry.instruction}</p>
+            </div>
+
+            <div class="schedule-card-actions">
+              <button
+                :if={view && view.action == :pause}
+                type="button"
+                phx-click="schedule_pause"
+                phx-value-id={entry.id}
+                class="schedule-secondary-button"
+              >
+                {gettext("暂停")}
+              </button>
+              <button
+                :if={view && view.action == :resume}
+                type="button"
+                phx-click="schedule_resume"
+                phx-value-id={entry.id}
+                class="schedule-secondary-button"
+              >
+                {gettext("恢复")}
+              </button>
+              <button
+                :if={!view && entry.status == "active"}
+                type="button"
+                phx-click="schedule_pause"
+                phx-value-id={entry.id}
+                class="schedule-secondary-button"
+              >
+                {gettext("暂停")}
+              </button>
+              <button
+                :if={!view && entry.status == "paused"}
+                type="button"
+                phx-click="schedule_resume"
+                phx-value-id={entry.id}
+                class="schedule-secondary-button"
+              >
+                {gettext("恢复")}
+              </button>
+              <button
+                :if={!view}
+                type="button"
+                phx-click="schedule_run_now"
+                phx-value-id={entry.id}
+                class="schedule-secondary-button"
+              >
+                {gettext("立即运行")}
+              </button>
+              <button
+                :if={!view}
+                type="button"
+                phx-click="schedule_revise"
+                phx-value-id={entry.id}
+                class="schedule-secondary-button"
+              >
+                {gettext("修改")}
+              </button>
+              <button
+                type="button"
+                phx-click="schedule_delete"
+                phx-value-id={entry.id}
+                class="schedule-danger-button"
+              >
+                {gettext("删除")}
+              </button>
+            </div>
+
+            <details :if={Map.get(@runs, entry.id, []) != []} class="schedule-history">
+              <summary>{gettext("运行历史")}</summary>
+              <ul>
+                <li :for={run <- Map.get(@runs, entry.id, [])}>
+                  <span>{run_label(run, entry.time_zone)} · {run.kind} · {run.status}</span>
+                  <span :if={run.reason}> · {run.reason}</span>
+                  <button
+                    :if={run.run_id}
+                    type="button"
+                    phx-click={
+                      JS.dispatch("phx:scroll-to-run",
+                        to: "window",
+                        detail: %{run_id: run.run_id}
+                      )
+                    }
+                  >
+                    {gettext("查看对话")}
+                  </button>
+                </li>
+              </ul>
+            </details>
+          </article>
         </div>
       </div>
-      <div id={"#{@card.dom_id}-status"} class="text-xs text-secondary">
-        {Enum.join(@card.lines, " · ")}
-      </div>
-      <p
-        :if={@card.countdown_at}
-        id={@card.countdown_id}
-        phx-hook="ScheduleCountdown"
-        data-at={@card.countdown_at}
-        data-due-target={"#{@card.dom_id}-status"}
-        data-due-lines={Enum.join(@card.due_lines, " · ")}
-        class="text-xs"
-      >
-        {gettext("下次还要")}
-      </p>
-      <p class="text-xs whitespace-pre-wrap">{@card.instruction}</p>
-    </div>
+    </section>
     """
   end
 
-  defp dock_cards(schedules, runs) when is_list(schedules) do
-    now = Handbeam.Schedule.now()
-
-    current =
-      Enum.flat_map(schedules, fn entry ->
-        if Rule.once?(entry.rule) do
-          view = Presentation.once(entry, Map.get(runs || %{}, entry.id, []), now)
-
-          if view.enabled do
-            [
-              %{
-                dom_id: "once-dock-#{entry.id}",
-                countdown_id: "once-countdown-dock-#{entry.id}",
-                id: entry.id,
-                name: entry.name,
-                instruction: entry.instruction,
-                event: event_name(view.action),
-                countdown_at: Map.get(view, :countdown_at),
-                due_lines: Map.get(view, :due_lines, []),
-                switch: view.switch,
-                enabled: view.enabled,
-                lines: view.lines
-              }
-            ]
-          else
-            []
-          end
-        else
-          []
-        end
-      end)
-
-    current
+  defp clock_icon(assigns) do
+    ~H"""
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.8"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      aria-hidden="true"
+    >
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 7.5V12l3 2" />
+    </svg>
+    """
   end
-
-  defp dock_cards(_schedules, _runs), do: []
-
-  defp event_name(:pause), do: "schedule_pause"
-  defp event_name(:resume), do: "schedule_resume"
 
   defp once_view(entry, runs) do
     Presentation.once(entry, runs, Handbeam.Schedule.now())
@@ -386,6 +349,12 @@ defmodule HandbeamWeb.WorkspaceLive.Schedules do
   defp next_label(entry, zone) do
     Rule.format_local(entry.next_run_at, zone || entry.time_zone)
   end
+
+  defp status_label("active"), do: gettext("运行中")
+  defp status_label("paused"), do: gettext("已暂停")
+  defp status_label("completed"), do: gettext("已完成")
+  defp status_label("disabled"), do: gettext("已停用")
+  defp status_label(status), do: status
 
   defp run_label(run, zone) do
     if run.slot_at, do: Rule.format_local(run.slot_at, zone), else: gettext("立即运行")

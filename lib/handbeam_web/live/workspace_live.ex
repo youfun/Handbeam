@@ -1390,7 +1390,10 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   def handle_event("toggle_schedules", _params, socket) do
-    {:noreply, Schedules.toggle(socket)}
+    {:noreply,
+     socket
+     |> Schedules.toggle()
+     |> WorkspaceNavigation.close_sheet_panels()}
   end
 
   def handle_event("schedule_request", %{"request" => request}, socket) do
@@ -1399,8 +1402,13 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   def handle_event("schedule_ask", %{"request" => request}, socket) do
     case Schedules.prepare_ask(socket, request) do
-      {:ok, socket, text} -> MessageSubmission.send_schedule_request(socket, text)
-      {:error, socket} -> {:noreply, socket}
+      {:ok, socket, text} ->
+        socket
+        |> assign(:show_schedules, false)
+        |> MessageSubmission.send_schedule_request(text)
+
+      {:error, socket} ->
+        {:noreply, socket}
     end
   end
 
