@@ -703,14 +703,25 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
   def workspace_conversations(conversations_by_workspace, ws_id, workspaces)
       when is_map(conversations_by_workspace) and is_list(workspaces) do
     ws_map = Map.new(workspaces, fn ws -> {ws["id"], ws["name"] || ws["id"]} end)
+    workspace_name = Map.get(ws_map, ws_id, ws_id)
 
-    conversations_by_workspace
-    |> Map.get(ws_id, [])
-    |> Enum.reject(&archived_conversation?/1)
-    |> sort_sidebar_conversations()
-    |> Enum.map(fn conv ->
-      conversation_row(conv, ws_id, Map.get(ws_map, ws_id, ws_id), "workspace")
-    end)
+    {pinned, unpinned} =
+      conversations_by_workspace
+      |> Map.get(ws_id, [])
+      |> Enum.reject(&archived_conversation?/1)
+      |> Enum.split_with(&pinned_conversation?/1)
+
+    tree_rows =
+      thread_tree_rows(unpinned, fn conv ->
+        conversation_row(conv, ws_id, workspace_name, "workspace")
+      end)
+
+    pinned_rows =
+      pinned
+      |> sort_sidebar_conversations()
+      |> Enum.map(&conversation_row(&1, ws_id, workspace_name, "workspace"))
+
+    tree_rows ++ pinned_rows
   end
 
   defp conversation_row(conv, workspace_id, workspace_name, scope) do
@@ -720,6 +731,9 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
       workspace_id: workspace_id,
       workspace_name: workspace_name,
       scope: scope,
+      parent_id: Handbeam.ConversationStore.parent_conversation_id(conv),
+      tree_depth: 0,
+      tree_branch: nil,
       archived: archived_conversation?(conv),
       pinned: pinned_conversation?(conv),
       pinned_at: ConversationState.conv_value(conv, "pinned_at", nil),
@@ -958,6 +972,111 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
     |> Enum.reject(&(ConversationState.conversation_id(&1) == id))
     |> then(&[conversation | &1])
     |> sort_sidebar_conversations()
+  end
+
+  defp thread_tree_rows(conversations, row_fun) do
+    by_id = Map.new(conversations, &{ConversationState.conversation_id(&1), &1})
+
+    parent_by_id =
+      Map.new(conversations, fn conversation ->
+        id = ConversationState.conversation_id(conversation)
+        {id, effective_parent_id(conversation, id, by_id)}
+      end)
+
+    children_by_parent =
+      Enum.reduce(conversations, %{}, fn conversation, children ->
+        case Map.get(parent_by_id, ConversationState.conversation_id(conversation)) do
+          parent_id when is_binary(parent_id) ->
+            Map.update(children, parent_id, [conversation], &[conversation | &1])
+
+          _ ->
+            children
+        end
+      end)
+
+    conversations
+    |> Enum.filter(&is_nil(Map.get(parent_by_id, ConversationState.conversation_id(&1))))
+    |> Enum.sort_by(&family_activity_key(&1, children_by_parent), :desc)
+    |> Enum.flat_map(&flatten_thread_tree(&1, 0, nil, children_by_parent, row_fun))
+  end
+
+  defp effective_parent_id(conversation, id, by_id) do
+    parent_id = Handbeam.ConversationStore.parent_conversation_id(conversation)
+
+    if is_binary(parent_id) and parent_id != id and Map.has_key?(by_id, parent_id) and
+         not cyclic_parent_chain?(id, parent_id, by_id, MapSet.new()) do
+      parent_id
+    end
+  end
+
+  defp cyclic_parent_chain?(origin_id, current_id, by_id, visited) do
+    cond do
+      current_id == origin_id ->
+        true
+
+      MapSet.member?(visited, current_id) ->
+        true
+
+      true ->
+        case Map.get(by_id, current_id) do
+          nil ->
+            false
+
+          conversation ->
+            case Handbeam.ConversationStore.parent_conversation_id(conversation) do
+              parent_id when is_binary(parent_id) and is_map_key(by_id, parent_id) ->
+                cyclic_parent_chain?(
+                  origin_id,
+                  parent_id,
+                  by_id,
+                  MapSet.put(visited, current_id)
+                )
+
+              _ ->
+                false
+            end
+        end
+    end
+  end
+
+  defp flatten_thread_tree(conversation, depth, branch, children_by_parent, row_fun) do
+    row =
+      conversation
+      |> row_fun.()
+      |> Map.merge(%{tree_depth: depth, tree_branch: branch})
+
+    children =
+      children_by_parent
+      |> Map.get(ConversationState.conversation_id(conversation), [])
+      |> Enum.sort_by(&family_activity_key(&1, children_by_parent), :desc)
+
+    descendants =
+      children
+      |> Enum.with_index()
+      |> Enum.flat_map(fn {child, index} ->
+        child_branch = if index == length(children) - 1, do: :last, else: :middle
+        flatten_thread_tree(child, depth + 1, child_branch, children_by_parent, row_fun)
+      end)
+
+    [row | descendants]
+  end
+
+  defp family_activity_key(conversation, children_by_parent) do
+    own_key = conversation_activity_key(conversation)
+
+    children_by_parent
+    |> Map.get(ConversationState.conversation_id(conversation), [])
+    |> Enum.reduce(own_key, fn child, latest ->
+      max(family_activity_key(child, children_by_parent), latest)
+    end)
+  end
+
+  defp conversation_activity_key(conversation) do
+    {
+      ConversationState.conv_value(conversation, "updated_at", "") || "",
+      ConversationState.conv_value(conversation, "created_at", "") || "",
+      ConversationState.conversation_id(conversation)
+    }
   end
 
   # Active chats stay above archived ones. Within each group, the most recently

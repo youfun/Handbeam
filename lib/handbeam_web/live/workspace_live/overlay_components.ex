@@ -288,6 +288,7 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
                 phx-value-ws_id={conv.workspace_id}
                 class={[
                   "sheet-conv-row",
+                  conv.tree_depth > 0 && "conversation-row-child",
                   if(
                     @current_conversation_id == conv.id and
                       @current_workspace_id == conv.workspace_id,
@@ -295,7 +296,19 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
                     else: ""
                   )
                 ]}
+                data-parent-conversation-id={conv.parent_id}
+                data-thread-depth={conv.tree_depth}
               >
+                <span
+                  :if={conv.tree_depth > 0}
+                  class={[
+                    "thread-tree-connector",
+                    conv.tree_branch == :middle && "is-middle",
+                    conv.tree_branch == :last && "is-last"
+                  ]}
+                  style={"--thread-indent: #{(conv.tree_depth - 1) * 12}px"}
+                  aria-hidden="true"
+                ></span>
                 <SidebarComponents.run_indicator
                   id={conv.id}
                   state={Map.get(@run_states, conv.id)}

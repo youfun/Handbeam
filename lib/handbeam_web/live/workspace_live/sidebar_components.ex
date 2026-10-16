@@ -613,8 +613,13 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
               }
               :if={!conv.archived and not conv.pinned}
               id={"conversation-#{conv.id}"}
-              class="conversation-row"
+              class={[
+                "conversation-row",
+                conv.tree_depth > 0 && "conversation-row-child"
+              ]}
               data-conversation-id={conv.id}
+              data-parent-conversation-id={conv.parent_id}
+              data-thread-depth={conv.tree_depth}
               data-conversation-title={conv.title}
               data-conversation-age={conv.age}
               data-workspace-id={conv.workspace_id}
@@ -633,6 +638,16 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
                   )
                 ]}
               >
+                <span
+                  :if={conv.tree_depth > 0}
+                  class={[
+                    "thread-tree-connector",
+                    conv.tree_branch == :middle && "is-middle",
+                    conv.tree_branch == :last && "is-last"
+                  ]}
+                  style={"--thread-indent: #{(conv.tree_depth - 1) * 12}px"}
+                  aria-hidden="true"
+                ></span>
                 <.run_indicator
                   id={conv.id}
                   state={Map.get(@run_states, conv.id)}

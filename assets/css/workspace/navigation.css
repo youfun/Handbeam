@@ -436,6 +436,46 @@
   background-color: var(--color-surface-hover);
 }
 
+.thread-tree-connector {
+  position: relative;
+  align-self: stretch;
+  width: 0.9rem;
+  min-height: 1.75rem;
+  margin-left: var(--thread-indent, 0);
+  flex: 0 0 0.9rem;
+  color: color-mix(in srgb, var(--color-text-tertiary) 48%, transparent);
+}
+
+.thread-tree-connector::before,
+.thread-tree-connector::after {
+  position: absolute;
+  content: "";
+  pointer-events: none;
+}
+
+.thread-tree-connector::before {
+  top: 0;
+  bottom: 50%;
+  left: 0.25rem;
+  border-left: 1px solid currentColor;
+}
+
+.thread-tree-connector.is-middle::before {
+  bottom: 0;
+}
+
+.thread-tree-connector::after {
+  top: 50%;
+  left: 0.25rem;
+  width: 0.55rem;
+  border-top: 1px solid currentColor;
+}
+
+.conversation-row-child .conversation-item,
+.sheet-conv-row.conversation-row-child {
+  min-width: 0;
+}
+
 .conversation-item {
   position: relative;
   min-height: 1.75rem;
