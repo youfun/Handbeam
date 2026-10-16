@@ -29,6 +29,12 @@ defmodule Handbeam.Tool.Extension.TerminalTest do
   end
 
   describe "ext__term_list" do
+    test "requires checkout context", %{context: ctx} do
+      context = Map.delete(ctx, :working_directory)
+      assert {:error, message} = Handbeam.Tool.Extension.Terminal.ext_term_list(%{}, context)
+      assert message =~ "working_directory"
+    end
+
     test "returns empty list when no terminals", %{context: ctx} do
       {:ok, json} = Handbeam.Tool.Extension.Terminal.ext_term_list(%{}, ctx)
       assert {:ok, terminals} = Jason.decode(json)

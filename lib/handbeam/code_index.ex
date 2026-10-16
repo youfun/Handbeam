@@ -107,22 +107,23 @@ defmodule Handbeam.CodeIndex do
     open_or_rebind(dir, workspace_root, workspace_id)
   end
 
-  @doc "Remove a workspace-local index. Fallback indexes live outside the workspace."
+  @doc "Remove every checkout index owned by a workspace root."
   @spec delete_local(Path.t()) :: :ok
   def delete_local(workspace_root) when is_binary(workspace_root) do
     root = Path.expand(workspace_root)
     dir = Path.join([root, ".handbeam", "code-index"])
-
-    if File.dir?(dir) do
-      Enum.each(["index.sqlite", "index.sqlite-wal", "index.sqlite-shm"], fn name ->
-        _ = File.rm(Path.join(dir, name))
-      end)
-    end
-
+    _ = File.rm_rf(dir)
     :ok
   end
 
   def delete_local(_), do: :ok
+
+  @doc false
+  def delete_workspace(workspace_root, workspace_id) do
+    :ok = delete_local(workspace_root)
+    _ = File.rm_rf(Location.fallback_dir(workspace_id))
+    :ok
+  end
 
   @doc "True when models.json has a usable embeddings section. Does not read the key."
   @spec embeddings_configured?(keyword()) :: boolean()
@@ -151,8 +152,11 @@ defmodule Handbeam.CodeIndex do
 
   defp same_root?(dir, workspace_root) do
     case Store.read_identity(dir) do
-      {:ok, _id, root} -> root == Path.expand(workspace_root)
-      _ -> false
+      {:ok, _id, root} ->
+        root == Handbeam.Security.PathValidator.resolve_symlink(Path.expand(workspace_root))
+
+      _ ->
+        false
     end
   end
 

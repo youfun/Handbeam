@@ -9,7 +9,7 @@ defmodule HandbeamWeb.Live.TerminalPanel do
 
   use HandbeamWeb, :live_component
 
-  alias Handbeam.Terminal.{Registry, Session, Supervisor}
+  alias Handbeam.Terminal.{Session, Supervisor}
 
   @session_call_timeout 2_000
 
@@ -33,10 +33,11 @@ defmodule HandbeamWeb.Live.TerminalPanel do
     # send_update from the parent only includes the new keys. A refresh must
     # not require workspace_id to be passed again.
     workspace_id = clean_assigns[:workspace_id] || socket.assigns[:workspace_id]
+    checkout_path = clean_assigns[:workspace_path] || socket.assigns[:workspace_path]
 
     socket =
       socket
-      |> reset_if_workspace_changed(workspace_id)
+      |> reset_if_scope_changed(workspace_id, checkout_path)
       |> assign(clean_assigns)
       |> assign_new(:create_error, fn -> nil end)
       |> assign_new(:confirm_close, fn -> nil end)
@@ -49,7 +50,9 @@ defmodule HandbeamWeb.Live.TerminalPanel do
       |> assign_new(:command_nonce, fn -> 0 end)
       |> assign(:preset_commands, @preset_commands)
       |> then(fn sock ->
-        if workspace_id, do: assign_terminals(sock, workspace_id), else: sock
+        if workspace_id && checkout_path,
+          do: assign_terminals(sock, workspace_id),
+          else: assign(sock, :terminals, [])
       end)
       |> maybe_bootstrap_shell()
 
@@ -311,7 +314,7 @@ defmodule HandbeamWeb.Live.TerminalPanel do
     name = socket.assigns.confirm_close
     workspace_id = socket.assigns.workspace_id
 
-    Supervisor.stop_terminal(workspace_id, name)
+    Supervisor.stop_terminal(workspace_id, socket.assigns.workspace_path, name)
 
     socket =
       socket
@@ -385,7 +388,8 @@ defmodule HandbeamWeb.Live.TerminalPanel do
   defp handle_action({:terminal_ready, "term-" <> name, cols, rows}, socket) do
     with cols when is_integer(cols) <- normalize_dim(cols),
          rows when is_integer(rows) <- normalize_dim(rows),
-         {:ok, pid} <- Registry.lookup(socket.assigns.workspace_id, name) do
+         {:ok, pid} <-
+           Supervisor.lookup(socket.assigns.workspace_id, socket.assigns.workspace_path, name) do
       Session.resize(pid, cols, rows)
     end
 
@@ -394,10 +398,11 @@ defmodule HandbeamWeb.Live.TerminalPanel do
 
   defp handle_action(_action, socket), do: socket
 
-  defp reset_if_workspace_changed(socket, workspace_id) do
-    prev = socket.assigns[:workspace_id]
+  defp reset_if_scope_changed(socket, workspace_id, checkout_path) do
+    previous = {socket.assigns[:workspace_id], socket.assigns[:workspace_path]}
+    current = {workspace_id, checkout_path}
 
-    if prev && prev != workspace_id do
+    if elem(previous, 0) && previous != current do
       socket
       |> assign(:bootstrapped, false)
       |> assign(:active_terminal_name, nil)
@@ -468,10 +473,9 @@ defmodule HandbeamWeb.Live.TerminalPanel do
   defp start_named(socket, name, cmd, args) do
     workspace_id = socket.assigns.workspace_id
 
-    case Supervisor.start_terminal(workspace_id, name,
+    case Supervisor.start_terminal(workspace_id, socket.assigns.workspace_path, name,
            cmd: cmd,
-           args: args,
-           workspace_path: socket.assigns.workspace_path
+           args: args
          ) do
       {:ok, _pid} ->
         socket
@@ -491,7 +495,7 @@ defmodule HandbeamWeb.Live.TerminalPanel do
   end
 
   defp restart_named(socket, name, cmd, args) do
-    Supervisor.stop_terminal(socket.assigns.workspace_id, name)
+    Supervisor.stop_terminal(socket.assigns.workspace_id, socket.assigns.workspace_path, name)
     start_named(socket, name, cmd, args)
   end
 
@@ -500,7 +504,8 @@ defmodule HandbeamWeb.Live.TerminalPanel do
 
     socket =
       with true <- is_binary(name),
-           {:ok, pid} <- Registry.lookup(socket.assigns.workspace_id, name),
+           {:ok, pid} <-
+             Supervisor.lookup(socket.assigns.workspace_id, socket.assigns.workspace_path, name),
            :ok <- Session.send_input(pid, input) do
         assign(socket, :create_error, nil)
       else
@@ -515,7 +520,11 @@ defmodule HandbeamWeb.Live.TerminalPanel do
   end
 
   defp assign_terminals(socket, workspace_id) do
-    assign(socket, :terminals, Supervisor.list_terminals(workspace_id))
+    assign(
+      socket,
+      :terminals,
+      Supervisor.list_terminals(workspace_id, socket.assigns[:workspace_path])
+    )
   end
 
   defp activate_terminal(socket, nil) do
@@ -526,7 +535,7 @@ defmodule HandbeamWeb.Live.TerminalPanel do
   end
 
   defp activate_terminal(socket, name) do
-    case Registry.lookup(socket.assigns.workspace_id, name) do
+    case Supervisor.lookup(socket.assigns.workspace_id, socket.assigns.workspace_path, name) do
       {:ok, session_pid} ->
         case safe_session_info(session_pid) do
           {:ok, info} ->

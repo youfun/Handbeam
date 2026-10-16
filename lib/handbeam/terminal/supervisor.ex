@@ -1,113 +1,107 @@
 defmodule Handbeam.Terminal.Supervisor do
-  @moduledoc """
-  Supervisor for terminal sessions.
-
-  Uses DynamicSupervisor — sessions are started/stopped dynamically.
-  Provides workspace-scoped start/stop/list/lookup API.
-  """
+  @moduledoc "Dynamic supervisor for checkout-scoped terminal sessions."
 
   use DynamicSupervisor
 
+  alias Handbeam.CheckoutScope
   alias Handbeam.Terminal.{Registry, Session}
 
-  # ── Supervisor callbacks ──
-
-  def start_link(opts \\ []) do
-    DynamicSupervisor.start_link(__MODULE__, opts, name: __MODULE__)
-  end
+  def start_link(opts \\ []), do: DynamicSupervisor.start_link(__MODULE__, opts, name: __MODULE__)
 
   @impl true
-  def init(_opts) do
-    DynamicSupervisor.init(strategy: :one_for_one)
-  end
+  def init(_opts), do: DynamicSupervisor.init(strategy: :one_for_one)
 
-  # ── Client API ──
-
-  @doc """
-  Starts a new terminal session for a workspace.
-
-  Returns `{:ok, pid}` or `{:error, reason}`.
-  """
-  @spec start_terminal(String.t(), String.t(), keyword()) ::
-          {:ok, pid()} | {:error, :already_exists | term()}
   def start_terminal(workspace_id, name, opts \\ []) when is_binary(name) do
-    case Registry.lookup(workspace_id, name) do
-      {:ok, _pid} ->
-        {:error, :already_exists}
+    checkout_path = Keyword.get(opts, :checkout_path) || Keyword.get(opts, :workspace_path)
+    start_terminal(workspace_id, checkout_path, name, opts)
+  end
 
-      {:error, :not_found} ->
-        child_spec = %{
-          id: {workspace_id, name},
-          start: {Session, :start_link, [build_session_opts(workspace_id, name, opts)]},
-          restart: :temporary
-        }
+  def start_terminal(workspace_id, checkout_path, name, opts)
+      when is_binary(workspace_id) and is_binary(checkout_path) and is_binary(name) do
+    with {:ok, checkout} <- CheckoutScope.resolve(checkout_path) do
+      case Registry.lookup(workspace_id, checkout.key, name) do
+        {:ok, _pid} ->
+          {:error, :already_exists}
 
-        DynamicSupervisor.start_child(__MODULE__, child_spec)
+        {:error, :not_found} ->
+          child_spec = %{
+            id: {workspace_id, checkout.key, name},
+            start:
+              {Session, :start_link,
+               [build_session_opts(workspace_id, checkout.path, checkout.key, name, opts)]},
+            restart: :temporary
+          }
+
+          DynamicSupervisor.start_child(__MODULE__, child_spec)
+      end
     end
   end
 
-  @doc """
-  Stops a terminal session and removes it from the registry.
-  """
-  @spec stop_terminal(String.t(), String.t()) :: :ok | {:error, :not_found | term()}
+  def start_terminal(_workspace_id, _checkout_path, _name, _opts),
+    do: {:error, :checkout_unavailable}
+
   def stop_terminal(workspace_id, name) do
-    case Registry.lookup(workspace_id, name) do
-      {:ok, pid} ->
-        Session.close(pid)
-        :ok
-
-      {:error, :not_found} ->
-        {:error, :not_found}
+    case legacy_lookup(workspace_id, name) do
+      {:ok, pid} -> Session.close(pid)
+      error -> error
     end
   end
 
-  @doc """
-  Stops all terminal sessions for a workspace.
-  """
-  @spec stop_all_for_workspace(String.t()) :: :ok
+  def stop_terminal(workspace_id, checkout_path, name) do
+    with {:ok, checkout} <- CheckoutScope.resolve(checkout_path),
+         {:ok, pid} <- Registry.lookup(workspace_id, checkout.key, name) do
+      Session.close(pid)
+    end
+  end
+
   def stop_all_for_workspace(workspace_id) do
     Registry.list(workspace_id)
-    |> Enum.each(fn %{pid: pid} ->
-      Session.close(pid)
-    end)
+    |> Enum.each(fn %{pid: pid} -> Session.close(pid) end)
 
     Registry.remove_workspace(workspace_id)
     :ok
   end
 
-  @doc """
-  Lists all terminal sessions for a workspace.
-  """
-  @spec list_terminals(String.t()) :: [
-          %{
-            name: String.t(),
-            status: atom(),
-            cmd: String.t(),
-            args: [String.t()],
-            cwd: String.t()
-          }
-        ]
   def list_terminals(workspace_id) do
     Registry.list(workspace_id)
-    |> Enum.map(fn %{pid: pid} ->
-      info = Session.info(pid)
-      Map.take(info, [:name, :status, :cmd, :args, :cwd])
-    end)
+    |> Enum.map(&terminal_info/1)
   end
 
-  @doc """
-  Looks up a terminal session PID by workspace and name.
-  """
-  @spec lookup(String.t(), String.t()) :: {:ok, pid()} | {:error, :not_found}
-  def lookup(workspace_id, name) do
-    Registry.lookup(workspace_id, name)
+  def list_terminals(workspace_id, checkout_path) do
+    with {:ok, checkout} <- CheckoutScope.resolve(checkout_path) do
+      Registry.list(workspace_id, checkout.key)
+      |> Enum.map(&terminal_info/1)
+    else
+      _ -> []
+    end
   end
 
-  # ── Helpers ──
+  def lookup(workspace_id, name), do: legacy_lookup(workspace_id, name)
 
-  defp build_session_opts(workspace_id, name, opts) do
+  def lookup(workspace_id, checkout_path, name) do
+    with {:ok, checkout} <- CheckoutScope.resolve(checkout_path) do
+      Registry.lookup(workspace_id, checkout.key, name)
+    end
+  end
+
+  defp legacy_lookup(workspace_id, name) do
+    case Enum.filter(Registry.list(workspace_id), &(&1.name == name)) do
+      [%{pid: pid}] -> {:ok, pid}
+      _ -> {:error, :not_found}
+    end
+  end
+
+  defp terminal_info(%{pid: pid} = entry) do
+    info = Session.info(pid) |> Map.take([:name, :status, :cmd, :args, :cwd, :checkout_key])
+    Map.merge(info, Map.take(entry, [:checkout_key]))
+  end
+
+  defp build_session_opts(workspace_id, checkout_path, checkout_key, name, opts) do
     opts
     |> Keyword.put(:workspace_id, workspace_id)
+    |> Keyword.put(:workspace_path, checkout_path)
+    |> Keyword.put(:checkout_path, checkout_path)
+    |> Keyword.put(:checkout_key, checkout_key)
     |> Keyword.put(:name, name)
   end
 end

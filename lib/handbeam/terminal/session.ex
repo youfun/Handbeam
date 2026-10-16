@@ -5,7 +5,8 @@ defmodule Handbeam.Terminal.Session do
   Owns a {Ghostty.Terminal, Ghostty.PTY} pair and handles message forwarding,
   state tracking, snapshot, input, resize, and cleanup.
 
-  Registered in `Handbeam.Terminal.Registry` under `{workspace_id, name}`.
+  Registered in `Handbeam.Terminal.Registry` under
+  `{workspace_id, checkout_key, name}`.
   """
 
   use GenServer
@@ -24,6 +25,7 @@ defmodule Handbeam.Terminal.Session do
 
   defstruct workspace_id: nil,
             workspace_path: nil,
+            checkout_key: nil,
             name: nil,
             cmd: nil,
             args: [],
@@ -57,10 +59,10 @@ defmodule Handbeam.Terminal.Session do
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
     workspace_id = Keyword.fetch!(opts, :workspace_id)
+    checkout_key = Keyword.fetch!(opts, :checkout_key)
     name = Keyword.fetch!(opts, :name)
 
-    # Check for duplicate
-    case Registry.lookup(workspace_id, name) do
+    case Registry.lookup(workspace_id, checkout_key, name) do
       {:ok, _pid} ->
         {:error, :already_exists}
 
@@ -118,7 +120,8 @@ defmodule Handbeam.Terminal.Session do
   @impl true
   def init(opts) do
     workspace_id = Keyword.fetch!(opts, :workspace_id)
-    workspace_path = Keyword.fetch!(opts, :workspace_path)
+    workspace_path = Keyword.fetch!(opts, :checkout_path)
+    checkout_key = Keyword.fetch!(opts, :checkout_key)
     name = Keyword.fetch!(opts, :name)
     cmd = Keyword.get(opts, :cmd) || default_shell()
     args = Keyword.get(opts, :args, default_shell_args(cmd))
@@ -155,6 +158,7 @@ defmodule Handbeam.Terminal.Session do
     state = %__MODULE__{
       workspace_id: workspace_id,
       workspace_path: workspace_path,
+      checkout_key: checkout_key,
       name: name,
       cmd: cmd,
       args: args,
@@ -169,7 +173,7 @@ defmodule Handbeam.Terminal.Session do
     }
 
     # Register in the global registry
-    case Registry.register(workspace_id, name, self()) do
+    case Registry.register(workspace_id, checkout_key, name, self()) do
       :ok -> {:ok, state}
       {:error, :already_exists} -> {:stop, :name_conflict}
     end
@@ -223,6 +227,7 @@ defmodule Handbeam.Terminal.Session do
   def handle_call(:info, _from, state) do
     info = %{
       workspace_id: state.workspace_id,
+      checkout_key: state.checkout_key,
       name: state.name,
       cmd: state.cmd,
       args: state.args,
@@ -263,8 +268,8 @@ defmodule Handbeam.Terminal.Session do
   def handle_info({:exit, status}, state) do
     Phoenix.PubSub.broadcast(
       @pubsub,
-      terminal_topic(state.workspace_id),
-      {:terminal_exited, state.workspace_id, state.name, status}
+      terminal_topic(state.workspace_id, state.checkout_key),
+      {:terminal_exited, state.workspace_id, state.checkout_key, state.name, status}
     )
 
     {:noreply, %{state | status: :exited, exit_status: status}}
@@ -279,7 +284,7 @@ defmodule Handbeam.Terminal.Session do
 
   @impl true
   def terminate(_reason, state) do
-    Registry.unregister(state.workspace_id, state.name)
+    Registry.unregister(state.workspace_id, state.checkout_key, state.name)
     do_cleanup(state)
     :ok
   end
@@ -365,13 +370,13 @@ defmodule Handbeam.Terminal.Session do
   defp broadcast_refresh(state) do
     Phoenix.PubSub.broadcast(
       @pubsub,
-      terminal_topic(state.workspace_id),
-      {:terminal_refresh, state.workspace_id, state.name}
+      terminal_topic(state.workspace_id, state.checkout_key),
+      {:terminal_refresh, state.workspace_id, state.checkout_key, state.name}
     )
   end
 
-  defp terminal_topic(workspace_id) do
-    "terminal:#{workspace_id}"
+  defp terminal_topic(workspace_id, checkout_key) do
+    Handbeam.CheckoutScope.terminal_topic(workspace_id, checkout_key)
   end
 
   # ── Output persistence ──

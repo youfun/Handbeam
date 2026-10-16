@@ -68,6 +68,19 @@ defmodule Handbeam.Terminal.SessionTest do
       assert {:error, :not_found} = Registry.lookup("ws-auto", "dying")
     end
 
+    test "isolates identical names by checkout within one workspace" do
+      first = spawn(fn -> Process.sleep(:infinity) end)
+      second = spawn(fn -> Process.sleep(:infinity) end)
+
+      :ok = Registry.register("ws-checkouts", "checkout-a", "shell", first)
+      :ok = Registry.register("ws-checkouts", "checkout-b", "shell", second)
+
+      assert {:ok, ^first} = Registry.lookup("ws-checkouts", "checkout-a", "shell")
+      assert {:ok, ^second} = Registry.lookup("ws-checkouts", "checkout-b", "shell")
+      assert [%{name: "shell", pid: ^first}] = Registry.list("ws-checkouts", "checkout-a")
+      assert [%{name: "shell", pid: ^second}] = Registry.list("ws-checkouts", "checkout-b")
+    end
+
     test "remove_workspace clears all terminals for a workspace" do
       :ok = Registry.register("ws-clear", "a", self())
       :ok = Registry.register("ws-clear", "b", self())

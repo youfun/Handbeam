@@ -87,6 +87,28 @@ defmodule Handbeam.CodeIndexTest do
     refute File.dir?(Path.join(imported, ".handbeam/code-index"))
   end
 
+  test "same workspace keeps divergent checkouts in distinct indexes", %{root: root} do
+    first = Path.join(root, "checkout-a")
+    second = Path.join(root, "checkout-b")
+    File.mkdir_p!(Path.join(first, "lib"))
+    File.mkdir_p!(Path.join(second, "lib"))
+    File.write!(Path.join(first, "lib/branch.ex"), "defmodule AlphaOnly, do: :ok")
+    File.write!(Path.join(second, "lib/branch.ex"), "defmodule BetaOnly, do: :ok")
+
+    assert {:ok, first_dir} = CodeIndex.index_dir(first, "shared-workspace")
+    assert {:ok, second_dir} = CodeIndex.index_dir(second, "shared-workspace")
+    refute first_dir == second_dir
+
+    assert {:ok, first_result} =
+             CodeIndex.search(first, "shared-workspace", "AlphaOnly", budget_ms: 5_000)
+
+    assert {:ok, second_result} =
+             CodeIndex.search(second, "shared-workspace", "AlphaOnly", budget_ms: 5_000)
+
+    assert Enum.any?(first_result.hits, &(&1.path == "lib/branch.ex"))
+    assert second_result.hits == []
+  end
+
   test "identity mismatch refuses the existing database", %{root: root} do
     File.write!(Path.join(root, "lib.ex"), "defmodule A, do: :ok")
     File.mkdir_p!(Path.join(root, "lib"))

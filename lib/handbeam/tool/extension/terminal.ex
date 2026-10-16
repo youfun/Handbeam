@@ -1,39 +1,25 @@
 defmodule Handbeam.Tool.Extension.Terminal do
-  @moduledoc """
-  Terminal introspection tools for LLM agents.
-
-  Provides ext__term_list, ext__term_output, and ext__term_send tools
-  for listing, reading, and sending input to workspace terminal sessions.
-  """
+  @moduledoc "Checkout-scoped terminal introspection tools for agents."
 
   alias Handbeam.Terminal.Supervisor, as: TermSup
 
   @max_output_bytes 50_000
 
-  @doc """
-  Registers terminal tools in the Tool.Registry.
-
-  ext__term_list and ext__term_output are read-only (safe).
-  ext__term_send is a write tool (requires prompt by default).
-  """
   def register do
     tools()
     |> Map.values()
-    |> Enum.each(fn %{name: name, description: desc, input_schema: schema, execute: exec} ->
-      Handbeam.Tool.Registry.register_virtual(
-        name,
-        desc,
-        schema,
-        exec
-      )
+    |> Enum.each(fn %{
+                      name: name,
+                      description: description,
+                      input_schema: schema,
+                      execute: execute
+                    } ->
+      Handbeam.Tool.Registry.register_virtual(name, description, schema, execute)
     end)
 
     :ok
   end
 
-  @doc """
-  Returns tool name to tool module map for registration.
-  """
   def tools do
     %{
       "ext__term_list" => %{
@@ -74,20 +60,16 @@ defmodule Handbeam.Tool.Extension.Terminal do
 
   @doc false
   def ext_term_list(_input, context) do
-    workspace_id = Map.get(context, :workspace_id, Map.get(context, "workspace_id"))
-
-    if is_nil(workspace_id) do
-      {:error, "workspace_id is required in context"}
-    else
+    with {:ok, workspace_id, checkout_path} <- terminal_scope(context) do
       terminals =
-        TermSup.list_terminals(workspace_id)
-        |> Enum.map(fn t ->
+        TermSup.list_terminals(workspace_id, checkout_path)
+        |> Enum.map(fn terminal ->
           %{
-            name: t.name,
-            status: t.status,
-            cmd: t.cmd,
-            args: t.args,
-            cwd: t.cwd
+            name: terminal.name,
+            status: terminal.status,
+            cmd: terminal.cmd,
+            args: terminal.args,
+            cwd: terminal.cwd
           }
         end)
 
@@ -97,70 +79,74 @@ defmodule Handbeam.Tool.Extension.Terminal do
 
   @doc false
   def ext_term_output(input, context) do
-    workspace_id = Map.get(context, :workspace_id, Map.get(context, "workspace_id"))
     terminal_name = Map.get(input, "terminal")
     tail = Map.get(input, "tail")
     grep = Map.get(input, "grep")
 
-    cond do
-      is_nil(workspace_id) ->
-        {:error, "workspace_id is required in context"}
+    with {:ok, workspace_id, checkout_path} <- terminal_scope(context),
+         :ok <- require_terminal_name(terminal_name),
+         {:ok, pid} <- terminal_pid(workspace_id, checkout_path, terminal_name) do
+      opts = [tail: tail, grep: grep] |> Enum.reject(fn {_key, value} -> is_nil(value) end)
 
-      is_nil(terminal_name) or terminal_name == "" ->
-        {:error, "terminal name is required"}
+      case Handbeam.Terminal.Session.snapshot(pid, opts) do
+        {:ok, text} ->
+          %{content: content} =
+            Handbeam.Utils.Truncate.truncate(text, :tail, max_bytes: @max_output_bytes)
 
-      true ->
-        case TermSup.lookup(workspace_id, terminal_name) do
-          {:ok, pid} ->
-            opts =
-              [tail: tail, grep: grep]
-              |> Enum.reject(fn {_k, v} -> is_nil(v) end)
+          {:ok, content}
 
-            case Handbeam.Terminal.Session.snapshot(pid, opts) do
-              {:ok, text} ->
-                %{content: content} =
-                  Handbeam.Utils.Truncate.truncate(text, :tail, max_bytes: @max_output_bytes)
-
-                {:ok, content}
-
-              {:error, reason} ->
-                {:error, "failed to read terminal output: #{inspect(reason)}"}
-            end
-
-          {:error, :not_found} ->
-            {:error, "terminal '#{terminal_name}' not found in workspace"}
-        end
+        {:error, reason} ->
+          {:error, "failed to read terminal output: #{inspect(reason)}"}
+      end
     end
   end
 
   @doc false
   def ext_term_send(input, context) do
-    workspace_id = Map.get(context, :workspace_id, Map.get(context, "workspace_id"))
     terminal_name = Map.get(input, "terminal")
     text_input = Map.get(input, "input")
 
-    if is_nil(workspace_id) do
-      {:error, "workspace_id is required in context"}
-    else
-      cond do
-        is_nil(terminal_name) or terminal_name == "" ->
-          {:error, "terminal name is required"}
-
-        is_nil(text_input) or text_input == "" ->
-          {:error, "input is required"}
-
-        true ->
-          case TermSup.lookup(workspace_id, terminal_name) do
-            {:ok, pid} ->
-              case Handbeam.Terminal.Session.send_input(pid, text_input) do
-                :ok -> {:ok, "input sent to terminal '#{terminal_name}'"}
-                {:error, reason} -> {:error, "failed to send input: #{inspect(reason)}"}
-              end
-
-            {:error, :not_found} ->
-              {:error, "terminal '#{terminal_name}' not found in workspace"}
-          end
+    with {:ok, workspace_id, checkout_path} <- terminal_scope(context),
+         :ok <- require_terminal_name(terminal_name),
+         :ok <- require_input(text_input),
+         {:ok, pid} <- terminal_pid(workspace_id, checkout_path, terminal_name) do
+      case Handbeam.Terminal.Session.send_input(pid, text_input) do
+        :ok -> {:ok, "input sent to terminal '#{terminal_name}'"}
+        {:error, reason} -> {:error, "failed to send input: #{inspect(reason)}"}
       end
+    end
+  end
+
+  defp terminal_scope(context) do
+    workspace_id = Map.get(context, :workspace_id, Map.get(context, "workspace_id"))
+
+    checkout_path =
+      Map.get(context, :working_directory, Map.get(context, "working_directory")) ||
+        Map.get(context, :checkout_path, Map.get(context, "checkout_path"))
+
+    cond do
+      not is_binary(workspace_id) or workspace_id == "" ->
+        {:error, "workspace_id is required in context"}
+
+      not is_binary(checkout_path) or checkout_path == "" ->
+        {:error, "working_directory is required in context"}
+
+      true ->
+        {:ok, workspace_id, checkout_path}
+    end
+  end
+
+  defp require_terminal_name(name) when is_binary(name) and name != "", do: :ok
+  defp require_terminal_name(_name), do: {:error, "terminal name is required"}
+
+  defp require_input(input) when is_binary(input) and input != "", do: :ok
+  defp require_input(_input), do: {:error, "input is required"}
+
+  defp terminal_pid(workspace_id, checkout_path, terminal_name) do
+    case TermSup.lookup(workspace_id, checkout_path, terminal_name) do
+      {:ok, pid} -> {:ok, pid}
+      {:error, :not_found} -> {:error, "terminal '#{terminal_name}' not found in checkout"}
+      {:error, reason} -> {:error, "terminal lookup failed: #{inspect(reason)}"}
     end
   end
 end

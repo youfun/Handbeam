@@ -1,57 +1,59 @@
 defmodule Handbeam.Terminal.Registry do
   @moduledoc """
-  Per-workspace terminal session registry.
+  Registry for terminal sessions scoped by workspace and checkout.
 
-  Maps `{workspace_id, terminal_name}` → session PID.
-  Two spaces can have terminals with the same name.
+  The primary key is `{workspace_id, checkout_key, terminal_name}`.
   """
 
   use GenServer
 
-  # ── Client API ──
+  @legacy_checkout "legacy"
 
-  def start_link(opts \\ []) do
-    GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+  def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
+
+  def register(workspace_id, name, pid),
+    do: register(workspace_id, @legacy_checkout, name, pid)
+
+  def register(workspace_id, checkout_key, name, pid)
+      when is_binary(workspace_id) and is_binary(checkout_key) and is_binary(name) and is_pid(pid) do
+    GenServer.call(__MODULE__, {:register, workspace_id, checkout_key, name, pid})
   end
 
-  @spec register(String.t(), String.t(), pid()) :: :ok | {:error, :already_exists}
-  def register(workspace_id, name, pid)
-      when is_binary(workspace_id) and is_binary(name) and is_pid(pid) do
-    GenServer.call(__MODULE__, {:register, workspace_id, name, pid})
+  def unregister(workspace_id, name),
+    do: unregister(workspace_id, @legacy_checkout, name)
+
+  def unregister(workspace_id, checkout_key, name)
+      when is_binary(workspace_id) and is_binary(checkout_key) and is_binary(name) do
+    GenServer.call(__MODULE__, {:unregister, workspace_id, checkout_key, name})
   end
 
-  @spec unregister(String.t(), String.t()) :: :ok
-  def unregister(workspace_id, name)
-      when is_binary(workspace_id) and is_binary(name) do
-    GenServer.call(__MODULE__, {:unregister, workspace_id, name})
+  def lookup(workspace_id, name),
+    do: lookup(workspace_id, @legacy_checkout, name)
+
+  def lookup(workspace_id, checkout_key, name)
+      when is_binary(workspace_id) and is_binary(checkout_key) and is_binary(name) do
+    GenServer.call(__MODULE__, {:lookup, workspace_id, checkout_key, name})
   end
 
-  @spec lookup(String.t(), String.t()) :: {:ok, pid()} | {:error, :not_found}
-  def lookup(workspace_id, name)
-      when is_binary(workspace_id) and is_binary(name) do
-    GenServer.call(__MODULE__, {:lookup, workspace_id, name})
-  end
-
-  @spec list(String.t()) :: [%{name: String.t(), pid: pid()}]
   def list(workspace_id) when is_binary(workspace_id) do
-    GenServer.call(__MODULE__, {:list, workspace_id})
+    GenServer.call(__MODULE__, {:list_workspace, workspace_id})
   end
 
-  @spec remove_workspace(String.t()) :: :ok
+  def list(workspace_id, checkout_key)
+      when is_binary(workspace_id) and is_binary(checkout_key) do
+    GenServer.call(__MODULE__, {:list, workspace_id, checkout_key})
+  end
+
   def remove_workspace(workspace_id) when is_binary(workspace_id) do
     GenServer.call(__MODULE__, {:remove_workspace, workspace_id})
   end
 
-  # ── Server Callbacks ──
+  @impl true
+  def init(_opts), do: {:ok, %{sessions: %{}}}
 
   @impl true
-  def init(_opts) do
-    {:ok, %{sessions: %{}}}
-  end
-
-  @impl true
-  def handle_call({:register, ws_id, name, pid}, _from, state) do
-    key = {ws_id, name}
+  def handle_call({:register, ws_id, checkout_key, name, pid}, _from, state) do
+    key = {ws_id, checkout_key, name}
 
     if Map.has_key?(state.sessions, key) do
       {:reply, {:error, :already_exists}, state}
@@ -61,36 +63,44 @@ defmodule Handbeam.Terminal.Registry do
     end
   end
 
-  @impl true
-  def handle_call({:unregister, ws_id, name}, _from, state) do
-    key = {ws_id, name}
+  def handle_call({:unregister, ws_id, checkout_key, name}, _from, state) do
+    key = {ws_id, checkout_key, name}
     {:reply, :ok, %{state | sessions: Map.delete(state.sessions, key)}}
   end
 
-  @impl true
-  def handle_call({:lookup, ws_id, name}, _from, state) do
-    key = {ws_id, name}
-
-    case Map.fetch(state.sessions, key) do
+  def handle_call({:lookup, ws_id, checkout_key, name}, _from, state) do
+    case Map.fetch(state.sessions, {ws_id, checkout_key, name}) do
       {:ok, pid} -> {:reply, {:ok, pid}, state}
       :error -> {:reply, {:error, :not_found}, state}
     end
   end
 
-  @impl true
-  def handle_call({:list, ws_id}, _from, state) do
+  def handle_call({:list, ws_id, checkout_key}, _from, state) do
     results =
       state.sessions
-      |> Enum.filter(fn {{w, _name}, _pid} -> w == ws_id end)
-      |> Enum.map(fn {{_w, name}, pid} -> %{name: name, pid: pid} end)
+      |> Enum.filter(fn {{workspace, checkout, _name}, _pid} ->
+        workspace == ws_id and checkout == checkout_key
+      end)
+      |> Enum.map(fn {{_workspace, _checkout, name}, pid} -> %{name: name, pid: pid} end)
 
     {:reply, results, state}
   end
 
-  @impl true
+  def handle_call({:list_workspace, ws_id}, _from, state) do
+    results =
+      state.sessions
+      |> Enum.filter(fn {{workspace, _checkout, _name}, _pid} -> workspace == ws_id end)
+      |> Enum.map(fn {{_workspace, checkout_key, name}, pid} ->
+        %{checkout_key: checkout_key, name: name, pid: pid}
+      end)
+
+    {:reply, results, state}
+  end
+
   def handle_call({:remove_workspace, ws_id}, _from, state) do
     sessions =
-      Enum.reject(state.sessions, fn {{w, _name}, _pid} -> w == ws_id end)
+      state.sessions
+      |> Enum.reject(fn {{workspace, _checkout, _name}, _pid} -> workspace == ws_id end)
       |> Map.new()
 
     {:reply, :ok, %{state | sessions: sessions}}
@@ -98,10 +108,7 @@ defmodule Handbeam.Terminal.Registry do
 
   @impl true
   def handle_info({:DOWN, _ref, :process, pid, _reason}, state) do
-    sessions =
-      Enum.reject(state.sessions, fn {_key, p} -> p == pid end)
-      |> Map.new()
-
+    sessions = state.sessions |> Enum.reject(fn {_key, value} -> value == pid end) |> Map.new()
     {:noreply, %{state | sessions: sessions}}
   end
 end

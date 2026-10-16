@@ -8,7 +8,7 @@ defmodule Handbeam.CodeIndex.Store do
 
   alias Exqlite.Sqlite3
 
-  @schema_version "1"
+  @schema_version "2"
   @db "index.sqlite"
 
   @type t :: %{
@@ -30,17 +30,21 @@ defmodule Handbeam.CodeIndex.Store do
         db: db,
         path: Path.join(dir, @db),
         workspace_id: workspace_id,
-        workspace_root: Path.expand(workspace_root)
+        workspace_root:
+          Handbeam.Security.PathValidator.resolve_symlink(Path.expand(workspace_root))
       }
 
       case identity(db) do
         {:empty, _} ->
           :ok = put_meta(store, "workspace_id", workspace_id)
           :ok = put_meta(store, "workspace_root", store.workspace_root)
+          :ok = put_meta(store, "checkout_path", store.workspace_root)
           :ok = put_meta(store, "schema", @schema_version)
           {:ok, store}
 
         {:ok, id, root} when id == workspace_id and root == store.workspace_root ->
+          :ok = put_meta(store, "checkout_path", store.workspace_root)
+          :ok = put_meta(store, "schema", @schema_version)
           {:ok, store}
 
         {:ok, _, _} ->
@@ -274,6 +278,7 @@ defmodule Handbeam.CodeIndex.Store do
     %{
       workspace_id: meta(store, "workspace_id"),
       workspace_root: meta(store, "workspace_root"),
+      checkout_path: meta(store, "checkout_path") || meta(store, "workspace_root"),
       embedding_model: meta(store, "embedding_model"),
       last_sync: meta(store, "last_sync"),
       files: count(store, "files"),
