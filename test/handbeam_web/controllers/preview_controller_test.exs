@@ -62,6 +62,29 @@ defmodule HandbeamWeb.PreviewControllerTest do
     assert Plug.Conn.get_resp_header(conn, "content-security-policy") == ["sandbox allow-scripts"]
   end
 
+  test "port proxy rewrites loopback redirects into PreviewShell", %{conn: conn} do
+    bypass = start_loopback!()
+    {:ok, record} = Preview.register_port("conv-http", bypass.port)
+
+    conn = get(conn, "/preview/#{record.id}/port/local-redirect")
+
+    assert response(conn, 302) == "local"
+
+    assert Plug.Conn.get_resp_header(conn, "location") == [
+             "/preview/#{record.id}/port/target?from=preview"
+           ]
+  end
+
+  test "port proxy rejects external redirects without leaking Location", %{conn: conn} do
+    bypass = start_loopback!()
+    {:ok, record} = Preview.register_port("conv-http", bypass.port)
+
+    conn = get(conn, "/preview/#{record.id}/port/external-redirect")
+
+    assert response(conn, 502) =~ "redirected outside"
+    assert Plug.Conn.get_resp_header(conn, "location") == []
+  end
+
   defp start_loopback! do
     {:ok, listen} = :gen_tcp.listen(0, [:binary, packet: :raw, active: false, ip: {127, 0, 0, 1}])
     {:ok, port} = :inet.port(listen)
@@ -86,6 +109,18 @@ end
 
 defmodule HandbeamWeb.PreviewControllerTest.Upstream do
   def init(opts), do: opts
+
+  def call(%Plug.Conn{request_path: "/local-redirect"} = conn, _opts) do
+    conn
+    |> Plug.Conn.put_resp_header("location", "/target?from=preview")
+    |> Plug.Conn.send_resp(302, "local")
+  end
+
+  def call(%Plug.Conn{request_path: "/external-redirect"} = conn, _opts) do
+    conn
+    |> Plug.Conn.put_resp_header("location", "https://example.com/escaped")
+    |> Plug.Conn.send_resp(302, "external")
+  end
 
   def call(conn, _opts) do
     cookie = Plug.Conn.get_req_header(conn, "cookie")

@@ -69,7 +69,8 @@ defmodule HandbeamWeb.PreviewController do
              query: conn.query_string,
              headers: conn.req_headers,
              body: conn.assigns[:raw_body]
-           ) do
+           ),
+         {:ok, upstream} <- rewrite_redirect(upstream, id, record.port) do
       cond do
         upstream.incompatible? ->
           send_resp(
@@ -82,7 +83,6 @@ defmodule HandbeamWeb.PreviewController do
           conn
           |> put_resp_header("content-security-policy", Files.csp())
           |> merge_upstream_headers(upstream.headers)
-          |> maybe_rewrite_redirect(id, record.port, upstream)
           |> send_resp(upstream.status, upstream.body || "")
       end
     else
@@ -149,16 +149,32 @@ defmodule HandbeamWeb.PreviewController do
     end)
   end
 
-  defp maybe_rewrite_redirect(conn, preview_id, port, %{headers: headers}) do
-    case Enum.find(headers, fn {k, _} -> String.downcase(to_string(k)) == "location" end) do
-      {_, location} ->
-        case Proxy.rewrite_location(to_string(location), preview_id, port) do
-          {:ok, rewritten} -> put_resp_header(conn, "location", rewritten)
-          {:error, :unsupported_redirect} -> conn
+  defp rewrite_redirect(%{headers: headers} = upstream, preview_id, port) do
+    locations =
+      for {key, value} <- headers,
+          String.downcase(to_string(key)) == "location",
+          do: to_string(value)
+
+    case locations do
+      [] ->
+        {:ok, upstream}
+
+      [location] ->
+        with {:ok, rewritten} <- Proxy.rewrite_location(location, preview_id, port) do
+          headers =
+            [{"location", rewritten} | reject_headers(headers, "location")]
+
+          {:ok, %{upstream | headers: headers}}
         end
 
-      nil ->
-        conn
+      _ ->
+        {:error, :unsupported_redirect}
     end
+  end
+
+  defp reject_headers(headers, rejected_name) do
+    Enum.reject(headers, fn {name, _value} ->
+      String.downcase(to_string(name)) == rejected_name
+    end)
   end
 end

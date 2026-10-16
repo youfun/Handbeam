@@ -15,6 +15,7 @@ defmodule Handbeam.PreviewTest do
     )
 
     File.write!(Path.join(root, "sub/ok.txt"), "ok")
+    File.ln_s!(Path.join(root, "sub"), Path.join(root, "inside-dir"))
 
     outside =
       Path.join(
@@ -25,6 +26,7 @@ defmodule Handbeam.PreviewTest do
     File.mkdir_p!(outside)
     File.write!(Path.join(outside, "secret.txt"), "nope")
     File.ln_s!(Path.join(outside, "secret.txt"), Path.join(root, "escape.txt"))
+    File.ln_s!(outside, Path.join(root, "escape-dir"))
 
     on_exit(fn ->
       File.rm_rf!(root)
@@ -38,8 +40,11 @@ defmodule Handbeam.PreviewTest do
     {:ok, record} = Preview.register_files("conv-p", root, title: "demo")
     assert {:ok, path} = Files.resolve(record.root, "index.html")
     assert File.read!(path) =~ "hello"
+    assert {:ok, internal_link} = Files.resolve(record.root, "inside-dir/ok.txt")
+    assert File.read!(internal_link) == "ok"
     assert {:error, :not_found} = Files.resolve(record.root, "../secret.txt")
     assert {:error, :not_found} = Files.resolve(record.root, "escape.txt")
+    assert {:error, :not_found} = Files.resolve(record.root, "escape-dir/secret.txt")
 
     assert {:error, :not_found} =
              Files.resolve(record.root, "sub/../../#{Path.basename(root)}/../secret.txt")
