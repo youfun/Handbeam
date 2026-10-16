@@ -331,6 +331,14 @@ defmodule HandbeamWeb.WorkspaceLive do
     end
   end
 
+  def handle_async({:cli_models, cli, revision}, {:ok, result}, socket) do
+    {:noreply, CliSelection.finish_model_load(socket, cli, revision, result)}
+  end
+
+  def handle_async({:cli_models, cli, revision}, {:exit, reason}, socket) do
+    {:noreply, CliSelection.finish_model_load(socket, cli, revision, {:error, {:exit, reason}})}
+  end
+
   defp conversation_list_failed(socket, reason) do
     Logger.warning("Conversation list failed to load: #{inspect(reason)}")
 

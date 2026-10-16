@@ -8,6 +8,7 @@ defmodule HandbeamWeb.WorkspaceLive.CliSelection do
   """
 
   import Phoenix.Component, only: [assign: 2, assign: 3]
+  import Phoenix.LiveView, only: [start_async: 3]
 
   alias Handbeam.Agent.CliAgent.Registry
   alias Handbeam.Host
@@ -33,6 +34,8 @@ defmodule HandbeamWeb.WorkspaceLive.CliSelection do
       available_clis: selectable(),
       selected_cli: nil,
       cli_models_error: nil,
+      cli_models_loading: false,
+      cli_models_revision: 0,
       handbeam_models: nil,
       handbeam_selected_model: nil,
       handbeam_reasoning_level: nil,
@@ -71,7 +74,7 @@ defmodule HandbeamWeb.WorkspaceLive.CliSelection do
       |> forget_current()
       |> remember_handbeam()
       |> assign(:selected_cli, cli)
-      |> load_cli_models(cli)
+      |> load_cli_models_async(cli)
     else
       socket
     end
@@ -187,8 +190,36 @@ defmodule HandbeamWeb.WorkspaceLive.CliSelection do
 
   defp normalize_persisted_session(_session), do: nil
 
-  defp load_cli_models(socket, cli) do
-    case Registry.list_models(cli, cwd: workspace_cwd(socket)) do
+  @doc false
+  def finish_model_load(socket, cli, revision, result) do
+    if socket.assigns.selected_cli == cli and socket.assigns.cli_models_revision == revision do
+      socket
+      |> assign(:cli_models_loading, false)
+      |> apply_cli_models(result)
+    else
+      socket
+    end
+  end
+
+  defp load_cli_models_async(socket, cli) do
+    revision = socket.assigns.cli_models_revision + 1
+    cwd = workspace_cwd(socket)
+
+    socket
+    |> assign(
+      available_models: [],
+      selected_model: nil,
+      available_reasoning_levels: [],
+      selected_reasoning_level: nil,
+      cli_models_error: nil,
+      cli_models_loading: true,
+      cli_models_revision: revision
+    )
+    |> start_async({:cli_models, cli, revision}, fn -> Registry.list_models(cli, cwd: cwd) end)
+  end
+
+  defp apply_cli_models(socket, result) do
+    case result do
       {:ok, []} ->
         socket
         |> assign(:available_models, [])
@@ -221,6 +252,8 @@ defmodule HandbeamWeb.WorkspaceLive.CliSelection do
         socket
         |> assign(:available_models, [])
         |> assign(:selected_model, nil)
+        |> assign(:available_reasoning_levels, [])
+        |> assign(:selected_reasoning_level, nil)
         |> assign(:cli_models_error, :models_unavailable)
     end
   end
@@ -255,6 +288,7 @@ defmodule HandbeamWeb.WorkspaceLive.CliSelection do
     socket
     |> assign(:selected_cli, nil)
     |> assign(:cli_models_error, nil)
+    |> assign(:cli_models_loading, false)
     |> assign(:available_models, models)
     |> assign(
       :selected_model,

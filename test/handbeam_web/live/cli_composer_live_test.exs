@@ -20,6 +20,7 @@ defmodule HandbeamWeb.CliComposerLiveTest do
     E2EHarness.use_fake_provider!(:simple_answer)
     Registry.reset()
     Application.delete_env(:handbeam, :fake_cli_notify)
+    Application.delete_env(:handbeam, :slow_cli_models_notify)
 
     on_exit(fn ->
       for conversation <- Handbeam.ConversationStore.list(include_timeline?: false) do
@@ -28,6 +29,7 @@ defmodule HandbeamWeb.CliComposerLiveTest do
 
       Registry.reset()
       Application.delete_env(:handbeam, :fake_cli_notify)
+      Application.delete_env(:handbeam, :slow_cli_models_notify)
     end)
 
     :ok
@@ -60,10 +62,7 @@ defmodule HandbeamWeb.CliComposerLiveTest do
     Application.put_env(:handbeam, :fake_cli_notify, self())
     {:ok, view, _html} = live(conn, "/")
 
-    html =
-      view
-      |> element("#cli-picker")
-      |> render_change(%{"cli" => "fake-cli"})
+    html = select_cli(view, "fake-cli")
 
     assert html =~ "fake-model"
     assert html =~ "Fake"
@@ -78,11 +77,56 @@ defmodule HandbeamWeb.CliComposerLiveTest do
     assert render(view) =~ "fake"
   end
 
+  test "loading CLI models does not block switching conversations", %{conn: conn} do
+    Registry.register(HandbeamWeb.CliComposerLiveTest.SlowModels)
+    Application.put_env(:handbeam, :slow_cli_models_notify, self())
+    {:ok, view, _html} = live(conn, "/")
+
+    view
+    |> element("button[phx-click='new_conversation_in_workspace'][phx-value-ws_id='default']")
+    |> render_click()
+
+    first_conversation_id = first_conversation_id(view)
+
+    view
+    |> element("button[phx-click='new_conversation_in_workspace'][phx-value-ws_id='default']")
+    |> render_click()
+
+    refute first_conversation_id(view) == first_conversation_id
+
+    selection =
+      Task.async(fn ->
+        view
+        |> element("#cli-picker")
+        |> render_change(%{"cli" => "slow-models"})
+      end)
+
+    assert_receive {:slow_cli_models_started, loader}
+    selection_result = Task.yield(selection, 500)
+
+    if is_nil(selection_result), do: send(loader, :finish_slow_cli_models)
+
+    assert {:ok, html} = selection_result
+    assert html =~ ~s(id="cli-models-loading")
+
+    view
+    |> element("#conversation-#{first_conversation_id} button[phx-click='select_conversation']")
+    |> render_click()
+
+    assert first_conversation_id(view) == first_conversation_id
+    send(loader, :finish_slow_cli_models)
+
+    html = render_async(view, 5_000)
+    refute has_element?(view, "#cli-model-picker option[value='slow-model']")
+    refute html =~ ~s(id="cli-models-loading")
+    assert has_element?(view, "#model-picker")
+  end
+
   test "a second message reuses the CLI session and switching does not", %{conn: conn} do
     Registry.register(Handbeam.Agent.CliAgentTest.FakeBackend)
     Application.put_env(:handbeam, :fake_cli_notify, self())
     {:ok, view, _html} = live(conn, "/")
-    view |> element("#cli-picker") |> render_change(%{"cli" => "fake-cli"})
+    select_cli(view, "fake-cli")
 
     view
     |> form("#composer", %{message: "slow", cli: "fake-cli", model: "fake-model"})
@@ -109,7 +153,7 @@ defmodule HandbeamWeb.CliComposerLiveTest do
     assert :ok = Handbeam.Agent.CliAgent.Runner.await_stop(conversation_id)
 
     view |> element("#cli-picker") |> render_change(%{"cli" => ""})
-    view |> element("#cli-picker") |> render_change(%{"cli" => "fake-cli"})
+    select_cli(view, "fake-cli")
 
     view
     |> form("#composer", %{message: "fresh", cli: "fake-cli", model: "fake-model"})
@@ -125,7 +169,7 @@ defmodule HandbeamWeb.CliComposerLiveTest do
     Registry.register(Handbeam.Agent.CliAgentTest.FakeBackend)
     Application.put_env(:handbeam, :fake_cli_notify, self())
     {:ok, view, _html} = live(conn, "/")
-    view |> element("#cli-picker") |> render_change(%{"cli" => "fake-cli"})
+    select_cli(view, "fake-cli")
 
     view
     |> form("#composer", %{message: "need-permission", cli: "fake-cli", model: "fake-model"})
@@ -149,7 +193,7 @@ defmodule HandbeamWeb.CliComposerLiveTest do
     Registry.register(Handbeam.Agent.CliAgentTest.FakeBackend)
     Application.put_env(:handbeam, :fake_cli_notify, self())
     {:ok, view, _html} = live(conn, "/")
-    view |> element("#cli-picker") |> render_change(%{"cli" => "fake-cli"})
+    select_cli(view, "fake-cli")
 
     view
     |> form("#composer", %{message: "need-permission", cli: "fake-cli", model: "fake-model"})
@@ -178,7 +222,7 @@ defmodule HandbeamWeb.CliComposerLiveTest do
 
     conversation_id = first_conversation_id(view)
     :ok = Session.subscribe(conversation_id)
-    view |> element("#cli-picker") |> render_change(%{"cli" => "fake-cli"})
+    select_cli(view, "fake-cli")
 
     view
     |> form("#composer", %{
@@ -233,7 +277,7 @@ defmodule HandbeamWeb.CliComposerLiveTest do
 
     conversation_id = first_conversation_id(view)
     :ok = Session.subscribe(conversation_id)
-    view |> element("#cli-picker") |> render_change(%{"cli" => "fake-cli"})
+    select_cli(view, "fake-cli")
 
     view
     |> form("#composer", %{message: "return-error", cli: "fake-cli", model: "fake-model"})
@@ -275,7 +319,7 @@ defmodule HandbeamWeb.CliComposerLiveTest do
 
     conversation_id = first_conversation_id(view)
     :ok = Session.subscribe(conversation_id)
-    view |> element("#cli-picker") |> render_change(%{"cli" => "fake-cli"})
+    select_cli(view, "fake-cli")
 
     ExUnit.CaptureLog.capture_log(fn ->
       view
@@ -321,7 +365,7 @@ defmodule HandbeamWeb.CliComposerLiveTest do
 
     conversation_id = first_conversation_id(view)
     :ok = Session.subscribe(conversation_id)
-    view |> element("#cli-picker") |> render_change(%{"cli" => "fake-cli"})
+    select_cli(view, "fake-cli")
 
     view
     |> form("#composer", %{
@@ -384,7 +428,7 @@ defmodule HandbeamWeb.CliComposerLiveTest do
 
     conversation_id = first_conversation_id(view)
     :ok = Session.subscribe(conversation_id)
-    view |> element("#cli-picker") |> render_change(%{"cli" => "fake-cli"})
+    select_cli(view, "fake-cli")
 
     view
     |> form("#composer", %{message: "streaming-slow", cli: "fake-cli", model: "fake-model"})
@@ -431,7 +475,7 @@ defmodule HandbeamWeb.CliComposerLiveTest do
     Registry.register(Handbeam.Agent.CliAgentTest.FakeBackend)
     Application.put_env(:handbeam, :fake_cli_notify, self())
     {:ok, view, _html} = live(conn, "/")
-    view |> element("#cli-picker") |> render_change(%{"cli" => "fake-cli"})
+    select_cli(view, "fake-cli")
 
     view
     |> form("#composer", %{message: "slow", cli: "fake-cli", model: "fake-model"})
@@ -461,7 +505,7 @@ defmodule HandbeamWeb.CliComposerLiveTest do
     Registry.register(Handbeam.Agent.CliAgentTest.FakeBackend)
     Application.put_env(:handbeam, :fake_cli_notify, self())
     {:ok, view, _html} = live(conn, "/")
-    view |> element("#cli-picker") |> render_change(%{"cli" => "fake-cli"})
+    select_cli(view, "fake-cli")
 
     view
     |> form("#composer", %{message: "slow", cli: "fake-cli", model: "fake-model"})
@@ -492,7 +536,7 @@ defmodule HandbeamWeb.CliComposerLiveTest do
     Registry.register(Handbeam.Agent.CliAgentTest.FakeBackend)
     Application.put_env(:handbeam, :fake_cli_notify, self())
     {:ok, view, _html} = live(conn, "/")
-    view |> element("#cli-picker") |> render_change(%{"cli" => "fake-cli"})
+    select_cli(view, "fake-cli")
 
     attachment = %{"id" => "kept", "filename" => "kept.png", "url" => "/uploads/kept.png"}
 
@@ -563,10 +607,7 @@ defmodule HandbeamWeb.CliComposerLiveTest do
     Registry.register(HandbeamWeb.CliComposerLiveTest.UnavailableModels)
     {:ok, view, _html} = live(conn, "/")
 
-    html =
-      view
-      |> element("#cli-picker")
-      |> render_change(%{"cli" => "silent-cli"})
+    html = select_cli(view, "silent-cli")
 
     assert html =~ "This CLI cannot list models."
     refute html =~ "fake-model"
@@ -575,6 +616,11 @@ defmodule HandbeamWeb.CliComposerLiveTest do
 
   defp first_conversation_id(view) do
     :sys.get_state(view.pid).socket.assigns.current_conversation_id
+  end
+
+  defp select_cli(view, cli) do
+    view |> element("#cli-picker") |> render_change(%{"cli" => cli})
+    render_async(view, 5_000)
   end
 end
 
@@ -625,6 +671,43 @@ defmodule HandbeamWeb.CliComposerLiveTest.UnavailableModels do
     {:ok, session, []}
   end
 
+  @impl true
+  def interrupt(_session), do: :ok
+  @impl true
+  def update_model(session, _opts), do: {:ok, session}
+  @impl true
+  def stop_session(_session), do: :ok
+end
+
+defmodule HandbeamWeb.CliComposerLiveTest.SlowModels do
+  @moduledoc false
+  @behaviour Handbeam.Agent.CliAgent
+
+  alias Handbeam.Agent.CliAgent.Session
+
+  @impl true
+  def id, do: "slow-models"
+  @impl true
+  def available?, do: true
+
+  @impl true
+  def list_models(_opts) do
+    notify = Application.fetch_env!(:handbeam, :slow_cli_models_notify)
+    send(notify, {:slow_cli_models_started, self()})
+
+    receive do
+      :finish_slow_cli_models ->
+        {:ok, [%{id: "slow-model", display_name: "Slow", reasoning_levels: []}]}
+    end
+  end
+
+  @impl true
+  def start_session(opts) do
+    {:ok, %Session{backend: id(), cwd: Keyword.get(opts, :cwd, ".")}}
+  end
+
+  @impl true
+  def send_message(session, _text, _on_event), do: {:ok, session, []}
   @impl true
   def interrupt(_session), do: :ok
   @impl true

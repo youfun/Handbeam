@@ -178,6 +178,7 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
   attr :running, :any, required: true
   attr :sandbox_workspace?, :any, required: true
   attr :cli_models_error, :any, default: nil
+  attr :cli_models_loading, :boolean, default: false
   attr :selected_cli, :any, default: nil
   attr :selected_model, :any, required: true
   attr :selected_reasoning_level, :any, required: true
@@ -1011,7 +1012,19 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
               </div>
             </div>
             <div
-              :if={@available_models == [] and is_nil(@cli_models_error)}
+              :if={@cli_models_loading}
+              id="cli-models-loading"
+              class="flex items-center gap-1.5 text-[11px] leading-[1.3] text-tertiary"
+              role="status"
+            >
+              <span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
+              {gettext("Loading CLI models…")}
+            </div>
+            <div
+              :if={
+                @available_models == [] and is_nil(@cli_models_error) and
+                  not @cli_models_loading
+              }
               class="composer-model-error"
             >
               {model_empty_message(@workspace_root)}
