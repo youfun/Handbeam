@@ -83,6 +83,98 @@ defmodule HandbeamProbe.ShareWorkspaceImportTest do
     refute File.exists?(Path.join(workspace["path"], ".handbeam/shared/#{id}"))
   end
 
+  test "confirmation refuses a shared-directory symlink outside the real workspace", %{
+    dir: dir,
+    workspace: workspace,
+    intake_root: intake_root
+  } do
+    id = Ecto.UUID.generate()
+    source_dir = Path.join(intake_root, id)
+    File.mkdir_p!(source_dir)
+    source = Path.join(source_dir, "notes.md")
+    File.write!(source, "do not escape")
+
+    outside = Path.join(dir, "other-workspace")
+    File.mkdir_p!(outside)
+    File.mkdir_p!(Path.join(workspace["path"], ".handbeam"))
+    File.ln_s!(outside, Path.join(workspace["path"], ".handbeam/shared"))
+
+    rec = %{
+      "intake_id" => id,
+      "text" => "",
+      "files" => [%{"status" => "ready", "name" => "notes.md", "path" => source}]
+    }
+
+    assert {:error, _reason} = ShareWorkspaceImport.accept(rec, workspace)
+    refute File.exists?(Path.join(outside, "#{id}/notes.md"))
+  end
+
+  test "confirmation does not claim or delete a pre-existing destination", %{
+    workspace: workspace,
+    intake_root: intake_root
+  } do
+    id = Ecto.UUID.generate()
+    source_dir = Path.join(intake_root, id)
+    File.mkdir_p!(source_dir)
+    source = Path.join(source_dir, "notes.md")
+    File.write!(source, "new")
+
+    destination = ShareWorkspaceImport.destination(workspace, id)
+    File.mkdir_p!(destination)
+    sentinel = Path.join(destination, "keep.txt")
+    File.write!(sentinel, "existing")
+
+    rec = %{
+      "intake_id" => id,
+      "files" => [%{"status" => "ready", "name" => "notes.md", "path" => source}]
+    }
+
+    assert {:error, :copy_failed} = ShareWorkspaceImport.accept(rec, workspace)
+    assert File.read!(sentinel) == "existing"
+    refute File.exists?(Path.join(destination, "notes.md"))
+  end
+
+  test "duplicate target names fail without overwriting", %{
+    workspace: workspace,
+    intake_root: intake_root
+  } do
+    id = Ecto.UUID.generate()
+    first_dir = Path.join([intake_root, id, "one"])
+    second_dir = Path.join([intake_root, id, "two"])
+    File.mkdir_p!(first_dir)
+    File.mkdir_p!(second_dir)
+    first = Path.join(first_dir, "same.txt")
+    second = Path.join(second_dir, "same.txt")
+    File.write!(first, "first")
+    File.write!(second, "second")
+
+    rec = %{
+      "intake_id" => id,
+      "files" => [
+        %{"status" => "ready", "name" => "same.txt", "path" => first},
+        %{"status" => "ready", "name" => "same.txt", "path" => second}
+      ]
+    }
+
+    assert {:error, :copy_failed} = ShareWorkspaceImport.accept(rec, workspace)
+    refute File.exists?(ShareWorkspaceImport.destination(workspace, id))
+  end
+
+  test "invalid intake id cannot widen rollback ownership", %{
+    workspace: workspace
+  } do
+    shared = Path.join(workspace["path"], ".handbeam/shared")
+    File.mkdir_p!(shared)
+    sentinel = Path.join(shared, "keep.txt")
+    File.write!(sentinel, "keep")
+
+    rec = %{"intake_id" => "..", "files" => []}
+
+    assert {:error, :outside_workspace} = ShareWorkspaceImport.accept(rec, workspace)
+    assert {:error, :outside_workspace} = ShareWorkspaceImport.rollback(workspace, "..")
+    assert File.read!(sentinel) == "keep"
+  end
+
   test "late success after cancel rolls back only owned dest", %{
     workspace: workspace,
     intake_root: intake_root
@@ -108,7 +200,11 @@ defmodule HandbeamProbe.ShareWorkspaceImportTest do
     assert {:ok, _paths} = ShareWorkspaceImport.accept(rec, workspace)
 
     assert {:rollback, ^workspace, ^id, _} =
-             ShareConfirm.finish_workspace(id, workspace, {:ok, [".handbeam/shared/#{id}/notes.md"]})
+             ShareConfirm.finish_workspace(
+               id,
+               workspace,
+               {:ok, [".handbeam/shared/#{id}/notes.md"]}
+             )
 
     assert {:ok, _} = ShareWorkspaceImport.schedule_rollback(workspace, id, notify: self())
     assert_receive {:share_rollback, ^id, :ok}, 1_000

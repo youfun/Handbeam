@@ -146,7 +146,7 @@ defmodule HandbeamProbe.App do
       pool_size: 5
     )
 
-    Application.put_env(:handbeam, HandbeamWeb.Gettext,
+    Application.put_env(:handbeam, Handbeam.Gettext,
       default_locale: "zh_CN",
       locales: ~w(zh_CN en)
     )

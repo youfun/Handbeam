@@ -29,7 +29,6 @@ import com.example.handbeam_probe.attachments.StagingRoots
 import com.example.handbeam_probe.workspace.NativeFileViewer
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Handbeam Probe product hooks that used to live inside the `mob_new` scaffold
@@ -65,14 +64,19 @@ object HandbeamBridge {
         AgentKeepAliveService.start(activity)
     }
 
-    private val closeRecorded = AtomicBoolean(false)
+    private val closeGate = CloseCycleGate()
 
-    /** Record close before the process goes away. Idempotent. Elixir may not run. */
+    /** Keep close idempotent for the runs visible when the close was claimed. */
+    @JvmStatic
+    fun observeActiveRuns(runIds: Collection<String>) {
+        closeGate.observeActiveRuns(runIds)
+    }
+
+    /** Record close before the process goes away. Elixir may not run. */
     @JvmStatic
     fun recordClose() {
-        if (!closeRecorded.compareAndSet(false, true)) return
         try {
-            MobBridge.nativeCancelRuns()
+            closeGate.runOnce { MobBridge.nativeCancelRuns() }
         } catch (_: Throwable) {
         }
     }
@@ -219,6 +223,47 @@ object HandbeamBridge {
         val handle = tapHandleFor(root, id) ?: return false
         MobBridge.nativeSendTap(handle)
         return true
+    }
+}
+
+/**
+ * Deduplicates close signals for one observed set of active runs. A new run id
+ * opens a new close cycle; updates and completion of already-claimed runs do
+ * not. The native action runs outside the monitor because it can call BEAM.
+ */
+internal class CloseCycleGate {
+    private data class Claim(val runIds: Set<String>)
+
+    private val lock = Any()
+    private var activeRunIds: Set<String> = emptySet()
+    private var claim: Claim? = null
+
+    fun observeActiveRuns(runIds: Collection<String>) {
+        val observed = runIds.filterTo(mutableSetOf()) { it.isNotBlank() }
+        synchronized(lock) {
+            val currentClaim = claim
+            if (currentClaim != null && observed.any { it !in currentClaim.runIds }) {
+                claim = null
+            }
+            activeRunIds = observed
+        }
+    }
+
+    fun runOnce(action: () -> Unit): Boolean {
+        val acquired = synchronized(lock) {
+            if (claim != null) return false
+            Claim(activeRunIds).also { claim = it }
+        }
+
+        try {
+            action()
+            return true
+        } catch (error: Throwable) {
+            synchronized(lock) {
+                if (claim === acquired) claim = null
+            }
+            throw error
+        }
     }
 }
 

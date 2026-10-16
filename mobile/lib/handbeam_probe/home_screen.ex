@@ -87,7 +87,7 @@ defmodule HandbeamProbe.HomeScreen do
   # ── mount ──
 
   def mount(_params, _session, socket) do
-    # Process-global so HandbeamWeb.Gettext copy (e.g. Intent outcomes) follows too.
+    # Process-global so the shared Handbeam.Gettext backend (e.g. Intent outcomes) follows too.
     Gettext.put_locale(HandbeamProbe.Gettext.locale())
 
     case WorkspaceStore.ensure_default!() do

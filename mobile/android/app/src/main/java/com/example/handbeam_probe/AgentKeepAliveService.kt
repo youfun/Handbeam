@@ -29,6 +29,7 @@ class AgentKeepAliveService : Service() {
         private const val EXTRA_TITLE = "sigil_running_title"
         private const val EXTRA_TEXT = "sigil_running_text"
         private const val EXTRA_TAP = "sigil_running_tap"
+        private const val EXTRA_ACTIVE_RUN_IDS = "sigil_active_run_ids"
 
         private val running = AtomicBoolean(false)
 
@@ -42,11 +43,17 @@ class AgentKeepAliveService : Service() {
         }
 
         @JvmStatic
-        fun update(context: Context, copy: Pair<String, String>, tap: Intent?) {
+        fun update(
+            context: Context,
+            copy: Pair<String, String>,
+            tap: Intent?,
+            activeRunIds: Collection<String>,
+        ) {
             val intent =
                 Intent(context, AgentKeepAliveService::class.java).apply {
                     putExtra(EXTRA_TITLE, copy.first)
                     putExtra(EXTRA_TEXT, copy.second)
+                    putStringArrayListExtra(EXTRA_ACTIVE_RUN_IDS, ArrayList(activeRunIds))
                     if (tap != null) putExtra(EXTRA_TAP, tap)
                 }
             ContextCompat.startForegroundService(context, intent)
@@ -76,6 +83,9 @@ class AgentKeepAliveService : Service() {
         if (intent?.action == ACTION_STOP) {
             shutdown()
             return START_NOT_STICKY
+        }
+        intent?.getStringArrayListExtra(EXTRA_ACTIVE_RUN_IDS)?.let {
+            HandbeamBridge.observeActiveRuns(it)
         }
         intent?.getStringExtra(EXTRA_TITLE)?.let { title = it }
         intent?.getStringExtra(EXTRA_TEXT)?.let { text = it }

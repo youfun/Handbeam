@@ -17,15 +17,19 @@ defmodule HandbeamProbe.ShareWorkspaceImport do
 
   @spec accept(map(), map()) :: {:ok, [String.t()]} | {:error, term()}
   def accept(rec, workspace) when is_map(rec) and is_map(workspace) do
-    intake_id = rec["intake_id"]
-    dest = destination(workspace, intake_id)
+    with {:ok, workspace_path, intake_id, dest} <-
+           validated_destination(workspace, rec["intake_id"]) do
+      case copy_ready_files(rec, dest, workspace_path) do
+        {:ok, paths} ->
+          {:ok, paths}
 
-    with {:ok, paths} <- copy_ready_files(rec, dest) do
-      {:ok, paths}
-    else
-      {:error, reason} ->
-        _ = rollback(workspace, intake_id)
-        {:error, reason}
+        {:error, reason, :owned} ->
+          _ = rollback(workspace, intake_id)
+          {:error, reason}
+
+        {:error, reason, :not_owned} ->
+          {:error, reason}
+      end
     end
   end
 
@@ -43,17 +47,12 @@ defmodule HandbeamProbe.ShareWorkspaceImport do
 
   @spec rollback(map(), String.t()) :: :ok | {:error, term()}
   def rollback(workspace, intake_id) when is_map(workspace) and is_binary(intake_id) do
-    dest = destination(workspace, intake_id)
-    workspace_path = workspace["path"]
-
-    with true <- is_binary(workspace_path),
-         :ok <- PathValidator.validate_within_workspace(dest, workspace_path) do
+    with {:ok, _workspace_path, _intake_id, dest} <-
+           validated_destination(workspace, intake_id) do
       case File.rm_rf(dest) do
         {:ok, _} -> :ok
         {:error, reason, _} -> {:error, reason}
       end
-    else
-      _ -> {:error, :outside_workspace}
     end
   end
 
@@ -94,30 +93,63 @@ defmodule HandbeamProbe.ShareWorkspaceImport do
 
   def item_label(_), do: gettext("Shared file")
 
-  defp copy_ready_files(rec, destination) do
+  defp copy_ready_files(rec, destination, workspace_path) do
     intake_id = rec["intake_id"]
     ready = Enum.filter(List.wrap(rec["files"]), &(&1["status"] == "ready"))
 
+    if ready == [] do
+      {:ok, []}
+    else
+      case create_destination(destination, workspace_path) do
+        :ok -> copy_ready_files(ready, intake_id, destination, workspace_path)
+        {:error, _} -> {:error, :copy_failed, :not_owned}
+      end
+    end
+  end
+
+  defp copy_ready_files(ready, intake_id, destination, workspace_path) do
     Enum.reduce_while(ready, {:ok, [], 0}, fn item, {:ok, paths, total} ->
       source = item["path"]
 
       with true <- is_binary(source),
            :ok <- validate_source(source, intake_id),
-           {:ok, %{type: :regular, size: size}} <- File.stat(source),
+           {:ok, %{type: :regular, size: size}} <- File.lstat(source),
            true <- total + size <= @max_batch_bytes,
-           :ok <- File.mkdir_p(destination),
            target <- Path.join(destination, Path.basename(source)),
-           :ok <- PathValidator.validate_within_workspace(target, destination),
-           :ok <- File.cp(source, target) do
-        relative = Path.relative_to(target, workspace_root(destination))
+           :ok <- validate_target(target, destination, workspace_path),
+           :ok <- copy_exclusive(source, target, size) do
+        relative = Path.relative_to(target, workspace_path)
         {:cont, {:ok, paths ++ [relative], total + size}}
       else
-        _ -> {:halt, {:error, :copy_failed}}
+        _ -> {:halt, {:error, :copy_failed, :owned}}
       end
     end)
     |> case do
       {:ok, paths, _total} -> {:ok, paths}
       error -> error
+    end
+  end
+
+  defp create_destination(destination, workspace_path) do
+    shared_root = Path.dirname(destination)
+
+    with :ok <- validate_destination(shared_root, workspace_path),
+         :ok <- File.mkdir_p(shared_root),
+         :ok <- validate_destination(shared_root, workspace_path),
+         :ok <- File.mkdir(destination),
+         :ok <- validate_destination(destination, workspace_path) do
+      :ok
+    end
+  end
+
+  defp copy_exclusive(source, target, expected_size) do
+    with {:ok, body} <- File.read(source),
+         true <- byte_size(body) == expected_size,
+         {:ok, :ok} <-
+           File.open(target, [:write, :binary, :exclusive], &IO.binwrite(&1, body)) do
+      :ok
+    else
+      _ -> {:error, :copy_failed}
     end
   end
 
@@ -130,8 +162,30 @@ defmodule HandbeamProbe.ShareWorkspaceImport do
     end
   end
 
-  defp workspace_root(destination),
-    do: destination |> Path.dirname() |> Path.dirname() |> Path.dirname()
+  defp validated_destination(workspace, intake_id) do
+    workspace_path = workspace["path"]
+
+    with true <- is_binary(workspace_path),
+         {:ok, intake_id} <- Ecto.UUID.cast(intake_id),
+         destination = destination(workspace, intake_id),
+         :ok <- validate_destination(destination, workspace_path) do
+      {:ok, workspace_path, intake_id, destination}
+    else
+      _ -> {:error, :outside_workspace}
+    end
+  end
+
+  defp validate_destination(destination, workspace_path) when is_binary(workspace_path),
+    do: PathValidator.validate_within_workspace(destination, workspace_path)
+
+  defp validate_destination(_destination, _workspace_path), do: {:error, :outside_workspace}
+
+  defp validate_target(target, destination, workspace_path) do
+    with :ok <- PathValidator.validate_within_workspace(target, workspace_path),
+         :ok <- PathValidator.validate_within_workspace(target, destination) do
+      :ok
+    end
+  end
 
   defp string(value) when is_binary(value), do: value
   defp string(_), do: ""
