@@ -7,23 +7,52 @@ and metadata marked `visibility: internal` or `task` are rejected. The bounded
 internal `task` tool remains separate: its conversations are excluded from these
 persistent thread tools, and its run-scoped authorization and cleanup remain intact.
 
-## Discovery
+## Discovery and inspection
 
-- `find_thread`: title substring, inclusive ISO-8601 `updated_after`, optional
-  archived entries, maximum 20 results. Summary is explicitly title-derived, not
-  an AI summary or body search. Metadata-only reads do not load transcripts.
+- `list_threads`: browse recent durable threads without a search term. It accepts
+  `archived: active | archived | all`, an inclusive ISO-8601 `updated_after`, and
+  a maximum of 20 results. Each summary includes persistent message/run/tool counts
+  and the last persisted run result; it never probes runtime processes.
+- `find_thread`: search titles using a required non-empty substring. It uses the
+  same filters, pagination, and summary schema as `list_threads`. Search remains
+  metadata-only: it does not search or load transcript bodies.
 - `read_thread`: inclusive zero-based message range; at most 16,000 Unicode
   codepoints and 50 message fragments per page. Stable message IDs and character
   offsets allow long single messages to continue without silently dropping tails.
-  Only visible text and selected metadata are returned; tool details are omitted.
-- Signed cursors bind caller, target/query and projected snapshot; expire in one
-  hour. Changes to the projected result (including appends within the selected
-  range) invalidate the cursor. Restart rather than silently skipping/repeating.
+  It returns visible text by default; `include_tools: true` adds bounded, redacted
+  persisted tool summaries and outputs.
 - `get_thread_status`: idle/running/awaiting_approval and available last result.
   No Session is required. Idle is not proof of successful completion.
+- `get_thread_trajectory`: a versioned observability projection over persistent
+  thread facts. `summary` returns aggregate stats plus bounded run/turn summaries;
+  `compact` additionally returns record metadata; `full` adds redacted persisted
+  content and tool input/output. Full means the complete persisted projection
+  available on that page, never unbounded raw output. Record pages are limited to
+  50 records and 16,000 characters. The tool is deferred and is loaded through
+  `tool_search` when execution-history inspection is needed.
+- Discovery/read cursors bind the caller, target/query, and projected snapshot and
+  expire after one hour. Changes invalidate the cursor; callers restart rather
+  than silently skipping or repeating data. Trajectory cursors additionally bind
+  the entry/run/turn revision snapshot and the last consumed record sequence.
 - `list_models`: bounded, paginated id/name search over models allowed by the
   current workspace. It is only needed to select a model other than the current
   thread model; the full catalog is never added to the prompt.
+
+Trajectory uses Handbeam's own execution hierarchy:
+
+```text
+thread
+  └── run       one admitted user request and its complete execution
+       └── turn one provider completion attempt inside the native loop
+            └── durable user / assistant / tool / system records
+```
+
+Run and turn lifecycle boundaries are durable facts. Entries carry `run_id` and,
+when captured by the current runtime, `turn_number`. Tool timings are recorded at
+the individual invocation boundary rather than copying batch duration. Historical
+entries created before trajectory capture remain readable but report
+`fidelity: partial` with explicit missing dimensions; the projection never invents
+turn boundaries or exact timings.
 
 ## Handoffs and delegation
 

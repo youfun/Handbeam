@@ -102,19 +102,14 @@ defmodule Handbeam.Agent.TranscriptPersistence do
 
   def handle_event(conversation_id, {:run_start, payload}, opts)
       when is_binary(conversation_id) do
-    Handbeam.Agent.TranscriptRecovery.mark(conversation_id)
-    Process.put(assistant_key(conversation_id), nil)
-    Process.delete(assistant_segments_key(conversation_id))
-    clear_buffer(conversation_id)
-    clear_thinking_buffer(conversation_id)
-    Process.put(run_opts_key(conversation_id), opts)
-    Process.put(run_payload_key(conversation_id), payload)
+    with :ok <- record_lifecycle(:run_start, conversation_id, lifecycle_attrs(payload, opts)),
+         :ok <- consume_inbound(conversation_id, opts) do
+      clear_process_state(conversation_id)
+      Process.put(run_opts_key(conversation_id), opts)
+      Process.put(run_payload_key(conversation_id), payload)
 
-    Logger.debug("[TranscriptPersistence] run_start conversation=#{conversation_id}")
-
-    if opts[:origin] && opts[:transcript_id] do
-      consume_messages(conversation_id, [opts[:transcript_id]], opts)
-    else
+      Handbeam.Agent.TranscriptRecovery.mark(conversation_id)
+      Logger.debug("[TranscriptPersistence] run_start conversation=#{conversation_id}")
       :ok
     end
   end
@@ -152,6 +147,38 @@ defmodule Handbeam.Agent.TranscriptPersistence do
     :ok
   end
 
+  def handle_event(conversation_id, {:turn_start, payload}, opts)
+      when is_binary(conversation_id) do
+    flush!(conversation_id, opts)
+    turn_number = payload_value(payload, :turn)
+
+    attrs =
+      payload
+      |> lifecycle_attrs(opts)
+      |> Map.put(:turn_number, turn_number)
+
+    with :ok <- record_lifecycle(:turn_start, conversation_id, attrs) do
+      Process.put(turn_key(conversation_id), turn_number)
+      :ok
+    end
+  end
+
+  def handle_event(conversation_id, {:turn_end, payload}, opts)
+      when is_binary(conversation_id) do
+    flush!(conversation_id, opts)
+    turn_number = payload_value(payload, :turn) || Process.get(turn_key(conversation_id))
+
+    attrs =
+      payload
+      |> lifecycle_attrs(opts)
+      |> Map.put(:turn_number, turn_number)
+
+    with :ok <- record_lifecycle(:turn_end, conversation_id, attrs) do
+      Process.delete(turn_key(conversation_id))
+      :ok
+    end
+  end
+
   def handle_event(conversation_id, {:tool_start, payload}, opts)
       when is_binary(conversation_id) do
     flush!(conversation_id, opts)
@@ -169,12 +196,15 @@ defmodule Handbeam.Agent.TranscriptPersistence do
         "message_type" => "tool",
         "role" => "tool",
         "direction" => "internal",
+        "turn_number" =>
+          payload_value(payload, :turn_number) || Process.get(turn_key(conversation_id)),
         "tool_use_id" => tool_use_id,
         "parent_tool_call_id" => payload_value(payload, :parent_tool_call_id),
         "tool_name" => tool_name,
         "tool_status" => "running",
         "input" => Handbeam.Log.Redactor.redact(payload_value(payload, :input, %{})),
-        "started_at" => now_iso8601()
+        "started_at" => payload_value(payload, :started_at) || now_iso8601(),
+        "timing_fidelity" => payload_value(payload, :timing_fidelity)
       })
 
     with {:ok, _saved} <- append_or_update(conversation_id, entry, opts), do: :ok
@@ -194,23 +224,29 @@ defmodule Handbeam.Agent.TranscriptPersistence do
       |> Handbeam.Agent.Tool.ResultContract.project_details()
       |> Handbeam.JsonSafe.normalize()
 
+    raw_output = payload_value(payload, :output)
+
     output =
-      payload
-      |> payload_value(:output)
+      raw_output
       |> bound_persisted_output()
       |> Handbeam.JsonSafe.normalize()
 
-    patch = %{
-      "tool_name" => tool_name,
-      "tool_status" => status,
-      "tool_duration_ms" => payload_value(payload, :duration_ms),
-      "tool_error" => error,
-      "output" => output,
-      "details" => details,
-      "images" => Handbeam.Tool.Images.project(payload_value(payload, :images, [])),
-      "file_path" => payload_value(payload, :file_path) || map_value(details, :file_path),
-      "diff_lines" => map_value(details, :diff_lines)
-    }
+    patch =
+      %{
+        "tool_name" => tool_name,
+        "tool_status" => status,
+        "tool_duration_ms" => payload_value(payload, :duration_ms),
+        "tool_error" => error,
+        "output" => output,
+        "output_truncated" => persisted_output_truncated?(raw_output),
+        "details" => details,
+        "images" => Handbeam.Tool.Images.project(payload_value(payload, :images, [])),
+        "file_path" => payload_value(payload, :file_path) || map_value(details, :file_path),
+        "diff_lines" => map_value(details, :diff_lines)
+      }
+      |> put_if_present("started_at", payload_value(payload, :started_at))
+      |> put_if_present("completed_at", payload_value(payload, :completed_at))
+      |> put_if_present("timing_fidelity", payload_value(payload, :timing_fidelity))
 
     entry =
       base_entry(conversation_id, opts)
@@ -220,6 +256,8 @@ defmodule Handbeam.Agent.TranscriptPersistence do
         "message_type" => "tool",
         "role" => "tool",
         "direction" => "internal",
+        "turn_number" =>
+          payload_value(payload, :turn_number) || Process.get(turn_key(conversation_id)),
         "tool_use_id" => tool_use_id,
         "parent_tool_call_id" => payload_value(payload, :parent_tool_call_id)
       })
@@ -273,14 +311,9 @@ defmodule Handbeam.Agent.TranscriptPersistence do
             finalize_successful_run(conversation_id, terminal_opts)
         end
 
-      with :ok <- result do
-        Process.put(assistant_key(conversation_id), nil)
-        Process.delete(assistant_segments_key(conversation_id))
-        Process.delete(segment_phases_key(conversation_id))
-        clear_buffer(conversation_id)
-        clear_thinking_buffer(conversation_id)
-        Process.delete(run_opts_key(conversation_id))
-        Process.delete(run_payload_key(conversation_id))
+      with :ok <- result,
+           :ok <- record_lifecycle(:run_end, conversation_id, lifecycle_attrs(payload, opts)) do
+        clear_process_state(conversation_id)
         Handbeam.Agent.TranscriptRecovery.clear(conversation_id)
         :ok
       end
@@ -892,6 +925,7 @@ defmodule Handbeam.Agent.TranscriptPersistence do
     %{
       "conversation_id" => conversation_id,
       "run_id" => Keyword.get(opts, :run_id),
+      "turn_number" => Process.get(turn_key(conversation_id)),
       "channel" => channel(opts),
       "source" => opts |> Keyword.get(:source, :unknown) |> to_string(),
       "delivery_ref" => Keyword.get(opts, :delivery_ref),
@@ -1048,6 +1082,12 @@ defmodule Handbeam.Agent.TranscriptPersistence do
 
   defp sanitize_block(block), do: block
 
+  defp persisted_output_truncated?(output) when is_binary(output), do: byte_size(output) > 16_000
+  defp persisted_output_truncated?(_output), do: false
+
+  defp put_if_present(map, _key, nil), do: map
+  defp put_if_present(map, key, value), do: Map.put(map, key, value)
+
   defp bound_persisted_output(output) when is_binary(output) and byte_size(output) > 16_000 do
     String.slice(output, 0, 15_900) <> "\n[truncated]"
   end
@@ -1090,7 +1130,66 @@ defmodule Handbeam.Agent.TranscriptPersistence do
         do: %{"kind" => "automatic", "source" => to_string(opts[:source])}
   end
 
-  defp now_iso8601, do: DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
+  defp turn_key(conversation_id),
+    do: {__MODULE__, :turn_number, conversation_id}
+
+  defp record_lifecycle(_kind, _conversation_id, %{run_id: run_id})
+       when not is_binary(run_id) or run_id == "",
+       do: :ok
+
+  defp record_lifecycle(:run_start, conversation_id, attrs),
+    do: Handbeam.ConversationStore.record_run_start(conversation_id, attrs)
+
+  defp record_lifecycle(:run_end, conversation_id, attrs),
+    do: Handbeam.ConversationStore.record_run_end(conversation_id, attrs)
+
+  defp record_lifecycle(:turn_start, conversation_id, attrs),
+    do: Handbeam.ConversationStore.record_turn_start(conversation_id, attrs)
+
+  defp record_lifecycle(:turn_end, conversation_id, attrs),
+    do: Handbeam.ConversationStore.record_turn_end(conversation_id, attrs)
+
+  defp clear_process_state(conversation_id) do
+    Process.delete(assistant_key(conversation_id))
+    Process.delete(assistant_segments_key(conversation_id))
+    Process.delete(assistant_phase_key(conversation_id))
+    Process.delete(segment_phases_key(conversation_id))
+    Process.delete(provider_items_key(conversation_id))
+    Process.delete(turn_key(conversation_id))
+    Process.delete(run_opts_key(conversation_id))
+    Process.delete(run_payload_key(conversation_id))
+    Process.delete({__MODULE__, :text_patch, conversation_id})
+    clear_buffer(conversation_id)
+    clear_thinking_buffer(conversation_id)
+    :ok
+  end
+
+  defp consume_inbound(conversation_id, opts) do
+    if opts[:origin] && opts[:transcript_id] do
+      consume_messages(conversation_id, [opts[:transcript_id]], opts)
+    else
+      :ok
+    end
+  end
+
+  defp lifecycle_attrs(payload, opts) do
+    %{
+      run_id: payload_value(payload, :run_id) || Keyword.get(opts, :run_id),
+      turn_number: payload_value(payload, :turn),
+      status: payload_value(payload, :status),
+      stop_reason:
+        payload_value(payload, :stop_reason) || payload_value(payload, :provider_finish_reason),
+      loop_owner: payload_value(payload, :loop_owner) || :handbeam,
+      backend: payload_value(payload, :backend),
+      model: payload_value(payload, :model) || Keyword.get(opts, :model),
+      error: payload_value(payload, :error),
+      turns: payload_value(payload, :turns),
+      duration_ms: payload_value(payload, :duration_ms)
+    }
+  end
+
+  defp now_iso8601,
+    do: DateTime.utc_now() |> DateTime.truncate(:microsecond) |> DateTime.to_iso8601()
 
   defp unique_id(prefix) do
     "#{prefix}-#{Ecto.UUID.generate()}"

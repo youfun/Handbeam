@@ -17,6 +17,7 @@ defmodule Handbeam.Storage.ConversationEntry do
     field :phase, :string
     field :status, :string
     field :run_id, :string
+    field :turn_number, :integer
     field :tool_call_id, :string
     field :tool_status, :string
     field :content, :string

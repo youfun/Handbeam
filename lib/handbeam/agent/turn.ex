@@ -27,6 +27,7 @@ defmodule Handbeam.Agent.Turn do
   require Logger
 
   @max_tool_event_output 16_000
+  @turn_end_counter_key {__MODULE__, :turn_end_counter}
 
   @doc """
   Resume agent loop from an interrupted tool-approval state.
@@ -72,6 +73,8 @@ defmodule Handbeam.Agent.Turn do
   # ── Approval execution ──
 
   defp continue_after_approval(state, [], _batch_calls, denied_blocks, opts) do
+    emit_denied_tool_end_events(denied_blocks, opts, state.turn)
+    emit_resumed_turn_end(state, opts)
     result_msg = Message.tool_results(denied_blocks)
 
     state
@@ -82,6 +85,8 @@ defmodule Handbeam.Agent.Turn do
   end
 
   defp continue_after_approval(state, executable, batch_calls, denied_blocks, opts) do
+    emit_tool_starts(executable, opts, state.turn)
+
     case Executor.execute_all_with_context(executable, state) do
       {:ok, result_msg, ui_blocks, state} ->
         merge_approved_execution(%{
@@ -108,7 +113,20 @@ defmodule Handbeam.Agent.Turn do
       | content: Enum.map(all_ui_blocks, &Executor.strip_details/1)
     }
 
-    emit_tool_end_events(execution.executable, execution.ui_blocks, execution.opts)
+    emit_tool_end_events(
+      execution.executable,
+      execution.ui_blocks,
+      execution.opts,
+      execution.state.turn
+    )
+
+    emit_denied_tool_end_events(
+      execution.denied_blocks,
+      execution.opts,
+      execution.state.turn
+    )
+
+    emit_resumed_turn_end(execution.state, execution.opts)
 
     execution.state
     |> append_tool_results([merged_msg])
@@ -135,7 +153,7 @@ defmodule Handbeam.Agent.Turn do
       call_id,
       content,
       true,
-      %{permission: :denied, blocked_by: blocked_by}
+      %{permission: :denied, blocked_by: blocked_by, tool: name}
     )
   end
 
@@ -149,7 +167,32 @@ defmodule Handbeam.Agent.Turn do
     end
   end
 
-  defp emit_tool_end_events(tool_calls, ui_blocks, opts) do
+  defp emit_denied_tool_end_events(blocks, opts, turn_number) do
+    Enum.each(blocks, fn block ->
+      details = block[:details] || %{}
+
+      emit(opts, :tool_end, %{
+        tool_use_id: block[:tool_use_id],
+        tool: Handbeam.Utils.SafeMap.get_any(details, [:tool, "tool"]) || "unknown",
+        turn_number: turn_number,
+        duration_ms: 0,
+        timing_fidelity: "not_started",
+        details: bounded_tool_details(details),
+        error: bounded_tool_error(block[:content]),
+        output: bounded_tool_output(block[:content])
+      })
+    end)
+  end
+
+  defp emit_resumed_turn_end(state, opts) do
+    emit_turn_end(opts, %{
+      turn: state.turn,
+      stop_reason: "tool_use_resumed",
+      status: :completed
+    })
+  end
+
+  defp emit_tool_end_events(tool_calls, ui_blocks, opts, turn_number) do
     ui_block_by_id =
       Map.new(ui_blocks, fn block ->
         {Handbeam.Utils.SafeMap.get_any(block, [:tool_use_id, "tool_use_id"]), block}
@@ -162,16 +205,18 @@ defmodule Handbeam.Agent.Turn do
 
       file_path = tool_end_file_path(details, call)
 
-      payload = %{
-        tool_use_id: call_id,
-        tool: Handbeam.Utils.SafeMap.get_any(call, [:name, "name"]),
-        parent_tool_call_id: nil,
-        duration_ms: 0,
-        details: bounded_tool_details(details),
-        file_path: file_path,
-        images: Handbeam.Tool.Images.project(ui_block && ui_block[:images]),
-        output: bounded_tool_output(ui_block && block_content(ui_block))
-      }
+      payload =
+        %{
+          tool_use_id: call_id,
+          tool: Handbeam.Utils.SafeMap.get_any(call, [:name, "name"]),
+          parent_tool_call_id: nil,
+          turn_number: turn_number,
+          details: bounded_tool_details(details),
+          file_path: file_path,
+          images: Handbeam.Tool.Images.project(ui_block && ui_block[:images]),
+          output: bounded_tool_output(ui_block && block_content(ui_block))
+        }
+        |> Map.merge(tool_timing_payload(details))
 
       payload =
         if ui_block && ui_block[:is_error] do
@@ -194,6 +239,8 @@ defmodule Handbeam.Agent.Turn do
   """
   @spec run_loop(State.t(), keyword()) :: State.t()
   def run_loop(%State{} = state, opts \\ []) do
+    Process.delete(@turn_end_counter_key)
+
     Logger.info(
       "[Turn] run_loop start model=#{state.config.model} " <>
         "max_turns=#{state.config.max_turns} streaming=#{Keyword.get(opts, :streaming, false)} " <>
@@ -213,6 +260,9 @@ defmodule Handbeam.Agent.Turn do
         status: state.status,
         error: state.error,
         turns: 0,
+        duration_ms: 0,
+        model: state.config.model,
+        loop_owner: :handbeam,
         run_id: state.config.run_id
       })
 
@@ -226,7 +276,7 @@ defmodule Handbeam.Agent.Turn do
       # session_end middleware
       mw_run(state, :session_end)
     else
-      emit(opts, :run_start, %{model: state.config.model})
+      emit(opts, :run_start, %{model: state.config.model, loop_owner: :handbeam})
 
       run_start = System.monotonic_time(:millisecond)
 
@@ -238,26 +288,33 @@ defmodule Handbeam.Agent.Turn do
 
       result = do_turn(state, opts)
 
+      duration_ms = System.monotonic_time(:millisecond) - run_start
+
       :telemetry.execute(
         [:handbeam, :run, :stop],
-        %{duration_ms: System.monotonic_time(:millisecond) - run_start},
+        %{duration_ms: duration_ms},
         %{status: result.status, turns: result.turn, model: state.config.model}
       )
 
       Logger.info(
         "[Turn] run_loop end status=#{result.status} turns=#{result.turn} " <>
-          "duration_ms=#{System.monotonic_time(:millisecond) - run_start} " <>
+          "duration_ms=#{duration_ms} " <>
           "usage=#{inspect(result.usage)}"
       )
 
-      finish_run(result, opts)
+      finish_run(result, opts, duration_ms)
     end
   end
 
-  defp finish_run(result, opts) do
+  defp finish_run(result, opts), do: finish_run(result, opts, nil)
+
+  defp finish_run(result, opts, duration_ms) do
     payload = %{
       status: result.status,
       turns: result.turn,
+      duration_ms: duration_ms,
+      model: result.config.model,
+      loop_owner: :handbeam,
       usage: result.usage,
       run_id: result.config.run_id
     }
@@ -389,6 +446,31 @@ defmodule Handbeam.Agent.Turn do
   end
 
   # ── Event helper ──
+
+  defp turn_end_count, do: Process.get(@turn_end_counter_key, 0)
+
+  defp emit_turn_end(opts, payload) do
+    Process.put(@turn_end_counter_key, turn_end_count() + 1)
+    emit(opts, :turn_end, payload)
+  end
+
+  defp tool_approval_interrupted?(%State{
+         status: :interrupted,
+         interrupt_data: %{type: :tool_approval}
+       }),
+       do: true
+
+  defp tool_approval_interrupted?(_state), do: false
+
+  defp continue_to_next_turn(state, opts, stop_reason) do
+    emit_turn_end(opts, %{
+      turn: state.turn,
+      stop_reason: stop_reason,
+      status: if(state.status == :running, do: :completed, else: state.status)
+    })
+
+    do_turn(state, opts)
+  end
 
   defp emit(opts, kind, payload) do
     log_emit(kind, payload)
@@ -562,11 +644,17 @@ defmodule Handbeam.Agent.Turn do
       )
 
       # turn_end hook (read-only notification)
-      emit(opts, :turn_end, %{turn: turn_number, stop_reason: "halted", status: :halted})
+      emit_turn_end(opts, %{
+        turn: turn_number,
+        stop_reason: "halted",
+        status: :halted,
+        duration_ms: 0
+      })
 
       state
     else
       t0 = System.monotonic_time(:millisecond)
+      turn_end_count = turn_end_count()
       result = do_completion(state, opts)
       duration_ms = System.monotonic_time(:millisecond) - t0
 
@@ -580,8 +668,14 @@ defmodule Handbeam.Agent.Turn do
         %{turn: turn_number, status: result.status}
       )
 
-      # turn_end hook (read-only notification)
-      emit(opts, :turn_end, %{turn: turn_number, stop_reason: "completed", status: result.status})
+      if turn_end_count() == turn_end_count and not tool_approval_interrupted?(result) do
+        emit_turn_end(opts, %{
+          turn: turn_number,
+          stop_reason: "completed",
+          status: result.status,
+          duration_ms: duration_ms
+        })
+      end
 
       result
     end
@@ -934,7 +1028,12 @@ defmodule Handbeam.Agent.Turn do
 
   defp retry_missing_final_answer(state, opts) do
     Logger.warning("[Turn] commentary without a final answer — requesting the final answer once")
-    do_turn(state, Keyword.put(opts, :empty_end_turn_retried, true))
+
+    continue_to_next_turn(
+      state,
+      Keyword.put(opts, :empty_end_turn_retried, true),
+      "retry_missing_final_answer"
+    )
   end
 
   defp fail_missing_final_answer(state, new_msgs) do
@@ -1069,14 +1168,15 @@ defmodule Handbeam.Agent.Turn do
         state
         |> Map.put(:advisor, advisor)
         |> State.append_messages([Handbeam.Agent.Message.user(feedback)])
-        |> do_turn(opts)
+        |> continue_to_next_turn(opts, "advisor_revision")
 
       {:blocked, advisor, reason} ->
         %{state | advisor: advisor, status: :error, error: "尚未通过验收: #{reason}"}
 
       {:stale, advisor} ->
-        %{state | advisor: advisor}
-        |> do_turn(opts)
+        state
+        |> Map.put(:advisor, advisor)
+        |> continue_to_next_turn(opts, "advisor_stale")
     end
   end
 
@@ -1093,7 +1193,7 @@ defmodule Handbeam.Agent.Turn do
 
         state
         |> State.append_messages(steer ++ follow_ups)
-        |> do_turn(opts)
+        |> continue_to_next_turn(opts, "candidate_message")
     end
   end
 
@@ -1105,7 +1205,7 @@ defmodule Handbeam.Agent.Turn do
 
         state
         |> State.append_messages(steer ++ follow_ups)
-        |> do_turn(opts)
+        |> continue_to_next_turn(opts, "candidate_message")
 
       :sealed ->
         %{state | status: :completed}
@@ -1427,7 +1527,9 @@ defmodule Handbeam.Agent.Turn do
       emit(opts, :tool_end, %{
         tool_use_id: block[:tool_use_id],
         tool: get_in(block, [:details, :tool]) || "unknown",
+        turn_number: state.turn,
         duration_ms: 0,
+        timing_fidelity: "not_started",
         details: bounded_tool_details(block[:details] || %{}),
         error: bounded_tool_error(block[:content]),
         output: bounded_tool_output(block[:content])
@@ -1455,7 +1557,7 @@ defmodule Handbeam.Agent.Turn do
     {blocked_calls, allowed_calls_w_ctx} =
       reject_unauthorized_rewrites(state, blocked_calls, allowed_calls_w_ctx, active_set)
 
-    emit_allowed_tool_starts(allowed_calls_w_ctx, opts)
+    emit_allowed_tool_starts(allowed_calls_w_ctx, opts, state)
 
     denied_blocks =
       Enum.map(blocked_calls, fn {call, block_source} ->
@@ -1533,6 +1635,7 @@ defmodule Handbeam.Agent.Turn do
 
     policy =
       Handbeam.Permissions.ToolPolicy.from_workspace(
+        state.config.workspace_path || state.config.working_directory,
         state.config.working_directory,
         %{},
         state.tool_guard_session_allow || []
@@ -1548,25 +1651,42 @@ defmodule Handbeam.Agent.Turn do
     end)
   end
 
-  defp emit_allowed_tool_starts(allowed_calls_w_ctx, opts) do
-    Enum.each(allowed_calls_w_ctx, fn {call, _ctx} ->
+  defp emit_allowed_tool_starts(allowed_calls_w_ctx, opts, state) do
+    denied_ids =
+      state.tool_guard_result_blocks
+      |> List.wrap()
+      |> Enum.map(&Handbeam.Utils.SafeMap.get_any(&1, [:tool_use_id, "tool_use_id"]))
+      |> MapSet.new()
+
+    calls =
+      allowed_calls_w_ctx
+      |> Enum.map(fn {call, _ctx} -> call end)
+      |> Enum.reject(&MapSet.member?(denied_ids, Handbeam.Utils.SafeMap.get_any(&1, [:id, "id"])))
+
+    emit_tool_starts(calls, opts, state.turn)
+  end
+
+  defp emit_tool_starts(calls, opts, turn_number) do
+    Enum.each(calls, fn call ->
       emit(opts, :tool_start, %{
         tool_use_id: call[:id],
         tool: call[:name],
         input: redact_tool_input(call[:name], call[:input] || %{}),
-        parent_tool_call_id: nil
+        parent_tool_call_id: nil,
+        turn_number: turn_number
       })
     end)
   end
 
   defp execute_or_skip_blocked_tools(state, [], denied_blocks, opts) do
+    emit_denied_tool_end_events(denied_blocks, opts, state.turn)
     result_msg = Message.tool_results(Enum.reverse(denied_blocks))
 
     state
     |> append_tool_results([result_msg])
     |> mw_run(:after_tool_execution)
     |> inject_candidate_messages(opts, :steer)
-    |> do_turn(opts)
+    |> continue_to_next_turn(opts, "tool_use")
   end
 
   defp execute_or_skip_blocked_tools(state, allowed_calls, denied_blocks, opts) do
@@ -1601,6 +1721,12 @@ defmodule Handbeam.Agent.Turn do
       duration_ms
     )
 
+    emit_denied_tool_end_events(
+      execution.denied_blocks,
+      execution.opts,
+      execution.state.turn
+    )
+
     merged_msg = %{
       execution.result_msg
       | content:
@@ -1612,7 +1738,7 @@ defmodule Handbeam.Agent.Turn do
     |> Map.update!(:messages, &Handbeam.Tool.Images.bound_history/1)
     |> mw_run(:after_tool_execution)
     |> inject_candidate_messages(execution.opts, :steer)
-    |> do_turn(execution.opts)
+    |> continue_to_next_turn(execution.opts, "tool_use")
   end
 
   defp emit_executed_tool_ends(state, allowed_calls, ui_blocks, opts, duration_ms) do
@@ -1621,29 +1747,60 @@ defmodule Handbeam.Agent.Turn do
     Enum.each(allowed_calls, fn call ->
       ui_block = Map.get(ui_block_by_id, call[:id])
       record_tool_receipt(state, call, ui_block)
-      emit(opts, :tool_end, executed_tool_end_payload(call, ui_block, duration_ms))
+
+      emit(
+        opts,
+        :tool_end,
+        executed_tool_end_payload(call, ui_block, duration_ms, state.turn)
+      )
     end)
   end
 
-  defp executed_tool_end_payload(call, ui_block, duration_ms) do
+  defp executed_tool_end_payload(call, ui_block, _batch_duration_ms, turn_number) do
     details = (ui_block && ui_block[:details]) || %{}
 
-    payload = %{
-      tool_use_id: call[:id],
-      tool: call[:name],
-      parent_tool_call_id: nil,
-      duration_ms: duration_ms,
-      details: bounded_tool_details(details),
-      file_path: tool_end_file_path(details, call),
-      images: Handbeam.Tool.Images.project(ui_block && ui_block[:images]),
-      output: bounded_tool_output(ui_block && ui_block[:content])
-    }
+    payload =
+      %{
+        tool_use_id: call[:id],
+        tool: call[:name],
+        parent_tool_call_id: nil,
+        turn_number: turn_number,
+        details: bounded_tool_details(details),
+        file_path: tool_end_file_path(details, call),
+        images: Handbeam.Tool.Images.project(ui_block && ui_block[:images]),
+        output: bounded_tool_output(ui_block && ui_block[:content])
+      }
+      |> Map.merge(tool_timing_payload(details))
+      |> maybe_put_not_started_timing(details)
 
     if ui_block && ui_block[:is_error] do
       Map.put(payload, :error, bounded_tool_error(ui_block[:content]))
     else
       payload
     end
+  end
+
+  defp maybe_put_not_started_timing(payload, details) do
+    permission = Handbeam.Utils.SafeMap.get_any(details, [:permission, "permission"])
+    side_effect = Handbeam.Utils.SafeMap.get_any(details, [:side_effect, "side_effect"])
+
+    if is_nil(payload[:timing_fidelity]) and
+         (permission in [:denied, "denied"] or side_effect in [:not_started, "not_started"]) do
+      Map.merge(payload, %{duration_ms: 0, timing_fidelity: "not_started"})
+    else
+      payload
+    end
+  end
+
+  defp tool_timing_payload(details) do
+    %{
+      started_at: Handbeam.Utils.SafeMap.get_any(details, [:started_at, "started_at"]),
+      completed_at: Handbeam.Utils.SafeMap.get_any(details, [:completed_at, "completed_at"]),
+      duration_ms: Handbeam.Utils.SafeMap.get_any(details, [:duration_ms, "duration_ms"]),
+      timing_fidelity:
+        Handbeam.Utils.SafeMap.get_any(details, [:timing_fidelity, "timing_fidelity"])
+    }
+    |> Map.reject(fn {_key, value} -> is_nil(value) end)
   end
 
   defp tool_end_file_path(details, call) do

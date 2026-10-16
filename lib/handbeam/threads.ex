@@ -36,45 +36,86 @@ defmodule Handbeam.Threads do
 
   defp free_chat?(meta), do: meta["scope"] == "free"
 
-  def find(input, context) do
+  def list(input, context) do
     with {:ok, source} <- identity(context),
-         :ok <- validate(input, ~w(query updated_after include_archived limit cursor)),
-         true <- is_boolean(Map.get(input, "include_archived", false)),
-         {:ok, query} <- text(input, "query", "", 200),
+         :ok <- validate(input, ~w(archived updated_after limit cursor)),
+         {:ok, archived} <- archived_filter(input),
          {:ok, after_time} <- text(input, "updated_after", "", 40),
          {:ok, after_time} <- timestamp(after_time),
          {:ok, limit} <- integer(input, "limit", 10, 1, 20) do
-      entries =
-        ConversationStore.list_metadata(source["workspace_id"])
-        |> Enum.filter(fn m ->
-          visible?(m) and (input["include_archived"] == true or is_nil(m["archived_at"])) and
-            String.contains?(String.downcase(m["title"] || ""), String.downcase(query)) and
-            updated_since?(m["updated_at"], after_time)
-        end)
-        |> Enum.sort_by(&{&1["updated_at"] || "", &1["id"]}, :desc)
-        |> Enum.map(fn m ->
-          Map.take(m, ~w(id updated_at created_at archived_at))
-          |> Map.put("title", String.slice(m["title"] || "", 0, 200))
-          |> Map.put("summary", String.slice(m["title"] || "", 0, 200))
-          |> Map.put("summary_source", "title")
-          |> Map.put("summary_truncated", String.length(m["title"] || "") > 200)
-        end)
+      discover(source, context, input, "list", nil, archived, after_time, limit)
+    end
+  end
 
-      binding = binding("find", context, input, entries)
-
-      with {:ok, offset} <- position(input["cursor"], binding) do
-        next = offset + limit
-
-        {:ok,
-         %{
-           threads: Enum.slice(entries, offset, limit),
-           next_cursor: cursor(next < length(entries), binding, next)
-         }}
-      end
+  def find(input, context) do
+    with {:ok, source} <- identity(context),
+         :ok <- validate(input, ~w(query archived updated_after limit cursor)),
+         {:ok, query} <- text(input, "query", nil, 200),
+         query <- String.trim(query),
+         true <- query != "",
+         {:ok, archived} <- archived_filter(input),
+         {:ok, after_time} <- text(input, "updated_after", "", 40),
+         {:ok, after_time} <- timestamp(after_time),
+         {:ok, limit} <- integer(input, "limit", 10, 1, 20) do
+      discover(source, context, input, "find", query, archived, after_time, limit)
     else
       false -> {:error, :invalid_input}
       error -> error
     end
+  end
+
+  def trajectory(input, context), do: Handbeam.Threads.Trajectory.get(input, context)
+
+  defp discover(source, context, input, kind, query, archived, after_time, limit) do
+    entries =
+      source["workspace_id"]
+      |> ConversationStore.list_thread_summaries()
+      |> Enum.filter(fn summary ->
+        archived_match?(summary["archived_at"], archived) and
+          title_match?(summary["title"], query) and
+          updated_since?(summary["updated_at"], after_time)
+      end)
+      |> Enum.map(&project_thread_summary/1)
+
+    binding = binding(kind, context, input, entries)
+
+    with {:ok, offset} <- position(input["cursor"], binding) do
+      next = offset + limit
+
+      {:ok,
+       %{
+         threads: Enum.slice(entries, offset, limit),
+         next_cursor: cursor(next < length(entries), binding, next)
+       }}
+    end
+  end
+
+  defp project_thread_summary(summary) do
+    title = summary["title"] || ""
+
+    summary
+    |> Map.put("title", String.slice(title, 0, 200))
+    |> Map.put("summary", String.slice(title, 0, 200))
+    |> Map.put("summary_source", "title")
+    |> Map.put("summary_truncated", String.length(title) > 200)
+  end
+
+  defp archived_filter(input) do
+    case Map.get(input, "archived", "active") do
+      value when value in ["active", "archived", "all"] -> {:ok, value}
+      _ -> {:error, :invalid_input}
+    end
+  end
+
+  defp archived_match?(nil, "active"), do: true
+  defp archived_match?(archived_at, "archived"), do: is_binary(archived_at)
+  defp archived_match?(_archived_at, "all"), do: true
+  defp archived_match?(_archived_at, _filter), do: false
+
+  defp title_match?(_title, nil), do: true
+
+  defp title_match?(title, query) do
+    String.contains?(String.downcase(title || ""), String.downcase(query))
   end
 
   def read(input, context) do

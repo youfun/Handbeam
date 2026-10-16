@@ -1,5 +1,6 @@
 defmodule Handbeam.ThreadsTest do
   use Handbeam.DataCase, async: false
+  alias Handbeam.Agent.TranscriptPersistence
   alias Handbeam.{ConversationStore, ConversationTranscriptStore, Threads}
   alias Handbeam.Threads.Collaboration
 
@@ -30,42 +31,306 @@ defmodule Handbeam.ThreadsTest do
 
   test "metadata-only discovery, authorization and guessed IDs", c do
     {:ok, _} = ConversationStore.update_meta(c.target, visibility: "internal")
-    assert {:ok, %{threads: [%{"id" => id}]}} = Threads.find(%{}, c.context)
+    assert {:ok, %{threads: [%{"id" => id}]}} = Threads.list(%{}, c.context)
     assert id == c.source
+    assert {:error, :invalid_input} = Threads.find(%{}, c.context)
 
     for id <- [c.target, c.foreign, "../index", "", nil] do
       assert {:error, :not_accessible} = Threads.read(%{"thread" => id}, c.context)
       assert {:error, :not_accessible} = Threads.status(%{"thread" => id}, c.context)
     end
 
-    assert {:error, :unauthorized} = Threads.find(%{}, %{})
-    assert {:error, :unauthorized} = Threads.find(%{}, %{c.context | workspace_id: "other"})
-    assert {:error, :invalid_input} = Threads.find(%{"workspace_id" => "other"}, c.context)
-    assert {:error, :unauthorized} = Threads.find(%{}, %{c.context | conversation_id: c.target})
+    assert {:error, :unauthorized} = Threads.list(%{}, %{})
+    assert {:error, :unauthorized} = Threads.list(%{}, %{c.context | workspace_id: "other"})
+    assert {:error, :invalid_input} = Threads.list(%{"workspace_id" => "other"}, c.context)
+    assert {:error, :unauthorized} = Threads.list(%{}, %{c.context | conversation_id: c.target})
   end
 
   test "same-time pagination binds query, caller and updates", c do
     for id <- [c.source, c.target], do: ConversationStore.update_meta(id, updated_at: "same")
     input = %{"limit" => 1}
-    assert {:ok, %{threads: [a], next_cursor: cursor}} = Threads.find(input, c.context)
+    assert {:ok, %{threads: [a], next_cursor: cursor}} = Threads.list(input, c.context)
 
     assert {:ok, %{threads: [^a], next_cursor: empty_cursor}} =
-             Threads.find(Map.put(input, "cursor", ""), c.context)
+             Threads.list(Map.put(input, "cursor", ""), c.context)
 
     assert is_binary(empty_cursor)
 
     assert {:ok, %{threads: [b], next_cursor: nil}} =
-             Threads.find(Map.put(input, "cursor", cursor), c.context)
+             Threads.list(Map.put(input, "cursor", cursor), c.context)
 
     assert a["id"] != b["id"]
 
     assert {:error, :stale_or_invalid_cursor} =
-             Threads.find(%{"limit" => 1, "query" => "x", "cursor" => cursor}, c.context)
+             Threads.list(
+               %{"limit" => 1, "archived" => "all", "cursor" => cursor},
+               c.context
+             )
 
     ConversationStore.update_meta(c.target, title: "Changed")
 
     assert {:error, :stale_or_invalid_cursor} =
-             Threads.find(Map.put(input, "cursor", cursor), c.context)
+             Threads.list(Map.put(input, "cursor", cursor), c.context)
+  end
+
+  test "list and find have distinct discovery semantics and shared aggregate summaries", c do
+    {:ok, _} =
+      ConversationTranscriptStore.append(c.target, %{
+        "id" => "summary-user",
+        "role" => "user",
+        "run_id" => "summary-run",
+        "content" => "question"
+      })
+
+    {:ok, _} =
+      ConversationTranscriptStore.append(c.target, %{
+        "id" => "summary-assistant",
+        "role" => "assistant",
+        "run_id" => "summary-run",
+        "content" => "answer"
+      })
+
+    {:ok, _} =
+      ConversationTranscriptStore.append(c.target, %{
+        "id" => "summary-tool",
+        "role" => "tool",
+        "content_type" => "tool",
+        "run_id" => "summary-run",
+        "tool_name" => "read"
+      })
+
+    assert :ok =
+             ConversationStore.record_run_start(c.target, %{
+               run_id: "summary-run",
+               model: "provider/model"
+             })
+
+    assert :ok =
+             ConversationStore.record_run_end(c.target, %{
+               run_id: "summary-run",
+               status: :completed,
+               turns: 1
+             })
+
+    assert {:ok, %{threads: listed}} = Threads.list(%{"archived" => "all"}, c.context)
+    target = Enum.find(listed, &(&1["id"] == c.target))
+    assert target["message_count"] == 2
+    assert target["tool_call_count"] == 1
+    assert target["run_count"] == 1
+
+    assert {:ok, %{threads: [found]}} =
+             Threads.find(%{"query" => "目标", "archived" => "all"}, c.context)
+
+    assert found == target
+    assert {:ok, _} = ConversationStore.archive(c.target)
+    assert {:ok, %{threads: active}} = Threads.list(%{}, c.context)
+    refute Enum.any?(active, &(&1["id"] == c.target))
+    assert {:ok, %{threads: archived}} = Threads.list(%{"archived" => "archived"}, c.context)
+    assert Enum.any?(archived, &(&1["id"] == c.target))
+  end
+
+  test "trajectory exposes durable runs, turns and bounded redacted records", c do
+    opts = [run_id: "trajectory-run", model: "provider/model"]
+
+    assert {:ok, _} =
+             TranscriptPersistence.append_inbound(c.target, "Investigate", opts)
+
+    assert :ok =
+             TranscriptPersistence.handle_event(
+               c.target,
+               {:run_start, %{model: "provider/model", loop_owner: :handbeam}},
+               opts
+             )
+
+    assert :ok =
+             TranscriptPersistence.handle_event(c.target, {:turn_start, %{turn: 1}}, opts)
+
+    assert :ok =
+             TranscriptPersistence.handle_event(
+               c.target,
+               {:message_delta, %{chunk: "Checking the file"}},
+               opts
+             )
+
+    assert :ok =
+             TranscriptPersistence.handle_event(
+               c.target,
+               {:tool_start,
+                %{
+                  tool_use_id: "trajectory-tool",
+                  tool: "read",
+                  input: %{"file_path" => "lib/app.ex", "api_key" => "top-secret"}
+                }},
+               opts
+             )
+
+    assert :ok =
+             TranscriptPersistence.handle_event(
+               c.target,
+               {:tool_end,
+                %{
+                  tool_use_id: "trajectory-tool",
+                  tool: "read",
+                  output: "Authorization: Bearer sub-token-value",
+                  duration_ms: 12,
+                  started_at: "2026-10-16T10:00:00.000000Z",
+                  completed_at: "2026-10-16T10:00:00.012000Z",
+                  timing_fidelity: "exact"
+                }},
+               opts
+             )
+
+    assert :ok =
+             TranscriptPersistence.handle_event(
+               c.target,
+               {:turn_end,
+                %{turn: 1, status: :completed, stop_reason: "completed", duration_ms: 20}},
+               opts
+             )
+
+    assert :ok =
+             TranscriptPersistence.handle_event(
+               c.target,
+               {:run_end,
+                %{
+                  status: :completed,
+                  turns: 1,
+                  duration_ms: 25,
+                  model: "provider/model"
+                }},
+               opts
+             )
+
+    assert {:ok, summary} =
+             Threads.trajectory(
+               %{"thread" => c.target, "detail_level" => "summary", "max_chars" => 16_000},
+               c.context
+             )
+
+    assert summary.schema_version == 1
+    assert summary.detail_level == "summary"
+    assert summary.records == []
+    assert summary.stats == %{errors: 0, records: 3, running: 0, runs: 1, tools: 1, turns: 1}
+    assert [%{id: "trajectory-run", status: "completed", turn_count: 1}] = summary.runs
+    assert [%{run_id: "trajectory-run", number: 1, status: "completed"}] = summary.turns
+    assert summary.fidelity.level == "complete"
+
+    assert {:ok, compact} =
+             Threads.trajectory(
+               %{"thread" => c.target, "detail_level" => "compact", "max_chars" => 16_000},
+               c.context
+             )
+
+    tool = Enum.find(compact.records, &(&1.kind == "tool"))
+    assert tool.duration_ms == 12
+    assert tool.timing_fidelity == "exact"
+    refute Map.has_key?(tool, :input)
+    refute Map.has_key?(tool, :output)
+
+    assert {:ok, small_page} =
+             Threads.trajectory(
+               %{"thread" => c.target, "detail_level" => "compact", "max_chars" => 2_000},
+               c.context
+             )
+
+    assert small_page.records != []
+    assert String.length(Handbeam.JSON.encode!(small_page)) <= 2_000
+
+    assert {:ok, full} =
+             Threads.trajectory(
+               %{"thread" => c.target, "detail_level" => "full", "max_chars" => 16_000},
+               c.context
+             )
+
+    full_tool = Enum.find(full.records, &(&1.kind == "tool"))
+    encoded = Handbeam.JSON.encode!(full_tool)
+    assert encoded =~ "lib/app.ex"
+    refute encoded =~ "top-secret"
+    refute encoded =~ "sub-token-value"
+
+    assert {:error, :not_accessible} =
+             Threads.trajectory(%{"thread" => c.foreign}, c.context)
+
+    assert {:error, :invalid_input} =
+             Threads.trajectory(%{"thread" => c.target, "turn" => 1}, c.context)
+  end
+
+  test "trajectory cursor is bound to the durable snapshot", c do
+    for i <- 1..3 do
+      {:ok, _} =
+        ConversationTranscriptStore.append(c.target, %{
+          "id" => "trajectory-page-#{i}",
+          "role" => "assistant",
+          "content" => "record #{i}"
+        })
+    end
+
+    input = %{
+      "thread" => c.target,
+      "detail_level" => "compact",
+      "limit" => 1,
+      "max_chars" => 4_000
+    }
+
+    assert {:ok, %{records: [first], next_cursor: cursor, truncated: true}} =
+             Threads.trajectory(input, c.context)
+
+    assert is_binary(cursor)
+
+    assert {:ok, %{records: [second]}} =
+             Threads.trajectory(Map.put(input, "cursor", cursor), c.context)
+
+    assert first.sequence < second.sequence
+
+    assert {:ok, _} =
+             ConversationTranscriptStore.update(c.target, first.id, %{"content" => "changed"})
+
+    assert {:error, :stale_or_invalid_cursor} =
+             Threads.trajectory(Map.put(input, "cursor", cursor), c.context)
+  end
+
+  test "trajectory redacts run errors and recovers lifecycle rows without streaming entries", c do
+    assert :ok =
+             ConversationStore.record_run_start(c.target, %{
+               run_id: "orphan-run",
+               model: "provider/model"
+             })
+
+    assert :ok =
+             ConversationStore.record_turn_start(c.target, %{
+               run_id: "orphan-run",
+               turn_number: 1
+             })
+
+    assert "orphan-run" in Handbeam.ConversationTranscriptStore.ConversationStore.unfinished_runs(
+             c.target
+           )
+
+    assert :ok =
+             ConversationStore.record_run_end(c.target, %{
+               run_id: "orphan-run",
+               status: :error,
+               error: "Authorization: Bearer run-secret-value"
+             })
+
+    refute "orphan-run" in Handbeam.ConversationTranscriptStore.ConversationStore.unfinished_runs(
+             c.target
+           )
+
+    assert {:ok, trajectory} =
+             Threads.trajectory(
+               %{
+                 "thread" => c.target,
+                 "run_id" => "orphan-run",
+                 "detail_level" => "summary",
+                 "max_chars" => 4_000
+               },
+               c.context
+             )
+
+    assert [%{status: "error"}] = trajectory.runs
+    assert [%{status: "error"}] = trajectory.turns
+    refute Handbeam.JSON.encode!(trajectory) =~ "run-secret-value"
   end
 
   test "Unicode and single-message continuation preserve the entire tail", c do
@@ -158,13 +423,15 @@ defmodule Handbeam.ThreadsTest do
 
   test "date filtering normalizes offsets and rejects malformed input", c do
     {:ok, %{threads: []}} =
-      Threads.find(%{"updated_after" => "2999-01-01T00:00:00+08:00"}, c.context)
+      Threads.list(%{"updated_after" => "2999-01-01T00:00:00+08:00"}, c.context)
 
     {:ok, %{threads: threads}} =
-      Threads.find(%{"updated_after" => "2000-01-01T00:00:00+08:00"}, c.context)
+      Threads.list(%{"updated_after" => "2000-01-01T00:00:00+08:00"}, c.context)
 
     assert length(threads) == 2
-    assert {:error, :invalid_input} = Threads.find(%{"updated_after" => "nonsense"}, c.context)
+
+    assert {:error, :invalid_input} =
+             Threads.list(%{"updated_after" => "nonsense"}, c.context)
   end
 
   test "fragment count bounds empty messages and deletion invalidates continuation", c do
@@ -281,10 +548,13 @@ defmodule Handbeam.ThreadsTest do
     names = Enum.map(modules, & &1.name())
 
     for name <-
-          ~w(find_thread read_thread get_thread_status send_thread_message reply_to_parent_thread create_thread),
+          ~w(list_threads find_thread read_thread get_thread_status get_thread_trajectory send_thread_message reply_to_parent_thread create_thread),
         do: assert(name in names)
 
     Enum.each(modules, &Handbeam.Tool.Registry.register/1)
+
+    declared = Handbeam.Tool.Registry.tool_defs() |> Enum.map(& &1.name)
+    refute "get_thread_trajectory" in declared
 
     config =
       Handbeam.Agent.Config.from_opts(
@@ -298,7 +568,7 @@ defmodule Handbeam.ThreadsTest do
 
     assert {:ok, _, [block]} =
              Handbeam.Agent.Tool.Executor.execute_all_with_details(
-               [%{id: "find", name: "find_thread", input: %{}}],
+               [%{id: "list", name: "list_threads", input: %{}}],
                state
              )
 

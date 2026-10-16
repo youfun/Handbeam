@@ -1441,13 +1441,35 @@ defmodule Handbeam.Agent.TurnTest do
 
       emitted = Agent.get(events, & &1)
 
+      turn_events =
+        Enum.filter(emitted, fn {kind, _payload} -> kind in [:turn_start, :turn_end] end)
+
+      assert [
+               {:turn_start, %{turn: 1}},
+               {:turn_end, %{turn: 1, stop_reason: "tool_use"}},
+               {:turn_start, %{turn: 2}},
+               {:turn_end, %{turn: 2, stop_reason: "completed"}}
+             ] = turn_events
+
       assert {:tool_start, %{tool_use_id: "toolu_001", tool: "read"}} =
                Enum.find(emitted, fn {kind, _payload} -> kind == :tool_start end)
 
-      assert {:tool_end, %{tool_use_id: "toolu_001", tool: "read", file_path: file_path}} =
-               Enum.find(emitted, fn {kind, _payload} -> kind == :tool_end end)
+      assert {:tool_end,
+              %{
+                tool_use_id: "toolu_001",
+                tool: "read",
+                file_path: file_path,
+                duration_ms: duration_ms,
+                started_at: started_at,
+                completed_at: completed_at,
+                timing_fidelity: "exact",
+                turn_number: 1
+              }} = Enum.find(emitted, fn {kind, _payload} -> kind == :tool_end end)
 
       assert file_path == "test_file.txt"
+      assert is_integer(duration_ms) and duration_ms >= 0
+      assert is_binary(started_at)
+      assert is_binary(completed_at)
     end
   end
 end
@@ -2012,7 +2034,14 @@ defmodule Handbeam.Agent.TurnPermissionTest do
       assert resumed.status == :completed
       assert resumed.interrupt_data == nil
       assert File.exists?(marker)
-      assert_receive {:resume_event, {:tool_end, %{tool_use_id: "touch_1"}}}
+
+      assert_receive {:resume_event, {:tool_start, %{tool_use_id: "touch_1", turn_number: 1}}}
+
+      assert_receive {:resume_event, {:tool_end, %{tool_use_id: "touch_1", turn_number: 1}}}
+
+      assert_receive {:resume_event,
+                      {:turn_end, %{turn: 1, status: :completed, stop_reason: "tool_use_resumed"}}}
+
       assert_receive {:resume_event, {:run_end, %{status: :completed, usage: usage}}}
       assert usage == resumed.usage
       assert_receive {:resume_event, {:agent_end, %{status: :completed}}}
@@ -2084,7 +2113,7 @@ defmodule Handbeam.Agent.TurnPermissionTest do
       assert resumed.status == :completed
       assert File.exists?(marker)
 
-      assert_receive {:resume_event, {:tool_end, %{tool_use_id: "touch_1"}}}
+      assert_receive {:resume_event, {:tool_end, %{tool_use_id: "touch_1", turn_number: 1}}}
 
       assert_receive {:resume_event,
                       {:candidate_message_injected,
@@ -2122,11 +2151,23 @@ defmodule Handbeam.Agent.TurnPermissionTest do
         Turn.resume_after_tool_approval(
           result,
           [%{"tool_call_id" => "touch_1", "action" => "deny"}],
-          []
+          on_event: &send(self(), {:deny_resume_event, &1})
         )
 
       assert resumed.status == :completed
       assert resumed.interrupt_data == nil
+
+      assert_receive {:deny_resume_event,
+                      {:tool_end,
+                       %{
+                         tool_use_id: "touch_1",
+                         turn_number: 1,
+                         duration_ms: 0,
+                         timing_fidelity: "not_started"
+                       }}}
+
+      assert_receive {:deny_resume_event,
+                      {:turn_end, %{turn: 1, status: :completed, stop_reason: "tool_use_resumed"}}}
 
       # The denied marker file should NOT exist since we denied the touch call
       refute File.exists?(Path.join(workspace, "denied_marker"))

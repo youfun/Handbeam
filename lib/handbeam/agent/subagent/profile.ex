@@ -37,7 +37,7 @@ defmodule Handbeam.Agent.Subagent.Profile do
         }
 
   @name_re ~r/^[a-z][a-z0-9_-]{0,39}$/
-  @delegation_tools ~w(task task_status advisor find_thread read_thread get_thread_status send_thread_message reply_to_parent_thread create_thread)
+  @delegation_tools ~w(task task_status advisor list_threads find_thread read_thread get_thread_status get_thread_trajectory send_thread_message reply_to_parent_thread create_thread)
   @write_tools ~w(write edit)
   @max_prompt_bytes 32_000
 

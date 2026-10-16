@@ -6,14 +6,19 @@ defmodule Handbeam.Tool.Builtin.FindThread do
     module: Handbeam.Threads,
     action: :find,
     description:
-      "Find durable threads in your workspace by title/update time, excluding internal tasks. Summary is title-only. Cursors expire on snapshot changes; restart the query.",
+      "Search durable threads in the current workspace by a required title substring, excluding internal tasks. Returns persistent summaries only. Use list_threads when browsing without a known keyword. Cursors expire on snapshot changes; restart the search.",
     schema: %{
       type: "object",
       additionalProperties: false,
+      required: ["query"],
       properties: %{
-        query: %{type: "string", maxLength: 200},
-        updated_after: %{type: "string"},
-        include_archived: %{type: "boolean"},
+        query: %{type: "string", minLength: 1, maxLength: 200},
+        archived: %{
+          type: "string",
+          enum: ["active", "archived", "all"],
+          description: "Which threads to search (default active)."
+        },
+        updated_after: %{type: "string", description: "Inclusive ISO-8601 timestamp."},
         limit: %{type: "integer", minimum: 1, maximum: 20},
         cursor: %{type: "string"}
       }
