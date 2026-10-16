@@ -377,15 +377,32 @@ pub fn build(b: *std.Build) void {
     // --- exqlite / SQLite NIF ─────────────────────────────────────────────
     // Compile sqlite3_nif.c + sqlite3.c (the SQLite amalgamation) and link
     // them into libsqlite3_nif.so. NDK clang for the link as before; zig cc
-    // for compile. -DSQLITE_THREADSAFE=1 matches CMake.
-    // FTS5 is required by the engrams_fts migration (trigram tokenizer).
+    // for compile. Flags match MobDev.Exqlite.defines/0 (MOB-487) and CMake.
     const sqlite_flags = &[_][]const u8{
         "-Os",
         "-ffunction-sections",
         "-fdata-sections",
         "-fPIC",
         "-DSQLITE_THREADSAFE=1",
-        "-DSQLITE_ENABLE_FTS5",
+        "-DSQLITE_USE_URI=1",
+        "-DSQLITE_LIKE_DOESNT_MATCH_BLOBS=1",
+        "-DSQLITE_DQS=0",
+        "-DHAVE_USLEEP=1",
+        "-DALLOW_COVERING_INDEX_SCAN=1",
+        "-DENABLE_FTS3_PARENTHESIS=1",
+        "-DENABLE_LOAD_EXTENSION=1",
+        "-DENABLE_SOUNDEX=1",
+        "-DENABLE_STAT4=1",
+        "-DENABLE_UPDATE_DELETE_LIMIT=1",
+        "-DSQLITE_ENABLE_FTS3=1",
+        "-DSQLITE_ENABLE_FTS4=1",
+        "-DSQLITE_ENABLE_FTS5=1",
+        "-DSQLITE_ENABLE_GEOPOLY=1",
+        "-DSQLITE_ENABLE_MATH_FUNCTIONS=1",
+        "-DSQLITE_ENABLE_RBU=1",
+        "-DSQLITE_ENABLE_RTREE=1",
+        "-DSQLITE_OMIT_DEPRECATED=1",
+        "-DSQLITE_ENABLE_DBSTAT_VTAB=1",
         b.fmt("--sysroot={s}", .{ndk_sysroot}),
         "-isystem",
         b.fmt("{s}/usr/include", .{ndk_sysroot}),

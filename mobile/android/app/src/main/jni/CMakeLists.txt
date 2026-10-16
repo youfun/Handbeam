@@ -177,13 +177,32 @@ if(NOT EXISTS "${ZIG_SQLITE_SO}")
 
     target_compile_definitions(sqlite3_nif PRIVATE
         SQLITE_THREADSAFE=1
-        SQLITE_ENABLE_FTS5
+        SQLITE_USE_URI=1
+        SQLITE_LIKE_DOESNT_MATCH_BLOBS=1
+        SQLITE_DQS=0
+        HAVE_USLEEP=1
+        ALLOW_COVERING_INDEX_SCAN=1
+        ENABLE_FTS3_PARENTHESIS=1
+        ENABLE_LOAD_EXTENSION=1
+        ENABLE_SOUNDEX=1
+        ENABLE_STAT4=1
+        ENABLE_UPDATE_DELETE_LIMIT=1
+        SQLITE_ENABLE_FTS3=1
+        SQLITE_ENABLE_FTS4=1
+        SQLITE_ENABLE_FTS5=1
+        SQLITE_ENABLE_GEOPOLY=1
+        SQLITE_ENABLE_MATH_FUNCTIONS=1
+        SQLITE_ENABLE_RBU=1
+        SQLITE_ENABLE_RTREE=1
+        SQLITE_OMIT_DEPRECATED=1
+        SQLITE_ENABLE_DBSTAT_VTAB=1
     )
 
     target_link_libraries(sqlite3_nif
         handbeam_probe
         android
         log
+        m
     )
 endif()  # NOT EXISTS ZIG_SQLITE_SO
 
