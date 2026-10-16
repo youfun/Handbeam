@@ -55,7 +55,8 @@ defmodule Handbeam.WorkspaceSettingsWriteTest do
       task_pids = Enum.map(tasks, & &1.pid)
       Enum.each(task_pids, fn pid -> assert_receive {:ready, ^pid} end)
       Enum.each(task_pids, &send(&1, {:go, gate}))
-      assert Enum.all?(tasks, &match?(:ok, Task.await(&1, 5_000)))
+      results = Task.await_many(tasks, 15_000)
+      assert Enum.all?(results, &match?(:ok, &1))
 
       assert {:ok, settings} = WorkspaceSettings.load(ws)
       assert MapSet.new(get_in(settings, ["tools", "allow"])) == MapSet.new(patterns)

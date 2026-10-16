@@ -329,7 +329,7 @@ defmodule Handbeam.Tool.Builtin.MixProjectTest do
           app: :handbeam_mix_tool,
           version: "0.1.0",
           elixir: "~> 1.18",
-          deps: [{:makeup, "== 1.2.1"}]
+          deps: [{:makeup, "~> 1.2"}]
         ]
       end
 

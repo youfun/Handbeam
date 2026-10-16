@@ -267,7 +267,7 @@ defmodule Handbeam.Memory.ObservationalTest do
       assert config.context.memory_scope == "both"
       assert config.context.privacy_mode == "standard"
 
-      disabled = AgentConfig.from_opts(om: %{enabled: false})
+      disabled = AgentConfig.from_opts(builtin_memory_enabled: false)
       refute Handbeam.Agent.Middleware.ObservationalSessionStart in disabled.middleware
 
       sid = "test-om-runtime-#{System.unique_integer([:positive])}"

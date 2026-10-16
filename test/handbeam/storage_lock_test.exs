@@ -4,7 +4,11 @@ defmodule Handbeam.StorageLockTest do
   alias Handbeam.StorageLock
 
   setup do
-    root = Path.join(System.tmp_dir!(), "handbeam-db-lock-#{Ecto.UUID.generate()}")
+    root =
+      System.tmp_dir!()
+      |> StorageLock.canonical_path()
+      |> Path.join("handbeam-db-lock-#{Ecto.UUID.generate()}")
+
     File.mkdir_p!(root)
     on_exit(fn -> File.rm_rf!(root) end)
     %{root: root}

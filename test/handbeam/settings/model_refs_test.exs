@@ -4,6 +4,7 @@ defmodule Handbeam.Settings.ModelRefsTest do
   import ExUnit.CaptureLog
 
   alias Handbeam.Agent.ModelConfig
+  alias Handbeam.Host
   alias Handbeam.Settings
   alias Handbeam.Settings.{ModelAIOverride, ModelPolicy, ModelRefs}
   alias Handbeam.WorkspaceStore
@@ -14,9 +15,9 @@ defmodule Handbeam.Settings.ModelRefsTest do
     dir = Path.join(System.tmp_dir!(), "sigil_model_refs_#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
     previous = Map.new(@env, &{&1, System.get_env(&1)})
-    host = Application.get_env(:handbeam, :host)
-    Handbeam.Host.put!(Map.put(host || %{}, :data_dir, dir))
+    previous_host = Application.get_env(:handbeam, :host)
 
+    Host.put!(%{data_dir: dir})
     System.put_env("HANDBEAM_MODELS_FILE", Path.join(dir, "models.json"))
     System.put_env("HANDBEAM_WORKSPACES_FILE", Path.join(dir, "workspaces.json"))
     System.put_env("HANDBEAM_GLOBAL_SETTINGS_FILE", Path.join(dir, "settings.json"))
@@ -37,13 +38,13 @@ defmodule Handbeam.Settings.ModelRefsTest do
       })
 
     on_exit(fn ->
-      if host,
-        do: Application.put_env(:handbeam, :host, host),
-        else: Application.delete_env(:handbeam, :host)
-
       Enum.each(previous, fn {key, value} ->
         if value, do: System.put_env(key, value), else: System.delete_env(key)
       end)
+
+      if previous_host,
+        do: Application.put_env(:handbeam, :host, previous_host),
+        else: Application.delete_env(:handbeam, :host)
 
       File.rm_rf!(dir)
     end)
@@ -88,8 +89,12 @@ defmodule Handbeam.Settings.ModelRefsTest do
     # Catalog defaults are reassigned by ModelConfig; only settings block deletion.
     blocking = ModelRefs.blocking(refs)
 
-    assert Enum.map(blocking, & &1.source) |> Enum.sort() ==
-             [:global_model_ai, :workspace_model_ai, :workspace_policy_default]
+    assert Enum.map(blocking, &{&1.source, &1[:field]}) |> Enum.sort() ==
+             [
+               {:global_model_ai, :default_model},
+               {:workspace_model_ai, :om_model},
+               {:workspace_policy_default, nil}
+             ]
 
     assert %{refs: [], errors: []} = ModelRefs.find(:model, "beta", "two")
   end
