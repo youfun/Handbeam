@@ -81,11 +81,20 @@ defmodule HandbeamWeb.WorkspaceLive.Composer do
   defp drafts(socket), do: socket.assigns[:composer_drafts] || %{}
 
   def materialize_uploads(socket) do
-    if has_upload_entries?(socket) do
-      {socket, _attachments} = consume_images(socket, socket.assigns[:workspace_root])
-      socket
-    else
-      socket
+    workspace_root = socket.assigns[:workspace_root]
+
+    cond do
+      not has_upload_entries?(socket) ->
+        socket
+
+      socket.assigns[:chat_scope] != :free and not is_binary(workspace_root) ->
+        socket
+        |> assign(:composer_error, gettext("This conversation checkout is unavailable."))
+        |> cancel_image_uploads()
+
+      true ->
+        {socket, _attachments} = consume_images(socket, workspace_root)
+        socket
     end
   end
 

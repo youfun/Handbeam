@@ -113,6 +113,22 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
     result
   end
 
+  defp git!(cwd, args) do
+    {output, status} = System.cmd("git", args, cd: cwd, stderr_to_stdout: true)
+    assert status == 0, output
+    output
+  end
+
+  defp init_git_repo!(path) do
+    File.mkdir_p!(path)
+    git!(path, ["init"])
+    git!(path, ["config", "user.email", "test@example.com"])
+    git!(path, ["config", "user.name", "Handbeam Test"])
+    File.write!(Path.join(path, "README.md"), "main")
+    git!(path, ["add", "README.md"])
+    git!(path, ["commit", "-m", "fixture"])
+  end
+
   # ── Helper: build an AgentEvent for tests ──
   defp send_recorded_edit(view, tool_use_id, file_path, change) do
     send(
@@ -183,18 +199,6 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
     view |> render() |> session_id_from_html()
   end
 
-  defp workspace_conversation_count(html, workspace_name, workspace_id) do
-    marker = "phx-value-ws_id=\"#{workspace_id}\""
-
-    html
-    |> String.split(~s(>#{workspace_name}</span>), parts: 2)
-    |> List.last()
-    |> String.split(marker, parts: 2)
-    |> hd()
-    |> then(&Regex.scan(~r/class=\"conversation-row(?:\s|\")/, &1))
-    |> length()
-  end
-
   defp isolate_conversation_home! do
     home_dir = Path.join(System.tmp_dir!(), "sigil_lv_home_#{System.unique_integer([:positive])}")
     System.put_env("HOME", home_dir)
@@ -217,6 +221,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
     )
 
     safe_rm_test_rune!(home_dir)
+    assert {:ok, _default_workspace} = Handbeam.WorkspaceStore.ensure_default!()
 
     Agent.update(Process.get(:workspace_live_test_tracker), fn state ->
       %{state | homes: [home_dir | state.homes]}
@@ -3958,7 +3963,56 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       {:ok, ws_dir: ws_dir, home_dir: home_dir}
     end
 
-    test "adding a workspace does not create a conversation", %{conn: conn} do
+    test "adding two linked checkouts creates one workspace with checkout-bound conversations", %{
+      conn: conn
+    } do
+      base =
+        Path.join(System.tmp_dir!(), "sigil_linked_project_#{System.unique_integer([:positive])}")
+
+      repo = Path.join(base, "repo")
+      linked = Path.join(base, "linked")
+      init_git_repo!(repo)
+      git!(repo, ["worktree", "add", "-b", "feature", linked])
+
+      try do
+        {:ok, view, _html} = live(conn, "/")
+
+        for {path, name} <- [{repo, "Repo"}, {linked, "Linked"}] do
+          view |> element("#activity-bar button[phx-click='open_add_project']") |> render_click()
+          view |> render_keyup("update_add_path", %{"value" => path})
+          view |> render_keyup("update_add_name", %{"value" => name})
+          view |> element("button[phx-click='confirm_add_project']") |> render_click()
+        end
+
+        assert {:ok, main_workspace} = Handbeam.WorkspaceStore.get_by_path(repo)
+        assert {:ok, linked_workspace} = Handbeam.WorkspaceStore.get_by_path(linked)
+        assert main_workspace["id"] == linked_workspace["id"]
+
+        conversations =
+          Handbeam.ConversationStore.list_for_workspace(main_workspace["id"])
+
+        assert MapSet.new(Enum.map(conversations, & &1["checkout_path"])) ==
+                 MapSet.new([
+                   Handbeam.Security.PathValidator.resolve_symlink(repo),
+                   Handbeam.Security.PathValidator.resolve_symlink(linked)
+                 ])
+
+        view
+        |> element(
+          "button[phx-click='new_conversation_in_workspace'][phx-value-ws_id='#{main_workspace["id"]}']"
+        )
+        |> render_click()
+
+        conversations = Handbeam.ConversationStore.list_for_workspace(main_workspace["id"])
+        linked_path = Handbeam.Security.PathValidator.resolve_symlink(linked)
+        assert Enum.count(conversations, &(&1["checkout_path"] == linked_path)) == 2
+        assert length(Enum.reject(Handbeam.WorkspaceStore.list(), & &1["default"])) == 1
+      after
+        File.rm_rf!(base)
+      end
+    end
+
+    test "adding a workspace creates a checkout-bound first conversation", %{conn: conn} do
       project_dir =
         Path.join(System.tmp_dir!(), "sigil_added_project_#{System.unique_integer([:positive])}")
 
@@ -3976,12 +4030,14 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         rendered = render(view)
 
         assert rendered =~ "Added Project"
-        assert rendered =~ "sid:none"
+        refute rendered =~ "sid:none"
         assert rendered =~ "No messages yet"
         {:ok, added_ws} = Handbeam.WorkspaceStore.get_by_path(project_dir)
         assert Handbeam.WorkspaceSettings.builtin_memory_enabled(project_dir)
-        assert Handbeam.ConversationStore.list_for_workspace(added_ws["id"]) == []
-        assert workspace_conversation_count(rendered, "Added Project", added_ws["id"]) == 0
+        assert [conversation] = Handbeam.ConversationStore.list_for_workspace(added_ws["id"])
+
+        assert conversation["checkout_path"] ==
+                 Handbeam.Security.PathValidator.resolve_symlink(project_dir)
       after
         File.rm_rf!(project_dir)
       end
@@ -4382,7 +4438,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         view |> render_keyup("update_add_name", %{"value" => "Send Project"})
         view |> element("button[phx-click='confirm_add_project']") |> render_click()
 
-        assert render(view) =~ "sid:none"
+        initial_id = render(view) |> session_id_from_html()
 
         view
         |> element("form")
@@ -4394,6 +4450,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
 
         {:ok, added_ws} = Handbeam.WorkspaceStore.get_by_path(project_dir)
         assert [conversation] = Handbeam.ConversationStore.list_for_workspace(added_ws["id"])
+        assert conversation["id"] == initial_id
 
         runner_pid =
           case Registry.lookup(Handbeam.AgentRunRegistry, conversation["id"]) do
@@ -4444,8 +4501,8 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         view |> element("button[phx-click='confirm_add_project']") |> render_click()
 
         {:ok, added_ws} = Handbeam.WorkspaceStore.get_by_path(project_dir)
-        {:ok, archived} = Handbeam.ConversationStore.create(added_ws["id"], [{"title", "Old"}])
-        {:ok, _archived} = Handbeam.ConversationStore.archive(archived["id"])
+        assert [initial] = Handbeam.ConversationStore.list_for_workspace(added_ws["id"])
+        {:ok, _archived} = Handbeam.ConversationStore.archive(initial["id"])
 
         view
         |> element(

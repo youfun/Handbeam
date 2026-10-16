@@ -192,13 +192,17 @@ defmodule HandbeamWeb.WorkspaceLive.ModelSelection do
 
   def reload_workspace_counts_for_path(socket) do
     workspace_root = ConversationState.current_workspace_path(socket)
+    checkout_root = ConversationState.current_checkout_path(socket)
 
     mcp_count =
       case Handbeam.MCP.ConfigLoader.load(project: workspace_root) do
         {:ok, config} -> map_size(config.servers)
       end
 
-    skills_count = length(Handbeam.Skills.Loader.load(workspace: workspace_root).skills)
+    skills_count =
+      if is_binary(checkout_root),
+        do: length(Handbeam.Skills.Loader.load(workspace: checkout_root).skills),
+        else: 0
 
     socket
     |> assign(:mcp_count, mcp_count)
@@ -381,7 +385,7 @@ defmodule HandbeamWeb.WorkspaceLive.ModelSelection do
   end
 
   def load_workspace_effective_settings(socket) do
-    workspace_path = socket.assigns.workspace_root || Handbeam.Workspace.root()
+    workspace_path = ConversationState.current_workspace_path(socket)
 
     if is_nil(workspace_path) or workspace_path == "" do
       Logger.warning(
@@ -410,8 +414,8 @@ defmodule HandbeamWeb.WorkspaceLive.ModelSelection do
   end
 
   def initialize_workspace_conversation_model(socket) do
-    available =
-      Handbeam.Agent.ModelConfig.available_models_for_workspace(socket.assigns.workspace_root)
+    workspace_path = ConversationState.current_workspace_path(socket)
+    available = Handbeam.Agent.ModelConfig.available_models_for_workspace(workspace_path)
 
     socket
     |> assign(:available_models, available)

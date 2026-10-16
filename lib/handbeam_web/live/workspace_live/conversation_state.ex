@@ -67,7 +67,7 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
     selected_model = conversation_selected_model(socket, conv, available_models)
     token_usage = load_conversation_token_usage(conv_id)
     running_for_conversation? = running_for_conversation?(socket, conv_id)
-    workspace_root = Map.get(socket.assigns, :workspace_root, Handbeam.Workspace.root())
+    workspace_root = Map.get(socket.assigns, :workspace_root)
     {editor_files, active_file} = normalize_editor_state(socket, conv, workspace_root)
 
     socket =
@@ -731,9 +731,34 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationState do
     if free_chat?(socket) do
       nil
     else
-      case Handbeam.WorkspaceStore.get(socket.assigns.current_workspace_id) do
-        {:ok, ws} -> ws["path"]
-        {:error, _} -> Handbeam.Workspace.root()
+      case socket.assigns[:workspace_path] do
+        path when is_binary(path) and path != "" ->
+          path
+
+        _ ->
+          case Handbeam.WorkspaceStore.get(socket.assigns.current_workspace_id) do
+            {:ok, ws} -> ws["path"]
+            {:error, _} -> nil
+          end
+      end
+    end
+  end
+
+  def current_checkout_path(socket) do
+    if free_chat?(socket) do
+      nil
+    else
+      case socket.assigns[:workspace_root] do
+        path when is_binary(path) and path != "" ->
+          path
+
+        _ ->
+          case Handbeam.ConversationStore.effective_checkout_path(
+                 socket.assigns[:current_conversation_id]
+               ) do
+            {:ok, path} -> path
+            {:error, _reason} -> nil
+          end
       end
     end
   end

@@ -97,10 +97,13 @@ defmodule HandbeamWeb.WorkspaceLive.CliSelection do
   @doc "Options for `Handbeam.Agent.CliAgent.Run.turn/2`. Nil when Handbeam owns the turn."
   @spec run_opts(Phoenix.LiveView.Socket.t(), String.t()) :: keyword() | nil
   def run_opts(socket, conversation_id) do
-    if cli_selected?(socket.assigns) and is_binary(socket.assigns.selected_model) do
+    cwd = workspace_cwd(socket)
+
+    if cli_selected?(socket.assigns) and is_binary(socket.assigns.selected_model) and
+         is_binary(cwd) do
       [
         backend: socket.assigns.selected_cli,
-        cwd: workspace_cwd(socket),
+        cwd: cwd,
         model: socket.assigns.selected_model,
         reasoning_effort: socket.assigns.selected_reasoning_level,
         conversation_id: conversation_id,
@@ -312,6 +315,8 @@ defmodule HandbeamWeb.WorkspaceLive.CliSelection do
   end
 
   defp workspace_cwd(socket) do
-    socket.assigns[:workspace_root] || File.cwd!()
+    if socket.assigns[:chat_scope] == :free,
+      do: File.cwd!(),
+      else: socket.assigns[:workspace_root]
   end
 end

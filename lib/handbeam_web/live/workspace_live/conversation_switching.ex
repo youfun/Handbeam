@@ -35,7 +35,9 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
   end
 
   def assign_current(socket, ws, conversation_id) do
-    _ = Handbeam.Search.prewarm(ws["path"])
+    checkout_path = checkout_path_for_assignment(ws, conversation_id)
+    socket = update_terminal_subscription(socket, ws["id"], checkout_path)
+    if is_binary(checkout_path), do: Handbeam.Search.prewarm(checkout_path)
 
     socket
     |> assign(:chat_scope, :workspace)
@@ -43,7 +45,9 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
     |> put_conversation(conversation_id)
     |> assign(:conversation_menu_id, nil)
     |> assign(:rename_conversation, nil)
-    |> assign(:workspace_root, ws["path"])
+    |> assign(:workspace_path, ws["path"])
+    |> assign(:workspace_root, checkout_path)
+    |> assign(:checkout_available?, is_binary(checkout_path))
     |> assign(:workspace_label, ws["name"])
     |> assign(:expanded_tool_groups, MapSet.new())
     |> assign(:pending_messages, %{})
@@ -52,8 +56,40 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
     |> SessionMemory.remember()
   end
 
+  defp update_terminal_subscription(socket, workspace_id, checkout_path) do
+    if Phoenix.LiveView.connected?(socket) and socket.assigns[:show_terminal] do
+      old_topic =
+        terminal_topic(socket.assigns[:current_workspace_id], socket.assigns[:workspace_root])
+
+      new_topic = terminal_topic(workspace_id, checkout_path)
+
+      if is_binary(old_topic) and old_topic != new_topic,
+        do: Phoenix.PubSub.unsubscribe(Handbeam.PubSub, old_topic)
+
+      if is_binary(new_topic), do: Phoenix.PubSub.subscribe(Handbeam.PubSub, new_topic)
+    end
+
+    socket
+  end
+
+  defp terminal_topic(workspace_id, checkout_path)
+       when is_binary(workspace_id) and is_binary(checkout_path) do
+    Handbeam.CheckoutScope.terminal_topic(workspace_id, Handbeam.CheckoutScope.key(checkout_path))
+  end
+
+  defp terminal_topic(_workspace_id, _checkout_path), do: nil
+
+  defp checkout_path_for_assignment(ws, nil), do: ws["default_checkout_path"]
+
+  defp checkout_path_for_assignment(_ws, conversation_id) do
+    case Handbeam.ConversationStore.effective_checkout_path(conversation_id) do
+      {:ok, checkout_path} -> checkout_path
+      {:error, _reason} -> nil
+    end
+  end
+
   def select_workspace(socket, ws_id) do
-    {:ok, ws} = Handbeam.WorkspaceStore.get(ws_id)
+    {:ok, ws} = refreshed_workspace(ws_id)
     Handbeam.WorkspaceStore.touch(ws_id)
 
     {socket, conv} = ensure_active_conversation(socket, ws_id)
@@ -62,28 +98,52 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
   end
 
   def select_conversation(socket, ws_id, conv_id) do
-    {:ok, ws} = Handbeam.WorkspaceStore.get(ws_id)
-    Handbeam.WorkspaceStore.touch(ws_id)
-
-    {assign_current(socket, ws, conv_id), conv_id}
+    with {:ok, ws} <- refreshed_workspace(ws_id),
+         {:ok, conversation} <-
+           Handbeam.ConversationStore.get(conv_id, include_timeline?: false),
+         true <- conversation["workspace_id"] == ws_id do
+      Handbeam.WorkspaceStore.touch(ws_id)
+      {assign_current(socket, ws, conv_id), conv_id}
+    else
+      _ -> {socket, nil}
+    end
   end
 
   def select_archived_conversation(socket, ws_id, conv_id) do
-    {:ok, ws} = Handbeam.WorkspaceStore.get(ws_id)
+    {:ok, ws} = refreshed_workspace(ws_id)
     {assign_current(socket, ws, conv_id), conv_id}
   end
 
-  def select_new_workspace_without_conversation(socket, new_ws, workspaces) do
+  def select_new_workspace_without_conversation(
+        socket,
+        new_ws,
+        workspaces,
+        checkout_path \\ nil
+      ) do
     conversations_by_ws =
       workspaces
       |> build_conversations_by_workspace(include_archived?: true)
       |> Map.put_new(new_ws["id"], [])
 
+    conversations = Map.get(conversations_by_ws, new_ws["id"], [])
+    checkout_path = checkout_path || new_ws["default_checkout_path"]
+
+    conversation =
+      existing_checkout_conversation(new_ws["id"], checkout_path) ||
+        build_conversation(new_ws["id"], length(conversations) + 1, checkout_path)
+
+    conversations_by_ws =
+      Map.put(
+        conversations_by_ws,
+        new_ws["id"],
+        insert_sidebar_conversation(conversations, conversation)
+      )
+
     socket
     |> assign(:workspaces, workspaces)
     |> assign(:conversations_by_workspace, conversations_by_ws)
     |> reload_conversation_stream()
-    |> assign_current(new_ws, nil)
+    |> assign_current(new_ws, ConversationState.conversation_id(conversation))
   end
 
   def ensure_current_conversation(socket, opts \\ []) do
@@ -151,9 +211,10 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
       |> reload_conversation_stream()
 
     {socket, conv} = ensure_active_conversation(socket, ws_id)
+    {:ok, workspace} = refreshed_workspace(ws_id)
 
     socket
-    |> put_conversation(ConversationState.conversation_id(conv))
+    |> assign_current(workspace, ConversationState.conversation_id(conv))
     |> reload_conversation_stream()
     |> ConversationState.sync_conv_state(opts)
   end
@@ -263,10 +324,11 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
     if socket.assigns.current_conversation_id == conv_id do
       {socket, next} = ensure_active_conversation(socket, ws_id)
       next_id = ConversationState.conversation_id(next)
+      {:ok, workspace} = refreshed_workspace(ws_id)
 
       socket =
         socket
-        |> put_conversation(next_id)
+        |> assign_current(workspace, next_id)
         |> reload_conversation_stream()
         |> ConversationState.sync_conv_state(opts)
         |> ConversationState.sync_conv_to()
@@ -366,13 +428,17 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
   end
 
   def assign_free(socket, conversation_id) do
+    socket = update_terminal_subscription(socket, nil, nil)
+
     socket
     |> assign(:chat_scope, :free)
     |> assign(:current_workspace_id, nil)
     |> put_conversation(conversation_id)
     |> assign(:conversation_menu_id, nil)
     |> assign(:rename_conversation, nil)
+    |> assign(:workspace_path, nil)
     |> assign(:workspace_root, nil)
+    |> assign(:checkout_available?, false)
     |> assign(:workspace_label, "Chats")
     |> assign(:expanded_tool_groups, MapSet.new())
     |> assign(:pending_messages, %{})
@@ -381,12 +447,30 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
     |> SessionMemory.remember()
   end
 
+  defp refreshed_workspace(workspace_id) do
+    case Handbeam.WorkspaceStore.refresh_identity(workspace_id) do
+      {:ok, workspace} -> {:ok, workspace}
+      {:error, _reason} -> Handbeam.WorkspaceStore.get(workspace_id)
+    end
+  end
+
+  defp existing_checkout_conversation(workspace_id, checkout_path) do
+    Handbeam.ConversationStore.list_for_workspace(workspace_id,
+      include_archived?: true,
+      include_timeline?: false
+    )
+    |> Enum.find(fn conversation ->
+      conversation["checkout_path"] == checkout_path and not archived_conversation?(conversation)
+    end)
+  end
+
   def new_conversation(socket, workspace_id, opts \\ []) do
-    {:ok, ws} = Handbeam.WorkspaceStore.get(workspace_id)
+    {:ok, ws} = refreshed_workspace(workspace_id)
     Handbeam.WorkspaceStore.touch(workspace_id)
 
     conversations = Map.get(socket.assigns.conversations_by_workspace, workspace_id, [])
-    conversation = build_conversation(workspace_id, length(conversations) + 1)
+    checkout_path = Keyword.get(opts, :checkout_path) || inherited_checkout_path(socket, ws)
+    conversation = build_conversation(workspace_id, length(conversations) + 1, checkout_path)
 
     conversations_by_ws =
       Map.put(
@@ -411,6 +495,20 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
       |> ConversationState.sync_conv_to()
 
     {socket, ConversationState.conversation_id(conversation)}
+  end
+
+  defp inherited_checkout_path(socket, ws) do
+    if socket.assigns[:current_workspace_id] == ws["id"] and
+         is_binary(socket.assigns[:current_conversation_id]) do
+      case Handbeam.ConversationStore.effective_checkout_path(
+             socket.assigns.current_conversation_id
+           ) do
+        {:ok, checkout_path} -> checkout_path
+        {:error, _reason} -> ws["default_checkout_path"]
+      end
+    else
+      ws["default_checkout_path"]
+    end
   end
 
   def refresh_conversation_in_sidebar(socket, conv_id) do
@@ -539,9 +637,18 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
     end
   end
 
-  def build_conversation(workspace_id, num) do
+  def build_conversation(workspace_id, num, checkout_path \\ nil) do
     title = conversation_title(num)
-    {:ok, conversation} = Handbeam.ConversationStore.create(workspace_id, [{"title", title}])
+
+    opts =
+      [title: title]
+      |> then(fn opts ->
+        if is_binary(checkout_path),
+          do: Keyword.put(opts, :checkout_path, checkout_path),
+          else: opts
+      end)
+
+    {:ok, conversation} = Handbeam.ConversationStore.create(workspace_id, opts)
     conversation
   end
 
@@ -599,7 +706,14 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
 
     case first_active_conversation(conversations) do
       nil ->
-        conversation = build_conversation(workspace_id, length(conversations) + 1)
+        {:ok, workspace} = refreshed_workspace(workspace_id)
+
+        conversation =
+          build_conversation(
+            workspace_id,
+            length(conversations) + 1,
+            workspace["default_checkout_path"]
+          )
 
         socket =
           update(socket, :conversations_by_workspace, fn conversations_by_workspace ->
@@ -738,38 +852,28 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSwitching do
       pinned: pinned_conversation?(conv),
       pinned_at: ConversationState.conv_value(conv, "pinned_at", nil),
       updated_at: ConversationState.conv_value(conv, "updated_at", nil),
-      created_at: ConversationState.conv_value(conv, "created_at", nil)
+      created_at: ConversationState.conv_value(conv, "created_at", nil),
+      checkout_path: ConversationState.conv_value(conv, "checkout_path", nil)
     }
 
     Map.put(row, :age, HandbeamWeb.WorkspaceLive.ViewComponents.short_relative_time(row))
   end
 
-  @doc """
-  Folder name and current Git branch shown on conversation hover.
-
-  Branch lookup is cached per workspace path so rendering the sidebar does
-  not spawn a Git process for every row.
-  """
-  def hover_context(workspaces, workspace_id) when is_list(workspaces) do
-    workspace = Enum.find(workspaces, &(&1["id"] == workspace_id))
-    path = workspace && workspace["path"]
+  @doc "Folder, live branch, and absolute checkout path shown on conversation hover."
+  def hover_context(conversation) when is_map(conversation) do
+    path = ConversationState.conv_value(conversation, "checkout_path", nil)
+    available? = is_binary(path) and path != "" and File.dir?(path)
 
     %{
-      folder: hover_folder(workspace),
-      branch: hover_branch(path)
+      folder: if(is_binary(path) and path != "", do: Path.basename(path)),
+      branch: if(available?, do: hover_branch(path)),
+      path: path,
+      available: available?
     }
   end
 
-  def hover_context(_workspaces, _workspace_id), do: %{folder: nil, branch: nil}
-
-  defp hover_folder(nil), do: nil
-
-  defp hover_folder(workspace) do
-    case workspace["path"] do
-      path when is_binary(path) and path != "" -> Path.basename(path)
-      _ -> nil
-    end
-  end
+  def hover_context(_conversation),
+    do: %{folder: nil, branch: nil, path: nil, available: false}
 
   defp hover_branch(path) when is_binary(path) and path != "" do
     key = {path, branch_cache_bucket()}

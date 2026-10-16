@@ -296,12 +296,12 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
           )
         )
 
-      workspace_path = ConversationState.current_workspace_path(socket)
+      checkout_path = ConversationState.current_checkout_path(socket)
 
       case Handbeam.Attachments.MessageBuilder.build(
              content_text,
              attachments,
-             Composer.build_opts(socket, workspace_path)
+             Composer.build_opts(socket, checkout_path)
            ) do
         {:ok, content, persistable} ->
           msg_id = RuntimeProjection.unique_id("msg-user")
@@ -476,34 +476,40 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
   end
 
   def add_message_to_current_conversation(socket, conv_id, content, opts) do
-    {selected_model, selected_reasoning_level} =
-      ModelSelection.effective_model_and_reasoning(socket)
+    checkout_path = ConversationState.current_checkout_path(socket)
 
-    workspace_path = ConversationState.current_workspace_path(socket)
+    if ConversationState.free_chat?(socket) or is_binary(checkout_path) do
+      {selected_model, selected_reasoning_level} =
+        ModelSelection.effective_model_and_reasoning(socket)
 
-    with {:ok, built} <-
-           Handbeam.Agent.RunOpts.for_selection(
-             workspace_path,
-             selected_model,
-             selected_reasoning_level,
-             socket.assigns.effective_settings
-           ) do
-      msg_id = Keyword.get(opts, :message_id)
+      workspace_path = ConversationState.current_workspace_path(socket)
 
-      Handbeam.Agent.Coordinator.add_message(
-        conv_id,
-        content,
-        run_opts(
-          socket,
-          Keyword.merge(built,
-            deliver_as: Keyword.get(opts, :deliver_as, :steer),
-            transcript_id: msg_id,
-            message_id: msg_id,
-            inbound_id: msg_id,
-            attachments: Keyword.get(opts, :attachments, [])
+      with {:ok, built} <-
+             Handbeam.Agent.RunOpts.for_selection(
+               workspace_path,
+               selected_model,
+               selected_reasoning_level,
+               socket.assigns.effective_settings
+             ) do
+        msg_id = Keyword.get(opts, :message_id)
+
+        Handbeam.Agent.Coordinator.add_message(
+          conv_id,
+          content,
+          run_opts(
+            socket,
+            Keyword.merge(built,
+              deliver_as: Keyword.get(opts, :deliver_as, :steer),
+              transcript_id: msg_id,
+              message_id: msg_id,
+              inbound_id: msg_id,
+              attachments: Keyword.get(opts, :attachments, [])
+            )
           )
         )
-      )
+      end
+    else
+      {:error, :checkout_unavailable}
     end
   end
 
@@ -525,6 +531,7 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
           tools: tools_for(socket),
           workspace_id: socket.assigns.current_workspace_id,
           workspace_path: ConversationState.current_workspace_path(socket),
+          working_directory: ConversationState.current_checkout_path(socket),
           source: :live_view,
           streaming: true
         ]
@@ -730,15 +737,26 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
   defp cli_turn_error(reason), do: gettext("CLI turn failed: %{reason}", reason: inspect(reason))
 
   def start_new_agent_run(socket, conv_id, content, message, attachments) do
-    if cli_run_active?(conv_id) do
-      {:noreply,
-       assign(
-         socket,
-         :composer_error,
-         gettext("Stop the active CLI run before sending with Handbeam.")
-       )}
-    else
-      do_start_new_agent_run(socket, conv_id, content, message, attachments)
+    cond do
+      not ConversationState.free_chat?(socket) and
+          is_nil(ConversationState.current_checkout_path(socket)) ->
+        {:noreply,
+         assign(
+           socket,
+           :composer_error,
+           gettext("This conversation checkout is unavailable. Restore it before running tools.")
+         )}
+
+      cli_run_active?(conv_id) ->
+        {:noreply,
+         assign(
+           socket,
+           :composer_error,
+           gettext("Stop the active CLI run before sending with Handbeam.")
+         )}
+
+      true ->
+        do_start_new_agent_run(socket, conv_id, content, message, attachments)
     end
   end
 
@@ -851,7 +869,7 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
   end
 
   def prepare_outbound_message(socket, message) do
-    Composer.prepare(socket, message, ConversationState.current_workspace_path(socket))
+    Composer.prepare(socket, message, ConversationState.current_checkout_path(socket))
   end
 
   def has_upload_entries?(socket), do: Composer.has_upload_entries?(socket)

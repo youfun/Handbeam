@@ -117,15 +117,19 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
         assign(socket, :add_project_form, form)
 
       true ->
-        case Handbeam.WorkspaceStore.add(path,
+        case Handbeam.WorkspaceStore.add_selection(path,
                name: name,
                builtin_memory_enabled: socket.assigns.add_project_form["builtin_memory_enabled"]
              ) do
-          {:ok, new_ws} ->
+          {:ok, new_ws, checkout_path} ->
             workspaces = Handbeam.WorkspaceStore.list()
 
             socket
-            |> ConversationSwitching.select_new_workspace_without_conversation(new_ws, workspaces)
+            |> ConversationSwitching.select_new_workspace_without_conversation(
+              new_ws,
+              workspaces,
+              checkout_path
+            )
             |> cancel_add_project()
             |> ConversationState.sync_conv_state(ModelSelection.state_opts())
             |> ModelSelection.reload_workspace_models()
@@ -136,7 +140,7 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
             assign(
               socket,
               :add_project_form,
-              Map.put(socket.assigns.add_project_form, "error", reason)
+              Map.put(socket.assigns.add_project_form, "error", workspace_error(reason))
             )
         end
     end
@@ -225,9 +229,11 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
   def sandbox_workspace?, do: Handbeam.Host.configured?() and not Handbeam.Host.shell?()
 
   defp load_skills(socket) do
-    if ConversationState.free_chat?(socket),
+    checkout_path = ConversationState.current_checkout_path(socket)
+
+    if ConversationState.free_chat?(socket) or not is_binary(checkout_path),
       do: assign(socket, :available_skills, []),
-      else: Skills.load(socket, ConversationState.current_workspace_path(socket))
+      else: Skills.load(socket, checkout_path)
   end
 
   defp request_sandbox_directory_picker do
@@ -254,18 +260,19 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
         {:noreply, assign(socket, :add_project_form, form)}
 
       true ->
-        case Handbeam.WorkspaceStore.add(path,
+        case Handbeam.WorkspaceStore.add_selection(path,
                name: if(name != "", do: name, else: Path.basename(path)),
                builtin_memory_enabled: form["builtin_memory_enabled"]
              ) do
-          {:ok, new_ws} ->
+          {:ok, new_ws, checkout_path} ->
             workspaces = Handbeam.WorkspaceStore.list()
 
             socket =
               socket
               |> ConversationSwitching.select_new_workspace_without_conversation(
                 new_ws,
-                workspaces
+                workspaces,
+                checkout_path
               )
               |> assign(:show_add_project, false)
               |> assign(:show_file_browser, false)
@@ -278,11 +285,20 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
             {:noreply, socket}
 
           {:error, reason} ->
-            form = Map.put(form, "error", reason)
+            form = Map.put(form, "error", workspace_error(reason))
             {:noreply, assign(socket, :add_project_form, form)}
         end
     end
   end
+
+  defp workspace_error(:workspace_format_outdated),
+    do: "工作区格式已更新，请重新添加工作区"
+
+  defp workspace_error(:workspace_repo_conflict),
+    do: "该仓库已关联到另一个工作区，请使用已有工作区"
+
+  defp workspace_error(reason) when is_binary(reason), do: reason
+  defp workspace_error(reason), do: inspect(reason)
 
   defp new_project_form do
     %{
@@ -322,7 +338,7 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
   end
 
   def load_workspace_tree(socket, relative_dir) do
-    path = ConversationState.current_workspace_path(socket)
+    path = ConversationState.current_checkout_path(socket)
 
     if is_binary(path) do
       load_workspace_tree(socket, path, relative_dir)
@@ -352,11 +368,18 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
   end
 
   def open_terminal_panel(socket, mobile?) do
-    if connected?(socket) do
-      Phoenix.PubSub.subscribe(
-        Handbeam.PubSub,
-        "terminal:\#{socket.assigns.current_workspace_id}"
-      )
+    checkout_path = ConversationState.current_checkout_path(socket)
+
+    if connected?(socket) and is_binary(checkout_path) do
+      with {:ok, checkout} <- Handbeam.CheckoutScope.resolve(checkout_path) do
+        Phoenix.PubSub.subscribe(
+          Handbeam.PubSub,
+          Handbeam.CheckoutScope.terminal_topic(
+            socket.assigns.current_workspace_id,
+            checkout.key
+          )
+        )
+      end
     end
 
     socket
@@ -494,8 +517,17 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
   end
 
   def refresh_loaded_tree_parent(socket, abs_path) do
-    relative = Path.relative_to(abs_path, ConversationState.current_workspace_path(socket))
+    case ConversationState.current_checkout_path(socket) do
+      checkout_path when is_binary(checkout_path) ->
+        relative = Path.relative_to(abs_path, checkout_path)
+        refresh_relative_tree_parent(socket, relative)
 
+      _ ->
+        socket
+    end
+  end
+
+  defp refresh_relative_tree_parent(socket, relative) do
     parent =
       case Path.dirname(relative) do
         "." -> ""
@@ -514,7 +546,7 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
       if ConversationState.free_chat?(socket) do
         :deny
       else
-        load_permission_mode(socket.assigns.workspace_root || Handbeam.Workspace.root())
+        load_permission_mode(ConversationState.current_workspace_path(socket))
       end
 
     assign(socket, :permission_mode, permission_mode)

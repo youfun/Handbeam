@@ -190,6 +190,7 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
   attr :timeline, :any, required: true
   attr :user_time_zone, :any, default: nil
   attr :uploads, :any, required: true
+  attr :workspace_path, :any, required: true
   attr :workspace_root, :any, required: true
 
   def chat_panel(assigns) do
@@ -1027,7 +1028,7 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
               }
               class="composer-model-error"
             >
-              {model_empty_message(@workspace_root)}
+              {model_empty_message(@workspace_path)}
             </div>
             <div class="permission-menu-container">
               <button

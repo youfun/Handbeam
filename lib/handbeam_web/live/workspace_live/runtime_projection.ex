@@ -568,7 +568,7 @@ defmodule HandbeamWeb.WorkspaceLive.RuntimeProjection do
       |> EditorProjection.maybe_add_diff_file(
         file_path,
         diff_lines,
-        ConversationState.current_workspace_path(socket)
+        ConversationState.current_checkout_path(socket)
       )
 
     if updated.assigns.editor_files != socket.assigns.editor_files do

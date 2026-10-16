@@ -46,8 +46,9 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   @impl true
   def mount(params, _session, socket) do
-    # Ensure default workspace exists
-    {:ok, default_ws} = Handbeam.WorkspaceStore.ensure_default!()
+    # Ensure v2 workspace storage exists. Legacy metadata is backed up, not migrated.
+    {:ok, default_ws, workspace_format_updated?} =
+      Handbeam.WorkspaceStore.ensure_default_for_ui()
 
     workspaces = Handbeam.WorkspaceStore.list()
 
@@ -70,11 +71,14 @@ defmodule HandbeamWeb.WorkspaceLive do
     socket =
       socket
       |> assign(:page_title, "Handbeam — Workspace")
+      |> maybe_warn_workspace_format(workspace_format_updated?)
       |> assign(:chat_scope, boot.chat_scope)
       |> assign(:workspaces, workspaces)
       |> assign(:current_workspace_id, boot.workspace_id)
       |> assign(:current_conversation_id, boot.conversation_id)
+      |> assign(:workspace_path, boot.workspace_path)
       |> assign(:workspace_root, boot.workspace_root)
+      |> assign(:checkout_available?, boot.chat_scope == :free or is_binary(boot.workspace_root))
       |> assign(:workspace_label, boot.workspace_label)
       |> assign(:conversations_by_workspace, conversations_by_ws)
       |> assign(:conversation_list_loading, true)
@@ -191,6 +195,12 @@ defmodule HandbeamWeb.WorkspaceLive do
     {:ok, socket}
   end
 
+  defp maybe_warn_workspace_format(socket, true) do
+    put_flash(socket, :warning, "工作区格式已更新，请重新添加工作区")
+  end
+
+  defp maybe_warn_workspace_format(socket, false), do: socket
+
   defp boot_location(params, workspaces, default_ws, conversations_by_ws) do
     if is_binary(params["conversation_id"]) do
       explicit_boot(params, workspaces, default_ws) ||
@@ -202,6 +212,7 @@ defmodule HandbeamWeb.WorkspaceLive do
             chat_scope: :free,
             workspace_id: nil,
             conversation_id: id,
+            workspace_path: nil,
             workspace_root: nil,
             workspace_label: "Chats",
             model_root: default_ws["path"]
@@ -210,11 +221,14 @@ defmodule HandbeamWeb.WorkspaceLive do
         %{scope: :workspace, workspace_id: workspace_id, conversation_id: id} ->
           ws = Enum.find(workspaces, &(&1["id"] == workspace_id)) || default_ws
 
+          checkout_path = checkout_for_boot(id, ws)
+
           %{
             chat_scope: :workspace,
             workspace_id: ws["id"],
             conversation_id: id,
-            workspace_root: ws["path"],
+            workspace_path: ws["path"],
+            workspace_root: checkout_path,
             workspace_label: ws["name"],
             model_root: ws["path"]
           }
@@ -239,7 +253,8 @@ defmodule HandbeamWeb.WorkspaceLive do
         chat_scope: :workspace,
         workspace_id: workspace_id,
         conversation_id: conversation_id,
-        workspace_root: workspace["path"],
+        workspace_path: workspace["path"],
+        workspace_root: checkout_for_boot(conversation_id, workspace),
         workspace_label: workspace["name"],
         model_root: workspace["path"]
       }
@@ -256,6 +271,7 @@ defmodule HandbeamWeb.WorkspaceLive do
         chat_scope: :free,
         workspace_id: nil,
         conversation_id: conversation_id,
+        workspace_path: nil,
         workspace_root: nil,
         workspace_label: "Chats",
         model_root: default_ws["path"]
@@ -270,10 +286,24 @@ defmodule HandbeamWeb.WorkspaceLive do
       chat_scope: :workspace,
       workspace_id: default_ws["id"],
       conversation_id: initial_conversation_id(conversations_by_ws, default_ws["id"]),
-      workspace_root: default_ws["path"],
+      workspace_path: default_ws["path"],
+      workspace_root: default_ws["default_checkout_path"],
       workspace_label: default_ws["name"],
       model_root: default_ws["path"]
     }
+  end
+
+  defp checkout_for_boot(conversation_id, workspace) do
+    case Handbeam.ConversationStore.effective_checkout_path(conversation_id) do
+      {:ok, checkout_path} ->
+        checkout_path
+
+      {:error, :checkout_path_missing} when is_nil(conversation_id) ->
+        workspace["default_checkout_path"]
+
+      {:error, _reason} ->
+        nil
+    end
   end
 
   defp finish_boot_models(socket) do
@@ -427,7 +457,6 @@ defmodule HandbeamWeb.WorkspaceLive do
 
         socket =
           socket
-          |> assign(:workspace_root, ws["path"])
           |> assign(:workspace_label, ws["name"])
           |> WorkspaceNavigation.after_switch()
           |> RuntimeProjection.subscribe_session()
@@ -621,7 +650,7 @@ defmodule HandbeamWeb.WorkspaceLive do
       ConversationState.select_file(
         socket,
         path,
-        ConversationState.current_workspace_path(socket),
+        ConversationState.current_checkout_path(socket),
         ModelSelection.state_opts()
       )
 
@@ -634,7 +663,7 @@ defmodule HandbeamWeb.WorkspaceLive do
      ConversationState.select_file(
        socket,
        relative_path,
-       ConversationState.current_workspace_path(socket),
+       ConversationState.current_checkout_path(socket),
        ModelSelection.state_opts()
      )}
   end
@@ -651,7 +680,7 @@ defmodule HandbeamWeb.WorkspaceLive do
      ConversationState.select_editor_file(
        socket,
        relative_path,
-       ConversationState.current_workspace_path(socket),
+       ConversationState.current_checkout_path(socket),
        ModelSelection.state_opts()
      )}
   end
@@ -659,7 +688,7 @@ defmodule HandbeamWeb.WorkspaceLive do
   @impl true
   def handle_event("close_editor_file", %{"path" => relative_path}, socket)
       when is_binary(relative_path) do
-    root = ConversationState.current_workspace_path(socket)
+    root = ConversationState.current_checkout_path(socket)
 
     {:noreply,
      ConversationState.close_file(socket, relative_path, root, ModelSelection.state_opts())}
@@ -702,7 +731,7 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   def handle_event("open_file_change", %{"path" => path} = params, socket)
       when is_binary(path) do
-    root = ConversationState.current_workspace_path(socket)
+    root = ConversationState.current_checkout_path(socket)
     requested = Path.expand(path, root)
     message_id = params["message_id"]
 
@@ -778,14 +807,14 @@ defmodule HandbeamWeb.WorkspaceLive do
     with %{} = change <- find_change(socket.assigns.timeline, change_id),
          {:not_running, false} <- {:not_running, running_for_current_conversation?(socket)} do
       result =
-        Handbeam.ChangeReverter.revert(change, ConversationState.current_workspace_path(socket))
+        Handbeam.ChangeReverter.revert(change, ConversationState.current_checkout_path(socket))
 
       {:noreply,
        EditorProjection.apply_revert_result(
          socket,
          change,
          result,
-         ConversationState.current_workspace_path(socket)
+         ConversationState.current_checkout_path(socket)
        )}
     else
       {:not_running, true} ->
@@ -938,7 +967,7 @@ defmodule HandbeamWeb.WorkspaceLive do
 
           socket =
             socket
-            |> ConversationState.sync_conv_state(reload?: true)
+            |> WorkspaceNavigation.after_switch()
             |> RuntimeProjection.subscribe_session()
             |> restore_session()
             |> WorkspaceNavigation.close_mobile_sheets()
@@ -1097,6 +1126,7 @@ defmodule HandbeamWeb.WorkspaceLive do
 
           next_conv_id && is_binary(ws_id) ->
             socket
+            |> WorkspaceNavigation.after_switch()
             |> RuntimeProjection.subscribe_session()
             |> push_patch(to: "/w/#{ws_id}/c/#{next_conv_id}")
 
@@ -1369,7 +1399,7 @@ defmodule HandbeamWeb.WorkspaceLive do
   def handle_event("select_permission_mode", %{"mode" => mode_str}, socket)
       when mode_str in ["prompt", "auto_review", "yolo"] do
     mode = String.to_existing_atom(mode_str)
-    workspace_root = socket.assigns.workspace_root || Handbeam.Workspace.root()
+    workspace_root = ConversationState.current_workspace_path(socket)
 
     case Handbeam.WorkspaceSettings.update_permission_mode(workspace_root, mode) do
       :ok ->
@@ -1569,11 +1599,33 @@ defmodule HandbeamWeb.WorkspaceLive do
   # Forward terminal PubSub events to TerminalPanel component.
   # TerminalPanel is a LiveComponent sharing this LiveView process,
   # so its PubSub subscriptions arrive here.
+  def handle_info({:terminal_refresh, ws_id, checkout_key, term_name}, socket) do
+    if terminal_scope?(socket, ws_id, checkout_key) do
+      send_update(HandbeamWeb.Live.TerminalPanel,
+        id: "terminal-panel",
+        action: {:terminal_refresh, term_name}
+      )
+    end
+
+    {:noreply, socket}
+  end
+
   def handle_info({:terminal_refresh, ws_id, term_name}, socket) do
     if ws_id == socket.assigns.current_workspace_id do
       send_update(HandbeamWeb.Live.TerminalPanel,
         id: "terminal-panel",
         action: {:terminal_refresh, term_name}
+      )
+    end
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:terminal_exited, ws_id, checkout_key, term_name, status}, socket) do
+    if terminal_scope?(socket, ws_id, checkout_key) do
+      send_update(HandbeamWeb.Live.TerminalPanel,
+        id: "terminal-panel",
+        action: {:terminal_exited, term_name, status}
       )
     end
 
@@ -1674,6 +1726,16 @@ defmodule HandbeamWeb.WorkspaceLive do
     {:noreply, socket}
   end
 
+  defp terminal_scope?(socket, workspace_id, checkout_key) do
+    current_key =
+      case socket.assigns[:workspace_root] do
+        path when is_binary(path) -> Handbeam.CheckoutScope.key(path)
+        _ -> nil
+      end
+
+    workspace_id == socket.assigns.current_workspace_id and checkout_key == current_key
+  end
+
   defp browser_panel_current?(socket, conversation_id) do
     socket.assigns.current_conversation_id == conversation_id and
       socket.assigns.right_panel_view == :browser
@@ -1705,6 +1767,7 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   defp project_event(socket, event) do
     socket = RuntimeProjection.apply(socket, event)
+    socket = maybe_refresh_workspace_identity(socket, event)
 
     socket =
       if schedule_tool_finished?(event) do
@@ -1715,6 +1778,28 @@ defmodule HandbeamWeb.WorkspaceLive do
 
     WorkspaceNavigation.finish_runtime(socket)
   end
+
+  defp maybe_refresh_workspace_identity(socket, %{kind: kind})
+       when kind in [:run_end, "run_end"] do
+    case socket.assigns[:current_workspace_id] do
+      workspace_id when is_binary(workspace_id) ->
+        with {:ok, workspace} <- Handbeam.WorkspaceStore.get(workspace_id),
+             true <- workspace["kind"] == "directory",
+             true <- File.exists?(Path.join(workspace["path"], ".git")),
+             {:ok, refreshed} <- Handbeam.WorkspaceStore.refresh_identity(workspace_id) do
+          socket
+          |> assign(:workspaces, Handbeam.WorkspaceStore.list())
+          |> assign(:workspace_path, refreshed["path"])
+        else
+          _ -> socket
+        end
+
+      _ ->
+        socket
+    end
+  end
+
+  defp maybe_refresh_workspace_identity(socket, _event), do: socket
 
   defp schedule_tool_finished?(%{kind: kind, payload: payload})
        when kind in [:tool_end, "tool_end"] do
@@ -1782,9 +1867,14 @@ defmodule HandbeamWeb.WorkspaceLive do
   # Preserves the current selected_model only if still allowed in the new workspace.
 
   defp load_available_skills(socket) do
-    if ConversationState.free_chat?(socket),
-      do: assign(socket, :available_skills, []),
-      else: Skills.load(socket, ConversationState.current_workspace_path(socket))
+    if ConversationState.free_chat?(socket) do
+      assign(socket, :available_skills, [])
+    else
+      case ConversationState.current_checkout_path(socket) do
+        path when is_binary(path) -> Skills.load(socket, path)
+        _ -> assign(socket, :available_skills, [])
+      end
+    end
   end
 
   # Resolve a composite model id to a human-readable display name.
@@ -1966,7 +2056,7 @@ defmodule HandbeamWeb.WorkspaceLive do
     pending = socket.assigns.pending_approval
 
     if is_binary(conv_id) and not is_nil(pending) do
-      workspace_root = socket.assigns.workspace_root || Handbeam.Workspace.root()
+      workspace_root = ConversationState.current_workspace_path(socket)
 
       case Approval.resume(conv_id, pending, action, remember, workspace_root) do
         :ok ->

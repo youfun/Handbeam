@@ -72,6 +72,7 @@ mobile-ux-demo*.html
 
 # Local runtime data
 .handbeam/
+.handbeam-recovery/conversation-artifacts/
 .playwright-mcp/
 
 # Temporary screenshots / assets

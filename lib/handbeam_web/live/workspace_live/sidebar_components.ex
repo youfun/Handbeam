@@ -5,6 +5,8 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
 
   import HandbeamWeb.WorkspaceLive.ViewComponents
 
+  alias HandbeamWeb.WorkspaceLive.{ConversationState, ConversationSwitching}
+
   attr :chat_scope, :any, required: true
   attr :conversations_by_workspace, :any, required: true
   attr :current_conversation_id, :any, required: true
@@ -778,7 +780,7 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
           <span :if={@schedule_count > 0} class="sidebar-primary-nav-count">{@schedule_count}</span>
         </button>
       </nav>
-      <.conversation_hover_card workspaces={@workspaces} />
+      <.conversation_hover_card conversations_by_workspace={@conversations_by_workspace} />
       <.workspace_hover_card />
     </div>
     """
@@ -847,10 +849,11 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
     """
   end
 
-  attr :workspaces, :list, required: true
+  attr :conversations_by_workspace, :map, required: true
 
   defp conversation_hover_card(assigns) do
-    assigns = assign(assigns, :contexts, hover_contexts(assigns.workspaces))
+    assigns =
+      assign(assigns, :contexts, hover_contexts(assigns.conversations_by_workspace))
 
     ~H"""
     <div id="conversation-hover-card" class="conversation-hover" role="tooltip" hidden>
@@ -933,15 +936,34 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
           </svg>
           <span class="truncate">{meta.branch}</span>
         </div>
+        <div :if={meta.path} class="conversation-hover-meta conversation-hover-path-row">
+          <span aria-hidden="true">⌁</span>
+          <span class="conversation-hover-path" title={meta.path}>{meta.path}</span>
+        </div>
+        <div
+          :if={meta.path && not meta.available}
+          class="conversation-hover-unavailable"
+          role="status"
+        >
+          {gettext("Checkout unavailable")}
+        </div>
       </div>
     </div>
     """
   end
 
-  defp hover_contexts(workspaces) do
-    workspaces
-    |> Enum.map(fn ws -> {ws["id"], hover_context(workspaces, ws["id"])} end)
-    |> Enum.filter(fn {_id, meta} -> meta.folder || meta.branch end)
+  defp hover_contexts(conversations_by_workspace) do
+    conversations_by_workspace
+    |> Map.values()
+    |> List.flatten()
+    |> Enum.map(fn conversation ->
+      {ConversationState.conversation_id(conversation),
+       ConversationSwitching.hover_context(conversation)}
+    end)
+    |> Enum.filter(fn {id, meta} ->
+      is_binary(id) and (meta.folder || meta.branch || meta.path)
+    end)
+    |> Enum.uniq_by(&elem(&1, 0))
   end
 
   attr :id, :string, required: true

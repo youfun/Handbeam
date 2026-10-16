@@ -115,9 +115,9 @@ export const ConversationHover = {
       age.hidden = value === "";
     }
 
-    const workspaceId = row.dataset.workspaceId || "";
+    const conversationId = row.dataset.conversationId || "";
     this.card.querySelectorAll("[data-hover-context]").forEach((node) => {
-      node.hidden = node.dataset.hoverContext !== workspaceId;
+      node.hidden = node.dataset.hoverContext !== conversationId;
     });
 
     this.card.hidden = false;

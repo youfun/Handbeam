@@ -14,19 +14,36 @@ defmodule HandbeamWeb.ConversationHoverTest do
     assert ViewComponents.short_relative_time(%{}) == ""
   end
 
-  test "hover context uses the folder basename and omits a missing branch" do
+  test "hover context uses the conversation checkout and exposes its absolute path" do
     dir = Path.join(System.tmp_dir!(), "handbeam-hover-#{System.unique_integer([:positive])}")
     File.mkdir_p!(dir)
+    on_exit(fn -> File.rm_rf(dir) end)
 
     context =
-      ConversationSwitching.hover_context(
-        [%{"id" => "ws", "name" => "Ignored", "path" => dir}],
-        "ws"
-      )
+      ConversationSwitching.hover_context(%{
+        "id" => "conversation",
+        "workspace_id" => "ws",
+        "checkout_path" => dir
+      })
 
     assert context.folder == Path.basename(dir)
     assert context.branch == nil
-    assert ConversationSwitching.hover_context([], nil) == %{folder: nil, branch: nil}
+    assert context.path == dir
+    assert context.available
+
+    File.rm_rf!(dir)
+    unavailable = ConversationSwitching.hover_context(%{"checkout_path" => dir})
+    assert unavailable.folder == Path.basename(dir)
+    assert unavailable.path == dir
+    refute unavailable.available
+    assert unavailable.branch == nil
+
+    assert ConversationSwitching.hover_context(nil) == %{
+             folder: nil,
+             branch: nil,
+             path: nil,
+             available: false
+           }
   end
 
   test "repo name is absent when the path is not a repository" do

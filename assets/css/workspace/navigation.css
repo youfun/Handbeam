@@ -326,6 +326,25 @@
   color: #7c6bb5;
 }
 
+.conversation-hover-path-row {
+  max-width: min(360px, calc(100vw - 32px));
+}
+
+.conversation-hover-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.conversation-hover-unavailable {
+  margin-top: 6px;
+  color: var(--sig-status-error, #b84c4c);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
 .workspace-hover {
   position: fixed;
   z-index: 80;

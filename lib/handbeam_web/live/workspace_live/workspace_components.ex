@@ -327,6 +327,7 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceComponents do
                 :if={!@file_preview_error && is_map(@file_preview)}
                 preview={@file_preview}
                 workspace_id={@current_workspace_id}
+                conversation_id={@current_conversation_id}
                 file_manager={@file_manager}
               />
             </div>
@@ -385,6 +386,7 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceComponents do
 
   attr :preview, :any, required: true
   attr :workspace_id, :string, required: true
+  attr :conversation_id, :string, required: true
   attr :file_manager, :atom, default: nil
 
   def file_preview(assigns) do
@@ -410,7 +412,9 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceComponents do
         phx-hook="FileImage"
       >
         <img
-          src={"/workspace-files/#{URI.encode(@workspace_id)}/#{encode_file_path(@preview.relative_path)}?v=#{@preview.revision}"}
+          src={
+            "/workspace-files/#{URI.encode(@workspace_id)}/#{encode_file_path(@preview.relative_path)}?conversation_id=#{URI.encode(@conversation_id)}&v=#{@preview.revision}"
+          }
           alt={@preview.name}
         />
         <span data-preview-image-error role="status" hidden>
