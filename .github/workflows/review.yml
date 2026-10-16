@@ -29,7 +29,7 @@ jobs:
       - name: Build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential pkg-config bubblewrap inotify-tools apparmor
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config patchelf bubblewrap inotify-tools apparmor
 
       - name: Permit Bubblewrap user namespaces on the CI runner
         run: |
@@ -42,6 +42,10 @@ jobs:
           EOF
           sudo apparmor_parser -r /etc/apparmor.d/handbeam-ci-bwrap
           bwrap --unshare-user --uid 0 --gid 0 --ro-bind / / -- /usr/bin/true
+
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: "0.16.0"
 
       - uses: erlef/setup-beam@v1
         with:
@@ -128,7 +132,7 @@ jobs:
       - name: Build tools
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends build-essential pkg-config bubblewrap inotify-tools apparmor
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config patchelf bubblewrap inotify-tools apparmor
 
       - name: Permit Bubblewrap user namespaces on the CI runner
         run: |
@@ -140,6 +144,10 @@ jobs:
           EOF
           sudo apparmor_parser -r /etc/apparmor.d/handbeam-ci-bwrap
           bwrap --unshare-user --uid 0 --gid 0 --ro-bind / / -- /usr/bin/true
+
+      - uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: "0.16.0"
 
       - uses: erlef/setup-beam@v1
         with:
