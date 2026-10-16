@@ -23,8 +23,21 @@ $actualVersion = ((Get-Content (Join-Path $release "releases\start_erl.data") -R
 if ($actualVersion -ne $expectedVersion) {
     throw "Web release $actualVersion does not match version.properties $expectedVersion"
 }
-Copy-Item (Join-Path $root "scripts\start.bat") (Join-Path $release "start.bat") -Force
-Copy-Item (Join-Path $root "scripts\start.ps1") (Join-Path $release "start.ps1") -Force
+$startBat = Join-Path $release "start.bat"
+$startScript = Join-Path $release "start.ps1"
+$releaseLauncher = Join-Path $release "bin\handbeam.bat"
+Copy-Item (Join-Path $root "scripts\start.bat") $startBat -Force
+Copy-Item (Join-Path $root "scripts\start.ps1") $startScript -Force
+
+$startInvocation = Select-String -Path $startScript -Pattern '^\s*&\s+"\$PSScriptRoot\\bin\\handbeam\.bat"\s+([A-Za-z0-9_]+)\s*$'
+if (@($startInvocation).Count -ne 1) {
+    throw "start.ps1 must invoke bin\handbeam.bat with exactly one release command"
+}
+$releaseCommand = $startInvocation.Matches[0].Groups[1].Value
+$commandDeclaration = 'if "%~1" == "' + $releaseCommand + '"'
+if (-not (Select-String -Path $releaseLauncher -SimpleMatch $commandDeclaration -Quiet)) {
+    throw "start.ps1 calls unsupported release command '$releaseCommand'"
+}
 
 $archive = Join-Path $root "handbeam-web-$target.zip"
 $sum = "$archive.sha256"

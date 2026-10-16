@@ -53,5 +53,5 @@ if (-not $env:SECRET_KEY_BASE) {
 
 Write-Host "Handbeam http://localhost:$($env:PORT)"
 Write-Host "Stop with Ctrl+C"
-& "$PSScriptRoot\bin\handbeam.bat" console
+& "$PSScriptRoot\bin\handbeam.bat" start
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

@@ -121,7 +121,7 @@ jobs:
 
       - uses: goto-bus-stop/setup-zig@v2
         with:
-          version: "0.16.0"
+          version: "0.17.0-dev.269+ebff43698"
 
       - uses: erlef/setup-beam@v1
         with:
@@ -262,7 +262,7 @@ jobs:
       - uses: goto-bus-stop/setup-zig@v2
         if: matrix.target == 'linux-x86_64' || matrix.target == 'macos-arm64'
         with:
-          version: "0.16.0"
+          version: "0.17.0-dev.269+ebff43698"
 
       - uses: erlef/setup-beam@v1
         if: matrix.target != 'windows-arm64'
@@ -454,6 +454,13 @@ jobs:
             if ! compgen -G "dist/handbeam-web-windows-arm64*" >/dev/null; then
               echo "Windows ARM64 is omitted: OTP publishes no ARM64 installer, and GitHub-hosted ARM runners cannot install WSL."
             fi
+            echo
+            if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+              changelog_ref="$GITHUB_REF_NAME"
+            else
+              changelog_ref="$GITHUB_SHA"
+            fi
+            echo "[完整更新日志](https://github.com/${GITHUB_REPOSITORY}/blob/${changelog_ref}/CHANGELOG.md)"
             echo
             echo "Assets:"
             find dist -type f -printf '%f\n' | sort
