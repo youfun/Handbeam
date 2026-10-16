@@ -201,29 +201,6 @@ defmodule HandbeamWeb.Live.Settings.ModelAIPanel do
         <div class="settings-card">
           <div class="settings-field-row">
             <div class="settings-field-copy">
-              <div class="settings-field-title">{gettext("Observational Memory")}</div>
-              <div class="settings-field-desc">
-                {gettext("Watch conversations and extract durable memories.")}
-              </div>
-            </div>
-            <div class="settings-field-control">
-              <label class="relative inline-flex items-center cursor-pointer h-4">
-                <input
-                  type="checkbox"
-                  name="om_enabled"
-                  phx-change="update_field"
-                  checked={@form.om_enabled}
-                  class="sr-only peer"
-                />
-                <span class="settings-toggle-track">
-                  <span class="settings-toggle-thumb"></span>
-                </span>
-              </label>
-            </div>
-          </div>
-
-          <div :if={@form.om_enabled} class="settings-field-row">
-            <div class="settings-field-copy">
               <div class="settings-field-title">{gettext("Memory model")}</div>
               <div class="settings-field-desc">
                 {gettext("Used for both observing conversations and consolidating memories.")}
@@ -258,7 +235,7 @@ defmodule HandbeamWeb.Live.Settings.ModelAIPanel do
               </select>
             </div>
           </div>
-          <div :if={@form.om_enabled} class="settings-field-row">
+          <div class="settings-field-row">
             <div class="settings-field-copy">
               <div class="settings-field-title">{gettext("Think level")}</div>
               <div class="settings-field-desc">
@@ -301,7 +278,7 @@ defmodule HandbeamWeb.Live.Settings.ModelAIPanel do
             </div>
           </div>
 
-          <div :if={@form.om_enabled} class="settings-field-row">
+          <div class="settings-field-row">
             <div class="settings-field-copy">
               <div class="settings-field-title">{gettext("Memory scope")}</div>
               <div class="settings-field-desc">
@@ -326,7 +303,7 @@ defmodule HandbeamWeb.Live.Settings.ModelAIPanel do
               </select>
             </div>
           </div>
-          <div :if={@form.om_enabled} class="settings-field-row">
+          <div class="settings-field-row">
             <div class="settings-field-copy">
               <div class="settings-field-title">{gettext("Privacy mode")}</div>
               <div class="settings-field-desc">
@@ -349,7 +326,7 @@ defmodule HandbeamWeb.Live.Settings.ModelAIPanel do
             </div>
           </div>
 
-          <div :if={@form.om_enabled} class="settings-field-row">
+          <div class="settings-field-row">
             <div class="settings-field-copy">
               <div class="settings-field-title">{gettext("Recent context limit")}</div>
               <div class="settings-field-desc">

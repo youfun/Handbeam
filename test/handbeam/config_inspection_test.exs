@@ -37,20 +37,21 @@ defmodule Handbeam.ConfigInspectionTest do
 
   test "settings values and winning sources use defaults < global < workspace", %{root: root} do
     write(root, "global.json", %{
-      "model_ai" => %{"om_enabled" => true, "om_message_tokens" => 7001}
+      "model_ai" => %{"om_message_tokens" => 7001}
     })
 
     write(root, ".handbeam/settings.jsonc", %{
-      "model_ai" => %{"om_enabled" => false, "om_message_tokens" => 8003}
+      "memory" => %{"builtin_enabled" => false},
+      "model_ai" => %{"om_message_tokens" => 8003}
     })
 
     report = ConfigInspection.report(workspace: root)
-    # An explicit workspace false disables OM even when the global setting is true.
-    assert report.model_ai.om_enabled == %{value: false, source: :workspace_settings}
+    assert report.memory == %{builtin_enabled: false, source: :workspace_settings}
+    refute Map.has_key?(report.model_ai, :om_enabled)
     assert report.model_ai.om_message_tokens == %{value: 8003, source: :workspace_settings}
     assert report.model_ai.om_buffer_tokens == %{value: 10_000, source: :model_ai_defaults}
     assert report.model_ai.reasoning == %{value: "medium", source: :model_ai_defaults}
-    assert Settings.effective_model_ai(root).om_enabled == false
+    refute Handbeam.WorkspaceSettings.builtin_memory_enabled(root)
     assert Settings.effective_model_ai(root).om_message_tokens == 8003
   end
 

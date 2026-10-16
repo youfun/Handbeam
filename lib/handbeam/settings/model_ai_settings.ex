@@ -9,7 +9,7 @@ defmodule Handbeam.Settings.ModelAISettings do
   """
 
   @fields ~w(
-    default_model reasoning om_enabled om_model om_reasoning
+    default_model reasoning om_model om_reasoning
     om_memory_scope om_privacy_mode om_max_recent_context
     om_message_tokens om_buffer_tokens om_observation_tokens
   )a
@@ -19,7 +19,6 @@ defmodule Handbeam.Settings.ModelAISettings do
   defstruct [
     :default_model,
     reasoning: "medium",
-    om_enabled: false,
     om_model: nil,
     om_reasoning: nil,
     om_memory_scope: "workspace",
@@ -38,7 +37,6 @@ defmodule Handbeam.Settings.ModelAISettings do
   @type t :: %__MODULE__{
           default_model: String.t() | nil,
           reasoning: String.t(),
-          om_enabled: boolean(),
           om_model: String.t() | nil,
           om_reasoning: String.t() | nil,
           om_memory_scope: String.t(),
@@ -86,7 +84,6 @@ defmodule Handbeam.Settings.ModelAISettings do
     %{}
     |> maybe_put(:default_model, raw_string(map, "default_model"))
     |> maybe_put(:reasoning, raw_string(map, "reasoning"))
-    |> maybe_put(:om_enabled, raw_bool_present(om_map, "enabled", map, "om_enabled"))
     |> put_optional_string(
       :om_model,
       om_map,
@@ -141,7 +138,6 @@ defmodule Handbeam.Settings.ModelAISettings do
         else: opts
 
     om_map = %{
-      enabled: settings.om_enabled,
       model: settings.om_model || settings.default_model,
       reasoning: settings.om_reasoning,
       memory_scope: settings.om_memory_scope,
@@ -267,7 +263,6 @@ defmodule Handbeam.Settings.ModelAISettings do
     map = put_if_present(map, override, :reasoning, "reasoning")
 
     om_map = %{}
-    om_map = put_if_present(om_map, override, :om_enabled, "enabled")
     om_map = put_if_present(om_map, override, :om_model, "model")
     om_map = put_if_present(om_map, override, :om_reasoning, "reasoning")
     om_map = put_if_present(om_map, override, :om_memory_scope, "memory_scope")
@@ -492,19 +487,6 @@ defmodule Handbeam.Settings.ModelAISettings do
     end
   end
 
-  defp raw_bool_present(primary, primary_key, fallback, fallback_key) do
-    case get_key(primary, primary_key) do
-      v when is_boolean(v) ->
-        v
-
-      _ ->
-        case get_key(fallback, fallback_key) do
-          v when is_boolean(v) -> v
-          _ -> :not_present
-        end
-    end
-  end
-
   defp raw_int(map, key) do
     case get_key(map, key) do
       v when is_integer(v) -> v
@@ -513,7 +495,6 @@ defmodule Handbeam.Settings.ModelAISettings do
   end
 
   defp maybe_put(map, _key, nil), do: map
-  defp maybe_put(map, _key, :not_present), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
 
   defp put_optional_string(map, field, primary, primary_key, fallback, fallback_key) do

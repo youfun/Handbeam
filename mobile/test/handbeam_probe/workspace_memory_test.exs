@@ -68,6 +68,9 @@ defmodule HandbeamProbe.WorkspaceMemoryTest do
 
     blob = flatten_text(tree)
     assert blob =~ "Workspace Memory"
+    assert blob =~ "Use built-in memory"
+    assert tap?(tree, {:memory_builtin, true})
+    assert tap?(tree, {:memory_builtin, false})
     assert blob =~ "Current workspace: Handbeam"
     assert blob =~ "Active memory  1"
     assert blob =~ "#42"
@@ -115,6 +118,28 @@ defmodule HandbeamProbe.WorkspaceMemoryTest do
     assert memory_tab.type == :button
     assert tap?(tree, {:memory_lifecycle, :active})
     assert tap?(tree, {:memory_kind, :preference})
+  end
+
+  test "HomeScreen persists the workspace-local built-in memory setting" do
+    root =
+      Path.join(System.tmp_dir!(), "mobile-memory-setting-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(root)
+    on_exit(fn -> File.rm_rf!(root) end)
+
+    workspace = %{"id" => "memory-setting", "name" => "Memory", "path" => root}
+    socket = %Mob.Socket{assigns: State.new(page: :chat, workspace: workspace)}
+
+    view = socket |> event({:tap, {:page, :memory}}) |> settle()
+    assert view.socket.assigns.workspace_memory.builtin_memory_enabled
+
+    view = event(view, {:tap, {:memory_builtin, false}})
+    refute view.socket.assigns.workspace_memory.builtin_memory_enabled
+    refute Handbeam.WorkspaceSettings.builtin_memory_enabled(root)
+
+    view = event(view, {:tap, {:memory_builtin, true}})
+    assert view.socket.assigns.workspace_memory.builtin_memory_enabled
+    assert Handbeam.WorkspaceSettings.builtin_memory_enabled(root)
   end
 
   test "locating a connection widens filters and copy values stay scoped to loaded items" do

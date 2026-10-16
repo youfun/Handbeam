@@ -2535,3 +2535,24 @@ msgstr "非官方 Cursor 协议接入。费用未知，不会显示为 0 或免�
 #, elixir-autogen, elixir-format
 msgid "默认工作区不能移除"
 msgstr "默认工作区不能移除"
+
+#: lib/handbeam_web/live/workspace_memory_live.html.heex
+#: lib/handbeam_web/live/workspace_live/chat_components.ex
+msgid "使用自带的记忆功能"
+msgstr "使用自带的记忆功能"
+
+#: lib/handbeam_web/live/workspace_memory_live.html.heex
+msgid "关闭后，此工作区可继续使用 MCP 或扩展提供的外部记忆；已有记忆不会删除。"
+msgstr "关闭后，此工作区可继续使用 MCP 或扩展提供的外部记忆；已有记忆不会删除。"
+
+#: lib/handbeam_web/live/workspace_live/chat_components.ex
+msgid "关闭后仍可使用此工作区配置的外部记忆工具。"
+msgstr "关闭后仍可使用此工作区配置的外部记忆工具。"
+
+#: lib/handbeam_web/live/workspace_memory_live.html.heex
+msgid "已开启"
+msgstr "已开启"
+
+#: lib/handbeam_web/live/workspace_memory_live.html.heex
+msgid "已关闭"
+msgstr "已关闭"

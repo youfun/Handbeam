@@ -417,10 +417,6 @@ defmodule HandbeamWeb.SettingsLive do
     struct!(form, reasoning: value)
   end
 
-  defp update_form_field(form, "om_enabled", value) do
-    struct!(form, om_enabled: value in [true, "true", "on"])
-  end
-
   defp update_form_field(form, "om_model", value) do
     struct!(form, om_model: blank_to_nil(value), om_reasoning: nil)
   end

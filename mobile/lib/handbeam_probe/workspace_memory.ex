@@ -1,5 +1,5 @@
 defmodule HandbeamProbe.WorkspaceMemory do
-  @moduledoc "Native read-only browser for workspace and global memories."
+  @moduledoc "Native workspace memory settings and browser."
 
   use Gettext, backend: HandbeamProbe.Gettext
   import HandbeamProbe.NativeUI
@@ -23,6 +23,7 @@ defmodule HandbeamProbe.WorkspaceMemory do
             lifecycle: :active,
             kind: :all,
             query: "",
+            builtin_memory_enabled: true,
             now: nil,
             loading?: false,
             error: nil
@@ -90,6 +91,16 @@ defmodule HandbeamProbe.WorkspaceMemory do
 
   def set_kind(%__MODULE__{} = state, _kind), do: state
 
+  def load_builtin_memory(%__MODULE__{} = state, workspace_path) do
+    %{
+      state
+      | builtin_memory_enabled: Handbeam.WorkspaceSettings.builtin_memory_enabled(workspace_path)
+    }
+  end
+
+  def set_builtin_memory(%__MODULE__{} = state, enabled) when is_boolean(enabled),
+    do: %{state | builtin_memory_enabled: enabled}
+
   def locate(%__MODULE__{} = state, id) when is_integer(id) do
     %{state | query: "##{id}", scope: :both, lifecycle: :all, kind: :all}
   end
@@ -114,6 +125,7 @@ defmodule HandbeamProbe.WorkspaceMemory do
     scroll(
       [
         workspace_card(workspace),
+        builtin_memory_card(state),
         lifecycle_grid(state),
         filters(state),
         status_node(state)
@@ -134,6 +146,31 @@ defmodule HandbeamProbe.WorkspaceMemory do
         padding_top: 8
       ),
       text(path, text_size: 12, text_color: color(:hint), padding_top: 4)
+    ])
+  end
+
+  defp builtin_memory_card(state) do
+    card([
+      text(gettext("Use built-in memory"), text_size: 15, font_weight: "bold"),
+      text(
+        gettext("External memory tools remain available when built-in memory is off."),
+        text_size: 12,
+        text_color: color(:muted),
+        padding_top: 6,
+        padding_bottom: 8
+      ),
+      segment_row([
+        segment_button(
+          gettext("On"),
+          {:memory_builtin, true},
+          state.builtin_memory_enabled
+        ),
+        segment_button(
+          gettext("Off"),
+          {:memory_builtin, false},
+          not state.builtin_memory_enabled
+        )
+      ])
     ])
   end
 

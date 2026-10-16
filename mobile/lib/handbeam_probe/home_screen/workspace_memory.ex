@@ -12,7 +12,11 @@ defmodule HandbeamProbe.HomeScreen.WorkspaceMemory do
   def load(%{assigns: %{workspace: nil}} = socket), do: socket
 
   def load(socket) do
-    state = WorkspaceMemory.loading(socket.assigns.workspace_memory)
+    state =
+      socket.assigns.workspace_memory
+      |> WorkspaceMemory.load_builtin_memory(socket.assigns.workspace["path"])
+      |> WorkspaceMemory.loading()
+
     workspace_id = socket.assigns.workspace["id"]
     {_generation, socket} = Requests.bump(socket, @scope)
 
@@ -26,6 +30,22 @@ defmodule HandbeamProbe.HomeScreen.WorkspaceMemory do
 
   def handle({:change, :memory_query, query}, socket) do
     reload(socket, WorkspaceMemory.set_query(socket.assigns.workspace_memory, query))
+  end
+
+  def handle({:tap, {:memory_builtin, enabled}}, socket) when is_boolean(enabled) do
+    path = socket.assigns.workspace["path"]
+
+    case Handbeam.WorkspaceSettings.update_builtin_memory_enabled(path, enabled) do
+      :ok ->
+        assign(
+          socket,
+          :workspace_memory,
+          WorkspaceMemory.set_builtin_memory(socket.assigns.workspace_memory, enabled)
+        )
+
+      {:error, _reason} ->
+        Notice.put_error(socket, gettext("Could not save workspace memory setting"))
+    end
   end
 
   def handle({:tap, {:memory_scope, scope}}, socket) do

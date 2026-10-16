@@ -237,6 +237,30 @@ defmodule Handbeam.WorkspaceStoreTest do
       end
     end
 
+    test "add can disable built-in memory for a new workspace" do
+      {:ok, _} = WorkspaceStore.ensure_default!()
+
+      tmp_dir =
+        Path.join(
+          System.tmp_dir!(),
+          "sigil_ws_store_memory_#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(tmp_dir)
+
+      try do
+        assert {:ok, _workspace} =
+                 WorkspaceStore.add(tmp_dir, builtin_memory_enabled: false)
+
+        refute Handbeam.WorkspaceSettings.builtin_memory_enabled(tmp_dir)
+
+        assert {:ok, settings} = Handbeam.WorkspaceSettings.load(tmp_dir)
+        assert get_in(settings, ["memory", "builtin_enabled"]) == false
+      after
+        if File.exists?(tmp_dir), do: File.rm_rf!(tmp_dir)
+      end
+    end
+
     test "add does not overwrite existing workspace settings" do
       {:ok, _} = WorkspaceStore.ensure_default!()
 

@@ -203,9 +203,7 @@ defmodule HandbeamProbe.ModelSettings do
   def action({:inherit, field}, state, ws), do: Defaults.inherit(state, field, ws)
   def action(:inherit_all, state, ws), do: Defaults.inherit_all(state, ws)
 
-  def action(:om_enabled, state, ws), do: Memory.toggle_enabled(state, ws)
   def action({:om_model, model}, state, ws), do: Memory.set_model(state, model, ws)
-  def action({:om_reasoning, level}, state, ws), do: Memory.set_reasoning(state, level, ws)
   def action({:om_memory_scope, scope}, state, ws), do: Memory.set_scope(state, scope, ws)
   def action({:om_privacy_mode, mode}, state, ws), do: Memory.set_privacy(state, mode, ws)
   def action(:save_memory_details, state, ws), do: Memory.save_details(state, ws)

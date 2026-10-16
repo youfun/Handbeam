@@ -37,9 +37,10 @@ defmodule Handbeam.Agent.Config do
     :runner_pid,
     :run_id,
     :advisor,
-    :source,
+    source: nil,
     skill_paths: [],
     delegated?: false,
+    builtin_memory_enabled: true,
     context: @default_context,
     tool_timeout: @default_tool_timeout
   ]
@@ -59,6 +60,7 @@ defmodule Handbeam.Agent.Config do
           advisor: map() | nil,
           skill_paths: [String.t()],
           delegated?: boolean(),
+          builtin_memory_enabled: boolean(),
           until_tool: String.t() | nil,
           reasoning_level: String.t(),
           memory: module() | nil,
@@ -94,6 +96,8 @@ defmodule Handbeam.Agent.Config do
   @spec from_opts(keyword()) :: t()
   def from_opts(opts \\ []) do
     provider_config = Keyword.get(opts, :provider_config, %{})
+    builtin_memory_enabled = builtin_memory_enabled(opts)
+    opts = Keyword.put(opts, :builtin_memory_enabled, builtin_memory_enabled)
 
     provider =
       Keyword.get(opts, :provider) ||
@@ -115,6 +119,7 @@ defmodule Handbeam.Agent.Config do
       source: Keyword.get(opts, :source),
       skill_paths: List.wrap(Keyword.get(opts, :skill_paths, [])),
       delegated?: Keyword.get(opts, :delegated?, false),
+      builtin_memory_enabled: builtin_memory_enabled,
       system_prompt: build_system_prompt(opts, provider),
       working_directory: working_directory(opts),
       model: Keyword.get(opts, :model, @default_model),
@@ -220,9 +225,29 @@ defmodule Handbeam.Agent.Config do
   def resolve_provider_from_api(_api, _model, _provider), do: Handbeam.Agent.Provider.OpenAICompat
 
   defp observational_config(opts) do
-    case Keyword.fetch(opts, :om) do
-      {:ok, om} -> Handbeam.Memory.ObservationalConfig.from_runtime(om)
-      :error -> Handbeam.Memory.ObservationalConfig.load()
+    enabled = Keyword.fetch!(opts, :builtin_memory_enabled)
+
+    om =
+      opts
+      |> Keyword.get(:om, %{})
+      |> then(&if(is_map(&1), do: &1, else: %{}))
+      |> Map.delete("enabled")
+      |> Map.put(:enabled, enabled)
+
+    Handbeam.Memory.ObservationalConfig.from_runtime(om)
+  end
+
+  defp builtin_memory_enabled(opts) do
+    case Keyword.fetch(opts, :builtin_memory_enabled) do
+      {:ok, enabled} when is_boolean(enabled) ->
+        enabled
+
+      _ ->
+        path = Keyword.get(opts, :workspace_path) || Keyword.get(opts, :working_directory)
+
+        if is_binary(path) and path != "",
+          do: Handbeam.WorkspaceSettings.builtin_memory_enabled(path),
+          else: true
     end
   end
 
@@ -270,7 +295,7 @@ defmodule Handbeam.Agent.Config do
       Keyword.get_lazy(opts, :system_prompt, fn ->
         if Keyword.get(opts, :chat_scope) == :free,
           do: free_chat_system_prompt(),
-          else: default_system_prompt()
+          else: default_system_prompt(opts)
       end)
 
     base
@@ -481,8 +506,17 @@ defmodule Handbeam.Agent.Config do
     }
   end
 
-  defp default_system_prompt do
-    memory_section = PromptPolicy.generate(%Policy{profile: :balanced})
+  defp default_system_prompt(opts) do
+    memory_section =
+      if Keyword.fetch!(opts, :builtin_memory_enabled) do
+        "\n\n" <>
+          (%Policy{profile: :balanced}
+           |> PromptPolicy.generate()
+           |> String.trim_trailing()) <>
+          "\n"
+      else
+        ""
+      end
 
     """
     You are Handbeam, an AI coding assistant. You help users by reading files,
@@ -524,7 +558,7 @@ defmodule Handbeam.Agent.Config do
     7. **Edit Failures**: If an `edit` fails because old_string does not match, re-read
        the file to get the current exact text, then retry with the correct old_string.
        Do not abandon the task — adjust and try again.
-    """ <> "\n\n" <> String.trim_trailing(memory_section) <> "\n"
+    """ <> memory_section
   end
 
   defp default_middleware(observational) do

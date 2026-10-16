@@ -424,6 +424,29 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
                 class="w-full bg-main border rounded px-2 py-1.5 text-xs text-primary focus:outline-none focus:border-accent"
               />
             </div>
+            <div class="flex items-center justify-between gap-4 py-1">
+              <div>
+                <label for="add-project-builtin-memory" class="text-xs text-primary block">
+                  {gettext("使用自带的记忆功能")}
+                </label>
+                <p id="add-project-builtin-memory-desc" class="text-[11px] text-tertiary mt-0.5">
+                  {gettext("关闭后仍可使用此工作区配置的外部记忆工具。")}
+                </p>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer h-4 shrink-0">
+                <input
+                  id="add-project-builtin-memory"
+                  type="checkbox"
+                  checked={@add_project_form["builtin_memory_enabled"]}
+                  phx-click="toggle_add_project_memory"
+                  aria-describedby="add-project-builtin-memory-desc"
+                  class="sr-only peer"
+                />
+                <span class="settings-toggle-track">
+                  <span class="settings-toggle-thumb"></span>
+                </span>
+              </label>
+            </div>
             <div
               :if={@add_project_form["error"]}
               class="text-xs text-error bg-error-subtle rounded px-3 py-2"

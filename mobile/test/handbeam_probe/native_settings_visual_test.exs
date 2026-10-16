@@ -225,10 +225,10 @@ defmodule HandbeamProbe.NativeSettingsVisualTest do
       assert Enum.all?(select.children, & &1.props[:on_tap])
     end
 
-    enabled = ModelSettings.action(:om_enabled, %{state | scope: :global}, ws)
-    memory = ModelSettings.render(enabled)
+    memory = ModelSettings.render(%{state | scope: :global})
+    refute tap?(memory, :om_enabled)
 
-    for id <- ~w(select-memory-model select-memory-reasoning select-memory-scope select-privacy) do
+    for id <- ~w(select-memory select-memory-scope select-privacy) do
       select = find_type(memory, :settings_select, id)
       assert select
       assert Enum.any?(select.children, &(&1.props[:selected] == true))

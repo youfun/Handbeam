@@ -2536,3 +2536,24 @@ msgstr "Unofficial Cursor protocol. Cost is unknown and is not shown as 0 or fre
 #, elixir-autogen, elixir-format
 msgid "默认工作区不能移除"
 msgstr "The default workspace cannot be removed"
+
+#: lib/handbeam_web/live/workspace_memory_live.html.heex
+#: lib/handbeam_web/live/workspace_live/chat_components.ex
+msgid "使用自带的记忆功能"
+msgstr "Use built-in memory"
+
+#: lib/handbeam_web/live/workspace_memory_live.html.heex
+msgid "关闭后，此工作区可继续使用 MCP 或扩展提供的外部记忆；已有记忆不会删除。"
+msgstr "When off, this workspace can continue using external memory from MCP or extensions; existing memories are not deleted."
+
+#: lib/handbeam_web/live/workspace_live/chat_components.ex
+msgid "关闭后仍可使用此工作区配置的外部记忆工具。"
+msgstr "External memory tools configured for this workspace remain available when this is off."
+
+#: lib/handbeam_web/live/workspace_memory_live.html.heex
+msgid "已开启"
+msgstr "On"
+
+#: lib/handbeam_web/live/workspace_memory_live.html.heex
+msgid "已关闭"
+msgstr "Off"

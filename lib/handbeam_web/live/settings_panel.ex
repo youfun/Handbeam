@@ -341,9 +341,6 @@ defmodule HandbeamWeb.Live.SettingsPanel do
 
   defp update_form_field(form, field, value) do
     case field do
-      "om_enabled" ->
-        struct!(form, om_enabled: value in [true, "true"])
-
       "default_model" ->
         updates = [default_model: blank_to_nil(value)]
 

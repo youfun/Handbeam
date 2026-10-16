@@ -2657,3 +2657,23 @@ msgstr ""
 #: lib/handbeam_probe/home_screen/workspace_memory.ex:76
 msgid "Memory content copied"
 msgstr ""
+
+#: lib/handbeam_probe/workspace_memory.ex
+msgid "Use built-in memory"
+msgstr "Use built-in memory"
+
+#: lib/handbeam_probe/workspace_memory.ex
+msgid "External memory tools remain available when built-in memory is off."
+msgstr "External memory tools remain available when built-in memory is off."
+
+#: lib/handbeam_probe/workspace_memory.ex
+msgid "On"
+msgstr "On"
+
+#: lib/handbeam_probe/home_screen/workspace_memory.ex
+msgid "Could not save workspace memory setting"
+msgstr "Could not save workspace memory setting"
+
+#: lib/handbeam_probe/model_settings/render.ex
+msgid "Built-in memory is enabled per workspace in Workspace Memory settings."
+msgstr "Built-in memory is enabled per workspace in Workspace Memory settings."

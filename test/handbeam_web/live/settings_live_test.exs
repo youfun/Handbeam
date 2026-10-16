@@ -132,6 +132,8 @@ defmodule HandbeamWeb.SettingsLiveTest do
       assert html =~ ~s(name="reasoning")
       assert html =~ ~s(name="advisor_model")
       assert html =~ ~s(name="advisor_reasoning")
+      assert html =~ ~s(name="om_model")
+      refute html =~ ~s(name="om_enabled")
     end
 
     test "configures advisor and one shared memory model with supported think levels", %{
@@ -147,7 +149,6 @@ defmodule HandbeamWeb.SettingsLiveTest do
              )
 
       render_change(view, "update_field", %{"advisor_reasoning" => "high"})
-      render_change(view, "update_field", %{"om_enabled" => "true"})
       render_change(view, "update_field", %{"om_model" => "stepfun/step-router-v1"})
 
       assert has_element?(view, ~s(select[name="om_model"]))
@@ -161,7 +162,6 @@ defmodule HandbeamWeb.SettingsLiveTest do
       saved = Handbeam.Settings.global_model_ai()
       assert saved.advisor_model == "stepfun/step-router-v1"
       assert saved.advisor_reasoning == "high"
-      assert saved.om_enabled
       assert saved.om_model == "stepfun/step-router-v1"
       assert saved.om_reasoning == "low"
     end
@@ -172,7 +172,6 @@ defmodule HandbeamWeb.SettingsLiveTest do
       {:ok, view, _html} = live(conn, "/settings?locale=zh_CN")
 
       render_change(view, "update_field", %{"advisor_model" => "stepfun/step-router-v1"})
-      render_change(view, "update_field", %{"om_enabled" => "true"})
       render_change(view, "update_field", %{"om_model" => "stepfun/step-router-v1"})
 
       html = render(view)
@@ -442,6 +441,12 @@ defmodule HandbeamWeb.SettingsLiveTest do
       assert html =~ ~s(href="/w/#{workspace_id}/c/conv_memory")
 
       memory = find_live_child(view, "settings-workspace-memory")
+      assert has_element?(memory, "#workspace-memory-toggle[aria-checked=true]")
+
+      render_click(element(memory, "#workspace-memory-toggle"))
+      assert has_element?(memory, "#workspace-memory-toggle[aria-checked=false]")
+      refute Handbeam.WorkspaceSettings.builtin_memory_enabled(workspace["path"])
+
       assert has_element?(memory, "#memory-engram-#{long_term.id}")
       assert has_element?(memory, "#memory-engram-#{short_term.id}")
       refute render(memory) =~ "Other workspace must stay private"

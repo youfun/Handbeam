@@ -29,7 +29,7 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
   def open_add_project(socket) do
     socket
     |> assign(:show_add_project, true)
-    |> assign(:add_project_form, %{"path" => "", "name" => "", "error" => nil})
+    |> assign(:add_project_form, new_project_form())
     |> assign(:show_file_browser, false)
   end
 
@@ -47,7 +47,7 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
     socket
     |> assign(:show_add_project, false)
     |> assign(:show_file_browser, false)
-    |> assign(:add_project_form, %{"path" => "", "name" => "", "error" => nil})
+    |> assign(:add_project_form, new_project_form())
   end
 
   def update_add_path(socket, path) do
@@ -57,6 +57,18 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
 
   def update_add_name(socket, name) do
     form = socket.assigns.add_project_form |> Map.put("name", name) |> Map.put("error", nil)
+    assign(socket, :add_project_form, form)
+  end
+
+  def toggle_add_project_memory(socket) do
+    form =
+      Map.update(
+        socket.assigns.add_project_form,
+        "builtin_memory_enabled",
+        false,
+        &(&1 != true)
+      )
+
     assign(socket, :add_project_form, form)
   end
 
@@ -105,7 +117,10 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
         assign(socket, :add_project_form, form)
 
       true ->
-        case Handbeam.WorkspaceStore.add(path, name: name) do
+        case Handbeam.WorkspaceStore.add(path,
+               name: name,
+               builtin_memory_enabled: socket.assigns.add_project_form["builtin_memory_enabled"]
+             ) do
           {:ok, new_ws} ->
             workspaces = Handbeam.WorkspaceStore.list()
 
@@ -240,7 +255,8 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
 
       true ->
         case Handbeam.WorkspaceStore.add(path,
-               name: if(name != "", do: name, else: Path.basename(path))
+               name: if(name != "", do: name, else: Path.basename(path)),
+               builtin_memory_enabled: form["builtin_memory_enabled"]
              ) do
           {:ok, new_ws} ->
             workspaces = Handbeam.WorkspaceStore.list()
@@ -253,7 +269,7 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
               )
               |> assign(:show_add_project, false)
               |> assign(:show_file_browser, false)
-              |> assign(:add_project_form, %{"path" => "", "name" => "", "error" => nil})
+              |> assign(:add_project_form, new_project_form())
               |> ConversationState.sync_conv_state()
               |> ModelSelection.reload_workspace_models()
               |> ModelSelection.reload_workspace_counts()
@@ -266,6 +282,15 @@ defmodule HandbeamWeb.WorkspaceLive.WorkspaceNavigation do
             {:noreply, assign(socket, :add_project_form, form)}
         end
     end
+  end
+
+  defp new_project_form do
+    %{
+      "path" => "",
+      "name" => "",
+      "builtin_memory_enabled" => true,
+      "error" => nil
+    }
   end
 
   def switch_away_from_removed_workspace(socket) do

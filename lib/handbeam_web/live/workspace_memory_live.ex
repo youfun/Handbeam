@@ -1,11 +1,11 @@
 defmodule HandbeamWeb.WorkspaceMemoryLive do
-  @moduledoc "Read-only workspace memory browser embedded in the settings page."
+  @moduledoc "Workspace memory settings and browser embedded in the settings page."
 
   use HandbeamWeb, :live_view
 
   alias Handbeam.Memory.MemoryStore
   alias Handbeam.Utils.SafeMap
-  alias Handbeam.WorkspaceStore
+  alias Handbeam.{WorkspaceSettings, WorkspaceStore}
 
   @kinds [:preference, :rule, :pattern, :fact, :context]
   @lifecycles [:active, :long_term, :short_term, :expired, :all]
@@ -27,6 +27,7 @@ defmodule HandbeamWeb.WorkspaceMemoryLive do
       |> assign(:lifecycle_filter, :active)
       |> assign(:kind_filter, :all)
       |> assign(:search_query, "")
+      |> load_memory_setting()
       |> load_memories()
 
     {:ok, socket}
@@ -63,6 +64,7 @@ defmodule HandbeamWeb.WorkspaceMemoryLive do
      |> assign(:workspace, nil)
      |> assign(:workspace_id, nil)
      |> assign(:scope_filter, :global)
+     |> load_memory_setting()
      |> load_memories()}
   end
 
@@ -77,7 +79,29 @@ defmodule HandbeamWeb.WorkspaceMemoryLive do
          |> assign(:workspace, workspace)
          |> assign(:workspace_id, workspace_id)
          |> assign(:scope_filter, :workspace)
+         |> load_memory_setting()
          |> load_memories()}
+    end
+  end
+
+  def handle_event("toggle_builtin_memory", _params, %{assigns: %{workspace: nil}} = socket) do
+    {:noreply, socket}
+  end
+
+  def handle_event("toggle_builtin_memory", _params, socket) do
+    enabled = !socket.assigns.builtin_memory_enabled
+    path = socket.assigns.workspace["path"]
+
+    case WorkspaceSettings.update_builtin_memory_enabled(path, enabled) do
+      :ok ->
+        {:noreply,
+         assign(socket,
+           builtin_memory_enabled: enabled,
+           memory_setting_error: nil
+         )}
+
+      {:error, reason} ->
+        {:noreply, assign(socket, :memory_setting_error, reason)}
     end
   end
 
@@ -159,6 +183,32 @@ defmodule HandbeamWeb.WorkspaceMemoryLive do
       end)
 
     outgoing ++ incoming
+  end
+
+  defp load_memory_setting(%{assigns: %{workspace: nil}} = socket) do
+    assign(socket,
+      builtin_memory_enabled: nil,
+      memory_setting_error: nil
+    )
+  end
+
+  defp load_memory_setting(socket) do
+    path = socket.assigns.workspace["path"]
+
+    case WorkspaceSettings.load(path) do
+      {:ok, settings} ->
+        assign(socket,
+          builtin_memory_enabled:
+            WorkspaceSettings.builtin_memory_enabled_from_settings(settings),
+          memory_setting_error: nil
+        )
+
+      {:error, reason} ->
+        assign(socket,
+          builtin_memory_enabled: false,
+          memory_setting_error: reason
+        )
+    end
   end
 
   defp load_memories(socket) do

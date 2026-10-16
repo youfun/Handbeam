@@ -378,7 +378,13 @@ defmodule HandbeamProbe.HomeScreen do
     do: WorkspaceMemory.handle(msg, socket)
 
   defp dispatch({:tap, {action, _}} = msg, %{assigns: %{page: :memory}} = socket)
-       when action in [:memory_scope, :memory_lifecycle, :memory_kind, :memory_related],
+       when action in [
+              :memory_builtin,
+              :memory_scope,
+              :memory_lifecycle,
+              :memory_kind,
+              :memory_related
+            ],
        do: WorkspaceMemory.handle(msg, socket)
 
   defp dispatch({:tap, {:memory_copy, _, _}} = msg, %{assigns: %{page: :memory}} = socket),

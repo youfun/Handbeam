@@ -3959,6 +3959,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         {:ok, view, _html} = live(conn, "/")
 
         view |> element("#activity-bar button[phx-click='open_add_project']") |> render_click()
+        assert has_element?(view, "#add-project-builtin-memory[checked]")
         view |> render_keyup("update_add_path", %{"value" => project_dir})
         view |> render_keyup("update_add_name", %{"value" => "Added Project"})
         view |> element("button[phx-click='confirm_add_project']") |> render_click()
@@ -3969,8 +3970,37 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
         assert rendered =~ "sid:none"
         assert rendered =~ "No messages yet"
         {:ok, added_ws} = Handbeam.WorkspaceStore.get_by_path(project_dir)
+        assert Handbeam.WorkspaceSettings.builtin_memory_enabled(project_dir)
         assert Handbeam.ConversationStore.list_for_workspace(added_ws["id"]) == []
         assert workspace_conversation_count(rendered, "Added Project", added_ws["id"]) == 0
+      after
+        File.rm_rf!(project_dir)
+      end
+    end
+
+    test "new workspace dialog can disable built-in memory", %{conn: conn} do
+      project_dir =
+        Path.join(
+          System.tmp_dir!(),
+          "sigil_external_memory_#{System.unique_integer([:positive])}"
+        )
+
+      File.mkdir_p!(project_dir)
+
+      try do
+        {:ok, view, _html} = live(conn, "/")
+
+        view |> element("#activity-bar button[phx-click='open_add_project']") |> render_click()
+        view |> element("#add-project-builtin-memory") |> render_click()
+        refute has_element?(view, "#add-project-builtin-memory[checked]")
+
+        view |> render_keyup("update_add_path", %{"value" => project_dir})
+        view |> render_keyup("update_add_name", %{"value" => "External Memory"})
+        view |> element("button[phx-click='confirm_add_project']") |> render_click()
+
+        refute Handbeam.WorkspaceSettings.builtin_memory_enabled(project_dir)
+        assert {:ok, settings} = Handbeam.WorkspaceSettings.load(project_dir)
+        assert get_in(settings, ["memory", "builtin_enabled"]) == false
       after
         File.rm_rf!(project_dir)
       end
@@ -5890,10 +5920,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
   end
 
   describe "settings panel" do
-    @tag capture_log: false
-    test "toggles Observational Memory without crashing", %{conn: conn} do
-      Logger.configure(level: :debug)
-
+    test "shows memory processing parameters without a global enable switch", %{conn: conn} do
       models_path =
         Path.join(
           System.tmp_dir!(),
@@ -5909,22 +5936,12 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       end)
 
       {:ok, view, _html} = live(conn, "/")
-
-      # Open settings panel and get returned html by following redirect
       result = view |> element("#open-settings") |> render_click()
       {:ok, settings_view, html} = follow_redirect(result, conn)
 
-      # Verify settings page is open and shows Model / AI settings
       assert html =~ "Model / AI"
-
-      # Find the Observational Memory checkbox and change it
-      html_after_click =
-        settings_view
-        |> element("input[name='om_enabled']")
-        |> render_change(%{"om_enabled" => "true"})
-
-      # Verify it toggled and didn't crash
-      assert html_after_click =~ "Memory model" or html_after_click =~ "记忆模型"
+      assert has_element?(settings_view, "select[name='om_model']")
+      refute has_element?(settings_view, "input[name='om_enabled']")
     end
 
     test "updates default model and reasoning settings without crashing", %{conn: conn} do

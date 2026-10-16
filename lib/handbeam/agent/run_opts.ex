@@ -9,12 +9,14 @@ defmodule Handbeam.Agent.RunOpts do
   alias Handbeam.Agent.{ModelConfig, Reasoning}
   alias Handbeam.Settings
   alias Handbeam.Settings.ModelAISettings
+  alias Handbeam.WorkspaceSettings
 
   @spec for_selection(String.t() | nil, String.t() | nil, term(), term()) ::
           {:ok, keyword()} | {:error, term()}
   def for_selection(workspace_path, composite_id, reasoning_level, effective_settings) do
     with {:ok, provider_config, model_id} <- resolve_model(workspace_path, composite_id) do
       entry = model_entry(workspace_path, composite_id)
+      builtin_memory_enabled = builtin_memory_enabled(workspace_path)
 
       provider_config =
         Reasoning.apply_provider_options(provider_config, entry, reasoning_level)
@@ -25,7 +27,8 @@ defmodule Handbeam.Agent.RunOpts do
          model: model_id,
          reasoning_level: reasoning_level,
          workspace_path: blank_to_nil(workspace_path),
-         om: om_from_effective(effective_settings)
+         builtin_memory_enabled: builtin_memory_enabled,
+         om: om_from_effective(effective_settings, builtin_memory_enabled)
        ]}
     end
   end
@@ -78,13 +81,19 @@ defmodule Handbeam.Agent.RunOpts do
     Enum.find(available, %{}, &(&1.id == composite_id))
   end
 
-  defp om_from_effective(nil), do: %{enabled: false}
+  defp om_from_effective(nil, enabled), do: %{enabled: enabled}
 
-  defp om_from_effective(effective) do
+  defp om_from_effective(effective, enabled) do
     effective
     |> ModelAISettings.to_runtime_opts()
-    |> Keyword.get(:om, %{enabled: false})
+    |> Keyword.get(:om, %{})
+    |> Map.put(:enabled, enabled)
   end
+
+  defp builtin_memory_enabled(path) when is_binary(path) and path != "",
+    do: WorkspaceSettings.builtin_memory_enabled(path)
+
+  defp builtin_memory_enabled(_path), do: true
 
   defp blank_to_nil(path) when is_binary(path) and path != "", do: path
   defp blank_to_nil(_), do: nil

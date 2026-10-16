@@ -143,7 +143,7 @@ defmodule Handbeam.SettingsTest do
       Settings.save_global(
         %{
           "reasoning" => "medium",
-          "observational_memory" => %{"enabled" => true, "memory_scope" => "both"}
+          "observational_memory" => %{"memory_scope" => "both"}
         },
         global_dir: global_dir
       )
@@ -155,7 +155,6 @@ defmodule Handbeam.SettingsTest do
       effective = Settings.effective_model_ai(ws_root, global_dir: global_dir)
       assert effective.default_model == "local-llama"
       assert effective.reasoning == "medium"
-      assert effective.om_enabled == true
       assert effective.om_memory_scope == "both"
     end
 
@@ -167,7 +166,7 @@ defmodule Handbeam.SettingsTest do
       assert effective == ModelAISettings.defaults()
     end
 
-    test "global settings override defaults", %{global_dir: global_dir} do
+    test "legacy global enablement is ignored", %{global_dir: global_dir} do
       Settings.save_global(
         %{"default_model" => "claude-sonnet-4", "om_enabled" => true},
         global_dir: global_dir
@@ -178,7 +177,7 @@ defmodule Handbeam.SettingsTest do
 
       effective = Settings.effective_model_ai(ws_root, global_dir: global_dir)
       assert effective.default_model == "claude-sonnet-4"
-      assert effective.om_enabled == true
+      refute Map.has_key?(Map.from_struct(effective), :om_enabled)
       assert effective.reasoning == "medium"
     end
 

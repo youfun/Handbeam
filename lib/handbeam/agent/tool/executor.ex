@@ -18,6 +18,7 @@ defmodule Handbeam.Agent.Tool.Executor do
 
   @default_max_result_chars 50_000
   @spill_head_chars 2_000
+  @builtin_memory_tools ~w(mem_associate mem_learn mem_recall mem_reinforce)
 
   @doc """
   Execute all tool calls and return a result message or halt signal.
@@ -672,6 +673,7 @@ defmodule Handbeam.Agent.Tool.Executor do
     registered
     |> Enum.filter(
       &((is_nil(config.allowed_tools) or &1 in config.allowed_tools) and
+          builtin_memory_tool_allowed?(&1, config) and
           advisor_tool_allowed?(&1, config) and
           (is_nil(active) or &1 in active) and
           (is_nil(parent_active) or &1 in parent_active) and
@@ -679,6 +681,11 @@ defmodule Handbeam.Agent.Tool.Executor do
              Handbeam.Agent.Delegation.Policy.authorized_child?(parent, config.run_id)))
     )
   end
+
+  defp builtin_memory_tool_allowed?(name, %{builtin_memory_enabled: false}),
+    do: name not in @builtin_memory_tools
+
+  defp builtin_memory_tool_allowed?(_name, _config), do: true
 
   defp loaded_deferred?(name, context) do
     Handbeam.Tool.Deferred.loaded?(name, context[:conversation_id])

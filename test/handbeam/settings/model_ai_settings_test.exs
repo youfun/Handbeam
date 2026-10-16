@@ -9,7 +9,6 @@ defmodule Handbeam.Settings.ModelAISettingsTest do
 
       assert defaults.default_model == nil
       assert defaults.reasoning == "medium"
-      assert defaults.om_enabled == false
       assert defaults.om_model == nil
       assert defaults.om_reasoning == nil
       assert defaults.om_memory_scope == "workspace"
@@ -34,13 +33,11 @@ defmodule Handbeam.Settings.ModelAISettingsTest do
         ModelAISettings.new(%{
           "default_model" => "stepfun/step-router-v1",
           "reasoning" => "medium",
-          "om_enabled" => true,
           "om_memory_scope" => "both"
         })
 
       assert settings.default_model == "stepfun/step-router-v1"
       assert settings.reasoning == "medium"
-      assert settings.om_enabled == true
       assert settings.om_memory_scope == "both"
       # Unspecified fields stay at defaults
       assert settings.om_model == nil
@@ -65,7 +62,6 @@ defmodule Handbeam.Settings.ModelAISettingsTest do
 
       assert settings.default_model == "claude-sonnet-4"
       assert settings.reasoning == "high"
-      assert settings.om_enabled == true
       assert settings.om_model == "claude-opus"
       assert settings.om_reasoning == "low"
       assert settings.om_memory_scope == "global"
@@ -121,21 +117,21 @@ defmodule Handbeam.Settings.ModelAISettingsTest do
       assert Keyword.get(opts, :reasoning_level) == "medium"
 
       om = Keyword.get(opts, :om)
-      assert om[:enabled] == true
+      refute Map.has_key?(om, :enabled)
       assert om[:model] == "anthropic/claude-opus"
       assert om[:reasoning] == "high"
     end
 
-    test "om is nil when disabled" do
+    test "legacy enablement is no longer part of Model / AI runtime settings" do
       settings =
         ModelAISettings.new(%{
-          "om_enabled" => false
+          "observational_memory" => %{"enabled" => false, "model" => "memory/model"}
         })
 
-      opts = ModelAISettings.to_runtime_opts(settings)
-
-      om = Keyword.get(opts, :om)
-      assert om[:enabled] == false
+      om = settings |> ModelAISettings.to_runtime_opts() |> Keyword.fetch!(:om)
+      refute Map.has_key?(om, :enabled)
+      assert om.model == "memory/model"
+      refute get_in(ModelAISettings.to_json_map(settings), ["observational_memory", "enabled"])
     end
 
     test "model is nil when not set" do
@@ -147,8 +143,7 @@ defmodule Handbeam.Settings.ModelAISettingsTest do
     test "memory model falls back to default_model when not set" do
       settings =
         ModelAISettings.new(%{
-          "default_model" => "stepfun/step-router-v1",
-          "om_enabled" => true
+          "default_model" => "stepfun/step-router-v1"
         })
 
       opts = ModelAISettings.to_runtime_opts(settings)
@@ -157,10 +152,7 @@ defmodule Handbeam.Settings.ModelAISettingsTest do
     end
 
     test "memory model is nil when both are nil" do
-      settings =
-        ModelAISettings.new(%{
-          "om_enabled" => true
-        })
+      settings = ModelAISettings.new(%{})
 
       opts = ModelAISettings.to_runtime_opts(settings)
       om = Keyword.get(opts, :om)
@@ -187,7 +179,6 @@ defmodule Handbeam.Settings.ModelAISettingsTest do
 
       assert reloaded.default_model == original.default_model
       assert reloaded.reasoning == original.reasoning
-      assert reloaded.om_enabled == original.om_enabled
       assert reloaded.om_model == original.om_model
       assert reloaded.om_reasoning == original.om_reasoning
       assert reloaded.advisor_model == original.advisor_model
@@ -210,13 +201,13 @@ defmodule Handbeam.Settings.ModelAISettingsTest do
       override =
         ModelAISettings.new(%{
           "default_model" => "claude-sonnet-4",
-          "om_enabled" => true
+          "om_memory_scope" => "both"
         })
 
       diff = ModelAISettings.diff(base, override)
 
       assert Map.has_key?(diff, :default_model)
-      assert Map.has_key?(diff, :om_enabled)
+      assert Map.has_key?(diff, :om_memory_scope)
       refute Map.has_key?(diff, :reasoning)
     end
 
@@ -234,13 +225,13 @@ defmodule Handbeam.Settings.ModelAISettingsTest do
       override =
         ModelAISettings.new(%{
           "default_model" => "claude-sonnet-4",
-          "om_enabled" => true
+          "om_memory_scope" => "both"
         })
 
       merged = ModelAISettings.merge(base, override)
 
       assert merged.default_model == "claude-sonnet-4"
-      assert merged.om_enabled == true
+      assert merged.om_memory_scope == "both"
       assert merged.reasoning == "medium"
     end
   end

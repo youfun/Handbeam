@@ -436,8 +436,13 @@ defmodule Handbeam.Agent.Coordinator do
 
   defp validate_om_model_policy(opts) do
     workspace_path = Keyword.fetch!(opts, :workspace_path)
-    om = Keyword.get(opts, :om, %{})
-    memory_model_allowed(workspace_path, om[:model])
+
+    if Handbeam.WorkspaceSettings.builtin_memory_enabled(workspace_path) do
+      om = Keyword.get(opts, :om, %{})
+      memory_model_allowed(workspace_path, om[:model] || om["model"])
+    else
+      :ok
+    end
   end
 
   # A removed catalog entry is not a workspace restriction. "Unrestricted" and
@@ -512,6 +517,7 @@ defmodule Handbeam.Agent.Coordinator do
     |> put_saved_provider()
     |> put_transcript_history(conversation_id)
     |> put_working_directory()
+    |> put_builtin_memory()
     |> put_skills()
     |> put_advisor_pin()
   end
@@ -555,6 +561,28 @@ defmodule Handbeam.Agent.Coordinator do
       true ->
         Keyword.put(opts, :working_directory, Keyword.fetch!(opts, :workspace_path))
     end
+  end
+
+  defp put_builtin_memory(opts) do
+    enabled =
+      if free_chat?(opts) do
+        true
+      else
+        opts
+        |> Keyword.fetch!(:workspace_path)
+        |> Handbeam.WorkspaceSettings.builtin_memory_enabled()
+      end
+
+    om =
+      opts
+      |> Keyword.get(:om, %{})
+      |> then(&if(is_map(&1), do: &1, else: %{}))
+      |> Map.delete("enabled")
+      |> Map.put(:enabled, enabled)
+
+    opts
+    |> Keyword.put(:builtin_memory_enabled, enabled)
+    |> Keyword.put(:om, om)
   end
 
   defp put_skills(opts) do

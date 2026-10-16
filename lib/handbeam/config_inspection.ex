@@ -51,6 +51,7 @@ defmodule Handbeam.ConfigInspection do
         operational: :unknown
       },
       approval: approval(workspace_settings),
+      memory: memory(workspace_settings),
       model_ai: model_ai(workspace, opts),
       model_catalog: model_catalog(),
       sources: %{
@@ -342,6 +343,19 @@ defmodule Handbeam.ConfigInspection do
       call_decision: :unknown,
       reason: :requires_arguments_session_overrides_and_capability_rules,
       source_of_truth: :permissions_tool_policy
+    }
+  end
+
+  defp memory({:error, _}) do
+    %{builtin_enabled: false, source: :workspace_settings_error_fallback}
+  end
+
+  defp memory({:ok, settings}) do
+    configured = get_in(settings, ["memory", "builtin_enabled"])
+
+    %{
+      builtin_enabled: WorkspaceSettings.builtin_memory_enabled_from_settings(settings),
+      source: if(is_boolean(configured), do: :workspace_settings, else: :workspace_default)
     }
   end
 

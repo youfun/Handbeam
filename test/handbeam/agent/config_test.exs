@@ -2,6 +2,7 @@ defmodule Handbeam.Agent.ConfigTest do
   use ExUnit.Case, async: true
 
   alias Handbeam.Agent.Config
+  alias Handbeam.Agent.Tool.Executor
 
   describe "provider resolution" do
     test "uses ZenMux adapter when provider field is zenmux" do
@@ -122,6 +123,37 @@ defmodule Handbeam.Agent.ConfigTest do
                max_tokens: 128_000,
                provider_config: %{model_meta: %{"contextWindow" => 272_000}}
              ).max_tokens == 128_000
+    end
+  end
+
+  test "workspace memory switch controls prompt, observation, and built-in memory tools" do
+    workspace =
+      Path.join(System.tmp_dir!(), "handbeam-config-memory-#{System.unique_integer([:positive])}")
+
+    File.mkdir_p!(workspace)
+
+    try do
+      assert :ok = Handbeam.WorkspaceSettings.update_builtin_memory_enabled(workspace, false)
+
+      disabled = Config.from_opts(working_directory: workspace)
+      refute disabled.builtin_memory_enabled
+      refute disabled.system_prompt =~ "mem_recall"
+      refute Handbeam.Agent.Middleware.ObservationalSessionStart in disabled.middleware
+
+      authorized = Executor.authorized_tools(disabled)
+      refute "mem_recall" in authorized
+      refute "mem_learn" in authorized
+      assert "read" in authorized
+
+      assert :ok = Handbeam.WorkspaceSettings.update_builtin_memory_enabled(workspace, true)
+
+      enabled = Config.from_opts(working_directory: workspace)
+      assert enabled.builtin_memory_enabled
+      assert enabled.system_prompt =~ "mem_recall"
+      assert Handbeam.Agent.Middleware.ObservationalSessionStart in enabled.middleware
+      assert "mem_recall" in Executor.authorized_tools(enabled)
+    after
+      File.rm_rf(workspace)
     end
   end
 

@@ -2672,3 +2672,23 @@ msgstr "已复制记忆 ID"
 #: lib/handbeam_probe/home_screen/workspace_memory.ex:76
 msgid "Memory content copied"
 msgstr "已复制记忆内容"
+
+#: lib/handbeam_probe/workspace_memory.ex
+msgid "Use built-in memory"
+msgstr "使用内置记忆"
+
+#: lib/handbeam_probe/workspace_memory.ex
+msgid "External memory tools remain available when built-in memory is off."
+msgstr "关闭内置记忆后，外部记忆工具仍然可用。"
+
+#: lib/handbeam_probe/workspace_memory.ex
+msgid "On"
+msgstr "开启"
+
+#: lib/handbeam_probe/home_screen/workspace_memory.ex
+msgid "Could not save workspace memory setting"
+msgstr "无法保存工作区记忆设置"
+
+#: lib/handbeam_probe/model_settings/render.ex
+msgid "Built-in memory is enabled per workspace in Workspace Memory settings."
+msgstr "内置记忆在工作区记忆设置中按工作区启用。"

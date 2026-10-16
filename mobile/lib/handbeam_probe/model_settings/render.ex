@@ -140,28 +140,18 @@ defmodule HandbeamProbe.ModelSettings.Render do
   end
 
   defp memory_card(state) do
-    d = state.defaults
-    src = state.sources
-    enabled? = d.om_enabled == true
-
     [
       card(
         [
           text(gettext("Observational memory"), text_size: 16),
-          text(Labels.memory_status(enabled?, src[:om_enabled]),
+          text(
+            gettext("Built-in memory is enabled per workspace in Workspace Memory settings."),
             text_size: 12,
             text_color: color(:hint),
             padding_top: 4,
             padding_bottom: 8
-          ),
-          secondary_button(
-            if(enabled?, do: gettext("Memory: on"), else: gettext("Memory: off")),
-            :om_enabled
-          ),
-          if(state.scope == :workspace && src[:om_enabled] == :workspace,
-            do: quiet_button(gettext("Use global memory switch"), {:inherit, :om_enabled})
           )
-        ] ++ if(enabled?, do: memory_details(state), else: [])
+        ] ++ memory_details(state)
       )
     ]
   end
@@ -174,23 +164,7 @@ defmodule HandbeamProbe.ModelSettings.Render do
       settings_select(
         Labels.follow(d.om_model, gettext("Follow default model")),
         follow_options(state, :om_model, gettext("Follow default model")),
-        "select-memory-model"
-      ),
-      text(gettext("Memory reasoning"), text_size: 13, padding_top: 12),
-      settings_select(
-        if(is_nil(d.om_reasoning),
-          do: gettext("Model default"),
-          else: Labels.reasoning(d.om_reasoning)
-        ),
-        [select_option(gettext("Model default"), {:om_reasoning, ""}, is_nil(d.om_reasoning))] ++
-          Enum.map(Reasoning.levels(), fn level ->
-            select_option(
-              Labels.reasoning(level),
-              {:om_reasoning, level},
-              d.om_reasoning == level
-            )
-          end),
-        "select-memory-reasoning"
+        "select-memory"
       ),
       text(gettext("Memory scope"), text_size: 13, padding_top: 12),
       settings_select(

@@ -182,11 +182,12 @@ defmodule Handbeam.WorkspaceStore do
         end)
 
       if found_ws do
-        updated_data =
-          data |> Map.put("workspaces", Enum.reverse(updated_workspaces))
+        updated_data = data |> Map.put("workspaces", Enum.reverse(updated_workspaces))
 
-        write_storage(storage_path(), updated_data)
-        {:ok, found_ws}
+        with :ok <- maybe_configure_builtin_memory(expanded, opts),
+             :ok <- write_storage(storage_path(), updated_data) do
+          {:ok, found_ws}
+        end
       else
         new_ws = %{
           "id" => generate_id(),
@@ -198,8 +199,11 @@ defmodule Handbeam.WorkspaceStore do
         }
 
         updated_data = Map.put(data, "workspaces", workspaces ++ [new_ws])
-        write_storage(storage_path(), updated_data)
-        {:ok, new_ws}
+
+        with :ok <- maybe_configure_builtin_memory(expanded, opts),
+             :ok <- write_storage(storage_path(), updated_data) do
+          {:ok, new_ws}
+        end
       end
     end
   end
@@ -386,6 +390,12 @@ defmodule Handbeam.WorkspaceStore do
     else
       :ok
     end
+  end
+
+  defp maybe_configure_builtin_memory(path, opts) do
+    if Keyword.get(opts, :builtin_memory_enabled, true) == false,
+      do: Handbeam.WorkspaceSettings.update_builtin_memory_enabled(path, false),
+      else: :ok
   end
 
   defp generate_id do

@@ -24,6 +24,43 @@ defmodule Handbeam.WorkspaceSettingsTest do
     path
   end
 
+  describe "built-in memory" do
+    test "defaults to enabled when the workspace has no setting" do
+      workspace = tmp_workspace()
+
+      assert WorkspaceSettings.builtin_memory_enabled(workspace)
+      assert WorkspaceSettings.builtin_memory_enabled_from_settings(%{})
+    end
+
+    test "writes an explicit workspace value and preserves JSONC comments" do
+      workspace = tmp_workspace()
+
+      write_settings(workspace, """
+      {
+        // keep this project note
+        "tools": {"default_mode": "auto"}
+      }
+      """)
+
+      assert :ok = WorkspaceSettings.update_builtin_memory_enabled(workspace, false)
+      refute WorkspaceSettings.builtin_memory_enabled(workspace)
+      assert File.read!(WorkspaceSettings.path(workspace)) =~ "// keep this project note"
+
+      assert :ok = WorkspaceSettings.update_builtin_memory_enabled(workspace, true)
+      assert WorkspaceSettings.builtin_memory_enabled(workspace)
+
+      assert get_in(elem(WorkspaceSettings.load(workspace), 1), ["tools", "default_mode"]) ==
+               "auto"
+    end
+
+    test "fails closed when workspace settings cannot be read" do
+      workspace = tmp_workspace()
+      write_settings(workspace, ~s({"memory": ))
+
+      refute WorkspaceSettings.builtin_memory_enabled(workspace)
+    end
+  end
+
   test "permission modes replace both execution policy and reviewer on every switch" do
     workspace = tmp_workspace()
 
@@ -151,6 +188,7 @@ defmodule Handbeam.WorkspaceSettingsTest do
     content = File.read!(WorkspaceSettings.path(workspace))
 
     assert content =~ "settings.jsonc"
+    assert content =~ "\"builtin_enabled\": true"
     assert content =~ "\"eval\": false"
     assert content =~ "\"providers\": {}"
 

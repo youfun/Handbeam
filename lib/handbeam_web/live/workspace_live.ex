@@ -104,7 +104,12 @@ defmodule HandbeamWeb.WorkspaceLive do
       |> ConversationState.sync_conv_state()
       # Add project dialog
       |> assign(:show_add_project, false)
-      |> assign(:add_project_form, %{"path" => "", "name" => "", "error" => nil})
+      |> assign(:add_project_form, %{
+        "path" => "",
+        "name" => "",
+        "builtin_memory_enabled" => true,
+        "error" => nil
+      })
       |> assign(:show_file_browser, false)
       |> assign(:file_browser_path, nil)
       |> assign(:sandbox_workspace?, WorkspaceNavigation.sandbox_workspace?())
@@ -844,6 +849,11 @@ defmodule HandbeamWeb.WorkspaceLive do
   end
 
   @impl true
+  def handle_event("toggle_add_project_memory", _params, socket) do
+    {:noreply, WorkspaceNavigation.toggle_add_project_memory(socket)}
+  end
+
+  @impl true
   def handle_event("confirm_add_project", _params, socket) do
     WorkspaceNavigation.confirm_add_event(socket)
   end
@@ -1441,7 +1451,7 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   @impl true
   def handle_info({:settings_saved, effective}, socket) do
-    Logger.debug("[WorkspaceLive] settings saved, om_enabled=#{effective.om_enabled}")
+    Logger.debug("[WorkspaceLive] settings saved")
 
     {:noreply,
      socket

@@ -13,6 +13,12 @@ defmodule Handbeam.WorkspaceSettings do
     // Workspace-local Handbeam settings.
     // Path: .handbeam/settings.jsonc
     //
+    // Handbeam's built-in memory is workspace-local. External MCP/extension
+    // memory tools are unaffected when this is false.
+    "memory": {
+      "builtin_enabled": true
+    },
+
     // `models` restricts which globally configured providers/models are available
     // in this workspace. An empty providers object means unrestricted.
     "models": {
@@ -116,6 +122,42 @@ defmodule Handbeam.WorkspaceSettings do
 
   defp normalize_string_list(list) when is_list(list), do: Enum.filter(list, &is_binary/1)
   defp normalize_string_list(_), do: []
+
+  @doc "Whether Handbeam's built-in memory is enabled for this workspace."
+  @spec builtin_memory_enabled(Path.t()) :: boolean()
+  def builtin_memory_enabled(workspace_root) do
+    case load(workspace_root) do
+      {:ok, settings} -> builtin_memory_enabled_from_settings(settings)
+      {:error, _reason} -> false
+    end
+  end
+
+  @doc "Resolve built-in memory from decoded settings; a missing value defaults to enabled."
+  @spec builtin_memory_enabled_from_settings(map()) :: boolean()
+  def builtin_memory_enabled_from_settings(settings) when is_map(settings) do
+    get_in(settings, ["memory", "builtin_enabled"]) != false
+  end
+
+  def builtin_memory_enabled_from_settings(_settings), do: true
+
+  @doc "Persist the workspace-local built-in memory switch."
+  @spec update_builtin_memory_enabled(Path.t(), boolean()) :: :ok | {:error, String.t()}
+  def update_builtin_memory_enabled(workspace_root, enabled) when is_boolean(enabled) do
+    settings_path = path(workspace_root)
+
+    with :ok <- ensure_file(workspace_root),
+         {:ok, content} <- File.read(settings_path),
+         {:ok, settings} <- decode_jsonc(content),
+         true <- is_map(settings),
+         updated_content <- put_builtin_memory_jsonc(content, settings, enabled),
+         :ok <- atomic_write(settings_path, updated_content) do
+      :ok
+    else
+      false -> {:error, "Failed to parse #{settings_path}: expected a JSON object"}
+      {:error, reason} when is_binary(reason) -> {:error, reason}
+      {:error, reason} -> {:error, "Failed to write settings: #{inspect(reason)}"}
+    end
+  end
 
   @doc "The three workspace permission modes exposed by Web and native hosts."
   def permission_mode(workspace_root) do
@@ -401,6 +443,51 @@ defmodule Handbeam.WorkspaceSettings do
 
   defp strip_trailing_commas(content) do
     Regex.replace(~r/,\s*([}\]])/, content, "\\1")
+  end
+
+  defp put_builtin_memory_jsonc(content, settings, enabled) do
+    memory_pattern = ~r/("memory"\s*:\s*\{)([^{}]*)(\})/s
+    enabled_text = to_string(enabled)
+
+    cond do
+      Regex.match?(memory_pattern, content) ->
+        Regex.replace(
+          memory_pattern,
+          content,
+          fn _match, open, body, close ->
+            body =
+              if Regex.match?(~r/"builtin_enabled"\s*:/, body) do
+                Regex.replace(
+                  ~r/"builtin_enabled"\s*:\s*(?:true|false)/,
+                  body,
+                  "\"builtin_enabled\": #{enabled_text}",
+                  global: false
+                )
+              else
+                "\n    \"builtin_enabled\": #{enabled_text}," <> body
+              end
+
+            open <> body <> close
+          end,
+          global: false
+        )
+
+      not Map.has_key?(settings, "memory") ->
+        separator = if map_size(settings) == 0, do: "", else: ","
+
+        block =
+          "{\n  \"memory\": {\n    \"builtin_enabled\": #{enabled_text}\n  }#{separator}"
+
+        Regex.replace(~r/\{/, content, block, global: false)
+
+      true ->
+        settings
+        |> Map.update("memory", %{"builtin_enabled" => enabled}, fn memory ->
+          memory = if is_map(memory), do: memory, else: %{}
+          Map.put(memory, "builtin_enabled", enabled)
+        end)
+        |> Handbeam.JSON.encode!(pretty: true)
+    end
   end
 
   # ──────────────────────────────────────────────────────────────
