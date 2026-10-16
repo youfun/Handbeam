@@ -60,9 +60,10 @@ defmodule HandbeamProbe.App do
     end
 
     if Handbeam.Host.dist?() do
+      # mob 0.9.8 ignores the public :mob_secret cookie. Omit it so Android
+      # uses the per-app cookie mix mob.deploy writes to mob_dist_cookie.
       Mob.Dist.ensure_started(
-        node: HandbeamProbe.NativePlatform.dist_node(HandbeamProbe.NativePlatform.get()),
-        cookie: :mob_secret
+        node: HandbeamProbe.NativePlatform.dist_node(HandbeamProbe.NativePlatform.get())
       )
     end
 

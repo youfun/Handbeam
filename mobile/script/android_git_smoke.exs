@@ -2,7 +2,7 @@
 # mix run --no-start script/android_git_smoke.exs
 # No LLM, credentials or writes to external repositories. Uses a disposable workspace.
 {:ok, _} = Node.start(:"android_git_smoke_#{System.unique_integer([:positive])}@127.0.0.1")
-Node.set_cookie(:mob_secret)
+Node.set_cookie(MobDev.DistCookie.for_project!())
 device = :"handbeam_probe_android_nativechat@127.0.0.1"
 :pong = Node.ping(device)
 HandbeamProbe.HomeScreen = Mob.Test.screen(device)

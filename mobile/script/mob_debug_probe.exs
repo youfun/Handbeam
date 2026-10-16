@@ -47,7 +47,7 @@ collect_types = fn tree ->
 end
 
 {:ok, _} = :net_kernel.start([:"native_inspect@127.0.0.1", :longnames])
-true = Node.set_cookie(:mob_secret)
+true = Node.set_cookie(MobDev.DistCookie.for_project!())
 
 candidates = [
   :"handbeam_probe_android_nativechat@127.0.0.1",
