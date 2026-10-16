@@ -151,14 +151,6 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
     end
   end
 
-  def start_free_chat_run(socket, conv_id, content, run_opts) do
-    if socket.assigns.current_conversation_id == conv_id do
-      start_agent_run_now(socket, conv_id, content, run_opts)
-    else
-      {:noreply, socket}
-    end
-  end
-
   defp persist_timeline(socket, entry, opts) do
     socket = RuntimeProjection.timeline_insert(socket, entry)
 
@@ -180,31 +172,34 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
           not is_nil(socket.assigns.pending_approval)
 
       socket = if running_for_current?, do: socket, else: ensure_current_conversation(socket)
+      conv_id = socket.assigns.current_conversation_id
 
-      case prepare_outbound_message(socket, message) do
-        {:ok, socket, content, attachments} ->
-          conv_id = socket.assigns.current_conversation_id
+      cond do
+        CliSelection.cli_selected?(socket.assigns) ->
+          send_cli_conversation_message(socket, conv_id, message)
 
-          cond do
-            CliSelection.cli_selected?(socket.assigns) ->
-              start_cli_turn(socket, conv_id, message)
+        cli_run_active?(conv_id) ->
+          reject_cli_active(socket)
 
-            running_for_current? ->
-              queue_running_agent_message(
-                socket,
-                conv_id,
-                content,
-                message,
-                attachments,
-                :steer
-              )
+        true ->
+          case prepare_outbound_message(socket, message) do
+            {:ok, socket, content, attachments} ->
+              if running_for_current? do
+                queue_running_agent_message(
+                  socket,
+                  conv_id,
+                  content,
+                  message,
+                  attachments,
+                  :steer
+                )
+              else
+                start_new_agent_run(socket, conv_id, content, message, attachments)
+              end
 
-            true ->
-              start_new_agent_run(socket, conv_id, content, message, attachments)
+            {:error, socket} ->
+              {:noreply, socket}
           end
-
-        {:error, socket} ->
-          {:noreply, socket}
       end
     else
       {:noreply, socket}
@@ -251,25 +246,29 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
 
     socket = if running_for_current?, do: socket, else: ensure_current_conversation(socket)
 
-    case prepare_outbound_message(socket, message) do
-      {:ok, socket, content, attachments} ->
-        conv_id = socket.assigns.current_conversation_id
+    conv_id = socket.assigns.current_conversation_id
 
-        if running_for_current? do
-          queue_running_agent_message(
-            socket,
-            conv_id,
-            content,
-            message,
-            attachments,
-            deliver_as
-          )
-        else
-          start_new_agent_run(socket, conv_id, content, message, attachments)
-        end
+    if cli_run_active?(conv_id) do
+      reject_cli_active(socket)
+    else
+      case prepare_outbound_message(socket, message) do
+        {:ok, socket, content, attachments} ->
+          if running_for_current? do
+            queue_running_agent_message(
+              socket,
+              conv_id,
+              content,
+              message,
+              attachments,
+              deliver_as
+            )
+          else
+            start_new_agent_run(socket, conv_id, content, message, attachments)
+          end
 
-      {:error, socket} ->
-        {:noreply, socket}
+        {:error, socket} ->
+          {:noreply, socket}
+      end
     end
   end
 
@@ -415,6 +414,14 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
   def put_inbound_message_id(content, id), do: Composer.put_message_id(content, id)
 
   def queue_running_agent_message(socket, conv_id, content, message, attachments, deliver_as) do
+    if cli_run_active?(conv_id) do
+      reject_cli_active(socket)
+    else
+      do_queue_running_agent_message(socket, conv_id, content, message, attachments, deliver_as)
+    end
+  end
+
+  defp do_queue_running_agent_message(socket, conv_id, content, message, attachments, deliver_as) do
     msg_id = RuntimeProjection.unique_id("msg-user")
     content = put_inbound_message_id(content, msg_id)
 
@@ -542,8 +549,9 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
     )
   end
 
-  def start_cli_turn(socket, conv_id, message) do
+  def send_cli_conversation_message(socket, conv_id, message) do
     opts = CliSelection.run_opts(socket, conv_id)
+    attachments? = socket.assigns.pending_attachments != [] or has_upload_entries?(socket)
 
     cond do
       is_nil(opts) ->
@@ -553,9 +561,41 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
         {:noreply,
          assign(socket, :composer_error, cli_models_error(socket.assigns.cli_models_error))}
 
-      true ->
-        msg_id = RuntimeProjection.unique_id("msg-user")
+      attachments? and
+          not Handbeam.Agent.CliAgent.Registry.attachments?(socket.assigns.selected_cli) ->
+        {:noreply,
+         assign(
+           socket,
+           :composer_error,
+           gettext("This CLI does not support attachments. Remove them or choose Handbeam.")
+         )}
 
+      true ->
+        case prepare_outbound_message(socket, message) do
+          {:ok, socket, content, attachments} ->
+            start_cli_turn(socket, conv_id, content, message, attachments, opts)
+
+          {:error, socket} ->
+            {:noreply, socket}
+        end
+    end
+  end
+
+  def start_cli_turn(socket, conv_id, content, message, attachments, opts) do
+    msg_id = RuntimeProjection.unique_id("msg-user")
+    content = put_inbound_message_id(content, msg_id)
+
+    opts =
+      Keyword.merge(opts,
+        transcript_id: msg_id,
+        message_id: msg_id,
+        inbound_id: msg_id,
+        attachments: attachments,
+        source: :live_view
+      )
+
+    case Handbeam.Agent.CliAgent.Runner.start(conv_id, content, message, opts) do
+      {:ok, _ack} ->
         socket =
           socket
           |> assign(:input_value, "")
@@ -564,33 +604,17 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
           |> assign(:stream_suppressed, false)
           |> assign(:pending_attachments, [])
           |> Composer.forget(conv_id)
-          |> append_user_message(message, [], msg_id)
+          |> append_user_message(message, attachments, msg_id)
           |> RuntimeProjection.update_status(%{status: :running, turns: 0})
           |> RuntimeProjection.subscribe_session()
           |> push_event("user-message-sent", %{})
 
         send(self(), {:schedule_auto_title, conv_id, message})
-        send(self(), {:start_cli_turn, conv_id, message, opts})
         {:noreply, socket}
-    end
-  end
-
-  def handle_cli_turn(socket, conv_id, message, opts) do
-    case Handbeam.Agent.CliAgent.Run.turn(message, opts) do
-      {:ok, text, meta} ->
-        {:noreply, finish_cli_turn(socket, conv_id, text, meta)}
-
-      {:awaiting, kind, meta} ->
-        {:noreply, hold_cli_approval(socket, conv_id, message, opts, kind, meta)}
 
       {:error, reason} ->
-        Logger.warning("[WorkspaceLive] CLI turn failed: #{inspect(reason)}")
-
-        {:noreply,
-         socket
-         |> assign(:running, false)
-         |> assign(:running_conversation_id, nil)
-         |> assign(:composer_error, cli_turn_error(reason))}
+        Logger.warning("[WorkspaceLive] CLI turn was not admitted: #{inspect(reason)}")
+        {:noreply, assign(socket, :composer_error, cli_turn_error(reason))}
     end
   end
 
@@ -599,121 +623,81 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
   end
 
   def resume_cli_approval(socket, pending, action) when action in [:approve, :deny] do
-    decision = cli_decision(pending, action)
-    resume_with_decision(socket, pending, decision)
+    resume_with_decision(socket, pending, cli_decision(pending, action))
   end
 
   defp resume_with_decision(socket, pending, decision) do
-    socket =
-      socket
-      |> assign(:pending_approval, nil)
-      |> assign(:running, true)
-      |> RuntimeProjection.update_status(%{status: :running})
+    conversation_id = Handbeam.Utils.SafeMap.get_any(pending, :conversation_id, "conversation_id")
 
     if offered_decision?(pending, decision) do
-      opts = Keyword.put(pending.opts, :decision, decision)
-      send(self(), {:start_cli_turn, pending.conversation_id, pending.message, opts})
-      {:noreply, socket}
+      case Handbeam.Agent.CliAgent.Runner.resume(conversation_id, decision) do
+        :ok ->
+          {:noreply,
+           socket
+           |> assign(:pending_approval, nil)
+           |> assign(:running, true)
+           |> RuntimeProjection.update_status(%{status: :running})}
+
+        {:error, reason} ->
+          {:noreply, assign(socket, :composer_error, cli_turn_error(reason))}
+      end
     else
+      _ = Handbeam.Agent.Coordinator.cancel(conversation_id)
+
       {:noreply,
        socket
+       |> assign(:pending_approval, nil)
        |> assign(:running, false)
        |> assign(:running_conversation_id, nil)
        |> assign(:composer_error, gettext("CLI turn stopped."))}
     end
   end
 
-  defp finish_cli_turn(socket, conv_id, text, meta) do
-    socket =
-      if is_binary(meta[:session_id]) and is_binary(meta[:backend]) do
-        CliSelection.remember_session(socket, conv_id, meta.backend, meta.session_id)
-      else
-        socket
-      end
-
-    socket
-    |> assign(:running, false)
-    |> assign(:running_conversation_id, nil)
-    |> assign(:pending_approval, nil)
-    |> RuntimeProjection.update_status(%{status: :idle, model: meta[:backend]})
-    |> append_cli_result(text)
-  end
-
-  defp hold_cli_approval(socket, conv_id, message, opts, kind, meta) do
-    request = meta.request || %{}
-
-    pending = %{
-      kind: :cli_agent,
-      request_kind: kind,
-      conversation_id: conv_id,
-      message: message,
-      opts: opts,
-      backend: meta.backend,
-      session_id: meta.session_id,
-      options: meta.options || request[:options] || [],
-      action_requests: cli_action_requests(kind, request)
-    }
-
-    socket
-    |> assign(:running, false)
-    |> assign(:pending_approval, pending)
-    |> RuntimeProjection.update_status(%{status: :awaiting_approval})
-  end
-
-  defp cli_action_requests(:permission, request) do
-    Enum.map(request[:tools] || [], fn tool ->
-      %{
-        tool_name: tool[:name] || "cli",
-        tool_call_id: tool[:id] || request[:id],
-        arguments: %{options: request[:options] || []}
-      }
-    end)
-    |> case do
-      [] ->
-        [
-          %{
-            tool_name: "cli",
-            tool_call_id: request[:id],
-            arguments: %{options: request[:options] || []}
-          }
-        ]
-
-      requests ->
-        requests
-    end
-  end
-
-  defp cli_action_requests(:ask_user, request) do
-    [
-      %{
-        tool_name: "ask_user",
-        tool_call_id: request[:id],
-        arguments: %{questions: request[:questions] || []}
-      }
-    ]
-  end
-
   defp offered_decision?(_pending, nil), do: false
 
   defp offered_decision?(pending, {:permission, value}) do
-    Enum.any?(pending.options || [], &(&1["value"] == value and value != "cancel"))
+    options = Handbeam.Utils.SafeMap.get_any(pending, :options, "options") || []
+    Enum.any?(options, &(&1["value"] == value and value != "cancel"))
   end
 
   defp offered_decision?(_pending, {:ask_user, answers}) when is_list(answers), do: true
   defp offered_decision?(_pending, _), do: false
 
-  defp cli_decision(%{request_kind: :permission, options: options}, :approve) do
-    case Enum.find(options, &(&1["value"] not in [nil, "cancel"])) do
-      %{"value" => value} -> {:permission, value}
-      _ -> nil
+  defp cli_decision(pending, :approve) do
+    case Handbeam.Utils.SafeMap.get_any(pending, :request_kind, "request_kind") do
+      kind when kind in [:permission, "permission"] ->
+        pending
+        |> Handbeam.Utils.SafeMap.get_any(:options, "options")
+        |> List.wrap()
+        |> Enum.find(&(&1["value"] not in [nil, "cancel"]))
+        |> case do
+          %{"value" => value} -> {:permission, value}
+          _ -> nil
+        end
+
+      kind when kind in [:ask_user, "ask_user"] ->
+        cli_ask_user_decision(pending)
+
+      _ ->
+        nil
     end
   end
 
-  defp cli_decision(%{request_kind: :ask_user, action_requests: [request | _]}, :approve) do
+  defp cli_decision(_pending, :deny), do: nil
+
+  defp cli_ask_user_decision(pending) do
+    requests = Handbeam.Utils.SafeMap.get_any(pending, :action_requests, "action_requests") || []
+
     questions =
-      request
-      |> Handbeam.Utils.SafeMap.get_any([:arguments, "arguments"])
-      |> then(&Handbeam.Utils.SafeMap.get_any(&1 || %{}, [:questions, "questions"])) || []
+      case requests do
+        [request | _] ->
+          request
+          |> Handbeam.Utils.SafeMap.get_any([:arguments, "arguments"])
+          |> then(&Handbeam.Utils.SafeMap.get_any(&1 || %{}, [:questions, "questions"])) || []
+
+        [] ->
+          []
+      end
 
     answers =
       Enum.map(questions, fn question ->
@@ -728,25 +712,6 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
     if answers == [], do: nil, else: {:ask_user, answers}
   end
 
-  defp cli_decision(_pending, :deny), do: nil
-
-  defp append_cli_result(socket, text) when is_binary(text) and text != "" do
-    entry = %{
-      "id" => RuntimeProjection.unique_id("msg-cli"),
-      "role" => "assistant",
-      "content" => text,
-      "content_type" => "text"
-    }
-
-    timeline = socket.assigns.timeline ++ [entry]
-
-    socket
-    |> assign(:timeline, timeline)
-    |> stream(:timeline, timeline, reset: true)
-  end
-
-  defp append_cli_result(socket, _text), do: socket
-
   defp cli_models_error(:models_unavailable),
     do: gettext("This CLI cannot list models.")
 
@@ -755,16 +720,29 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
 
   defp cli_turn_error(:not_available), do: gettext("CLI is not available on this host.")
 
-  defp cli_turn_error(:permission_unanswered),
-    do: gettext("CLI asked for permission. The turn stopped.")
+  defp cli_turn_error(:attachments_not_supported),
+    do: gettext("This CLI does not support attachments. Remove them or choose Handbeam.")
 
-  defp cli_turn_error(:ask_user_unanswered),
-    do: gettext("CLI asked a question. The turn stopped.")
+  defp cli_turn_error(:run_in_progress),
+    do: gettext("A run is already active in this conversation.")
 
   defp cli_turn_error(reason) when is_binary(reason), do: reason
   defp cli_turn_error(reason), do: gettext("CLI turn failed: %{reason}", reason: inspect(reason))
 
   def start_new_agent_run(socket, conv_id, content, message, attachments) do
+    if cli_run_active?(conv_id) do
+      {:noreply,
+       assign(
+         socket,
+         :composer_error,
+         gettext("Stop the active CLI run before sending with Handbeam.")
+       )}
+    else
+      do_start_new_agent_run(socket, conv_id, content, message, attachments)
+    end
+  end
+
+  defp do_start_new_agent_run(socket, conv_id, content, message, attachments) do
     {selected_model, selected_reasoning_level} =
       ModelSelection.effective_model_and_reasoning(socket)
 
@@ -780,37 +758,6 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
         msg_id = RuntimeProjection.unique_id("msg-user")
         content = put_inbound_message_id(content, msg_id)
 
-        socket =
-          socket
-          |> assign(:input_value, "")
-          |> assign(:running, true)
-          |> assign(:running_conversation_id, conv_id)
-          |> assign(:stream_suppressed, false)
-          |> assign(:tools_active, %{})
-          |> assign(:timeline, socket.assigns.timeline)
-          |> stream(:timeline, socket.assigns.timeline, reset: true)
-          |> assign(:thinking_content, "")
-          |> assign(:think_buffer, "")
-          |> assign(:current_assistant_entry_id, nil)
-          |> append_user_message(message, attachments, msg_id)
-          |> assign(:pending_attachments, [])
-          |> Composer.forget(conv_id)
-          |> RuntimeProjection.update_status(%{
-            status: :running,
-            input_tokens: 0,
-            total_input_tokens: 0,
-            output_tokens: 0,
-            cache_read_tokens: 0,
-            cache_write_tokens: 0,
-            turns: 0
-          })
-          |> RuntimeProjection.subscribe_session()
-          |> push_event("user-message-sent", %{})
-
-        # Title persistence can take long enough to make the submit look inert.
-        # Run it after LiveView has acknowledged and rendered the user message.
-        send(self(), {:schedule_auto_title, conv_id, message})
-
         run_opts =
           run_opts(
             socket,
@@ -823,11 +770,17 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
             )
           )
 
-        if ConversationState.free_chat?(socket) do
-          send(self(), {:start_free_chat_run, conv_id, content, run_opts})
-          {:noreply, socket}
-        else
-          start_agent_run_now(socket, conv_id, content, run_opts)
+        case Handbeam.Agent.Coordinator.add_message(conv_id, content, run_opts) do
+          {:ok, _ack} ->
+            socket = accept_new_agent_run(socket, conv_id, message, attachments, msg_id)
+            send(self(), {:schedule_auto_title, conv_id, message})
+            {:noreply, socket}
+
+          {:error, reason} ->
+            Logger.warning("[WorkspaceLive] Failed to start agent run: #{inspect(reason)}")
+
+            {:noreply,
+             assign(socket, :composer_error, "Message not delivered: #{inspect(reason)}")}
         end
 
       {:error, reason} ->
@@ -835,21 +788,48 @@ defmodule HandbeamWeb.WorkspaceLive.MessageSubmission do
     end
   end
 
-  def start_agent_run_now(socket, conv_id, content, run_opts) do
-    case Handbeam.Agent.Coordinator.add_message(conv_id, content, run_opts) do
-      {:ok, _ack} ->
-        {:noreply, socket}
+  defp reject_cli_active(socket) do
+    {:noreply,
+     assign(
+       socket,
+       :composer_error,
+       gettext("Stop the active CLI run before sending with Handbeam.")
+     )}
+  end
 
-      {:error, reason} ->
-        Logger.warning("[WorkspaceLive] Failed to start agent run: #{inspect(reason)}")
-
-        {:noreply,
-         socket
-         |> assign(:running, false)
-         |> assign(:running_conversation_id, nil)
-         |> assign(:stream_suppressed, true)
-         |> assign(:composer_error, "Message not delivered: #{inspect(reason)}")}
+  defp cli_run_active?(conv_id) do
+    case Handbeam.Agent.Runner.status(conv_id) do
+      {:ok, %{running?: true, loop_owner: :cli_agent}} -> true
+      _ -> false
     end
+  end
+
+  defp accept_new_agent_run(socket, conv_id, message, attachments, msg_id) do
+    socket
+    |> assign(:input_value, "")
+    |> assign(:running, true)
+    |> assign(:running_conversation_id, conv_id)
+    |> assign(:stream_suppressed, false)
+    |> assign(:tools_active, %{})
+    |> assign(:timeline, socket.assigns.timeline)
+    |> stream(:timeline, socket.assigns.timeline, reset: true)
+    |> assign(:thinking_content, "")
+    |> assign(:think_buffer, "")
+    |> assign(:current_assistant_entry_id, nil)
+    |> append_user_message(message, attachments, msg_id)
+    |> assign(:pending_attachments, [])
+    |> Composer.forget(conv_id)
+    |> RuntimeProjection.update_status(%{
+      status: :running,
+      input_tokens: 0,
+      total_input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      turns: 0
+    })
+    |> RuntimeProjection.subscribe_session()
+    |> push_event("user-message-sent", %{})
   end
 
   def ensure_current_conversation(socket) do

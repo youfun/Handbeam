@@ -14,25 +14,47 @@ defmodule Handbeam.Platform.WorkspaceEnvironment do
 
   @helper_env "HANDBEAM_DESKTOP_ENV_HELPER"
 
+  @type failure_reason ::
+          :service_unavailable
+          | :helper_unavailable
+          | :invalid_environment
+          | :invalid_capture_result
+          | :capture_failed
+          | {:helper_exit_status, non_neg_integer()}
+          | {:capture_exception, module()}
+          | {:capture_caught, :exit | :throw}
+  @type error :: {:workspace_environment_failed, failure_reason()}
+
   def start_link(opts \\ []), do: GenServer.start_link(__MODULE__, opts, name: __MODULE__)
 
-  @spec environment(Path.t() | nil) :: map()
+  @spec environment(Path.t() | nil) :: {:ok, map()} | {:error, error()}
   def environment(path) when is_binary(path) and path != "" do
     if Process.whereis(__MODULE__) do
       GenServer.call(__MODULE__, {:environment, Path.expand(path)}, 10_000)
     else
-      %{}
+      {:error, {:workspace_environment_failed, :service_unavailable}}
     end
   end
 
-  def environment(_path), do: %{}
+  def environment(_path), do: {:ok, %{}}
 
-  @spec port_env(Path.t() | nil) :: [{String.t(), String.t() | false}]
-  def port_env(path), do: path |> environment() |> CommandEnvironment.port_env()
+  @spec port_env(Path.t() | nil) ::
+          {:ok, [{String.t(), String.t() | false}]} | {:error, error()}
+  def port_env(path) do
+    with {:ok, environment} <- environment(path) do
+      {:ok, CommandEnvironment.port_env(environment)}
+    end
+  end
 
-  @spec find_executable(String.t(), Path.t() | nil) :: String.t() | nil
+  @spec find_executable(String.t(), Path.t() | nil) ::
+          {:ok, String.t()} | {:error, :not_found | error()}
   def find_executable(name, path) do
-    CommandEnvironment.find_executable(name, environment(path)) || System.find_executable(name)
+    with {:ok, environment} <- environment(path) do
+      case CommandEnvironment.find_executable(name, environment) || System.find_executable(name) do
+        nil -> {:error, :not_found}
+        executable -> {:ok, executable}
+      end
+    end
   end
 
   @doc false
@@ -47,11 +69,16 @@ defmodule Handbeam.Platform.WorkspaceEnvironment do
   def handle_call({:environment, path}, _from, state) do
     case state.environments do
       %{^path => environment} ->
-        {:reply, environment, state}
+        {:reply, {:ok, environment}, state}
 
       _ ->
-        environment = capture(path)
-        {:reply, environment, put_in(state.environments[path], environment)}
+        case capture(path) do
+          {:ok, environment} ->
+            {:reply, {:ok, environment}, put_in(state.environments[path], environment)}
+
+          {:error, reason} ->
+            {:reply, {:error, {:workspace_environment_failed, reason}}, state}
+        end
     end
   end
 
@@ -62,11 +89,19 @@ defmodule Handbeam.Platform.WorkspaceEnvironment do
       Application.get_env(:handbeam, :workspace_environment_capture, &capture_with_helper/1)
 
     case capture.(path) do
-      {:ok, environment} when is_map(environment) -> CommandEnvironment.sanitize(environment)
-      _ -> %{}
+      {:ok, environment} when is_map(environment) ->
+        {:ok, CommandEnvironment.sanitize(environment)}
+
+      {:error, reason} ->
+        {:error, sanitize_failure(reason)}
+
+      _ ->
+        {:error, :invalid_capture_result}
     end
   rescue
-    _ -> %{}
+    exception -> {:error, {:capture_exception, exception.__struct__}}
+  catch
+    kind, _reason when kind in [:exit, :throw] -> {:error, {:capture_caught, kind}}
   end
 
   defp capture_with_helper(path) do
@@ -83,10 +118,18 @@ defmodule Handbeam.Platform.WorkspaceEnvironment do
       case Handbeam.JSON.decode(output) do
         {:ok, environment} when is_map(environment) -> {:ok, environment}
         _ when status == 0 -> {:error, :invalid_environment}
-        _ -> {:error, {:capture_failed, status}}
+        _ -> {:error, {:helper_exit_status, status}}
       end
     else
-      {:error, :unavailable}
+      {:error, :helper_unavailable}
     end
   end
+
+  defp sanitize_failure(reason) when reason in [:helper_unavailable, :invalid_environment], do: reason
+
+  defp sanitize_failure({:helper_exit_status, status})
+       when is_integer(status) and status >= 0,
+       do: {:helper_exit_status, status}
+
+  defp sanitize_failure(_reason), do: :capture_failed
 end

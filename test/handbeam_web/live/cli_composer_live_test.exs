@@ -12,6 +12,7 @@ defmodule HandbeamWeb.CliComposerLiveTest do
   import Phoenix.LiveViewTest
 
   alias Handbeam.Agent.CliAgent.Registry
+  alias Handbeam.PubSub.Session
   alias Handbeam.TestSupport.E2EHarness
 
   setup do
@@ -79,16 +80,22 @@ defmodule HandbeamWeb.CliComposerLiveTest do
     Registry.register(Handbeam.Agent.CliAgentTest.FakeBackend)
     Application.put_env(:handbeam, :fake_cli_notify, self())
     {:ok, view, _html} = live(conn, "/")
-
     view |> element("#cli-picker") |> render_change(%{"cli" => "fake-cli"})
 
     view
-    |> form("#composer", %{message: "first", cli: "fake-cli", model: "fake-model"})
+    |> form("#composer", %{message: "slow", cli: "fake-cli", model: "fake-model"})
     |> render_submit()
 
-    assert_receive {:fake_cli_turn, "first", first}
+    assert_receive {:fake_cli_turn, "slow", first}
+    assert_receive {:fake_cli_waiting, task}
     assert first.session_id == "fake-new"
     assert first.private.resumed == nil
+
+    conversation_id = first_conversation_id(view)
+    [{runner, _metadata}] = Elixir.Registry.lookup(Handbeam.AgentRunRegistry, conversation_id)
+    runner_ref = Process.monitor(runner)
+    send(task, :finish_fake_cli)
+    assert_receive {:DOWN, ^runner_ref, :process, ^runner, _reason}
 
     view
     |> form("#composer", %{message: "second", cli: "fake-cli", model: "fake-model"})
@@ -97,6 +104,7 @@ defmodule HandbeamWeb.CliComposerLiveTest do
     assert_receive {:fake_cli_turn, "second", second}
     assert second.session_id == "fake-new"
     assert second.private.resumed == "fake-new"
+    assert :ok = Handbeam.Agent.CliAgent.Runner.await_stop(conversation_id)
 
     view |> element("#cli-picker") |> render_change(%{"cli" => ""})
     view |> element("#cli-picker") |> render_change(%{"cli" => "fake-cli"})
@@ -157,6 +165,398 @@ defmodule HandbeamWeb.CliComposerLiveTest do
     refute has_element?(view, "#tool-approval-overlay")
   end
 
+  test "cross-sender CLI events are durably ordered before run_end", %{conn: conn} do
+    Registry.register(Handbeam.Agent.CliAgentTest.FakeBackend)
+    Application.put_env(:handbeam, :fake_cli_notify, self())
+    {:ok, view, _html} = live(conn, "/")
+
+    view
+    |> element("button[phx-click='new_conversation_in_workspace'][phx-value-ws_id='default']")
+    |> render_click()
+
+    conversation_id = first_conversation_id(view)
+    :ok = Session.subscribe(conversation_id)
+    view |> element("#cli-picker") |> render_change(%{"cli" => "fake-cli"})
+
+    view
+    |> form("#composer", %{
+      message: "ordered-cross-sender",
+      cli: "fake-cli",
+      model: "fake-model"
+    })
+    |> render_submit()
+
+    assert_receive {:agent_event, %{kind: :run_start, payload: %{run_id: run_id}}}
+    assert_receive {:fake_cli_event_ready, emitter}
+    send(emitter, :emit_cli_events)
+    assert_receive :fake_cli_event_callbacks_returned
+
+    assert_receive {:agent_event,
+                    %{kind: :message_delta, payload: %{run_id: ^run_id, chunk: "ordered"}}}
+
+    assert_receive {:agent_event,
+                    %{kind: :tool_start, payload: %{run_id: ^run_id, id: "ordered-tool"}}}
+
+    assert_receive {:agent_event,
+                    %{kind: :tool_end, payload: %{run_id: ^run_id, id: "ordered-tool"}}}
+
+    assert_receive {:agent_event, %{kind: :turn_end, payload: %{run_id: ^run_id}}}
+
+    assert_receive {:agent_event,
+                    %{kind: :run_end, payload: %{run_id: ^run_id, status: :completed}}}
+
+    {:ok, entries} = Handbeam.ConversationTranscriptStore.list(conversation_id)
+
+    assert Enum.any?(entries, fn entry ->
+             entry["role"] == "assistant" and entry["content"] == "ordered" and
+               entry["status"] == "completed" and entry["run_id"] == run_id
+           end)
+
+    assert Enum.any?(entries, fn entry ->
+             entry["content_type"] == "tool" and entry["tool_status"] == "done" and
+               entry["run_id"] == run_id
+           end)
+  end
+
+  test "backend error emits one persisted and broadcast run_end with complete metadata", %{
+    conn: conn
+  } do
+    Registry.register(Handbeam.Agent.CliAgentTest.FakeBackend)
+    Application.put_env(:handbeam, :fake_cli_notify, self())
+    {:ok, view, _html} = live(conn, "/")
+
+    view
+    |> element("button[phx-click='new_conversation_in_workspace'][phx-value-ws_id='default']")
+    |> render_click()
+
+    conversation_id = first_conversation_id(view)
+    :ok = Session.subscribe(conversation_id)
+    view |> element("#cli-picker") |> render_change(%{"cli" => "fake-cli"})
+
+    view
+    |> form("#composer", %{message: "return-error", cli: "fake-cli", model: "fake-model"})
+    |> render_submit()
+
+    assert_receive {:agent_event, %{kind: :run_start, payload: %{run_id: run_id}}}
+
+    assert_receive {:agent_event,
+                    %{
+                      kind: :run_end,
+                      payload: %{
+                        status: :error,
+                        error: "fake_failure",
+                        run_id: ^run_id,
+                        loop_owner: :cli_agent,
+                        backend: "fake-cli",
+                        turns: 0
+                      }
+                    }}
+
+    refute_receive {:agent_event, %{kind: :run_end, payload: %{run_id: ^run_id}}}, 100
+    {:ok, entries} = Handbeam.ConversationTranscriptStore.list(conversation_id)
+
+    assert Enum.any?(entries, fn entry ->
+             entry["message_type"] == "error" and entry["run_id"] == run_id
+           end)
+  end
+
+  test "backend task crash emits one persisted and broadcast run_end with complete metadata", %{
+    conn: conn
+  } do
+    Registry.register(Handbeam.Agent.CliAgentTest.FakeBackend)
+    Application.put_env(:handbeam, :fake_cli_notify, self())
+    {:ok, view, _html} = live(conn, "/")
+
+    view
+    |> element("button[phx-click='new_conversation_in_workspace'][phx-value-ws_id='default']")
+    |> render_click()
+
+    conversation_id = first_conversation_id(view)
+    :ok = Session.subscribe(conversation_id)
+    view |> element("#cli-picker") |> render_change(%{"cli" => "fake-cli"})
+
+    ExUnit.CaptureLog.capture_log(fn ->
+      view
+      |> form("#composer", %{message: "crash", cli: "fake-cli", model: "fake-model"})
+      |> render_submit()
+
+      assert_receive {:agent_event, %{kind: :run_start, payload: %{run_id: run_id}}}
+
+      assert_receive {:agent_event,
+                      %{
+                        kind: :run_end,
+                        payload: %{
+                          status: :error,
+                          error: error,
+                          run_id: ^run_id,
+                          loop_owner: :cli_agent,
+                          backend: "fake-cli",
+                          turns: 0
+                        }
+                      }},
+                     1_000
+
+      assert error =~ "fake cli crash"
+      refute_receive {:agent_event, %{kind: :run_end, payload: %{run_id: ^run_id}}}, 100
+      {:ok, entries} = Handbeam.ConversationTranscriptStore.list(conversation_id)
+
+      assert Enum.any?(entries, fn entry ->
+               entry["message_type"] == "error" and entry["run_id"] == run_id
+             end)
+    end)
+  end
+
+  test "approval resume keeps one logical run and emits one complete terminal payload", %{
+    conn: conn
+  } do
+    Registry.register(Handbeam.Agent.CliAgentTest.FakeBackend)
+    Application.put_env(:handbeam, :fake_cli_notify, self())
+    {:ok, view, _html} = live(conn, "/")
+
+    view
+    |> element("button[phx-click='new_conversation_in_workspace'][phx-value-ws_id='default']")
+    |> render_click()
+
+    conversation_id = first_conversation_id(view)
+    :ok = Session.subscribe(conversation_id)
+    view |> element("#cli-picker") |> render_change(%{"cli" => "fake-cli"})
+
+    view
+    |> form("#composer", %{
+      message: "need-permission",
+      cli: "fake-cli",
+      model: "fake-model"
+    })
+    |> render_submit()
+
+    assert_receive {:agent_event,
+                    %{
+                      kind: :run_start,
+                      payload: %{
+                        run_id: run_id,
+                        loop_owner: :cli_agent,
+                        backend: "fake-cli"
+                      }
+                    }}
+
+    assert_receive {:fake_cli_turn, "need-permission", asked}
+    assert has_element?(view, "#cli-approval-proceed_once")
+    view |> element("#cli-approval-proceed_once") |> render_click()
+    assert_receive {:fake_cli_turn, "need-permission", resumed}
+    assert resumed.session_id == asked.session_id
+
+    assert_receive {:agent_event,
+                    %{
+                      kind: :run_end,
+                      payload: %{
+                        status: :completed,
+                        run_id: ^run_id,
+                        loop_owner: :cli_agent,
+                        backend: "fake-cli",
+                        turns: 1
+                      }
+                    }},
+                   1_000
+
+    refute_receive {:agent_event, %{kind: :run_start, payload: %{run_id: ^run_id}}}, 100
+    refute_receive {:agent_event, %{kind: :run_end, payload: %{run_id: ^run_id}}}, 100
+
+    {:ok, entries} = Handbeam.ConversationTranscriptStore.list(conversation_id)
+
+    assert Enum.any?(entries, fn entry ->
+             entry["role"] == "assistant" and entry["content"] == "fake" and
+               entry["status"] == "completed" and entry["run_id"] == run_id
+           end)
+  end
+
+  test "cancelling streamed CLI text settles that assistant and emits one matching run_end", %{
+    conn: conn
+  } do
+    Registry.register(Handbeam.Agent.CliAgentTest.FakeBackend)
+    Application.put_env(:handbeam, :fake_cli_notify, self())
+    {:ok, view, _html} = live(conn, "/")
+
+    view
+    |> element("button[phx-click='new_conversation_in_workspace'][phx-value-ws_id='default']")
+    |> render_click()
+
+    conversation_id = first_conversation_id(view)
+    :ok = Session.subscribe(conversation_id)
+    view |> element("#cli-picker") |> render_change(%{"cli" => "fake-cli"})
+
+    view
+    |> form("#composer", %{message: "streaming-slow", cli: "fake-cli", model: "fake-model"})
+    |> render_submit()
+
+    assert_receive {:agent_event,
+                    %{kind: :run_start, payload: %{run_id: run_id, loop_owner: :cli_agent}}}
+
+    assert_receive {:fake_cli_waiting, task}
+    task_ref = Process.monitor(task)
+
+    assert_receive {:agent_event,
+                    %{kind: :message_delta, payload: %{run_id: ^run_id, chunk: "partial"}}}
+
+    view |> element("button[phx-click='stop_run']") |> render_click()
+    assert_receive {:DOWN, ^task_ref, :process, ^task, _reason}, 1_000
+
+    assert_receive {:agent_event,
+                    %{
+                      kind: :run_end,
+                      payload: %{
+                        status: :cancelled,
+                        run_id: ^run_id,
+                        loop_owner: :cli_agent,
+                        backend: "fake-cli",
+                        turns: 0
+                      }
+                    }},
+                   1_000
+
+    refute_receive {:agent_event, %{kind: :run_end, payload: %{run_id: ^run_id}}}, 100
+
+    {:ok, entries} = Handbeam.ConversationTranscriptStore.list(conversation_id)
+
+    assert Enum.any?(entries, fn entry ->
+             entry["role"] == "assistant" and entry["content"] == "partial" and
+               entry["status"] == "cancelled" and entry["run_id"] == run_id
+           end)
+  end
+
+  test "switching to Handbeam during a CLI run rejects queueing and retains the draft", %{
+    conn: conn
+  } do
+    Registry.register(Handbeam.Agent.CliAgentTest.FakeBackend)
+    Application.put_env(:handbeam, :fake_cli_notify, self())
+    {:ok, view, _html} = live(conn, "/")
+    view |> element("#cli-picker") |> render_change(%{"cli" => "fake-cli"})
+
+    view
+    |> form("#composer", %{message: "slow", cli: "fake-cli", model: "fake-model"})
+    |> render_submit()
+
+    assert_receive {:fake_cli_waiting, task}
+    conversation_id = first_conversation_id(view)
+    view |> element("#cli-picker") |> render_change(%{"cli" => ""})
+    render_keyup(view, "update_input", %{"value" => "keep while cli runs"})
+
+    view
+    |> form("#composer", %{message: "keep while cli runs", model: "fake/fake-model"})
+    |> render_submit()
+
+    assigns = :sys.get_state(view.pid).socket.assigns
+    assert assigns.input_value == "keep while cli runs"
+    assert assigns.composer_error =~ "Stop the active CLI run"
+    assert Process.alive?(task)
+
+    {:ok, entries} = Handbeam.ConversationTranscriptStore.list(conversation_id)
+    refute Enum.any?(entries, &(&1["content"] == "keep while cli runs"))
+
+    view |> element("button[phx-click='stop_run']") |> render_click()
+  end
+
+  test "slow CLI remains supervised while switching and Stop cancels it", %{conn: conn} do
+    Registry.register(Handbeam.Agent.CliAgentTest.FakeBackend)
+    Application.put_env(:handbeam, :fake_cli_notify, self())
+    {:ok, view, _html} = live(conn, "/")
+    view |> element("#cli-picker") |> render_change(%{"cli" => "fake-cli"})
+
+    view
+    |> form("#composer", %{message: "slow", cli: "fake-cli", model: "fake-model"})
+    |> render_submit()
+
+    assert_receive {:fake_cli_waiting, task}
+    task_ref = Process.monitor(task)
+    conversation_id = first_conversation_id(view)
+
+    view
+    |> element("button[phx-click='new_conversation_in_workspace'][phx-value-ws_id='default']")
+    |> render_click()
+
+    refute first_conversation_id(view) == conversation_id
+    assert Process.alive?(task)
+
+    {:ok, reconnected, _html} = live(conn, "/w/default/c/#{conversation_id}")
+    assert has_element?(reconnected, "button[phx-click='stop_run']")
+
+    reconnected |> element("button[phx-click='stop_run']") |> render_click()
+    assert_receive {:DOWN, ^task_ref, :process, ^task, _reason}
+    refute has_element?(reconnected, "button[phx-click='stop_run']")
+  end
+
+  test "unsupported CLI attachments are rejected without clearing draft or attachments", %{
+    conn: conn
+  } do
+    Registry.register(Handbeam.Agent.CliAgentTest.FakeBackend)
+    Application.put_env(:handbeam, :fake_cli_notify, self())
+    {:ok, view, _html} = live(conn, "/")
+    view |> element("#cli-picker") |> render_change(%{"cli" => "fake-cli"})
+
+    attachment = %{"id" => "kept", "filename" => "kept.png", "url" => "/uploads/kept.png"}
+
+    :sys.replace_state(view.pid, fn %{socket: socket} = state ->
+      socket =
+        socket
+        |> Phoenix.Component.assign(:input_value, "keep this draft")
+        |> Phoenix.Component.assign(:pending_attachments, [attachment])
+
+      %{state | socket: socket}
+    end)
+
+    view
+    |> form("#composer", %{
+      message: "keep this draft",
+      cli: "fake-cli",
+      model: "fake-model"
+    })
+    |> render_submit()
+
+    refute_received {:fake_cli_turn, _, _}
+    assigns = :sys.get_state(view.pid).socket.assigns
+    assert assigns.input_value == "keep this draft"
+    assert assigns.pending_attachments == [attachment]
+    assert assigns.composer_error =~ "does not support attachments"
+  end
+
+  test "new Handbeam run rejection retains input and remembered draft", %{conn: conn} do
+    {:ok, view, _html} = live(conn, "/")
+    conversation_id = first_conversation_id(view)
+    previous = Application.get_env(:handbeam, :conversation_transcript_store)
+
+    :sys.replace_state(view.pid, fn %{socket: socket} = state ->
+      socket =
+        socket
+        |> Phoenix.Component.assign(:input_value, "retry after rejection")
+        |> Phoenix.Component.assign(:composer_drafts, %{
+          conversation_id => %{input: "retry after rejection", attachments: []}
+        })
+
+      %{state | socket: socket}
+    end)
+
+    Application.put_env(
+      :handbeam,
+      :conversation_transcript_store,
+      HandbeamWeb.CliComposerLiveTest.RefusingTranscriptStore
+    )
+
+    try do
+      view
+      |> form("#composer", %{message: "retry after rejection", model: "fake/fake-model"})
+      |> render_submit()
+
+      assigns = :sys.get_state(view.pid).socket.assigns
+      assert assigns.input_value == "retry after rejection"
+      assert assigns.composer_drafts[conversation_id].input == "retry after rejection"
+      assert assigns.composer_error =~ "Message not delivered"
+      refute assigns.running
+    after
+      if previous,
+        do: Application.put_env(:handbeam, :conversation_transcript_store, previous),
+        else: Application.delete_env(:handbeam, :conversation_transcript_store)
+    end
+  end
+
   test "a CLI that cannot list models does not fall back to the Handbeam catalog", %{conn: conn} do
     Registry.register(HandbeamWeb.CliComposerLiveTest.UnavailableModels)
     {:ok, view, _html} = live(conn, "/")
@@ -170,6 +570,33 @@ defmodule HandbeamWeb.CliComposerLiveTest do
     refute html =~ "fake-model"
     assert has_element?(view, "#cli-models-error")
   end
+
+  defp first_conversation_id(view) do
+    :sys.get_state(view.pid).socket.assigns.current_conversation_id
+  end
+end
+
+defmodule HandbeamWeb.CliComposerLiveTest.RefusingTranscriptStore do
+  @moduledoc false
+  @behaviour Handbeam.ConversationTranscriptStore
+
+  alias Handbeam.ConversationTranscriptStore.ConversationStore
+
+  def list(conversation_id, opts), do: ConversationStore.list(conversation_id, opts)
+  def page(conversation_id, opts), do: ConversationStore.page(conversation_id, opts)
+  def append(_conversation_id, _entry, _opts), do: {:error, :storage_unavailable}
+
+  def append_with_receipt(_conversation_id, _entry, _request_id, _receipt, _opts),
+    do: {:error, :storage_unavailable}
+
+  def update(conversation_id, entry_id, patch, opts),
+    do: ConversationStore.update(conversation_id, entry_id, patch, opts)
+
+  def delete(conversation_id, entry_id, opts),
+    do: ConversationStore.delete(conversation_id, entry_id, opts)
+
+  def replace_all(conversation_id, entries, opts),
+    do: ConversationStore.replace_all(conversation_id, entries, opts)
 end
 
 defmodule HandbeamWeb.CliComposerLiveTest.UnavailableModels do

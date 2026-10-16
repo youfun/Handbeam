@@ -101,11 +101,14 @@ defmodule HandbeamWeb.WorkspaceLive.CliSelection do
         model: socket.assigns.selected_model,
         reasoning_effort: socket.assigns.selected_reasoning_level,
         conversation_id: conversation_id,
-        run_id: conversation_id,
         session_id: resumed_session_id(socket, conversation_id)
       ]
     end
   end
+
+  @doc "Restore Handbeam controls when changing conversations without forgetting resumable CLI state."
+  @spec restore_handbeam_for_switch(Phoenix.LiveView.Socket.t()) :: Phoenix.LiveView.Socket.t()
+  def restore_handbeam_for_switch(socket), do: restore_handbeam(socket)
 
   @doc "Form value for the CLI picker. Empty string means Handbeam."
   @spec form_value(String.t() | nil) :: String.t()
@@ -126,11 +129,12 @@ defmodule HandbeamWeb.WorkspaceLive.CliSelection do
     sessions = socket.assigns[:cli_sessions] || %{}
     sessions = Map.put(sessions, conversation_id, %{backend: backend, session_id: session_id})
 
-    _ =
-      Handbeam.ConversationStore.update_meta(conversation_id,
-        cli_backend: backend,
-        cli_session_id: session_id
-      )
+    Handbeam.PubSub.Session.update_extension_state(
+      conversation_id,
+      :cli_agent,
+      :session,
+      %{backend: backend, session_id: session_id}
+    )
 
     assign(socket, :cli_sessions, sessions)
   end
@@ -140,11 +144,7 @@ defmodule HandbeamWeb.WorkspaceLive.CliSelection do
   def forget_session(socket, conversation_id) when is_binary(conversation_id) do
     sessions = socket.assigns[:cli_sessions] || %{}
 
-    _ =
-      Handbeam.ConversationStore.update_meta(conversation_id,
-        cli_backend: nil,
-        cli_session_id: nil
-      )
+    Handbeam.PubSub.Session.delete_extension_state(conversation_id, :cli_agent, :session)
 
     assign(socket, :cli_sessions, Map.delete(sessions, conversation_id))
   end
@@ -159,15 +159,33 @@ defmodule HandbeamWeb.WorkspaceLive.CliSelection do
   end
 
   defp persisted_session(conversation_id) do
-    case Handbeam.ConversationStore.get_meta(conversation_id) do
-      {:ok, %{"cli_backend" => backend, "cli_session_id" => session_id}}
-      when is_binary(backend) and is_binary(session_id) ->
-        %{backend: backend, session_id: session_id}
+    session =
+      case Handbeam.PubSub.Session.whereis(conversation_id) do
+        pid when is_pid(pid) ->
+          snapshot = Handbeam.PubSub.Session.snapshot(conversation_id)
 
-      _ ->
-        nil
-    end
+          extension =
+            Handbeam.Utils.SafeMap.get_any(snapshot.extension_state, :cli_agent, "cli_agent") ||
+              %{}
+
+          Handbeam.Utils.SafeMap.get_any(extension, :session, "session")
+
+        _ ->
+          nil
+      end
+
+    normalize_persisted_session(session)
   end
+
+  defp normalize_persisted_session(session) when is_map(session) do
+    backend = Handbeam.Utils.SafeMap.get_any(session, :backend, "backend")
+    session_id = Handbeam.Utils.SafeMap.get_any(session, :session_id, "session_id")
+
+    if is_binary(backend) and is_binary(session_id),
+      do: %{backend: backend, session_id: session_id}
+  end
+
+  defp normalize_persisted_session(_session), do: nil
 
   defp load_cli_models(socket, cli) do
     case Registry.list_models(cli, cwd: workspace_cwd(socket)) do

@@ -7,6 +7,7 @@ defmodule Handbeam.WorkspaceSettings do
   """
 
   @settings_relpath ".handbeam/settings.jsonc"
+  @lock_aborted_error "Failed to acquire workspace settings lock"
 
   @default_content """
   {
@@ -69,12 +70,15 @@ defmodule Handbeam.WorkspaceSettings do
   @spec ensure_file(Path.t()) :: :ok | {:error, String.t()}
   def ensure_file(workspace_root) do
     settings_path = path(workspace_root)
+    with_settings_lock(settings_path, fn -> ensure_file_unlocked(settings_path) end)
+  end
 
+  defp ensure_file_unlocked(settings_path) do
     if File.exists?(settings_path) do
       :ok
     else
       with :ok <- File.mkdir_p(Path.dirname(settings_path)),
-           :ok <- File.write(settings_path, @default_content) do
+           :ok <- atomic_write(settings_path, @default_content) do
         :ok
       else
         {:error, reason} ->
@@ -98,22 +102,24 @@ defmodule Handbeam.WorkspaceSettings do
     else
       settings_path = path(workspace_root)
 
-      with {:ok, existing} <- read_existing_for_write(settings_path),
-           :ok <- File.mkdir_p(Path.dirname(settings_path)) do
-        tools = existing |> Map.get("tools", %{}) |> ensure_map()
-        current = tools |> Map.get(Atom.to_string(list), []) |> normalize_string_list()
-        updated_list = if pattern in current, do: current, else: current ++ [pattern]
-        updated_tools = Map.put(tools, Atom.to_string(list), updated_list)
-        updated = Map.put(existing, "tools", updated_tools)
+      with_settings_lock(settings_path, fn ->
+        with {:ok, existing} <- read_existing_for_write(settings_path),
+             :ok <- File.mkdir_p(Path.dirname(settings_path)) do
+          tools = existing |> Map.get("tools", %{}) |> ensure_map()
+          current = tools |> Map.get(Atom.to_string(list), []) |> normalize_string_list()
+          updated_list = if pattern in current, do: current, else: current ++ [pattern]
+          updated_tools = Map.put(tools, Atom.to_string(list), updated_list)
+          updated = Map.put(existing, "tools", updated_tools)
 
-        case atomic_write(settings_path, Handbeam.JSON.encode!(updated, pretty: true)) do
-          :ok -> :ok
-          {:error, reason} -> {:error, "Failed to write settings: #{inspect(reason)}"}
+          case atomic_write(settings_path, Handbeam.JSON.encode!(updated, pretty: true)) do
+            :ok -> :ok
+            {:error, reason} -> {:error, "Failed to write settings: #{inspect(reason)}"}
+          end
+        else
+          {:error, reason} when is_binary(reason) -> {:error, reason}
+          {:error, reason} -> {:error, "Failed to prepare settings path: #{inspect(reason)}"}
         end
-      else
-        {:error, reason} when is_binary(reason) -> {:error, reason}
-        {:error, reason} -> {:error, "Failed to prepare settings path: #{inspect(reason)}"}
-      end
+      end)
     end
   end
 
@@ -145,18 +151,17 @@ defmodule Handbeam.WorkspaceSettings do
   def update_builtin_memory_enabled(workspace_root, enabled) when is_boolean(enabled) do
     settings_path = path(workspace_root)
 
-    with :ok <- ensure_file(workspace_root),
-         {:ok, content} <- File.read(settings_path),
-         {:ok, settings} <- decode_jsonc(content),
-         true <- is_map(settings),
-         updated_content <- put_builtin_memory_jsonc(content, settings, enabled),
-         :ok <- atomic_write(settings_path, updated_content) do
-      :ok
-    else
-      false -> {:error, "Failed to parse #{settings_path}: expected a JSON object"}
-      {:error, reason} when is_binary(reason) -> {:error, reason}
-      {:error, reason} -> {:error, "Failed to write settings: #{inspect(reason)}"}
-    end
+    with_settings_lock(settings_path, fn ->
+      with :ok <- ensure_file_unlocked(settings_path),
+           {:ok, content, settings} <- read_settings_for_update(settings_path),
+           updated_content <- put_builtin_memory_jsonc(content, settings, enabled),
+           :ok <- atomic_write(settings_path, updated_content) do
+        :ok
+      else
+        {:error, reason} when is_binary(reason) -> {:error, reason}
+        {:error, reason} -> {:error, "Failed to write settings: #{inspect(reason)}"}
+      end
+    end)
   end
 
   @doc "The three workspace permission modes exposed by Web and native hosts."
@@ -184,33 +189,41 @@ defmodule Handbeam.WorkspaceSettings do
         :yolo -> {"yolo", "user"}
       end
 
-    with :ok <- ensure_file(workspace_root),
-         {:ok, content} <- File.read(path(workspace_root)),
-         {:ok, settings} <- decode_jsonc(content),
-         {:ok, content} <- put_approvals_reviewer(content, reviewer) do
-      content =
-        if Regex.match?(~r/"default_mode"\s*:\s*"[^"]*"/, content) do
-          Regex.replace(
-            ~r/"default_mode"\s*:\s*"[^"]*"/,
-            content,
-            "\"default_mode\": \"#{default_mode}\"",
-            global: false
-          )
-        else
-          tools =
-            settings
-            |> Map.get("tools")
-            |> ensure_map()
-            |> Map.merge(%{
-              "default_mode" => default_mode,
-              "approvals_reviewer" => reviewer
-            })
+    settings_path = path(workspace_root)
 
-          settings |> Map.put("tools", tools) |> Handbeam.JSON.encode!(pretty: true)
+    with_settings_lock(settings_path, fn ->
+      with :ok <- ensure_file_unlocked(settings_path),
+           {:ok, content, settings} <- read_settings_for_update(settings_path),
+           {:ok, content} <- put_approvals_reviewer(content, reviewer) do
+        content =
+          if Regex.match?(~r/"default_mode"\s*:\s*"[^"]*"/, content) do
+            Regex.replace(
+              ~r/"default_mode"\s*:\s*"[^"]*"/,
+              content,
+              "\"default_mode\": \"#{default_mode}\"",
+              global: false
+            )
+          else
+            tools =
+              settings
+              |> Map.get("tools")
+              |> ensure_map()
+              |> Map.merge(%{
+                "default_mode" => default_mode,
+                "approvals_reviewer" => reviewer
+              })
+
+            settings |> Map.put("tools", tools) |> Handbeam.JSON.encode!(pretty: true)
+          end
+
+        case atomic_write(settings_path, content) do
+          :ok -> :ok
+          {:error, reason} -> {:error, "Failed to write settings: #{inspect(reason)}"}
         end
-
-      File.write(path(workspace_root), content)
-    end
+      else
+        {:error, reason} -> {:error, reason}
+      end
+    end)
   end
 
   @default_review_timeout_ms 30_000
@@ -509,18 +522,20 @@ defmodule Handbeam.WorkspaceSettings do
   def write_policy(workspace_root, policy) when is_map(policy) do
     settings_path = path(workspace_root)
 
-    with {:ok, existing} <- read_existing_for_write(settings_path),
-         :ok <- File.mkdir_p(Path.dirname(settings_path)) do
-      updated = Map.put(existing, "models", policy)
+    with_settings_lock(settings_path, fn ->
+      with {:ok, existing} <- read_existing_for_write(settings_path),
+           :ok <- File.mkdir_p(Path.dirname(settings_path)) do
+        updated = Map.put(existing, "models", policy)
 
-      case atomic_write(settings_path, Handbeam.JSON.encode!(updated, pretty: true)) do
-        :ok -> :ok
-        {:error, reason} -> {:error, "Failed to write settings: #{inspect(reason)}"}
+        case atomic_write(settings_path, Handbeam.JSON.encode!(updated, pretty: true)) do
+          :ok -> :ok
+          {:error, reason} -> {:error, "Failed to write settings: #{inspect(reason)}"}
+        end
+      else
+        {:error, reason} when is_binary(reason) -> {:error, reason}
+        {:error, reason} -> {:error, "Failed to prepare settings path: #{inspect(reason)}"}
       end
-    else
-      {:error, reason} when is_binary(reason) -> {:error, reason}
-      {:error, reason} -> {:error, "Failed to prepare settings path: #{inspect(reason)}"}
-    end
+    end)
   end
 
   def write_policy(_workspace_root, _policy) do
@@ -538,6 +553,25 @@ defmodule Handbeam.WorkspaceSettings do
       e in File.Error ->
         File.rm(tmp_path)
         {:error, e}
+    end
+  end
+
+  defp read_settings_for_update(settings_path) do
+    case File.read(settings_path) do
+      {:ok, content} ->
+        case decode_jsonc(content) do
+          {:ok, settings} when is_map(settings) ->
+            {:ok, content, settings}
+
+          {:ok, _other} ->
+            {:error, "Failed to parse #{settings_path}: expected a JSON object"}
+
+          {:error, reason} ->
+            {:error, "Failed to parse #{settings_path}: #{inspect(reason)}"}
+        end
+
+      {:error, reason} ->
+        {:error, "Failed to read #{settings_path}: #{inspect(reason)}"}
     end
   end
 
@@ -561,5 +595,18 @@ defmodule Handbeam.WorkspaceSettings do
       {:error, reason} ->
         {:error, "Failed to read #{settings_path}: #{inspect(reason)}"}
     end
+  end
+
+  @doc false
+  def normalize_transaction_result(:aborted), do: {:error, @lock_aborted_error}
+  def normalize_transaction_result(result), do: result
+
+  defp with_settings_lock(settings_path, fun) when is_function(fun, 0) do
+    resource =
+      {:handbeam_workspace_settings, Handbeam.StorageLock.canonical_path(settings_path)}
+
+    {resource, self()}
+    |> :global.trans(fun, [node()])
+    |> normalize_transaction_result()
   end
 end

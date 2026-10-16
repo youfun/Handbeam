@@ -38,6 +38,29 @@ defmodule Handbeam.WorkspaceSettingsWriteTest do
   # ══════════════════════════════════════════════════════════
 
   describe "append_tool_rule/3" do
+    test "serializes concurrent read-modify-write updates" do
+      ws = tmp_workspace()
+      parent = self()
+      gate = make_ref()
+      patterns = Enum.map(1..40, &"bash(command-#{&1})")
+
+      tasks =
+        Enum.map(patterns, fn pattern ->
+          Task.async(fn ->
+            send(parent, {:ready, self()})
+            receive do: ({:go, ^gate} -> WorkspaceSettings.append_tool_rule(ws, :allow, pattern))
+          end)
+        end)
+
+      task_pids = Enum.map(tasks, & &1.pid)
+      Enum.each(task_pids, fn pid -> assert_receive {:ready, ^pid} end)
+      Enum.each(task_pids, &send(&1, {:go, gate}))
+      assert Enum.all?(tasks, &match?(:ok, Task.await(&1, 5_000)))
+
+      assert {:ok, settings} = WorkspaceSettings.load(ws)
+      assert MapSet.new(get_in(settings, ["tools", "allow"])) == MapSet.new(patterns)
+    end
+
     test "appends an allow pattern without duplicating or dropping default_mode" do
       ws = tmp_workspace()
 

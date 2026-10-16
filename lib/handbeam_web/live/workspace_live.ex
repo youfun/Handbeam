@@ -566,7 +566,7 @@ defmodule HandbeamWeb.WorkspaceLive do
   def handle_event("approve_cli_option", %{"option" => option}, socket) do
     pending = socket.assigns.pending_approval
 
-    if is_map(pending) and pending[:kind] == :cli_agent and is_binary(option) do
+    if cli_approval?(pending) and is_binary(option) do
       MessageSubmission.resume_cli_approval(socket, pending, {:approve, option})
     else
       {:noreply, socket}
@@ -1504,14 +1504,6 @@ defmodule HandbeamWeb.WorkspaceLive do
      |> ConversationState.maybe_patch_page_title(conv_id, title)}
   end
 
-  def handle_info({:start_cli_turn, conv_id, message, opts}, socket) do
-    if socket.assigns.current_conversation_id == conv_id do
-      MessageSubmission.handle_cli_turn(socket, conv_id, message, opts)
-    else
-      {:noreply, socket}
-    end
-  end
-
   def handle_info({:schedule_auto_title, conv_id, message}, socket)
       when is_binary(conv_id) and is_binary(message) do
     if socket.assigns.current_conversation_id == conv_id do
@@ -1597,10 +1589,6 @@ defmodule HandbeamWeb.WorkspaceLive do
 
   def handle_info({:ext_ui, %{event: event, data: data}}, socket) do
     {:noreply, assign(socket, :ext_widget_data, %{event: event, data: data})}
-  end
-
-  def handle_info({:start_free_chat_run, conv_id, content, run_opts}, socket) do
-    MessageSubmission.start_free_chat_run(socket, conv_id, content, run_opts)
   end
 
   def handle_info({:schedule_changed, conv_id}, socket) do
@@ -1724,6 +1712,7 @@ defmodule HandbeamWeb.WorkspaceLive do
     |> assign(:conversation_list_boot, nil)
     |> Composer.materialize_uploads()
     |> Composer.switch_conversation(next_id)
+    |> CliSelection.restore_handbeam_for_switch()
   end
 
   defp restore_session(socket) do
@@ -1943,12 +1932,18 @@ defmodule HandbeamWeb.WorkspaceLive do
   defp resume_tool_approval(socket, action, remember) when action in [:approve, :deny] do
     pending = socket.assigns.pending_approval
 
-    if is_map(pending) and pending[:kind] == :cli_agent do
+    if cli_approval?(pending) do
       MessageSubmission.resume_cli_approval(socket, pending, action)
     else
       resume_handbeam_approval(socket, action, remember)
     end
   end
+
+  defp cli_approval?(pending) when is_map(pending) do
+    Handbeam.Utils.SafeMap.get_any(pending, :kind, "kind") in [:cli_agent, "cli_agent"]
+  end
+
+  defp cli_approval?(_pending), do: false
 
   defp resume_handbeam_approval(socket, action, remember) when action in [:approve, :deny] do
     conv_id = socket.assigns.current_conversation_id

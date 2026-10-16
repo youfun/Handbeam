@@ -61,6 +61,28 @@ defmodule Handbeam.WorkspaceSettingsTest do
     end
   end
 
+  test "settings read-modify-write updates fail closed on malformed or non-object JSONC" do
+    workspace = tmp_workspace()
+
+    for original <- [~s({"tools": ), ~s([{"default_mode":"prompt"}])],
+        update <- [
+          fn -> WorkspaceSettings.update_builtin_memory_enabled(workspace, false) end,
+          fn -> WorkspaceSettings.update_permission_mode(workspace, :auto_review) end
+        ] do
+      write_settings(workspace, original)
+      assert {:error, reason} = update.()
+      assert reason =~ "Failed to parse"
+      assert File.read!(WorkspaceSettings.path(workspace)) == original
+    end
+  end
+
+  test "maps an aborted global transaction into the settings error contract" do
+    assert WorkspaceSettings.normalize_transaction_result(:aborted) ==
+             {:error, "Failed to acquire workspace settings lock"}
+
+    assert WorkspaceSettings.normalize_transaction_result(:ok) == :ok
+  end
+
   test "permission modes replace both execution policy and reviewer on every switch" do
     workspace = tmp_workspace()
 

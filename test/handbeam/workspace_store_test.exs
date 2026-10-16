@@ -16,7 +16,7 @@ defmodule Handbeam.WorkspaceStoreTest do
 
   use ExUnit.Case, async: false
 
-  alias Handbeam.WorkspaceStore
+  alias Handbeam.{WorkspaceSettings, WorkspaceStore}
 
   setup do
     test_id = System.unique_integer([:positive])
@@ -108,6 +108,39 @@ defmodule Handbeam.WorkspaceStoreTest do
 
       assert %{"workspaces" => [%{"path" => ^expected_root}]} =
                isolated_index |> File.read!() |> Jason.decode!()
+    end
+
+    test "returns a tagged error when the storage parent is not a directory", %{
+      workspace_path: workspace_path
+    } do
+      File.mkdir_p!(workspace_path)
+      blocked_parent = Path.join(workspace_path, "not-a-directory")
+      File.write!(blocked_parent, "file")
+      System.put_env("HANDBEAM_WORKSPACES_FILE", Path.join(blocked_parent, "workspaces.json"))
+
+      assert {:error, :corrupted} = WorkspaceStore.ensure_default!()
+      assert File.read!(blocked_parent) == "file"
+    end
+
+    test "returns a tagged error when the default workspace directory cannot be created", %{
+      storage_path: storage_path,
+      workspace_path: workspace_path
+    } do
+      expected_root = Path.join(workspace_path, ".handbeam/workspace")
+
+      existing = %{
+        "id" => "default",
+        "default" => true,
+        "path" => expected_root,
+        "name" => "My Workspace"
+      }
+
+      original = Jason.encode!(%{"workspaces" => [existing]})
+      File.write!(storage_path, original)
+      File.write!(workspace_path, "not a directory")
+
+      assert {:error, :enotdir} = WorkspaceStore.ensure_default!()
+      assert File.read!(storage_path) == original
     end
 
     test "creates default workspace when file does not exist", %{
@@ -280,6 +313,30 @@ defmodule Handbeam.WorkspaceStoreTest do
         assert File.read!(settings_path) == existing_settings
       after
         if File.exists?(tmp_dir), do: File.rm_rf!(tmp_dir)
+      end
+    end
+
+    test "does not create settings when the workspace index write fails", %{
+      workspace_path: workspace_path
+    } do
+      if match?({:unix, _}, :os.type()) do
+        index_dir = Path.join(workspace_path, "read-only-index")
+        storage_path = Path.join(index_dir, "workspaces.json")
+        project = Path.join(workspace_path, "project")
+        File.mkdir_p!(index_dir)
+        File.mkdir_p!(project)
+        original = Jason.encode!(%{"workspaces" => []})
+        File.write!(storage_path, original)
+        System.put_env("HANDBEAM_WORKSPACES_FILE", storage_path)
+        File.chmod!(index_dir, 0o500)
+
+        try do
+          assert {:error, _reason} = WorkspaceStore.add(project)
+          assert File.read!(storage_path) == original
+          refute File.exists?(WorkspaceSettings.path(project))
+        after
+          File.chmod!(index_dir, 0o700)
+        end
       end
     end
 
@@ -508,12 +565,81 @@ defmodule Handbeam.WorkspaceStoreTest do
     end
   end
 
+  test "maps an aborted global transaction into the workspace store error contract" do
+    assert WorkspaceStore.normalize_transaction_result(:aborted) == {:error, :lock_aborted}
+    assert WorkspaceStore.normalize_transaction_result({:ok, :value}) == {:ok, :value}
+  end
+
+  describe "concurrent updates" do
+    test "preserves every workspace added concurrently", %{workspace_path: workspace_path} do
+      assert {:ok, _default} = WorkspaceStore.ensure_default!()
+      parent = self()
+      gate = make_ref()
+
+      paths =
+        for index <- 1..32 do
+          path = Path.join(workspace_path, "concurrent-#{index}")
+          File.mkdir_p!(path)
+          path
+        end
+
+      tasks =
+        Enum.map(paths, fn path ->
+          Task.async(fn ->
+            send(parent, {:ready, self()})
+            receive do: ({:go, ^gate} -> WorkspaceStore.add(path))
+          end)
+        end)
+
+      task_pids = Enum.map(tasks, & &1.pid)
+      Enum.each(task_pids, fn pid -> assert_receive {:ready, ^pid} end)
+      Enum.each(task_pids, &send(&1, {:go, gate}))
+      assert Enum.all?(tasks, &match?({:ok, _workspace}, Task.await(&1, 5_000)))
+
+      stored_paths = WorkspaceStore.list() |> Enum.map(& &1["path"]) |> MapSet.new()
+      assert MapSet.subset?(MapSet.new(paths), stored_paths)
+    end
+  end
+
   describe "corrupted JSON" do
     test "returns an error without overwriting the corrupted file", %{storage_path: storage_path} do
       corrupted = "this is not valid json {{{"
       File.write!(storage_path, corrupted)
 
       assert {:error, _reason} = WorkspaceStore.ensure_default!()
+      assert File.read!(storage_path) == corrupted
+    end
+
+    test "every read-modify-write operation fails closed", %{
+      storage_path: storage_path,
+      workspace_path: workspace_path
+    } do
+      corrupted = "this is not valid json {{{"
+      project = Path.join(workspace_path, "corrupted-add")
+      File.mkdir_p!(project)
+
+      operations = [
+        fn -> WorkspaceStore.add(project) end,
+        fn -> WorkspaceStore.touch("workspace-id") end,
+        fn -> WorkspaceStore.rename("workspace-id", "New name") end,
+        fn -> WorkspaceStore.remove("workspace-id") end
+      ]
+
+      Enum.each(operations, fn operation ->
+        File.write!(storage_path, corrupted)
+        assert {:error, :corrupted} = operation.()
+        assert File.read!(storage_path) == corrupted
+      end)
+
+      refute File.exists?(WorkspaceSettings.path(project))
+    end
+
+    test "rejects non-object workspace entries without raising", %{storage_path: storage_path} do
+      corrupted = ~s({"workspaces":["not-an-object"]})
+      File.write!(storage_path, corrupted)
+
+      assert {:error, :corrupted} = WorkspaceStore.touch("workspace-id")
+      assert {:error, :corrupted} = WorkspaceStore.ensure_default!()
       assert File.read!(storage_path) == corrupted
     end
   end

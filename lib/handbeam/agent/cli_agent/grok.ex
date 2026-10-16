@@ -108,7 +108,7 @@ defmodule Handbeam.Agent.CliAgent.Grok do
   defp executable_path(opts) do
     case Keyword.get(opts, :executable) do
       path when is_binary(path) and path != "" -> true
-      _ -> not is_nil(WorkspaceEnvironment.find_executable(@executable, opts[:cwd]))
+      _ -> match?({:ok, _path}, WorkspaceEnvironment.find_executable(@executable, opts[:cwd]))
     end
   end
 

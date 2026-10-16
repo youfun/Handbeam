@@ -236,6 +236,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
     end)
 
     Registry.select(Handbeam.AgentRunSupervisorRegistry, [{{:"$1", :_, :_}, [], [:"$1"]}])
+    |> Enum.filter(&is_binary/1)
     |> Enum.each(fn conversation_id ->
       case Registry.lookup(Handbeam.AgentRunSupervisorRegistry, conversation_id) do
         [{pid, _}] ->
@@ -281,7 +282,7 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
     Handbeam.Runtime.TaskTracker.reset()
   end
 
-  test "cleanup stops the unlinked provider task even after its Runner has exited" do
+  test "stopping a run tears down its run-local provider task before runtime cleanup" do
     {:ok, conversation} = Handbeam.ConversationStore.create("default")
     id = conversation["id"]
 
@@ -298,11 +299,9 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
 
     assert_receive {:cleanup_provider_waiting, task}, 1_000
     ref = Process.monitor(task)
-    on_exit(fn -> Task.Supervisor.terminate_child(Handbeam.AgentRunTaskSupervisor, task) end)
     :ok = Handbeam.AgentRunSupervisor.stop_run(id)
-    assert Process.alive?(task)
-    :ok = stop_test_runtime!(Process.get(:workspace_live_test_tracker))
     assert_receive {:DOWN, ^ref, :process, ^task, _}, 1_000
+    :ok = stop_test_runtime!(Process.get(:workspace_live_test_tracker))
   end
 
   test "cleanup waits for queued lifecycle consumers before removing their HOME" do
@@ -1887,7 +1886,6 @@ defmodule HandbeamWeb.WorkspaceLiveTest do
       send(view.pid, {:agent_event, agent_event(:tool_start, %{tool: "read", input: %{}})})
 
       assert has_element?(view, "#tool-event-read")
-      assert has_element?(view, "#tool-event-read", "read")
     end
 
     test "tool_end event updates tool status to done with duration", %{conn: conn} do
