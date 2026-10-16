@@ -179,6 +179,59 @@ defmodule Handbeam.Agent.RunnerTest do
     def stream(messages, tool_defs, config, _on_chunk), do: complete(messages, tool_defs, config)
   end
 
+  defmodule BlockingMutationTool do
+    @behaviour Handbeam.Agent.Tool
+
+    def name, do: "blocking_mutation_fixture"
+    def description, do: "Waits before a deterministic test mutation"
+    def input_schema, do: %{type: "object", properties: %{}}
+
+    def execute(_input, context) do
+      send(context.test_pid, {:blocking_mutation_started, self()})
+
+      receive do
+        :mutate ->
+          File.write!(context.marker, "mutated")
+          {:ok, "mutated"}
+      end
+    end
+  end
+
+  defmodule MutationProvider do
+    @behaviour Handbeam.Agent.Provider
+
+    @impl true
+    def complete(messages, _tool_defs, _config) do
+      if Enum.any?(messages, &(&1.role == :tool_result)) do
+        {:ok,
+         %{
+           stop_reason: :end_turn,
+           messages: [Handbeam.Agent.Message.assistant("done")],
+           usage: %{input_tokens: 1, output_tokens: 1}
+         }}
+      else
+        {:ok,
+         %{
+           stop_reason: :tool_use,
+           messages: [
+             Handbeam.Agent.Message.assistant([
+               %{
+                 type: "tool_use",
+                 id: "mutation-1",
+                 name: "blocking_mutation_fixture",
+                 input: %{}
+               }
+             ])
+           ],
+           usage: %{input_tokens: 1, output_tokens: 1}
+         }}
+      end
+    end
+
+    @impl true
+    def stream(messages, tool_defs, config, _on_chunk), do: complete(messages, tool_defs, config)
+  end
+
   defmodule UnavailableErrorStore do
     alias Handbeam.ConversationTranscriptStore.ConversationStore, as: Store
 
@@ -363,6 +416,93 @@ defmodule Handbeam.Agent.RunnerTest do
       end)
 
     assert length(cancelled) == 1
+  end
+
+  test "cancel does not acknowledge until run-local tool tasks are terminated" do
+    sid = "runner-tool-cancel-#{System.unique_integer([:positive])}"
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
+    marker = Path.join(Handbeam.Host.data_dir(), "late-tool-mutation")
+
+    assert {:ok, %{action: :started}} =
+             Coordinator.add_message(
+               sid,
+               "start mutation",
+               opts(
+                 provider: MutationProvider,
+                 tools: [BlockingMutationTool],
+                 middleware: [],
+                 context: %{test_pid: self(), marker: marker}
+               )
+             )
+
+    assert_receive {:blocking_mutation_started, tool_task}, 1_000
+    tool_ref = Process.monitor(tool_task)
+
+    assert :ok = Coordinator.cancel(sid)
+    assert_receive {:DOWN, ^tool_ref, :process, ^tool_task, _reason}, 0
+
+    send(tool_task, :mutate)
+    refute File.exists?(marker)
+  end
+
+  test "Runner validates run and approval batch identities atomically" do
+    sid = "runner-approval-identity-#{System.unique_integer([:positive])}"
+    workspace = approval_workspace()
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
+    :ok = Session.subscribe(sid)
+
+    assert {:ok, %{run_id: run_id}} =
+             Coordinator.add_message(
+               sid,
+               "approve",
+               opts(
+                 workspace_path: workspace,
+                 provider: ApprovalProvider,
+                 tools: [Handbeam.Tool.Builtin.RunElixirScript],
+                 middleware: [Handbeam.Agent.Middleware.ToolGuard]
+               )
+             )
+
+    assert_receive {:agent_event, %{kind: :run_end, payload: %{status: initial_status}}}, 1_000
+    assert initial_status in [:interrupted, "interrupted"]
+
+    assert_eventually(fn ->
+      assert {:ok,
+              %{
+                status: :awaiting_approval,
+                approval_batch_id: batch_id,
+                interrupt_data: interrupt_data
+              }} = Coordinator.status(sid)
+
+      assert is_binary(batch_id)
+      assert interrupt_data.approval_batch_id == batch_id
+    end)
+
+    {:ok, %{approval_batch_id: batch_id, run_supervisor: run_supervisor}} =
+      Coordinator.status(sid)
+
+    supervisor_ref = Process.monitor(run_supervisor)
+    decisions = [%{"tool_call_id" => "call-1", "action" => "deny"}]
+
+    assert {:error, {:run_mismatch, ^run_id}} =
+             Handbeam.Agent.Runner.cancel(sid, "stale-run")
+
+    assert {:error, :stale_approval} =
+             Handbeam.Agent.Runner.resume(sid, decisions, run_id, "stale-batch")
+
+    assert {:ok, %{status: :awaiting_approval}} = Coordinator.status(sid)
+    assert :ok = Handbeam.Agent.Runner.resume(sid, decisions, run_id, batch_id)
+    assert_receive {:agent_event, %{kind: :run_resumed}}, 1_000
+
+    assert_eventually(fn ->
+      assert {:ok, %{status: :awaiting_approval, approval_batch_id: next_batch_id}} =
+               Coordinator.status(sid)
+
+      assert next_batch_id != batch_id
+    end)
+
+    assert :ok = Handbeam.Agent.Runner.cancel(sid, run_id)
+    assert_receive {:DOWN, ^supervisor_ref, :process, ^run_supervisor, _reason}, 1_000
   end
 
   test "task crash broadcasts run_end status error" do

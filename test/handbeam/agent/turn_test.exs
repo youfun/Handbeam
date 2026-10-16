@@ -1875,6 +1875,77 @@ defmodule Handbeam.Agent.TurnPermissionTest do
       refute Enum.any?(denied, &((&1[:tool_use_id] || &1["tool_use_id"]) == "read_1"))
     end
 
+    test "resume executes only explicitly permitted ids and preserves hard denials" do
+      workspace = tmp_workspace(%{})
+
+      calls = [
+        %{
+          type: "tool_use",
+          id: "hard-denied",
+          name: "permission_touch_fixture",
+          input: %{"file" => "hard-denied"}
+        },
+        %{
+          type: "tool_use",
+          id: "approved",
+          name: "permission_touch_fixture",
+          input: %{"file" => "approved"}
+        },
+        %{
+          type: "tool_use",
+          id: "unclassified",
+          name: "permission_touch_fixture",
+          input: %{"file" => "unclassified"}
+        }
+      ]
+
+      hard_block =
+        Message.tool_result_block(
+          "hard-denied",
+          "Tool call denied by workspace permissions",
+          true,
+          %{permission: :denied, tool: "permission_touch_fixture"}
+        )
+
+      config = %Config{
+        provider: TouchProvider,
+        model: "fake",
+        max_turns: 5,
+        working_directory: workspace,
+        middleware: [],
+        provider_config: %{}
+      }
+
+      state = %State{
+        State.init(config, "do")
+        | messages: [Message.user("do"), Message.tool_use(calls)],
+          turn: 1,
+          status: :interrupted,
+          interrupt_data: %{
+            type: :tool_approval,
+            hitl_tool_call_ids: ["approved"],
+            auto_approved_tool_call_ids: ["hard-denied"]
+          },
+          tool_guard_denied_calls: [hd(calls)],
+          tool_guard_result_blocks: [hard_block]
+      }
+
+      result =
+        Turn.resume_after_tool_approval(
+          state,
+          [%{"tool_call_id" => "approved", "action" => "approve"}],
+          []
+        )
+
+      assert result.status == :completed
+      assert File.read!(Path.join(workspace, "approved")) == "approved"
+      refute File.exists?(Path.join(workspace, "hard-denied"))
+      refute File.exists?(Path.join(workspace, "unclassified"))
+
+      assert MapSet.new(Enum.map(result.tool_guard_result_blocks, & &1.tool_use_id)) ==
+               MapSet.new(["hard-denied", "unclassified"])
+    end
+
     test "empty decisions default all to deny" do
       state = build_interrupted_state()
 

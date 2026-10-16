@@ -204,6 +204,25 @@ defmodule Handbeam.Agent.CoordinatorTest do
     )
   end
 
+  test "require_idle admission ignores a stale Session projection and uses Runner ownership" do
+    sid = "coord-stale-session-#{System.unique_integer([:positive])}"
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
+    {:ok, _session} = Session.start_or_get(session_id: sid, model: "fake")
+    {:ok, queue} = Handbeam.Agent.CandidateQueue.start_link(session_id: sid, owner: self())
+    :ok = Session.attach_run(sid, self(), queue, run_id: "stale-run")
+    assert %{meta: %{running?: true, run_id: "stale-run"}} = Session.snapshot(sid)
+
+    assert {:ok, %{action: :started, run_id: run_id}} =
+             Coordinator.add_message(
+               sid,
+               "scheduled",
+               opts(source: :schedule, require_idle?: true, request_id: Ecto.UUID.generate())
+             )
+
+    assert run_id != "stale-run"
+    assert_receive_run_end(sid)
+  end
+
   test "inbound write failure rejects both idle entry points before starting a run" do
     for entry_point <- [:add_message, :start_run] do
       sid = "coord-write-failure-#{entry_point}-#{System.unique_integer([:positive])}"

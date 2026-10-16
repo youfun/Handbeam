@@ -53,24 +53,44 @@ defmodule Handbeam.Agent.Turn do
     interrupt_data = state.interrupt_data || %{}
     hitl_ids = interrupt_id_list(interrupt_data, :hitl_tool_call_ids, "hitl_tool_call_ids")
 
-    _auto_ids =
+    auto_ids =
       interrupt_id_list(
         interrupt_data,
         :auto_approved_tool_call_ids,
         "auto_approved_tool_call_ids"
       )
+      |> MapSet.new()
 
     tool_calls = last_tool_calls_from_state(state)
     decision_by_id = decision_lookup(decisions)
 
-    {_denied_calls, denied_blocks, remembered_overrides, denied_ids} =
+    {_denied_calls, decision_blocks, remembered_overrides, _denied_ids, approved_hitl_ids} =
       partition_hitl_decisions(hitl_ids, tool_calls, decision_by_id)
 
-    approved_calls = calls_not_denied(tool_calls, denied_ids)
+    classified_denied_blocks = (state.tool_guard_result_blocks || []) ++ decision_blocks
+
+    denied_ids =
+      MapSet.new(classified_denied_blocks, fn block ->
+        Handbeam.Utils.SafeMap.get_any(block, :tool_use_id, "tool_use_id")
+      end)
+
+    permitted_ids =
+      auto_ids
+      |> MapSet.union(approved_hitl_ids)
+      |> MapSet.difference(denied_ids)
+
+    denied_blocks =
+      total_denied_blocks(tool_calls, permitted_ids, classified_denied_blocks)
+
+    executable_calls =
+      Enum.filter(tool_calls, fn call ->
+        MapSet.member?(permitted_ids, Handbeam.Utils.SafeMap.get_any(call, :id, "id"))
+      end)
+
     state = apply_approval_resume_state(state, denied_blocks, remembered_overrides)
 
     state
-    |> continue_after_approval(approved_calls, denied_blocks, opts)
+    |> continue_after_approval(executable_calls, tool_calls, denied_blocks, opts)
     |> finish_run(opts)
   end
 
@@ -95,7 +115,7 @@ defmodule Handbeam.Agent.Turn do
   end
 
   defp partition_hitl_decisions(hitl_ids, tool_calls, decision_by_id) do
-    Enum.reduce(hitl_ids, {[], [], %{}, MapSet.new()}, fn call_id, acc ->
+    Enum.reduce(hitl_ids, {[], [], %{}, MapSet.new(), MapSet.new()}, fn call_id, acc ->
       call =
         Enum.find(
           tool_calls,
@@ -107,18 +127,20 @@ defmodule Handbeam.Agent.Turn do
     end)
   end
 
-  defp fold_hitl_decision({calls, blocks, overrides, denied}, call_id, call, decision) do
+  defp fold_hitl_decision({calls, blocks, overrides, denied, approved}, call_id, call, decision) do
     action =
       Handbeam.Utils.SafeMap.get_any(decision, "action", :action) || "deny"
 
     if to_string(action) == "approve" do
-      {calls, blocks, remember_session_grant(overrides, decision, call), denied}
+      {calls, blocks, remember_session_grant(overrides, decision, call), denied,
+       MapSet.put(approved, call_id)}
     else
       deny_hitl_call(%{
         calls: calls,
         blocks: blocks,
         overrides: overrides,
         denied: denied,
+        approved: approved,
         call_id: call_id,
         call: call,
         decision: decision,
@@ -136,7 +158,7 @@ defmodule Handbeam.Agent.Turn do
     new_overrides = remember_deny_override(hitl.overrides, hitl.decision, tool_name)
 
     {[hitl.call | hitl.calls], [block | hitl.blocks], new_overrides,
-     MapSet.put(hitl.denied, hitl.call_id)}
+     MapSet.put(hitl.denied, hitl.call_id), hitl.approved}
   end
 
   defp remember_deny_override(overrides, decision, tool_name) do
@@ -147,10 +169,20 @@ defmodule Handbeam.Agent.Turn do
     end
   end
 
-  defp calls_not_denied(tool_calls, denied_ids) do
-    Enum.reject(tool_calls, fn call ->
-      id = Handbeam.Utils.SafeMap.get_any(call, [:id, "id"])
-      MapSet.member?(denied_ids, id)
+  defp total_denied_blocks(tool_calls, permitted_ids, blocks) do
+    by_id =
+      Map.new(blocks, fn block ->
+        {Handbeam.Utils.SafeMap.get_any(block, :tool_use_id, "tool_use_id"), block}
+      end)
+
+    tool_calls
+    |> Enum.reject(fn call ->
+      MapSet.member?(permitted_ids, Handbeam.Utils.SafeMap.get_any(call, :id, "id"))
+    end)
+    |> Enum.map(fn call ->
+      id = Handbeam.Utils.SafeMap.get_any(call, :id, "id")
+      name = Handbeam.Utils.SafeMap.get_any(call, :name, "name") || "unknown"
+      Map.get(by_id, id) || denied_result_block(id, name, "deny")
     end)
   end
 
@@ -167,8 +199,8 @@ defmodule Handbeam.Agent.Turn do
     |> Map.put(:tool_guard_session_allow, session_allow)
   end
 
-  defp continue_after_approval(state, [], denied_blocks, opts) do
-    result_msg = Message.tool_results(denied_blocks |> Enum.reverse())
+  defp continue_after_approval(state, [], _batch_calls, denied_blocks, opts) do
+    result_msg = Message.tool_results(denied_blocks)
 
     state
     |> append_tool_results([result_msg])
@@ -177,14 +209,12 @@ defmodule Handbeam.Agent.Turn do
     |> do_turn(opts)
   end
 
-  defp continue_after_approval(state, approved_calls, denied_blocks, opts) do
-    {executable, _already_denied} = executable_approved_calls(approved_calls, denied_blocks)
-
+  defp continue_after_approval(state, executable, batch_calls, denied_blocks, opts) do
     case Executor.execute_all_with_context(executable, state) do
       {:ok, result_msg, ui_blocks, state} ->
         merge_approved_execution(%{
           state: state,
-          approved_calls: approved_calls,
+          batch_calls: batch_calls,
           executable: executable,
           result_msg: result_msg,
           ui_blocks: ui_blocks,
@@ -194,21 +224,10 @@ defmodule Handbeam.Agent.Turn do
     end
   end
 
-  defp executable_approved_calls(approved_calls, denied_blocks) do
-    Enum.split_with(approved_calls, fn call ->
-      id = Handbeam.Utils.SafeMap.get_any(call, :id, "id")
-
-      not Enum.any?(
-        denied_blocks,
-        &(Handbeam.Utils.SafeMap.get_any(&1, :tool_use_id, "tool_use_id") == id)
-      )
-    end)
-  end
-
   defp merge_approved_execution(execution) do
     all_ui_blocks =
       order_guarded_blocks(
-        execution.approved_calls,
+        execution.batch_calls,
         execution.ui_blocks ++ execution.denied_blocks
       )
 

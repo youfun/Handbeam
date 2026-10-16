@@ -39,12 +39,42 @@ defmodule Handbeam.Agent.Coordinator do
   defp admit_message(_id, _content, _opts, 0), do: {:error, :run_in_progress}
 
   defp admit_message(id, content, opts, attempts) do
+    if Keyword.get(opts, :require_idle?, false) do
+      admit_idle_message(id, content, opts)
+    else
+      do_admit_message(id, content, opts, attempts)
+    end
+  end
+
+  defp admit_idle_message(id, content, opts) do
+    case Handbeam.Agent.Runner.status(id) do
+      {:ok, %{running?: true}} ->
+        release_idle_busy(id, content, opts)
+
+      {:ok, %{running?: false} = inactive} ->
+        with :ok <- await_run_exit(inactive[:run_supervisor]),
+             result <- start_run(id, content, opts) do
+          case result do
+            {:error, :run_in_progress} -> release_idle_busy(id, content, opts)
+            other -> other
+          end
+        end
+
+      {:error, :not_found} ->
+        case start_run(id, content, opts) do
+          {:error, :run_in_progress} -> release_idle_busy(id, content, opts)
+          result -> result
+        end
+
+      error ->
+        error
+    end
+  end
+
+  defp do_admit_message(id, content, opts, attempts) do
     case status(id) do
       {:ok, %{running?: true} = active} ->
         cond do
-          Keyword.get(opts, :require_idle?, false) ->
-            release_idle_busy(id, content, opts)
-
           present_task_instructions?(opts) ->
             {:error, :run_in_progress}
 
@@ -59,13 +89,24 @@ defmodule Handbeam.Agent.Coordinator do
           with :ok <- await_run_exit(inactive[:run_supervisor]) do
             case start_run(id, content, opts) do
               {:error, :run_in_progress} ->
-                if Keyword.get(opts, :require_idle?, false),
-                  do: release_idle_busy(id, content, opts),
-                  else: admit_message(id, content, opts, attempts - 1)
+                admit_message(id, content, opts, attempts - 1)
 
               result ->
                 result
             end
+          end
+        end
+
+      {:error, :not_found} ->
+        if Keyword.get(opts, :require_running?, false) do
+          {:error, :no_active_run}
+        else
+          case start_run(id, content, opts) do
+            {:error, :run_in_progress} ->
+              admit_message(id, content, opts, attempts - 1)
+
+            result ->
+              result
           end
         end
 
@@ -172,8 +213,7 @@ defmodule Handbeam.Agent.Coordinator do
          :ok <- validate_model_policy(opts),
          :ok <- validate_advisor_policy(opts),
          opts <- ensure_run_id(opts),
-         {:ok, _pid} <- Session.start_or_get(session_id: conversation_id, model: opts[:model]),
-         {:ok, %{running?: false}} <- status(conversation_id) do
+         {:ok, _pid} <- Session.start_or_get(session_id: conversation_id, model: opts[:model]) do
       {content, opts} = stamp_message_ids(content, opts)
       run_opts = agent_run_opts(conversation_id, opts)
 
@@ -193,7 +233,6 @@ defmodule Handbeam.Agent.Coordinator do
           normalize_start_run_error(reason)
       end
     else
-      {:ok, %{running?: true}} -> {:error, :run_in_progress}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -248,18 +287,20 @@ defmodule Handbeam.Agent.Coordinator do
   def resume(conversation_id, decisions, opts \\ [])
       when is_binary(conversation_id) and is_list(decisions) and is_list(opts) do
     with :ok <- bind_control(conversation_id, :resume, opts),
-         :ok <- validate_approval(conversation_id, decisions, opts) do
-      result = do_resume(conversation_id, decisions)
+         {:ok, approval} <- validate_approval(conversation_id, decisions, opts) do
+      control_opts =
+        opts
+        |> Keyword.put_new(:expected_run_id, approval[:run_id])
+        |> Keyword.put_new(:approval_batch_id, approval[:approval_batch_id])
+
+      result = do_resume(conversation_id, decisions, control_opts)
       finish_control(conversation_id, :resume, opts, result)
       result
     end
   end
 
   defp do_cancel(conversation_id, opts) do
-    case expected_run(conversation_id, opts) do
-      :ok -> Handbeam.Agent.Runner.cancel(conversation_id)
-      {:error, reason} -> {:error, reason}
-    end
+    Handbeam.Agent.Runner.cancel(conversation_id, opts[:expected_run_id])
   end
 
   defp runner_awaiting?(conversation_id) do
@@ -269,7 +310,7 @@ defmodule Handbeam.Agent.Coordinator do
     end
   end
 
-  defp do_resume(conversation_id, decisions) do
+  defp do_resume(conversation_id, decisions, opts) do
     cond do
       Handbeam.ConversationStore.internal?(conversation_id) ->
         {:error, :internal_conversation}
@@ -278,7 +319,12 @@ defmodule Handbeam.Agent.Coordinator do
         {:error, :not_awaiting_approval}
 
       true ->
-        Handbeam.Agent.Runner.resume(conversation_id, decisions)
+        Handbeam.Agent.Runner.resume(
+          conversation_id,
+          decisions,
+          opts[:expected_run_id],
+          opts[:approval_batch_id]
+        )
     end
   end
 
@@ -351,7 +397,7 @@ defmodule Handbeam.Agent.Coordinator do
           {:error, :approval_mismatch}
 
         true ->
-          :ok
+          {:ok, info}
       end
     end
   end
@@ -426,7 +472,7 @@ defmodule Handbeam.Agent.Coordinator do
     else
       {:error,
        Gettext.dgettext(
-         HandbeamWeb.Gettext,
+         Handbeam.Gettext,
          "errors",
          "Model %{model} is not allowed in this workspace. Check Settings → Model / AI → Default model.",
          model: model
@@ -468,7 +514,7 @@ defmodule Handbeam.Agent.Coordinator do
 
   defp memory_model_rejected(model) do
     Gettext.dgettext(
-      HandbeamWeb.Gettext,
+      Handbeam.Gettext,
       "errors",
       "Observational Memory model (%{model}) is not allowed in this workspace. Check Settings → Model / AI → Observational Memory → Memory model.",
       model: model

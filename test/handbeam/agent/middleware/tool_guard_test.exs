@@ -111,6 +111,35 @@ defmodule Handbeam.Agent.Middleware.ToolGuardTest do
     assert [%{tool_call_id: "b1", tool_name: "bash"}] = data.action_requests
   end
 
+  test "mixed deny, prompt, and auto batches retain every classification" do
+    settings = %{
+      "tools" => %{
+        "deny" => ["bash(rm:*)"],
+        "per_tool" => %{"read" => "prompt", "web_fetch" => "auto"}
+      }
+    }
+
+    calls = [
+      %{type: "tool_use", id: "deny-1", name: "bash", input: %{"command" => "rm tmp"}},
+      %{type: "tool_use", id: "prompt-1", name: "read", input: %{"file_path" => "x"}},
+      %{
+        type: "tool_use",
+        id: "auto-1",
+        name: "web_fetch",
+        input: %{"url" => "https://example.com"}
+      }
+    ]
+
+    assert {:interrupt, interrupted, data} =
+             ToolGuard.call(:after_tool_request, state(settings, calls))
+
+    assert Enum.map(interrupted.tool_guard_denied_calls, & &1.id) == ["deny-1"]
+    assert Enum.map(interrupted.tool_guard_result_blocks, & &1.tool_use_id) == ["deny-1"]
+    assert data.hitl_tool_call_ids == ["prompt-1"]
+    assert data.auto_approved_tool_call_ids == ["auto-1"]
+    assert is_binary(data.approval_batch_id)
+  end
+
   test "after_tool_request auto-approves browser eval in full access" do
     settings = %{"tools" => %{"default_mode" => "auto"}}
 

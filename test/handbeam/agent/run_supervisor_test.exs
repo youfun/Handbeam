@@ -119,6 +119,27 @@ defmodule Handbeam.Agent.RunSupervisorTest do
     end)
   end
 
+  test "a runner crash tears down the significant run tree and local tasks", %{sid: sid} do
+    assert {:ok, %{run_pid: runner}} = Coordinator.start_run(sid, "one", opts())
+    assert_receive {:run_supervisor_provider_started, task}, 1_000
+
+    assert {:ok, %{run_supervisor: run_supervisor, queue_pid: queue}} = Coordinator.status(sid)
+
+    [{task_supervisor, _}] =
+      Registry.lookup(Handbeam.AgentRunSupervisorRegistry, {:tasks, sid})
+
+    refs =
+      for pid <- [runner, run_supervisor, queue, task_supervisor, task], into: %{} do
+        {pid, Process.monitor(pid)}
+      end
+
+    Process.exit(runner, :kill)
+
+    Enum.each(refs, fn {pid, ref} ->
+      assert_receive {:DOWN, ^ref, :process, ^pid, _reason}, 1_000
+    end)
+  end
+
   defp assert_eventually(fun, attempts \\ 50)
   defp assert_eventually(fun, 0), do: fun.()
 

@@ -2,8 +2,8 @@ defmodule Handbeam.Agent.Runner do
   @moduledoc """
   GenServer owner for one active agent run.
 
-  Runner owns lifecycle state and delegates the expensive agent loop to
-  `Handbeam.AgentRunTaskSupervisor` via `Task.Supervisor.async_nolink/2`.
+  Runner owns lifecycle state and delegates the expensive agent loop to the
+  run-local task supervisor inside `Handbeam.Agent.RunSupervisor`.
   """
 
   use GenServer
@@ -86,12 +86,12 @@ defmodule Handbeam.Agent.Runner do
 
   def owns_run_task?(_conversation_id, _run_id, _runner_pid, _reader_pid), do: false
 
-  def cancel(conversation_id) do
-    call_runner(conversation_id, :cancel)
+  def cancel(conversation_id, expected_run_id \\ nil) do
+    call_runner(conversation_id, {:cancel, expected_run_id})
   end
 
-  def resume(conversation_id, decisions) do
-    call_runner(conversation_id, {:resume, decisions})
+  def resume(conversation_id, decisions, expected_run_id \\ nil, expected_batch_id \\ nil) do
+    call_runner(conversation_id, {:resume, decisions, expected_run_id, expected_batch_id})
   end
 
   def enqueue(conversation_id, content, opts \\ []) do
@@ -239,7 +239,7 @@ defmodule Handbeam.Agent.Runner do
 
     task =
       apply(Task.Supervisor, start_task, [
-        Handbeam.AgentRunTaskSupervisor,
+        Keyword.fetch!(run_opts, :run_task_supervisor),
         fn ->
           owner = run_opts[:delegation_owner]
 
@@ -278,7 +278,9 @@ defmodule Handbeam.Agent.Runner do
         queue_pid: state.queue_pid,
         deadline: state.deadline,
         error: state.error,
-        interrupt_type: interrupt_type(state)
+        interrupt_type: interrupt_type(state),
+        interrupt_data: interrupt_data(state),
+        approval_batch_id: approval_batch_id(state)
       }}, state}
   end
 
@@ -301,62 +303,81 @@ defmodule Handbeam.Agent.Runner do
     {:reply, reply, state}
   end
 
-  def handle_call(:cancel, from, %{status: status, task: task} = state)
+  def handle_call(:cancel, from, state), do: handle_call({:cancel, nil}, from, state)
+
+  def handle_call({:cancel, expected_run_id}, from, %{status: status, task: task} = state)
       when status in [:running, :awaiting_approval] do
-    cleanup_os_processes(state)
-    close_scope(state)
-    shutdown_run_task(task)
-    persist_cancelled_run(state)
-    Handbeam.Agent.CandidateQueue.seal(state.queue_pid)
+    with :ok <- validate_run_identity(state, expected_run_id) do
+      cleanup_os_processes(state)
+      close_scope(state)
+      shutdown_run_tasks(state, task)
+      persist_cancelled_run(state)
+      Handbeam.Agent.CandidateQueue.seal(state.queue_pid)
 
-    Session.broadcast_event(state.conversation_id, :run_end, %{
-      status: "cancelled",
-      turns: 0,
-      run_id: state.opts[:run_id]
-    })
+      Session.broadcast_event(state.conversation_id, :run_end, %{
+        status: "cancelled",
+        turns: 0,
+        run_id: state.opts[:run_id]
+      })
 
-    Session.mark_run_finished(state.conversation_id, state.opts[:run_id])
-    # Teardown may terminate this Runner immediately; acknowledge before launching it.
-    GenServer.reply(from, :ok)
-    stop_run_supervisor(state)
-    {:noreply, %{state | status: :cancelled, task: nil, interrupted_state: nil}}
+      Session.mark_run_finished(state.conversation_id, state.opts[:run_id])
+      # Teardown may terminate this Runner immediately; acknowledge after all
+      # run-owned tasks are down and before launching tree teardown.
+      GenServer.reply(from, :ok)
+      stop_run_supervisor(state)
+      {:noreply, %{state | status: :cancelled, task: nil, interrupted_state: nil}}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
   end
 
-  def handle_call(:cancel, _from, state) do
+  def handle_call({:cancel, _expected_run_id}, _from, state) do
     {:reply, {:error, :not_running}, state}
   end
 
-  def handle_call({:resume, decisions}, _from, %{status: :awaiting_approval} = state) do
-    {deadline, timer} = resume_timeout(state)
+  def handle_call({:resume, decisions}, from, state),
+    do: handle_call({:resume, decisions, nil, nil}, from, state)
 
-    run_opts =
-      state.opts
-      |> Keyword.put(:candidate_queue, state.queue_pid)
-      |> maybe_put_run_deadline(state, deadline)
-      |> put_compaction_callback(self())
-      |> put_persistence_callback(state.conversation_id)
+  def handle_call(
+        {:resume, decisions, expected_run_id, expected_batch_id},
+        _from,
+        %{status: :awaiting_approval} = state
+      ) do
+    with :ok <- validate_run_identity(state, expected_run_id),
+         :ok <- validate_batch_identity(state, expected_batch_id) do
+      {deadline, timer} = resume_timeout(state)
 
-    resume = resume_fun(state)
+      run_opts =
+        state.opts
+        |> Keyword.put(:candidate_queue, state.queue_pid)
+        |> maybe_put_run_deadline(state, deadline)
+        |> put_compaction_callback(self())
+        |> put_persistence_callback(state.conversation_id)
 
-    Session.broadcast_event(state.conversation_id, :run_resumed, %{run_id: state.opts[:run_id]})
+      resume = resume_fun(state)
 
-    task =
-      Task.Supervisor.async_nolink(Handbeam.AgentRunTaskSupervisor, fn ->
-        resume.(state.interrupted_state, decisions, run_opts)
-      end)
+      Session.broadcast_event(state.conversation_id, :run_resumed, %{run_id: state.opts[:run_id]})
 
-    {:reply, :ok,
-     %{
-       state
-       | status: :running,
-         task: task,
-         interrupted_state: nil,
-         deadline: deadline,
-         deadline_timer: timer
-     }}
+      task =
+        Task.Supervisor.async_nolink(Keyword.fetch!(run_opts, :run_task_supervisor), fn ->
+          resume.(state.interrupted_state, decisions, run_opts)
+        end)
+
+      {:reply, :ok,
+       %{
+         state
+         | status: :running,
+           task: task,
+           interrupted_state: nil,
+           deadline: deadline,
+           deadline_timer: timer
+       }}
+    else
+      {:error, reason} -> {:reply, {:error, reason}, state}
+    end
   end
 
-  def handle_call({:resume, _decisions}, _from, state) do
+  def handle_call({:resume, _decisions, _expected_run_id, _expected_batch_id}, _from, state) do
     {:reply, {:error, :not_awaiting_approval}, state}
   end
 
@@ -368,7 +389,7 @@ defmodule Handbeam.Agent.Runner do
   @impl true
   def handle_info({:DOWN, ref, :process, _pid, _reason}, %{delegation_monitor: ref} = state)
       when is_reference(ref) do
-    shutdown_run_task(state.task)
+    shutdown_run_tasks(state, state.task)
     persist_cancelled_run(state)
     Session.mark_run_finished(state.conversation_id, state.opts[:run_id])
     stop_run_supervisor(state)
@@ -449,7 +470,7 @@ defmodule Handbeam.Agent.Runner do
       when state.status in [:running, :awaiting_approval] do
     report_error(:run_timeout, state, failure_class: :run_timeout)
     cleanup_os_processes(state)
-    shutdown_run_task(state.task)
+    shutdown_run_tasks(state, state.task)
 
     payload = %{
       status: "timeout",
@@ -479,7 +500,7 @@ defmodule Handbeam.Agent.Runner do
     )
 
     cleanup_os_processes(state)
-    shutdown_run_task(state.task)
+    shutdown_run_tasks(state, state.task)
 
     payload = %{
       status: "timeout",
@@ -510,7 +531,7 @@ defmodule Handbeam.Agent.Runner do
   @doc false
   def abort_unreplayable(state, reason) do
     report_error(reason, state, failure_class: :run_tree_exit)
-    shutdown_run_task(state.task)
+    shutdown_run_tasks(state, state.task)
     Handbeam.Agent.CandidateQueue.seal(state.queue_pid)
 
     payload = %{
@@ -550,6 +571,38 @@ defmodule Handbeam.Agent.Runner do
 
   defp interrupt_type(_state), do: nil
 
+  defp interrupt_data(%{status: :awaiting_approval, interrupted_state: %{interrupt_data: data}})
+       when is_map(data),
+       do: data
+
+  defp interrupt_data(_state), do: nil
+
+  defp approval_batch_id(state) do
+    case interrupt_data(state) do
+      data when is_map(data) ->
+        Handbeam.Utils.SafeMap.get_any(data, :approval_batch_id, "approval_batch_id")
+
+      _ ->
+        nil
+    end
+  end
+
+  defp validate_run_identity(_state, nil), do: :ok
+
+  defp validate_run_identity(state, expected_run_id) do
+    if state.opts[:run_id] == expected_run_id,
+      do: :ok,
+      else: {:error, {:run_mismatch, state.opts[:run_id]}}
+  end
+
+  defp validate_batch_identity(_state, nil), do: :ok
+
+  defp validate_batch_identity(state, expected_batch_id) do
+    if approval_batch_id(state) == expected_batch_id,
+      do: :ok,
+      else: {:error, :stale_approval}
+  end
+
   defp resume_fun(state) do
     if interrupt_type(state) == :stall_check do
       &Handbeam.Agent.resume_after_stall_check/3
@@ -562,6 +615,20 @@ defmodule Handbeam.Agent.Runner do
     Enum.each(state.os_processes, fn {os_pid, invocation} ->
       Handbeam.Platform.ProcessRunner.cleanup_owned(os_pid, invocation)
     end)
+  end
+
+  defp shutdown_run_tasks(state, task) do
+    shutdown_run_task(task)
+
+    case state.opts[:run_supervisor] do
+      supervisor when is_pid(supervisor) ->
+        Supervisor.terminate_child(supervisor, Handbeam.Agent.RunTaskSupervisor)
+
+      _ ->
+        :ok
+    end
+  catch
+    :exit, _reason -> :ok
   end
 
   defp shutdown_run_task(nil), do: :ok

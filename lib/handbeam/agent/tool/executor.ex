@@ -165,7 +165,7 @@ defmodule Handbeam.Agent.Tool.Executor do
       else
         stream =
           Task.Supervisor.async_stream_nolink(
-            Handbeam.AgentRunTaskSupervisor,
+            task_supervisor(context),
             concurrent,
             &execute_one(&1, tool_fns, context),
             timeout: timeout_for(hd(concurrent), tool_fns, state),
@@ -300,7 +300,7 @@ defmodule Handbeam.Agent.Tool.Executor do
 
     task =
       apply(Task.Supervisor, start_task, [
-        Handbeam.AgentRunTaskSupervisor,
+        task_supervisor(context),
         fn ->
           Process.put(:tool_owner, context[:runner_pid])
           execute_one_with_revision(call, tool_fns, context)
@@ -860,6 +860,7 @@ defmodule Handbeam.Agent.Tool.Executor do
       run_deadline: context_run_deadline(config),
       run_id: config.run_id,
       runner_pid: config.runner_pid,
+      run_task_supervisor: config.run_task_supervisor,
       delegation_config: config,
       parent_usage: usage,
       authorized_tools:
@@ -883,6 +884,9 @@ defmodule Handbeam.Agent.Tool.Executor do
     |> Map.new()
     |> Map.put(:model_messages, ModelContext.visible(state))
   end
+
+  defp task_supervisor(context),
+    do: context[:run_task_supervisor] || Handbeam.AgentRunTaskSupervisor
 
   defp effective_approval_mode(config, overrides, session_allow) do
     delegated =

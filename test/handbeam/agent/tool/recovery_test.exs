@@ -153,12 +153,10 @@ defmodule Handbeam.Agent.Tool.RecoveryTest do
     assert File.read!(Path.join(workspace, "edit.txt")) == replacement <> "\n"
   end
 
-  test "only declared fields use opaque recovery artifacts", %{root: root, workspace: workspace} do
+  test "declared large fields use opaque recovery artifacts", %{root: root, workspace: workspace} do
     File.mkdir_p!(workspace)
     artifact_root = Path.join(root, "field-artifacts")
     body = String.duplicate("saved-body\n", 2_000)
-    injected = String.duplicate("attacker-controlled\n", 1_000)
-    malicious_key = "../../../../../escaped"
 
     context = %{
       working_directory: workspace,
@@ -167,10 +165,7 @@ defmodule Handbeam.Agent.Tool.RecoveryTest do
     }
 
     assert {:ok, _text, _details} =
-             Write.execute(
-               %{"file_path" => "inside.txt", "content" => body, malicious_key => injected},
-               context
-             )
+             Write.execute(%{"file_path" => "inside.txt", "content" => body}, context)
 
     artifact_files =
       artifact_root
@@ -181,8 +176,37 @@ defmodule Handbeam.Agent.Tool.RecoveryTest do
     assert [artifact] = artifact_files
     assert String.starts_with?(Path.basename(artifact), "artifact_")
     refute Path.basename(artifact) =~ "content"
-    refute File.exists?(Path.join(artifact_root, "escaped.txt"))
     assert File.read!(artifact) == body
+    assert {:ok, stat} = File.stat(artifact)
+    assert Bitwise.band(stat.mode, 0o777) == 0o600
+  end
+
+  test "unknown large fields are rejected before artifact or receipt writes", %{
+    root: root,
+    workspace: workspace
+  } do
+    File.mkdir_p!(workspace)
+    artifact_root = Path.join(root, "unknown-field-artifacts")
+    body = String.duplicate("saved-body\n", 2_000)
+    injected = String.duplicate("attacker-controlled\n", 1_000)
+    malicious_key = "../../../../../escaped"
+
+    context = %{
+      working_directory: workspace,
+      conversation_id: "conv-unknown-field",
+      tool_input_root: artifact_root
+    }
+
+    assert {:error, reason, details} =
+             Write.execute(
+               %{"file_path" => "inside.txt", "content" => body, malicious_key => injected},
+               context
+             )
+
+    assert reason =~ "unknown tool input fields"
+    assert details.code == :input_rejected
+    refute File.exists?(artifact_root)
+    refute File.exists?(Path.join(workspace, "inside.txt"))
   end
 
   test "saved input rejects a symlinked artifact ancestor", %{root: root, workspace: workspace} do
@@ -206,6 +230,24 @@ defmodule Handbeam.Agent.Tool.RecoveryTest do
     assert details.code == :artifact_unavailable
     assert File.ls!(outside) == []
     refute File.exists?(Path.join(workspace, "inside.txt"))
+  end
+
+  test "file commit ignores a predictable retry temp symlink", %{root: root, workspace: workspace} do
+    File.mkdir_p!(workspace)
+    path = Path.join(workspace, "committed.txt")
+    outside = Path.join(root, "outside.txt")
+    operation_id = "known-operation"
+    predictable_temp = path <> ".#{operation_id}.tmp"
+    File.write!(outside, "outside")
+    File.ln_s!(outside, predictable_temp)
+
+    assert {:ok, commit} =
+             FileCommit.commit(path, "expected", %{}, operation_id: operation_id)
+
+    assert commit.side_effect == :committed
+    assert File.read!(path) == "expected"
+    assert File.read!(outside) == "outside"
+    assert {:ok, ^outside} = File.read_link(predictable_temp)
   end
 
   test "file commit reconciles a matching target and refuses a mismatch", %{workspace: workspace} do

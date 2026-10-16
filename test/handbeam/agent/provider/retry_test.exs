@@ -29,6 +29,11 @@ defmodule Handbeam.Agent.Provider.RetryTest do
       assert Retry.retryable?("HTTP 504: Gateway Timeout")
     end
 
+    test "Cloudflare 520 and 524 gateway failures are retryable" do
+      assert Retry.retryable?("HTTP 520: Unknown Error")
+      assert Retry.retryable?("HTTP 524: A Timeout Occurred")
+    end
+
     test "400 bad request is not retryable" do
       refute Retry.retryable?("HTTP 400: Bad Request")
     end
@@ -121,6 +126,11 @@ defmodule Handbeam.Agent.Provider.RetryTest do
 
     test "504 is retryable" do
       assert Retry.retryable_status?(504)
+    end
+
+    test "Cloudflare 520 and 524 are retryable" do
+      assert Retry.retryable_status?(520)
+      assert Retry.retryable_status?(524)
     end
 
     test "200 is not retryable" do

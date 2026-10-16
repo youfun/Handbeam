@@ -17,6 +17,10 @@ defmodule Handbeam.Agent.Tool.SavedInput do
     "edit" => MapSet.new(["diff", "new_string", "old_string"]),
     "write" => MapSet.new(["content"])
   }
+  @tool_modules %{
+    "edit" => Handbeam.Tool.Builtin.Edit,
+    "write" => Handbeam.Tool.Builtin.Write
+  }
 
   @spec prepare(String.t(), map(), map(), [String.t()]) ::
           {:ok, map(), String.t()} | {:error, String.t(), map()}
@@ -66,6 +70,16 @@ defmodule Handbeam.Agent.Tool.SavedInput do
   defp save_fresh(tool, input, context) do
     operation_id = "op_" <> Ecto.UUID.generate()
 
+    case validate_fresh_input(tool, input) do
+      :ok ->
+        save_validated(tool, operation_id, input, context)
+
+      {:error, reason} ->
+        failure(operation_id, reason, %{code: :input_rejected, side_effect: :not_started})
+    end
+  end
+
+  defp save_validated(tool, operation_id, input, context) do
     case store_large_fields(tool, operation_id, input, context) do
       {:ok, stored} ->
         stored = Map.put(stored, "operation_id", operation_id)
@@ -116,6 +130,49 @@ defmodule Handbeam.Agent.Tool.SavedInput do
     end)
   end
 
+  defp validate_fresh_input(tool, input) do
+    allowed = schema_fields(tool)
+
+    unknown =
+      input
+      |> Map.keys()
+      |> Enum.map(&to_string/1)
+      |> Enum.reject(&MapSet.member?(allowed, &1))
+
+    cond do
+      unknown != [] ->
+        {:error, "unknown tool input fields: #{Enum.join(Enum.sort(unknown), ", ")}"}
+
+      input_bytes(input) > @max_artifact_bytes ->
+        {:error, "tool input exceeds the 50MB recovery artifact limit"}
+
+      true ->
+        :ok
+    end
+  end
+
+  defp schema_fields(tool) do
+    case Map.fetch(@tool_modules, tool) do
+      {:ok, module} ->
+        module.input_schema()
+        |> Map.get(:properties, %{})
+        |> Map.keys()
+        |> Enum.map(&to_string/1)
+        |> MapSet.new()
+
+      :error ->
+        MapSet.new()
+    end
+  end
+
+  defp input_bytes(value) when is_binary(value), do: byte_size(value)
+  defp input_bytes(value) when is_list(value), do: Enum.reduce(value, 0, &(&2 + input_bytes(&1)))
+
+  defp input_bytes(value) when is_map(value),
+    do: Enum.reduce(value, 0, fn {_key, item}, total -> total + input_bytes(item) end)
+
+  defp input_bytes(_value), do: 0
+
   defp store_large_fields(tool, operation_id, input, context) do
     artifact_fields = Map.get(@artifact_fields, tool, MapSet.new())
 
@@ -154,6 +211,7 @@ defmodule Handbeam.Agent.Tool.SavedInput do
       with :ok <- validate_artifact_path(directory, root),
            :ok <- File.mkdir_p(directory),
            :ok <- validate_artifact_path(directory, root),
+           :ok <- File.chmod(directory, 0o700),
            :ok <- validate_artifact_path(path, directory),
            :ok <- validate_artifact_path(path, root),
            :ok <- write_exclusive(path, value) do
@@ -225,10 +283,12 @@ defmodule Handbeam.Agent.Tool.SavedInput do
 
         path = Path.join(directory, name)
 
-        with :ok <- validate_artifact_path(directory, root),
+        with :ok <- validate_artifact_name(name),
+             :ok <- validate_artifact_path(directory, root),
              :ok <- validate_artifact_path(path, directory),
              :ok <- validate_artifact_path(path, root),
-             {:ok, body} <- File.read(path) do
+             :ok <- validate_artifact_file(path),
+             {:ok, body} <- read_bounded(path) do
           {:cont, {:ok, Map.put(acc, key, body)}}
         else
           {:error, reason} ->
@@ -258,10 +318,42 @@ defmodule Handbeam.Agent.Tool.SavedInput do
 
   defp validate_artifact_path(path, root), do: PathValidator.validate_under_root(path, root)
 
+  defp validate_artifact_name(name) do
+    if name not in ["", ".", ".."] and Path.basename(name) == name,
+      do: :ok,
+      else: {:error, :invalid_artifact_name}
+  end
+
+  defp validate_artifact_file(path) do
+    case File.lstat(path) do
+      {:ok, %{type: :regular, size: size}} when size <= @max_artifact_bytes -> :ok
+      {:ok, %{type: :regular}} -> {:error, :artifact_too_large}
+      {:ok, _} -> {:error, :invalid_artifact_type}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp read_bounded(path) do
+    case File.open(path, [:read, :binary], &IO.binread(&1, @max_artifact_bytes + 1)) do
+      {:ok, :eof} -> {:ok, ""}
+      {:ok, body} when is_binary(body) and byte_size(body) <= @max_artifact_bytes -> {:ok, body}
+      {:ok, body} when is_binary(body) -> {:error, :artifact_too_large}
+      {:ok, {:error, reason}} -> {:error, reason}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
   defp write_exclusive(path, value) do
     case File.open(path, [:write, :binary, :exclusive], &IO.binwrite(&1, value)) do
       {:ok, :ok} ->
-        :ok
+        case File.chmod(path, 0o600) do
+          :ok ->
+            :ok
+
+          {:error, reason} ->
+            _ = File.rm(path)
+            {:error, reason}
+        end
 
       {:ok, {:error, reason}} ->
         _ = File.rm(path)

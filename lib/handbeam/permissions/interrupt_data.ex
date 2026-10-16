@@ -16,6 +16,7 @@ defmodule Handbeam.Permissions.InterruptData do
         end),
       hitl_tool_call_ids: Enum.map(pending_calls, &call_id/1),
       auto_approved_tool_call_ids: Enum.map(auto_approved_calls, &call_id/1),
+      approval_batch_id: Ecto.UUID.generate(),
       workspace_path: workspace_path
     }
   end

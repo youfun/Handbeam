@@ -14,7 +14,7 @@ defmodule Handbeam.Agent.Provider.Retry do
       end
   """
 
-  @retryable_statuses [429, 500, 502, 503, 504]
+  @retryable_statuses [429, 500, 502, 503, 504, 520, 524]
   @default_max_retries 3
   @default_retry_delay_base_ms 500
 
@@ -37,6 +37,8 @@ defmodule Handbeam.Agent.Provider.Retry do
   def retryable?("HTTP 502:" <> _), do: true
   def retryable?("HTTP 503:" <> _), do: true
   def retryable?("HTTP 504:" <> _), do: true
+  def retryable?("HTTP 520:" <> _), do: true
+  def retryable?("HTTP 524:" <> _), do: true
 
   def retryable?("rate_limit_error:" <> _), do: true
   def retryable?("rate_limit_exceeded:" <> _), do: true

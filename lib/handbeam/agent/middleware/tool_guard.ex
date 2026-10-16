@@ -36,18 +36,14 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
     {pending, auto_approved} =
       Enum.split_with(rest, &(ToolPolicy.decision(policy, &1) == :prompt))
 
+    state = put_denied(state, denied, policy)
+
     cond do
       pending != [] ->
         review_or_interrupt(state, pending, auto_approved)
 
       denied != [] ->
-        guarded = %{
-          state
-          | tool_guard_denied_calls: denied,
-            tool_guard_result_blocks: Enum.map(denied, &denied_result_block(&1, policy))
-        }
-
-        {:tool_guard_denied, guarded}
+        {:tool_guard_denied, state}
 
       true ->
         state
@@ -56,6 +52,16 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
 
   def call(_hook, %State{} = state), do: state
 
+  defp put_denied(state, [], _policy), do: state
+
+  defp put_denied(state, denied, policy) do
+    %{
+      state
+      | tool_guard_denied_calls: denied,
+        tool_guard_result_blocks: Enum.map(denied, &denied_result_block(&1, policy))
+    }
+  end
+
   # Review runs only after ToolPolicy has already returned :prompt. It never
   # rewrites allow rules or session overrides, and a failed review is the
   # existing human interrupt — not a deny.
@@ -63,13 +69,13 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
     if auto_review?(state) and not Enum.any?(pending, &(&1[:name] == "computer")) do
       case AutoReview.review(state, pending) do
         {:ok, %State{status: :halted} = reviewed} ->
-          {:tool_guard_denied, reviewed}
+          {:tool_guard_denied, merge_prior_denials(reviewed, state)}
 
         {:ok, %State{tool_guard_result_blocks: []} = reviewed} ->
-          reviewed
+          merge_prior_denials(reviewed, state)
 
         {:ok, %State{} = reviewed} ->
-          {:tool_guard_denied, reviewed}
+          {:tool_guard_denied, merge_prior_denials(reviewed, state)}
 
         {:fallback, %State{} = reviewed, _reason} ->
           interrupt(reviewed, pending, auto_approved)
@@ -77,6 +83,22 @@ defmodule Handbeam.Agent.Middleware.ToolGuard do
     else
       interrupt(state, pending, auto_approved)
     end
+  end
+
+  defp merge_prior_denials(reviewed, prior) do
+    %{
+      reviewed
+      | tool_guard_denied_calls:
+          Enum.uniq_by(
+            (prior.tool_guard_denied_calls || []) ++ (reviewed.tool_guard_denied_calls || []),
+            &Handbeam.Utils.SafeMap.get_any(&1, :id, "id")
+          ),
+        tool_guard_result_blocks:
+          Enum.uniq_by(
+            (prior.tool_guard_result_blocks || []) ++ (reviewed.tool_guard_result_blocks || []),
+            &Handbeam.Utils.SafeMap.get_any(&1, :tool_use_id, "tool_use_id")
+          )
+    }
   end
 
   defp delegated_policy(policy, %State{} = state) do

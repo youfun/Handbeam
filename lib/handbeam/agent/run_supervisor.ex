@@ -30,6 +30,9 @@ defmodule Handbeam.Agent.RunSupervisor do
     conversation_id = Keyword.fetch!(opts, :conversation_id)
     queue_name = {:via, Registry, {Handbeam.AgentRunQueueRegistry, conversation_id}}
 
+    task_supervisor_name =
+      {:via, Registry, {Handbeam.AgentRunSupervisorRegistry, {:tasks, conversation_id}}}
+
     queue_opts = [
       session_id: conversation_id,
       owner: self(),
@@ -39,7 +42,11 @@ defmodule Handbeam.Agent.RunSupervisor do
     runner_opts =
       opts
       |> Keyword.put(:queue_name, queue_name)
-      |> Keyword.update!(:run_opts, &Keyword.put(&1, :run_supervisor, self()))
+      |> Keyword.update!(:run_opts, fn run_opts ->
+        run_opts
+        |> Keyword.put(:run_supervisor, self())
+        |> Keyword.put(:run_task_supervisor, task_supervisor_name)
+      end)
 
     # A crashed runner, queue, or this tree must not be restarted with the
     # original input. DynamicSupervisor also uses the temporary child_spec.
@@ -49,11 +56,16 @@ defmodule Handbeam.Agent.RunSupervisor do
       [
         Supervisor.child_spec({Handbeam.Agent.CandidateQueue, queue_opts},
           id: Handbeam.Agent.CandidateQueue,
-          restart: :temporary
+          restart: :temporary,
+          significant: true
+        ),
+        Supervisor.child_spec({Task.Supervisor, name: task_supervisor_name},
+          id: Handbeam.Agent.RunTaskSupervisor
         ),
         Supervisor.child_spec({Handbeam.Agent.Runner, runner_opts},
           id: Handbeam.Agent.Runner,
-          restart: :temporary
+          restart: :temporary,
+          significant: true
         )
       ],
       strategy: :one_for_all,

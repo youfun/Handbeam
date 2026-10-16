@@ -17,13 +17,12 @@ defmodule Handbeam.Agent.Tool.FileCommit do
     operation_id = Keyword.get(opts, :operation_id) || new_id()
     expected = ChangeSnapshot.sha256(content)
     receipt = %{"path" => path, "after_sha256" => expected, "operation_id" => operation_id}
+    fingerprint = OperationReceipt.fingerprint(receipt)
 
-    with :ok <- reserve(operation_id, receipt, context),
-         :ok <- write_temp(path, content, operation_id),
-         :ok <- File.rename(temp_path(path, operation_id), path),
-         :ok <- complete(operation_id, receipt, context) do
-      {:ok, %{operation_id: operation_id, after_sha256: expected, side_effect: :committed}}
-    else
+    case reserve(operation_id, fingerprint, context) do
+      :ok ->
+        commit_reserved(path, content, operation_id, expected, receipt, fingerprint, context)
+
       {:replay, stored} ->
         {:ok,
          %{
@@ -37,10 +36,7 @@ defmodule Handbeam.Agent.Tool.FileCommit do
         reconcile(path, expected, operation_id)
 
       {:error, reason} ->
-        _ = File.rm(temp_path(path, operation_id))
-
-        {:error, "file commit failed: #{inspect(reason)}",
-         %{operation_id: operation_id, side_effect: :unknown, code: :commit_unknown}}
+        commit_error(operation_id, reason)
     end
   end
 
@@ -72,33 +68,92 @@ defmodule Handbeam.Agent.Tool.FileCommit do
     end
   end
 
-  defp write_temp(path, content, operation_id) do
-    tmp = temp_path(path, operation_id)
+  defp commit_reserved(path, content, operation_id, expected, receipt, fingerprint, context) do
+    case write_temp(path, content) do
+      {:ok, temp} ->
+        with :ok <- File.rename(temp, path),
+             :ok <- complete(operation_id, receipt, context) do
+          {:ok, %{operation_id: operation_id, after_sha256: expected, side_effect: :committed}}
+        else
+          {:error, reason} ->
+            _ = File.rm(temp)
+            commit_error(operation_id, reason)
+        end
 
-    with :ok <- File.mkdir_p(Path.dirname(path)) do
-      File.write(tmp, content)
+      {:error, reason} ->
+        _ = release_reserved(operation_id, fingerprint, context)
+        commit_not_started(operation_id, reason)
     end
   end
 
-  defp temp_path(path, operation_id) do
-    safe = String.replace(operation_id, ~r/[^A-Za-z0-9_.-]/, "_")
-    path <> "." <> safe <> ".tmp"
+  defp write_temp(path, content, attempts \\ 3)
+
+  defp write_temp(_path, _content, 0), do: {:error, :eexist}
+
+  defp write_temp(path, content, attempts) do
+    with :ok <- File.mkdir_p(Path.dirname(path)) do
+      temp = random_temp_path(path)
+
+      case File.open(temp, [:write, :binary, :exclusive], &IO.binwrite(&1, content)) do
+        {:ok, :ok} ->
+          {:ok, temp}
+
+        {:ok, {:error, reason}} ->
+          _ = File.rm(temp)
+          {:error, reason}
+
+        {:error, :eexist} ->
+          write_temp(path, content, attempts - 1)
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    end
   end
 
-  defp reserve(operation_id, receipt, context) do
+  defp random_temp_path(path) do
+    Path.join(
+      Path.dirname(path),
+      ".#{Path.basename(path)}.handbeam-#{Ecto.UUID.generate()}.tmp"
+    )
+  end
+
+  defp commit_error(operation_id, reason) do
+    {:error, "file commit failed: #{inspect(reason)}",
+     %{operation_id: operation_id, side_effect: :unknown, code: :commit_unknown}}
+  end
+
+  defp commit_not_started(operation_id, reason) do
+    {:error, "file commit failed before rename: #{inspect(reason)}",
+     %{operation_id: operation_id, side_effect: :not_started, code: :commit_not_started}}
+  end
+
+  defp reserve(operation_id, fingerprint, context) do
     case conversation(context) do
       nil ->
         :ok
 
       conversation ->
-        fingerprint = OperationReceipt.fingerprint(receipt)
-
         case OperationReceipt.reserve({:file_commit, conversation}, operation_id, fingerprint) do
           :ok -> :ok
           {:replay, stored} -> {:replay, stored}
           {:unknown, reason} -> {:unknown, reason}
           other -> other
         end
+    end
+  end
+
+  defp release_reserved(operation_id, fingerprint, context) do
+    case conversation(context) do
+      nil ->
+        :ok
+
+      conversation ->
+        OperationReceipt.release_reserved(
+          {:file_commit, conversation},
+          operation_id,
+          fingerprint
+        )
     end
   end
 
