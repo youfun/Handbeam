@@ -932,7 +932,7 @@ defmodule HandbeamWeb.WorkspaceLive.SidebarComponents do
   attr :id, :string, required: true
   attr :state, :atom, default: nil
 
-  defp run_indicator(assigns) do
+  def run_indicator(assigns) do
     ~H"""
     <span
       class="conversation-run-indicator"

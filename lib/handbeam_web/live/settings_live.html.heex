@@ -42,6 +42,7 @@
     <div
       id="settings-menu"
       class="settings-sidebar flex-shrink-0 border-r bg-surface flex flex-col"
+      phx-hook="SettingsNav"
     >
       <div class="pt-3 pb-2 px-3">
         <h2 class="projects-panel-title">{gettext("Settings")}</h2>
@@ -51,6 +52,7 @@
           :for={item <- @tabs}
           phx-click="select_tab"
           phx-value-tab={item.id}
+          aria-current={if @active_tab == item.id, do: "page", else: nil}
           class={[
             "settings-menu-item w-full text-left px-3 py-2 text-xs flex items-center gap-2 transition-colors",
             if(@active_tab == item.id,
@@ -134,7 +136,11 @@
                 </div>
               </div>
 
-              <form phx-change="set_workspace_default_model" class="settings-field-row">
+              <form
+                id="workspace-default-model-form"
+                phx-change="set_workspace_default_model"
+                class="settings-field-row"
+              >
                 <div class="settings-field-copy">
                   <label class="settings-field-title" for="workspace-default-model">
                     {gettext("工作区默认模型")}
@@ -144,30 +150,84 @@
                   </div>
                 </div>
                 <div class="settings-field-control">
-                  <select
+                  <ModelPicker.render
                     id="workspace-default-model"
                     name="default_model"
-                    value={@workspace_model_policy.default_model || ""}
-                    class="settings-input"
-                  >
-                    <option value="">{gettext("使用供应商默认")}</option>
-                    <%= for model <- workspace_default_options(@workspace_model_policy, @all_models) do %>
-                      <option
-                        value={model.id}
-                        selected={model.id == @workspace_model_policy.default_model}
-                      >
-                        {model.provider_id} / {model.name || model.model_id}
-                      </option>
-                    <% end %>
-                  </select>
+                    value={@workspace_model_policy.default_model}
+                    options={
+                      workspace_default_picker_options(@workspace_model_policy, @all_models)
+                    }
+                    label={gettext("工作区默认模型")}
+                    change="set_workspace_default_model"
+                  />
                 </div>
               </form>
             </div>
 
-            <div :if={@workspace_model_policy.mode == :restricted} class="settings-model-list">
-              <%= for {provider_id, models} <- models_grouped_by_provider(@all_models) do %>
-                <div class="settings-model-provider">
-                  <div class="settings-model-provider-title">{provider_id}</div>
+            <div
+              :if={@workspace_model_policy.mode == :restricted}
+              class="settings-model-picker-list"
+            >
+              <form
+                id="workspace-model-filter-form"
+                phx-change="filter_workspace_models"
+                class="settings-model-filter"
+              >
+                <label class="sr-only" for="workspace-model-filter">{gettext("搜索模型")}</label>
+                <input
+                  id="workspace-model-filter"
+                  type="search"
+                  name="query"
+                  value={@workspace_model_query}
+                  placeholder={gettext("搜索模型或供应商")}
+                  phx-debounce="200"
+                  class="settings-input"
+                />
+              </form>
+
+              <div class="settings-model-list">
+                <div
+                  :for={
+                    {provider_id, models} <-
+                      filtered_models_grouped_by_provider(@all_models, @workspace_model_query)
+                  }
+                  class="settings-model-provider"
+                >
+                  <div class="settings-model-provider-header">
+                    <div>
+                      <div class="settings-model-provider-title">{provider_id}</div>
+                      <div class="settings-model-provider-count">
+                        {gettext("已选 %{selected} / %{total}",
+                          selected:
+                            workspace_provider_selected_count(
+                              @workspace_model_policy,
+                              provider_id
+                            ),
+                          total: workspace_provider_model_count(@all_models, provider_id)
+                        )}
+                      </div>
+                    </div>
+                    <div class="settings-model-provider-actions">
+                      <button
+                        type="button"
+                        phx-click="set_workspace_provider_models"
+                        phx-value-provider={provider_id}
+                        phx-value-action="all"
+                        class="settings-btn"
+                      >
+                        {gettext("全选")}
+                      </button>
+                      <button
+                        type="button"
+                        phx-click="set_workspace_provider_models"
+                        phx-value-provider={provider_id}
+                        phx-value-action="none"
+                        class="settings-btn"
+                      >
+                        {gettext("清空")}
+                      </button>
+                    </div>
+                  </div>
                   <label :for={model <- models} class="settings-model-row">
                     <input
                       type="checkbox"
@@ -185,7 +245,16 @@
                     <span>{model.name || model.model_id}</span>
                   </label>
                 </div>
-              <% end %>
+              </div>
+
+              <div
+                :if={
+                  filtered_models_grouped_by_provider(@all_models, @workspace_model_query) == []
+                }
+                class="settings-model-empty"
+              >
+                {gettext("没有匹配的模型")}
+              </div>
             </div>
           </div>
 
@@ -234,6 +303,14 @@
             class="webgpu-probe"
             phx-hook="LocalWebGPUProbe"
             data-probe-status="running"
+            data-status-running={gettext("Running")}
+            data-status-ready={gettext("Ready")}
+            data-status-unsupported={gettext("Unsupported")}
+            data-status-probe-failure={gettext("Probe failed")}
+            data-run-running={gettext("Running…")}
+            data-run-again={gettext("Run probe again")}
+            data-secure-context={gettext("Secure context")}
+            data-insecure-context={gettext("Not a secure context")}
           >
             <div class="webgpu-probe-summary">
               <div>
@@ -245,39 +322,44 @@
               </button>
             </div>
 
-            <div class="webgpu-probe-meta" data-probe-meta>
-              {gettext("Reading browser capabilities…")}
-            </div>
+            <details class="webgpu-probe-details webgpu-probe-diagnostics">
+              <summary>{gettext("Technical details")}</summary>
+              <div class="webgpu-probe-diagnostics-body">
+                <div class="webgpu-probe-meta" data-probe-meta>
+                  {gettext("Reading browser capabilities…")}
+                </div>
 
-            <div class="webgpu-probe-grid" aria-live="polite">
-              <div
-                :for={
-                  {key, label} <- [
-                    {"navigator_gpu", "navigator.gpu"},
-                    {"adapter", "requestAdapter"},
-                    {"device", "requestDevice"},
-                    {"compute", "WebGPU compute"},
-                    {"shared_worker", "SharedWorker"},
-                    {"opfs", "OPFS"}
-                  ]
-                }
-                class="webgpu-probe-check"
-                data-probe-check={key}
-                data-status="running"
-              >
-                <div class="webgpu-probe-check-heading">
-                  <span data-check-label>{label}</span>
-                  <span class="webgpu-probe-check-status" data-check-status>running</span>
+                <div class="webgpu-probe-grid" aria-live="polite">
+                  <div
+                    :for={
+                      {key, label} <- [
+                        {"navigator_gpu", "navigator.gpu"},
+                        {"adapter", "requestAdapter"},
+                        {"device", "requestDevice"},
+                        {"compute", "WebGPU compute"},
+                        {"shared_worker", "SharedWorker"},
+                        {"opfs", "OPFS"}
+                      ]
+                    }
+                    class="webgpu-probe-check"
+                    data-probe-check={key}
+                    data-status="running"
+                  >
+                    <div class="webgpu-probe-check-heading">
+                      <span data-check-label>{label}</span>
+                      <span class="webgpu-probe-check-status" data-check-status>running</span>
+                    </div>
+                    <div class="webgpu-probe-check-detail" data-check-detail>
+                      {gettext("Waiting for probe…")}
+                    </div>
+                  </div>
                 </div>
-                <div class="webgpu-probe-check-detail" data-check-detail>
-                  {gettext("Waiting for probe…")}
-                </div>
+
+                <details class="webgpu-probe-details webgpu-probe-json">
+                  <summary>{gettext("Structured result")}</summary>
+                  <pre data-probe-json>{gettext("Probe is running…")}</pre>
+                </details>
               </div>
-            </div>
-
-            <details class="webgpu-probe-details">
-              <summary>{gettext("Structured result")}</summary>
-              <pre data-probe-json>{gettext("Probe is running…")}</pre>
             </details>
 
             <p class="webgpu-probe-caveat">
@@ -397,45 +479,6 @@
                     </button>
                   </div>
                 </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- Coming Soon Tabs -->
-      <div
-        :if={
-          @active_tab not in [
-            :model_ai,
-            :workspace_models,
-            :available_models,
-            :local_webgpu,
-            :mcp,
-            :git,
-            :ui
-          ]
-        }
-        class="settings-content-wrap"
-      >
-        <div class="settings-section-heading">
-          <div class="settings-section-title">{gettext("即将推出")}</div>
-          <div class="settings-help-text">
-            {gettext("这些设置还不能用。")}
-          </div>
-        </div>
-        <div class="settings-card">
-          <div
-            :for={name <- [gettext("SNS"), gettext("Tools"), gettext("Security")]}
-            class="settings-field-row is-disabled"
-          >
-            <div class="settings-field-copy">
-              <div class="settings-field-title">
-                {name}
-                <span class="settings-badge-experimental">{gettext("Experimental")}</span>
-              </div>
-              <div class="settings-field-desc">
-                {gettext("%{name} settings — coming soon", name: name)}
               </div>
             </div>
           </div>

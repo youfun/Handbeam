@@ -11,8 +11,10 @@ defmodule HandbeamWeb.SettingsLive do
 
     - Model / AI         → inline form (default)
     - Workspace Models   → workspace allowlist/default model
+    - Workspace Memory   → nested memory browser
     - Available Models   → nested AvailableModelsLive via live_render
-    - SNS / Tools / ...  → coming soon placeholder
+    - Advanced           → browser-local diagnostics
+    - MCP / Git / UI     → integration and appearance settings
   """
 
   use HandbeamWeb, :live_view
@@ -20,6 +22,7 @@ defmodule HandbeamWeb.SettingsLive do
   alias Handbeam.Settings
   alias Handbeam.Settings.ModelAISettings
   alias Handbeam.Agent.ModelConfig
+  alias HandbeamWeb.Components.ModelPicker
   alias HandbeamWeb.Live.Settings.ModelAIPanel
 
   @tabs [
@@ -30,8 +33,7 @@ defmodule HandbeamWeb.SettingsLive do
     %{id: :local_webgpu, label_key: "Local WebGPU"},
     %{id: :mcp, label_key: "MCP"},
     %{id: :git, label_key: "Git"},
-    %{id: :ui, label_key: "UI"},
-    %{id: :coming_soon, label_key: "Coming soon"}
+    %{id: :ui, label_key: "UI"}
   ]
 
   @impl true
@@ -75,6 +77,7 @@ defmodule HandbeamWeb.SettingsLive do
       |> assign(:all_models, ModelConfig.all_global_models())
       |> assign(:available_models, available_models)
       |> assign(:workspace_model_policy, load_workspace_model_policy_form(workspace_root))
+      |> assign(:workspace_model_query, "")
       |> assign(:form, form)
       |> assign(:errors, %{})
       |> assign(:saving, false)
@@ -188,6 +191,44 @@ defmodule HandbeamWeb.SettingsLive do
         "restricted" -> Map.put(policy, :mode, :restricted)
         _ -> Map.put(policy, :mode, :unrestricted)
       end
+
+    {:noreply, assign(socket, :workspace_model_policy, policy)}
+  end
+
+  def handle_event("filter_workspace_models", %{"query" => query}, socket) do
+    {:noreply, assign(socket, :workspace_model_query, String.trim(query))}
+  end
+
+  def handle_event(
+        "set_workspace_provider_models",
+        %{"provider" => provider, "action" => action},
+        socket
+      ) do
+    policy = socket.assigns.workspace_model_policy
+    allowed = Map.get(policy, :allowed, %{})
+
+    allowed =
+      case action do
+        "all" ->
+          model_ids =
+            socket.assigns.all_models
+            |> Enum.filter(&(&1.provider_id == provider))
+            |> Enum.map(& &1.model_id)
+            |> MapSet.new()
+
+          if MapSet.size(model_ids) == 0,
+            do: Map.delete(allowed, provider),
+            else: Map.put(allowed, provider, model_ids)
+
+        _ ->
+          Map.delete(allowed, provider)
+      end
+
+    policy =
+      policy
+      |> Map.put(:mode, :restricted)
+      |> Map.put(:allowed, allowed)
+      |> clear_invalid_workspace_default()
 
     {:noreply, assign(socket, :workspace_model_policy, policy)}
   end
@@ -337,11 +378,10 @@ defmodule HandbeamWeb.SettingsLive do
   def tab_label(:workspace_models), do: gettext("Workspace Models")
   def tab_label(:workspace_memory), do: gettext("Workspace Memory")
   def tab_label(:available_models), do: gettext("Available Models")
-  def tab_label(:local_webgpu), do: gettext("Local WebGPU")
+  def tab_label(:local_webgpu), do: gettext("Advanced")
   def tab_label(:mcp), do: gettext("MCP")
   def tab_label(:git), do: gettext("Git")
   def tab_label(:ui), do: gettext("UI")
-  def tab_label(:coming_soon), do: gettext("即将推出")
   def tab_label(:sns), do: gettext("SNS")
   def tab_label(:tools), do: gettext("Tools")
   def tab_label(:security), do: gettext("Security")
@@ -351,7 +391,6 @@ defmodule HandbeamWeb.SettingsLive do
   def tab_icon(:workspace_memory), do: "◉"
   def tab_icon(:available_models), do: "🔧"
   def tab_icon(:ui), do: "🎨"
-  def tab_icon(:coming_soon), do: "…"
   def tab_icon(:sns), do: "📡"
   def tab_icon(:tools), do: "🔒"
   def tab_icon(:security), do: "🛡️"
@@ -364,15 +403,9 @@ defmodule HandbeamWeb.SettingsLive do
   end
 
   defp tab_from_params(%{"tab" => tab_str}) do
-    cond do
-      tab_str in ["sns", "tools", "security"] ->
-        :coming_soon
-
-      true ->
-        Enum.find_value(@tabs, :model_ai, fn tab ->
-          if Atom.to_string(tab.id) == tab_str, do: tab.id
-        end)
-    end
+    Enum.find_value(@tabs, :model_ai, fn tab ->
+      if Atom.to_string(tab.id) == tab_str, do: tab.id
+    end)
   end
 
   defp tab_from_params(_params), do: :model_ai
@@ -556,6 +589,36 @@ defmodule HandbeamWeb.SettingsLive do
   defp workspace_default_options(policy, all_models) do
     all_models
     |> Enum.filter(fn model -> workspace_model_allowed?(policy, model.id) end)
+  end
+
+  defp workspace_default_picker_options(policy, all_models) do
+    [ModelPicker.option("", gettext("使用供应商默认"))] ++
+      Enum.map(workspace_default_options(policy, all_models), fn model ->
+        ModelPicker.option(model.id, model.name || model.model_id, model.provider_id)
+      end)
+  end
+
+  defp filtered_models_grouped_by_provider(models, query) do
+    normalized_query = query |> to_string() |> String.downcase()
+
+    models
+    |> Enum.filter(fn model ->
+      normalized_query == "" or
+        Enum.any?([model.provider_id, model.model_id, model.name], fn value ->
+          is_binary(value) and String.contains?(String.downcase(value), normalized_query)
+        end)
+    end)
+    |> models_grouped_by_provider()
+  end
+
+  defp workspace_provider_selected_count(policy, provider_id) do
+    policy.allowed
+    |> Map.get(provider_id, MapSet.new())
+    |> MapSet.size()
+  end
+
+  defp workspace_provider_model_count(models, provider_id) do
+    Enum.count(models, &(&1.provider_id == provider_id))
   end
 
   defp models_grouped_by_provider(models) do

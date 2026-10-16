@@ -6,4 +6,8 @@
 @import "./workspace/conversation-actions.css";
 @import "./workspace/mobile.css";
 @import "./workspace/settings.css";
+@import "./workspace/settings-models.css";
+@import "./workspace/settings-memory.css";
+@import "./workspace/settings-integrations.css";
+@import "./workspace/model-picker.css";
 @import "./workspace/schedules.css";

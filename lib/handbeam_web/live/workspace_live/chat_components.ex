@@ -3,6 +3,7 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
 
   use HandbeamWeb, :html
 
+  alias HandbeamWeb.Components.ModelPicker
   alias HandbeamWeb.FileChangeCard
 
   import HandbeamWeb.WorkspaceLive.ViewComponents
@@ -967,44 +968,28 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
                 {HandbeamWeb.WorkspaceLive.CliSelection.error_message(@cli_models_error)}
               </div>
               <div :if={is_nil(@selected_cli) and @available_models != []} class="model-control">
-                <select
+                <ModelPicker.render
                   id="model-picker"
                   name="model"
                   value={@selected_model}
-                  phx-click="refresh_models"
-                  phx-change="select_model"
-                  aria-label={gettext("模型")}
+                  options={composer_model_options(@available_models)}
+                  label={gettext("模型")}
                   title={gettext("可在对话中途更换模型")}
-                >
-                  <optgroup
-                    :for={{provider_id, models} <- models_by_provider(@available_models)}
-                    label={provider_display_name(provider_id)}
-                  >
-                    <option
-                      :for={m <- models}
-                      value={m.id}
-                      selected={m.id == @selected_model}
-                    >
-                      {model_option_label(m, models)}
-                    </option>
-                  </optgroup>
-                </select>
+                  change="select_model"
+                  refresh="refresh_models"
+                  compact
+                />
               </div>
               <div :if={is_binary(@selected_cli) and @available_models != []} class="model-control">
-                <select
+                <ModelPicker.render
                   id="cli-model-picker"
                   name="model"
-                  phx-change="select_model"
-                  aria-label={gettext("CLI model")}
-                >
-                  <option
-                    :for={m <- @available_models}
-                    value={m.id}
-                    selected={m.id == @selected_model}
-                  >
-                    {m.display_name || m.id}
-                  </option>
-                </select>
+                  value={@selected_model}
+                  options={cli_model_options(@available_models)}
+                  label={gettext("CLI model")}
+                  change="select_model"
+                  compact
+                />
               </div>
               <div :if={@available_reasoning_levels != []} class="model-control">
                 <select
@@ -1252,5 +1237,23 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
       </svg>
     </button>
     """
+  end
+
+  defp composer_model_options(models) do
+    models
+    |> models_by_provider()
+    |> Enum.flat_map(fn {provider_id, provider_models} ->
+      group = provider_display_name(provider_id)
+
+      Enum.map(provider_models, fn model ->
+        ModelPicker.option(model.id, model_option_label(model, provider_models), group)
+      end)
+    end)
+  end
+
+  defp cli_model_options(models) do
+    Enum.map(models, fn model ->
+      ModelPicker.option(model.id, model.display_name || model.id)
+    end)
   end
 end

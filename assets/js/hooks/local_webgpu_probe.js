@@ -291,18 +291,29 @@ export async function runLocalWebGPUProbe(environment = globalThis, options = {}
   };
 }
 
+const STATUS_LABEL_KEYS = {
+  running: "statusRunning",
+  ready: "statusReady",
+  unsupported: "statusUnsupported",
+  probe_failure: "statusProbeFailure",
+};
+
+function statusLabel(element, status) {
+  return element.dataset[STATUS_LABEL_KEYS[status]] || status;
+}
+
 function renderProbe(element, probe) {
   element.dataset.probeStatus = probe.status;
-  element.querySelector("[data-probe-summary]").textContent = probe.status;
+  element.querySelector("[data-probe-summary]").textContent = statusLabel(element, probe.status);
   element.querySelector("[data-probe-meta]").textContent =
-    `${probe.secure_context ? "Secure context" : "Not a secure context"} · ${probe.user_agent}`;
+    `${probe.secure_context ? element.dataset.secureContext : element.dataset.insecureContext} · ${probe.user_agent}`;
 
   for (const [key, label] of CHECKS) {
     const check = probe.checks[key];
     const row = element.querySelector(`[data-probe-check="${key}"]`);
     row.dataset.status = check.status;
     row.querySelector("[data-check-label]").textContent = label;
-    row.querySelector("[data-check-status]").textContent = check.status;
+    row.querySelector("[data-check-status]").textContent = statusLabel(element, check.status);
     row.querySelector("[data-check-detail]").textContent = check.detail;
   }
 
@@ -314,9 +325,9 @@ export const LocalWebGPUProbe = {
     this.run = async () => {
       const button = this.el.querySelector("[data-probe-run]");
       button.disabled = true;
-      button.textContent = "Running…";
+      button.textContent = this.el.dataset.runRunning || "Running…";
       this.el.dataset.probeStatus = "running";
-      this.el.querySelector("[data-probe-summary]").textContent = "running";
+      this.el.querySelector("[data-probe-summary]").textContent = statusLabel(this.el, "running");
 
       try {
         const probe = await runLocalWebGPUProbe(window);
@@ -334,7 +345,7 @@ export const LocalWebGPUProbe = {
         window.dispatchEvent(new CustomEvent("handbeam:webgpu-probe", { detail: probe }));
       } finally {
         button.disabled = false;
-        button.textContent = "Run probe again";
+        button.textContent = this.el.dataset.runAgain || "Run probe again";
       }
     };
 

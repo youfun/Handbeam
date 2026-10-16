@@ -3,6 +3,8 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
 
   use HandbeamWeb, :html
 
+  alias HandbeamWeb.WorkspaceLive.SidebarComponents
+
   import HandbeamWeb.WorkspaceLive.ViewComponents
 
   attr :available_models, :any, required: true
@@ -13,6 +15,7 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
   attr :current_conversation_id, :any, required: true
   attr :current_workspace_id, :any, required: true
   attr :mcp_count, :any, required: true
+  attr :runtime_tasks, :map, default: %{tasks: []}
   attr :selected_cli, :any, default: nil
   attr :selected_model, :any, required: true
   attr :selected_reasoning_level, :any, required: true
@@ -28,6 +31,12 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
   attr :workspaces, :any, required: true
 
   def mobile_sheets(assigns) do
+    assigns =
+      assign(
+        assigns,
+        run_states: Map.new(assigns.runtime_tasks.tasks, &{&1.conversation_id, &1.status})
+      )
+
     ~H"""
     <div
       id="mobile-backdrop"
@@ -52,6 +61,7 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
     <!-- Workspace / Conversation Switcher Sheet -->
     <div
       id="workspace-sheet"
+      phx-hook="ConversationActivity"
       class={["bottom-sheet", if(@show_workspace_sheet, do: "open", else: "")]}
       aria-hidden={to_string(not @show_workspace_sheet)}
       inert={!@show_workspace_sheet}
@@ -108,6 +118,10 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
               phx-value-ws_id={conv.workspace_id}
               class="sheet-conv-row"
             >
+              <SidebarComponents.run_indicator
+                id={conv.id}
+                state={Map.get(@run_states, conv.id)}
+              />
               <span class="truncate flex-1">{conv.title}</span>
             </button>
             <button
@@ -182,6 +196,10 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
               @current_conversation_id == conv.id && @chat_scope == :free && "active"
             ]}
           >
+            <SidebarComponents.run_indicator
+              id={conv.id}
+              state={Map.get(@run_states, conv.id)}
+            />
             <span class="truncate flex-1">{conv.title}</span>
           </button>
         </div>
@@ -278,15 +296,10 @@ defmodule HandbeamWeb.WorkspaceLive.OverlayComponents do
                   )
                 ]}
               >
-                <span class={[
-                  "sheet-conv-dot",
-                  if(
-                    @current_conversation_id == conv.id and
-                      @current_workspace_id == conv.workspace_id,
-                    do: "active",
-                    else: ""
-                  )
-                ]}></span>
+                <SidebarComponents.run_indicator
+                  id={conv.id}
+                  state={Map.get(@run_states, conv.id)}
+                />
                 <span class="truncate flex-1">{conv.title}</span>
                 <span class="sheet-conv-time">{relative_time(conv)}</span>
               </button>

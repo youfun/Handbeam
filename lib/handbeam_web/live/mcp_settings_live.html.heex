@@ -1,24 +1,13 @@
 <div id="mcp-settings" class="settings-content-wrap h-full overflow-y-auto">
-  <style>
-    #mcp-settings { font: 14px/1.5 system-ui, sans-serif; color: var(--sig-text-primary, #202124); }
-    #mcp-settings * { box-sizing: border-box; }
-    #mcp-settings .settings-section-title { font-size: 20px; font-weight: 600; }
-    #mcp-settings .settings-help-text, #mcp-settings .settings-field-desc { color: var(--sig-text-secondary, #62666b); }
-    #mcp-settings .settings-card { border: 1px solid var(--sig-border-subtle, #d9dce0); border-radius: 8px; padding: 16px; background: var(--sig-bg-elevated, #fff); }
-    #mcp-settings .text-left { text-align: left; overflow-wrap: anywhere; }
-    #mcp-settings .text-red-600 { color: #b42318; }
-    #mcp-settings .text-green-600 { color: #247044; }
-  </style>
-
   <div class="settings-content-card">
-    <div class="flex items-center justify-between gap-3 mb-4">
+    <div class="mcp-settings-header">
       <div>
         <div class="settings-section-title">{gettext("MCP Servers")}</div>
         <div class="settings-help-text">
           {gettext("Connect HTTP MCP servers and control workspace access.")}
         </div>
       </div>
-      <button id="mcp-add" type="button" phx-click="new" class="settings-save-btn">
+      <button id="mcp-add" type="button" phx-click="new" class="settings-btn settings-btn-primary">
         {gettext("Add server")}
       </button>
     </div>
@@ -31,10 +20,12 @@
     <div
       :if={!@load_error && @servers == []}
       id="mcp-empty"
-      class="settings-card p-6 text-center text-secondary text-sm"
+      class="settings-empty-state"
     >
-      <div class="text-2xl mb-2">🔌</div>
       <p>{gettext("No MCP servers configured.")}</p>
+      <p class="settings-field-desc">
+        {gettext("Connect a server to make its tools available to approved workspaces.")}
+      </p>
     </div>
 
     <!-- Server List -->

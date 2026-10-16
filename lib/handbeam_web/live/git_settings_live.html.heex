@@ -1,40 +1,30 @@
-<div id="git-settings" class="settings-content-wrap">
-  <style>
-    #git-settings { font: 14px/1.5 system-ui, sans-serif; color: var(--sig-text-primary, #202124); padding: 16px; max-width: 960px; margin: auto; }
-    #git-settings * { box-sizing: border-box; }
-    #git-settings .settings-section-title { font-size: 20px; font-weight: 600; }
-    #git-settings .settings-help-text, #git-settings .settings-field-desc { color: var(--sig-text-secondary, #62666b); }
-    #git-settings .settings-card { border: 1px solid var(--sig-border-subtle, #d9dce0); border-radius: 8px; padding: 16px; margin-top: 12px; }
-    #git-settings .flex { display: flex; gap: 12px; align-items: center; }
-    #git-settings .justify-between { justify-content: space-between; }
-    #git-settings button { cursor: pointer; font: inherit; padding: 8px 12px; border: 1px solid var(--sig-border-subtle, #d9dce0); border-radius: 6px; background: var(--sig-bg-elevated, #fff); color: inherit; }
-    #git-settings .settings-save-btn { background: var(--sig-text-primary, #202124); color: var(--sig-bg-elevated, #fff); }
-    #git-settings label { display: block; margin: 12px 0; }
-    #git-settings .settings-input { display: block; width: 100%; padding: 10px; margin-top: 4px; font: inherit; color: inherit; background: var(--sig-bg-elevated, #fff); border: 1px solid var(--sig-border-subtle, #b7bbc1); border-radius: 6px; }
-    #git-settings .text-red-600 { color: #b42318; }
-    #git-settings .grid { display: grid; gap: 12px; }
-    @media (min-width: 800px) { #git-settings .grid-2 { grid-template-columns: 1fr 1fr; } }
-  </style>
-
-  <div class="settings-content-card">
-    <div class="settings-section-title">{gettext("Git")}</div>
-    <div class="settings-help-text">
-      {gettext(
-        "Commit author and HTTPS accounts for clone, fetch, pull, and push. Passwords and tokens are never shown after save. Pick a default account; the agent can also pass a credential name."
-      )}
+<div id="git-settings" class="settings-content-wrap h-full overflow-y-auto">
+  <div class="settings-content-card settings-form-section">
+    <div class="settings-section-heading">
+      <div class="settings-section-title">{gettext("Git")}</div>
+      <div class="settings-help-text">
+        {gettext(
+          "Used for Git commits and HTTPS repository access. Saved passwords and tokens are never shown again."
+        )}
+      </div>
     </div>
 
-    <div :if={@load_error} id="git-load-error" class="settings-help-text text-red-600">
+    <div :if={@load_error} id="git-load-error" class="settings-error-text">
       {@load_error}
     </div>
 
-    <form id="git-identity" phx-submit="save_identity" class="settings-card">
-      <div class="settings-section-title" style="font-size: 16px;">
-        {gettext("Commit identity")}
+    <form id="git-identity" phx-submit="save_identity" class="settings-card git-settings-section">
+      <div class="git-settings-section-header">
+        <div>
+          <div class="settings-field-title">{gettext("Commit identity")}</div>
+          <div class="settings-field-desc">
+            {gettext("The author name and email written to new commits.")}
+          </div>
+        </div>
       </div>
-      <div class="grid grid-2">
-        <label>
-          {gettext("Name")}
+      <div class="git-settings-fields">
+        <label class="settings-form-group">
+          <span class="settings-form-label">{gettext("Name")}</span>
           <input
             type="text"
             name="identity[name]"
@@ -43,8 +33,8 @@
             autocomplete="name"
           />
         </label>
-        <label>
-          {gettext("Email")}
+        <label class="settings-form-group">
+          <span class="settings-form-label">{gettext("Email")}</span>
           <input
             type="email"
             name="identity[email]"
@@ -54,73 +44,106 @@
           />
         </label>
       </div>
-      <div :if={@identity_error} class="settings-help-text text-red-600">{@identity_error}</div>
-      <button type="submit" class="settings-save-btn">{gettext("Save identity")}</button>
+      <div :if={@identity_error} class="settings-error-text">{@identity_error}</div>
+      <div class="git-settings-actions">
+        <button type="submit" class="settings-btn settings-btn-primary">
+          {gettext("Save identity")}
+        </button>
+      </div>
     </form>
 
-    <div class="settings-card">
-      <div class="flex justify-between">
-        <div class="settings-section-title" style="font-size: 16px;">
-          {gettext("Accounts")}
+    <section class="settings-card git-settings-section">
+      <div class="git-settings-section-header git-settings-accounts-header">
+        <div>
+          <div class="settings-field-title">{gettext("Accounts")}</div>
+          <div class="settings-field-desc">
+            {gettext("Credentials used for HTTPS clone, fetch, pull, and push.")}
+          </div>
         </div>
         <button
           :if={is_nil(@form)}
           id="git-add"
           type="button"
           phx-click="new_account"
-          class="settings-save-btn"
+          class="settings-btn settings-btn-primary"
         >
           {gettext("Add account")}
         </button>
       </div>
 
-      <div :if={@accounts == [] and is_nil(@form)} id="git-empty" class="settings-help-text">
-        {gettext("No Git accounts yet.")}
+      <div :if={@accounts == [] and is_nil(@form)} id="git-empty" class="settings-empty-state">
+        <div>{gettext("No Git accounts yet.")}</div>
+        <div class="settings-field-desc">
+          {gettext("Add an account when a private HTTPS repository needs credentials.")}
+        </div>
       </div>
 
-      <div :for={account <- @accounts} id={"git-account-#{account.id}"} class="settings-card">
-        <div class="flex justify-between">
-          <div>
-            <div>{account.name} <span class="settings-help-text">({account.id})</span></div>
-            <div class="settings-help-text">
+      <div :if={@accounts != []} class="git-account-list">
+        <article
+          :for={account <- @accounts}
+          id={"git-account-#{account.id}"}
+          class="git-account-row"
+        >
+          <div class="git-account-copy">
+            <div class="git-account-name">
+              {account.name}
+              <span :if={account.default?} class="settings-badge">{gettext("default")}</span>
+            </div>
+            <div class="settings-field-desc">
               {account.endpoint}
               <%= if account.username != "" do %>
                 · {account.username}
               <% end %>
-              <%= if account.default? do %>
-                · {gettext("default")}
-              <% end %>
             </div>
+            <div class="git-account-id">{account.id}</div>
           </div>
-          <div class="flex">
+          <div class="git-account-actions">
             <button
               :if={not account.default?}
               type="button"
               phx-click="set_default"
               phx-value-id={account.id}
+              class="settings-btn"
             >
               {gettext("Use as default")}
             </button>
-            <button type="button" phx-click="edit_account" phx-value-id={account.id}>
+            <button
+              type="button"
+              phx-click="edit_account"
+              phx-value-id={account.id}
+              class="settings-btn"
+            >
               {gettext("Edit")}
             </button>
-            <button type="button" phx-click="confirm_delete" phx-value-id={account.id}>
+            <button
+              type="button"
+              phx-click="confirm_delete"
+              phx-value-id={account.id}
+              class="settings-btn settings-btn-danger"
+            >
               {gettext("Delete")}
             </button>
           </div>
-        </div>
-        <div :if={@delete_target == account.id} class="flex" style="margin-top: 8px;">
-          <span>{gettext("Delete this account?")}</span>
-          <button type="button" phx-click="delete_account" phx-value-id={account.id}>
-            {gettext("Delete")}
-          </button>
-          <button type="button" phx-click="cancel_delete">{gettext("Cancel")}</button>
-        </div>
+          <div :if={@delete_target == account.id} class="git-delete-confirm">
+            <span>{gettext("Delete this account?")}</span>
+            <button
+              type="button"
+              phx-click="delete_account"
+              phx-value-id={account.id}
+              class="settings-btn settings-btn-danger"
+            >
+              {gettext("Delete")}
+            </button>
+            <button type="button" phx-click="cancel_delete" class="settings-btn">
+              {gettext("Cancel")}
+            </button>
+          </div>
+        </article>
       </div>
 
-      <form :if={@form} id="git-account-form" phx-submit="save_account" class="settings-card">
-        <label>
-          {gettext("Id")}
+      <form :if={@form} id="git-account-form" phx-submit="save_account" class="git-account-form">
+        <label class="settings-form-group">
+          <span class="settings-form-label">{gettext("Id")}</span>
           <input
             type="text"
             name="account[id]"
@@ -130,13 +153,13 @@
             placeholder="github"
           />
         </label>
-        <div class="grid grid-2">
-          <label>
-            {gettext("Display name")}
+        <div class="git-settings-fields">
+          <label class="settings-form-group">
+            <span class="settings-form-label">{gettext("Display name")}</span>
             <input type="text" name="account[name]" value={@form["name"]} class="settings-input" />
           </label>
-          <label>
-            {gettext("Username")}
+          <label class="settings-form-group">
+            <span class="settings-form-label">{gettext("Username")}</span>
             <input
               type="text"
               name="account[username]"
@@ -146,8 +169,8 @@
             />
           </label>
         </div>
-        <label>
-          {gettext("HTTPS endpoint")}
+        <label class="settings-form-group">
+          <span class="settings-form-label">{gettext("HTTPS endpoint")}</span>
           <input
             type="url"
             name="account[endpoint]"
@@ -156,8 +179,8 @@
             placeholder="https://github.com"
           />
         </label>
-        <label>
-          {gettext("Password or token")}
+        <label class="settings-form-group">
+          <span class="settings-form-label">{gettext("Password or token")}</span>
           <input
             type="password"
             name="account[password]"
@@ -171,12 +194,16 @@
             }
           />
         </label>
-        <div :if={@form_error} class="settings-help-text text-red-600">{@form_error}</div>
-        <div class="flex">
-          <button type="submit" class="settings-save-btn">{gettext("Save account")}</button>
-          <button type="button" phx-click="cancel_account">{gettext("Cancel")}</button>
+        <div :if={@form_error} class="settings-error-text">{@form_error}</div>
+        <div class="git-settings-actions">
+          <button type="submit" class="settings-btn settings-btn-primary">
+            {gettext("Save account")}
+          </button>
+          <button type="button" phx-click="cancel_account" class="settings-btn">
+            {gettext("Cancel")}
+          </button>
         </div>
       </form>
-    </div>
+    </section>
   </div>
 </div>

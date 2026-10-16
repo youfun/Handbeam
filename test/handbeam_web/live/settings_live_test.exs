@@ -8,7 +8,7 @@ defmodule HandbeamWeb.SettingsLiveTest do
     - Tab switching works via menu clicks
     - Available Models tab renders nested AvailableModelsLive (text presence,
       interaction tests are in a separate AvailableModelsLive test)
-    - Coming-soon tabs show placeholder
+    - Advanced diagnostics render without placeholder-only tabs
     - URL query param sets initial tab
     - Top bar has back-to-workspace link
   """
@@ -113,9 +113,10 @@ defmodule HandbeamWeb.SettingsLiveTest do
       assert html =~ "Model / AI"
       assert html =~ "Workspace Models"
       assert html =~ "Available Models"
-      assert html =~ "Local WebGPU"
+      assert html =~ "Advanced"
       assert html =~ "UI"
-      assert html =~ "Coming soon" or html =~ "即将推出"
+      refute html =~ "Coming soon"
+      refute html =~ "即将推出"
     end
 
     test "has back-to-workspace link", %{conn: conn} do
@@ -133,6 +134,7 @@ defmodule HandbeamWeb.SettingsLiveTest do
       assert html =~ ~s(name="advisor_model")
       assert html =~ ~s(name="advisor_reasoning")
       assert html =~ ~s(name="om_model")
+      assert html =~ ~s(id="default-model-picker-trigger")
       refute html =~ ~s(name="om_enabled")
     end
 
@@ -290,6 +292,7 @@ defmodule HandbeamWeb.SettingsLiveTest do
 
       html = render(view)
       assert html =~ "Local WebGPU capability probe"
+      assert has_element?(view, ~s|button[phx-value-tab="local_webgpu"]|, "Advanced")
       assert html =~ ~s(id="local-webgpu-probe")
       assert html =~ ~s(phx-hook="LocalWebGPUProbe")
       assert html =~ ~s(data-probe-check="compute")
@@ -348,6 +351,45 @@ defmodule HandbeamWeb.SettingsLiveTest do
              ]
     end
 
+    test "restricted workspace models can be searched and selected by provider", %{conn: conn} do
+      {:ok, view, _html} = live(conn, "/settings?tab=workspace_models")
+
+      view
+      |> element(~s|button[phx-click="set_workspace_model_mode"][phx-value-mode="restricted"]|)
+      |> render_click()
+
+      assert has_element?(view, "#workspace-model-filter")
+      assert has_element?(view, ".settings-model-row", "Step Router v1")
+      assert has_element?(view, ".settings-model-row", "Step 3.5 Flash")
+
+      view
+      |> form(~s|form[phx-change="filter_workspace_models"]|, %{query: "router"})
+      |> render_change()
+
+      assert has_element?(view, ".settings-model-row", "Step Router v1")
+      refute has_element?(view, ".settings-model-row", "Step 3.5 Flash")
+
+      view
+      |> element(
+        ~s|button[phx-click="set_workspace_provider_models"][phx-value-provider="stepfun"][phx-value-action="all"]|
+      )
+      |> render_click()
+
+      view
+      |> form(~s|form[phx-change="filter_workspace_models"]|, %{query: ""})
+      |> render_change()
+
+      assert has_element?(
+               view,
+               ~s|input[phx-value-model="step-router-v1"][checked]|
+             )
+
+      assert has_element?(
+               view,
+               ~s|input[phx-value-model="step-3.5-flash"][checked]|
+             )
+    end
+
     test "Available Models tab shows default provider badge", %{conn: conn} do
       {:ok, view, _html} = live(conn, "/settings")
 
@@ -376,19 +418,14 @@ defmodule HandbeamWeb.SettingsLiveTest do
       assert html =~ ~s(name="default_model")
     end
 
-    test "coming-soon tabs show placeholder text", %{conn: conn} do
-      {:ok, view, _html} = live(conn, "/settings")
+    test "does not expose inactive placeholder settings", %{conn: conn} do
+      {:ok, view, html} = live(conn, "/settings")
 
-      view
-      |> element(~s|button[phx-value-tab="coming_soon"]|)
-      |> render_click()
+      refute has_element?(view, ~s|button[phx-value-tab="coming_soon"]|)
+      refute html =~ "coming soon"
 
-      html = render(view)
-
-      assert html =~ "coming soon"
-      assert html =~ "SNS"
-      assert html =~ "Tools"
-      assert html =~ "Security"
+      {:ok, _view, legacy_html} = live(conn, "/settings?tab=coming_soon")
+      assert legacy_html =~ ~s(name="default_model")
     end
 
     test "Workspace Memory tab renders isolated memories and supports filters and search", %{

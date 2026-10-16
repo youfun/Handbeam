@@ -40,6 +40,8 @@ defmodule HandbeamWeb.CliComposerLiveTest do
     assert html =~ ~s(id="cli-picker")
     assert html =~ "Handbeam"
     assert html =~ ~s(id="model-picker")
+    assert html =~ ~s(id="model-picker-trigger")
+    assert html =~ ~s(phx-hook="ModelPicker")
     assert has_element?(view, "#model-picker option[value='fake/fake-model']")
     refute has_element?(view, "#cli-model-picker")
 

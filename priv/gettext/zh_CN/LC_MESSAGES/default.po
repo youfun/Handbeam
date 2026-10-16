@@ -2556,3 +2556,62 @@ msgstr "已开启"
 #: lib/handbeam_web/live/workspace_memory_live.html.heex
 msgid "已关闭"
 msgstr "已关闭"
+
+# Mobile model picker and settings polish
+msgid "Advanced"
+msgstr "高级"
+
+msgid "Choose a model"
+msgstr "选择模型"
+
+msgid "Search models"
+msgstr "搜索模型"
+
+msgid "No matching models"
+msgstr "没有匹配的模型"
+
+msgid "%{count} model"
+msgid_plural "%{count} models"
+msgstr[0] "%{count} 个模型"
+
+msgid "Used for Git commits and HTTPS repository access. Saved passwords and tokens are never shown again."
+msgstr "用于 Git 提交和 HTTPS 仓库访问。已保存的密码和令牌不会再次显示。"
+
+msgid "The author name and email written to new commits."
+msgstr "写入新提交的作者姓名和邮箱。"
+
+msgid "Credentials used for HTTPS clone, fetch, pull, and push."
+msgstr "用于 HTTPS 克隆、获取、拉取和推送的凭据。"
+
+msgid "Add an account when a private HTTPS repository needs credentials."
+msgstr "私有 HTTPS 仓库需要凭据时再添加账号。"
+
+msgid "Connect a server to make its tools available to approved workspaces."
+msgstr "连接服务器后，可将其工具授权给指定工作区使用。"
+
+msgid "Technical details"
+msgstr "技术详情"
+
+msgid "Running"
+msgstr "检测中"
+
+msgid "Ready"
+msgstr "可用"
+
+msgid "Unsupported"
+msgstr "不支持"
+
+msgid "Probe failed"
+msgstr "检测失败"
+
+msgid "Running…"
+msgstr "检测中…"
+
+msgid "Run probe again"
+msgstr "重新检测"
+
+msgid "Secure context"
+msgstr "安全上下文"
+
+msgid "Not a secure context"
+msgstr "非安全上下文"

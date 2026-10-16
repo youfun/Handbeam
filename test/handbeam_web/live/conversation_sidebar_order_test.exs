@@ -94,6 +94,42 @@ defmodule HandbeamWeb.WorkspaceLive.ConversationSidebarOrderTest do
     end
   end
 
+  test "mobile conversation sheet projects runtime status" do
+    conv = conversation("background", "2026-01-01T00:00:00Z")
+
+    html =
+      Phoenix.LiveViewTest.render_component(
+        &HandbeamWeb.WorkspaceLive.OverlayComponents.mobile_sheets/1,
+        available_models: [],
+        available_reasoning_levels: [],
+        chat_scope: :workspace,
+        collapsed_workspace_ids: MapSet.new(),
+        conversations_by_workspace: %{"ws" => [conv]},
+        current_conversation_id: "another-conversation",
+        current_workspace_id: "ws",
+        mcp_count: 0,
+        runtime_tasks: %{tasks: [%{conversation_id: "background", status: :running}]},
+        selected_model: nil,
+        selected_reasoning_level: nil,
+        show_model_sheet: false,
+        show_reasoning_sheet: false,
+        show_settings_sheet: false,
+        show_workspace_sheet: true,
+        skills_count: 0,
+        status_info: %{model: nil, status: "idle"},
+        workspace_label: "Workspace",
+        workspaces: [%{"id" => "ws", "name" => "Workspace"}]
+      )
+
+    document = Floki.parse_document!(html)
+
+    assert Floki.find(document, "#workspace-sheet[phx-hook='ConversationActivity']") != []
+
+    assert document
+           |> Floki.find("#workspace-sheet [data-run-id='background']")
+           |> Floki.attribute("data-run-state") == ["running"]
+  end
+
   test "refresh state preserves existing conversation rows" do
     conv = conversation("existing", "2026-01-01T00:00:00Z")
 

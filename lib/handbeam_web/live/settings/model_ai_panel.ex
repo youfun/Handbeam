@@ -9,6 +9,7 @@ defmodule HandbeamWeb.Live.Settings.ModelAIPanel do
   use HandbeamWeb, :html
 
   alias Handbeam.Agent.Reasoning
+  alias HandbeamWeb.Components.ModelPicker
 
   attr(:form, :map, required: true)
   attr(:available_models, :list, required: true)
@@ -43,29 +44,21 @@ defmodule HandbeamWeb.Live.Settings.ModelAIPanel do
               </div>
             </div>
             <div class="settings-field-control">
-              <select
+              <ModelPicker.render
+                id="default-model-picker"
                 name="default_model"
-                phx-change="update_field"
-                class="settings-input"
-              >
-                <option value="" selected={is_nil(@form.default_model)}>
-                  {gettext("None (use provider default)")}
-                </option>
-                <option
-                  :if={missing_model?(@form.default_model, @available_models)}
-                  value={@form.default_model}
-                  selected
-                >
-                  {unavailable_model_label(@form.default_model)}
-                </option>
-                <option
-                  :for={m <- @available_models}
-                  value={model_value(m)}
-                  selected={@form.default_model == model_value(m)}
-                >
-                  {model_display(m)}
-                </option>
-              </select>
+                value={@form.default_model}
+                options={
+                  model_picker_options(
+                    @available_models,
+                    @form.default_model,
+                    gettext("None (use provider default)")
+                  )
+                }
+                label={gettext("Default model")}
+                change="update_field"
+                target={@target}
+              />
             </div>
           </div>
           <div class="settings-field-row">
@@ -112,27 +105,24 @@ defmodule HandbeamWeb.Live.Settings.ModelAIPanel do
               </div>
             </div>
             <div class="settings-field-control">
-              <select name="advisor_model" phx-change="update_field" class="settings-input">
-                <option value="" selected={is_nil(@form.advisor_model)}>
-                  {if @scope == :global,
-                    do: gettext("Not configured"),
-                    else: gettext("No workspace model")}
-                </option>
-                <option
-                  :if={missing_model?(@form.advisor_model, @available_models)}
-                  value={@form.advisor_model}
-                  selected
-                >
-                  {unavailable_model_label(@form.advisor_model)}
-                </option>
-                <option
-                  :for={m <- @available_models}
-                  value={model_value(m)}
-                  selected={@form.advisor_model == model_value(m)}
-                >
-                  {model_display(m)}
-                </option>
-              </select>
+              <ModelPicker.render
+                id="advisor-model-picker"
+                name="advisor_model"
+                value={@form.advisor_model}
+                options={
+                  model_picker_options(
+                    @available_models,
+                    @form.advisor_model,
+                    if(@scope == :global,
+                      do: gettext("Not configured"),
+                      else: gettext("No workspace model")
+                    )
+                  )
+                }
+                label={gettext("Advisor model")}
+                change="update_field"
+                target={@target}
+              />
             </div>
           </div>
           <div class="settings-field-row">
@@ -207,32 +197,21 @@ defmodule HandbeamWeb.Live.Settings.ModelAIPanel do
               </div>
             </div>
             <div class="settings-field-control">
-              <select
+              <ModelPicker.render
+                id="memory-model-picker"
                 name="om_model"
-                phx-change="update_field"
-                class="settings-input"
-              >
-                <option
-                  value=""
-                  selected={is_nil(@form.om_model)}
-                >
-                  {gettext("Same as default model")}
-                </option>
-                <option
-                  :if={missing_model?(@form.om_model, @available_models)}
-                  value={@form.om_model}
-                  selected
-                >
-                  {unavailable_model_label(@form.om_model)}
-                </option>
-                <option
-                  :for={m <- @available_models}
-                  value={model_value(m)}
-                  selected={@form.om_model == model_value(m)}
-                >
-                  {model_display(m)}
-                </option>
-              </select>
+                value={@form.om_model}
+                options={
+                  model_picker_options(
+                    @available_models,
+                    @form.om_model,
+                    gettext("Same as default model")
+                  )
+                }
+                label={gettext("Memory model")}
+                change="update_field"
+                target={@target}
+              />
             </div>
           </div>
           <div class="settings-field-row">
@@ -354,6 +333,43 @@ defmodule HandbeamWeb.Live.Settings.ModelAIPanel do
     </form>
     """
   end
+
+  defp model_picker_options(models, selected, empty_label) do
+    empty = [ModelPicker.option("", empty_label)]
+
+    unavailable =
+      if missing_model?(selected, models) do
+        [
+          ModelPicker.option(
+            selected,
+            unavailable_model_label(selected),
+            model_provider(selected)
+          )
+        ]
+      else
+        []
+      end
+
+    available =
+      Enum.map(models, fn model ->
+        ModelPicker.option(
+          model_value(model),
+          model_display(model),
+          model_provider(model_value(model))
+        )
+      end)
+
+    empty ++ unavailable ++ available
+  end
+
+  defp model_provider(model_id) when is_binary(model_id) do
+    case String.split(model_id, "/", parts: 2) do
+      [provider, _model] -> provider
+      _ -> nil
+    end
+  end
+
+  defp model_provider(_model_id), do: nil
 
   defp model_value(m) when is_map(m) do
     provider = Handbeam.Utils.SafeMap.get_any(m, :provider, "provider")
