@@ -22,8 +22,12 @@ defmodule Handbeam.Tool.RegistryTest do
 
   setup do
     registry_state = :sys.get_state(Registry)
+    snapshot_sync_id = "registry-test-sync-#{System.unique_integer([:positive])}"
 
-    on_exit(fn -> :sys.replace_state(Registry, fn _current -> registry_state end) end)
+    on_exit(fn ->
+      :sys.replace_state(Registry, fn _current -> registry_state end)
+      Registry.set_active_for_session(snapshot_sync_id, nil)
+    end)
   end
 
   describe "register/1" do
@@ -83,6 +87,112 @@ defmodule Handbeam.Tool.RegistryTest do
     after
       Registry.remove_owner(:owner_a)
       Registry.remove_owner(:owner_b)
+    end
+  end
+
+  describe "concurrent snapshots" do
+    test "keeps reads available while the single write owner is busy and publishes replace_owner atomically" do
+      owner = {:snapshot_test, System.unique_integer([:positive])}
+      session_id = "snapshot-session-#{System.unique_integer([:positive])}"
+      old_names = MapSet.new(["snapshot_old_a", "snapshot_old_b"])
+      new_names = MapSet.new(["snapshot_new_a", "snapshot_new_b"])
+
+      assert :ok =
+               Registry.replace_owner(owner, [__MODULE__.SnapshotOldA, __MODULE__.SnapshotOldB])
+
+      assert :ok =
+               Registry.set_active_for_session(
+                 session_id,
+                 MapSet.to_list(MapSet.union(old_names, new_names))
+               )
+
+      Process.register(self(), __MODULE__.RegistrySnapshotProbe)
+
+      on_exit(fn ->
+        if Process.whereis(__MODULE__.RegistrySnapshotProbe) == self() do
+          Process.unregister(__MODULE__.RegistrySnapshotProbe)
+        end
+
+        Registry.remove_owner(owner)
+      end)
+
+      replacement =
+        Task.async(fn ->
+          Registry.replace_owner(owner, [__MODULE__.SnapshotNewA, __MODULE__.SnapshotNewB])
+        end)
+
+      assert_receive {:building_snapshot_replacement, registry_pid}
+
+      read =
+        Task.async(fn ->
+          tools = Registry.tool_fns()
+
+          %{
+            get: Registry.get("snapshot_old_a"),
+            list: Registry.list() |> MapSet.new() |> MapSet.intersection(old_names),
+            fns: tools |> Map.keys() |> MapSet.new() |> MapSet.intersection(old_names),
+            defs: Registry.tool_defs() |> names() |> MapSet.intersection(old_names),
+            deferred_catalog: Registry.deferred_catalog(),
+            active: Registry.active_for_session(session_id),
+            session_defs:
+              session_id
+              |> Registry.tool_defs_for_session()
+              |> names()
+              |> MapSet.intersection(old_names),
+            prompt: Registry.prompt_snippets(),
+            session_prompt: Registry.prompt_snippets_for_session(session_id)
+          }
+        end)
+
+      try do
+        assert {:ok, observed} = Task.yield(read, 1_000) || Task.shutdown(read, :brutal_kill)
+        assert match?({:ok, %{name: "snapshot_old_a"}}, observed.get)
+        assert observed.list == old_names
+        assert observed.fns == old_names
+        assert observed.defs == old_names
+        assert is_list(observed.deferred_catalog)
+        assert MapSet.new(observed.active) == MapSet.union(old_names, new_names)
+        assert observed.session_defs == old_names
+        assert observed.prompt =~ "snapshot_old_a"
+        assert observed.session_prompt =~ "snapshot_old_a"
+        refute observed.session_prompt =~ "snapshot_new_a"
+      after
+        send(registry_pid, :continue_snapshot_replacement)
+      end
+
+      assert :ok = Task.await(replacement)
+      tools = Registry.tool_fns()
+      assert MapSet.disjoint?(MapSet.new(Map.keys(tools)), old_names)
+      assert MapSet.subset?(new_names, MapSet.new(Map.keys(tools)))
+      assert Registry.tool_defs_for_session(session_id) |> names() == new_names
+    end
+
+    test "uses a protected ETS table owned by the registry process" do
+      assert :ets.info(Registry, :protection) == :protected
+      assert :ets.info(Registry, :owner) == Process.whereis(Registry)
+      refute :ets.info(Registry, :write_concurrency)
+      assert :ets.info(Registry, :read_concurrency)
+    end
+
+    test "does not serve a stale snapshot while the registry is stopped or after restart" do
+      assert :ok = Registry.register(__MODULE__.SnapshotOldA, override: true)
+      registry_pid = Process.whereis(Registry)
+      monitor_ref = Process.monitor(registry_pid)
+
+      on_exit(fn ->
+        unless Process.whereis(Registry) do
+          {:ok, _pid} = Supervisor.restart_child(Handbeam.Supervisor, Registry)
+        end
+      end)
+
+      assert :ok = Supervisor.terminate_child(Handbeam.Supervisor, Registry)
+      assert_receive {:DOWN, ^monitor_ref, :process, ^registry_pid, :shutdown}
+      assert :ets.whereis(Registry) == :undefined
+      assert {:noproc, _details} = catch_exit(Registry.get("snapshot_old_a"))
+
+      assert {:ok, restarted_pid} = Supervisor.restart_child(Handbeam.Supervisor, Registry)
+      assert Process.whereis(Registry) == restarted_pid
+      assert Registry.get("snapshot_old_a") == :error
     end
   end
 
@@ -396,6 +506,56 @@ defmodule Handbeam.Tool.RegistryTest do
     def execute(_input, _context), do: {:ok, "nested"}
   end
 
+  defmodule SnapshotOldA do
+    @behaviour Handbeam.Agent.Tool
+
+    def name, do: "snapshot_old_a"
+    def description, do: "old a"
+    def input_schema, do: %{"type" => "object", "properties" => %{}}
+    def execute(_input, _context), do: {:ok, "old a"}
+  end
+
+  defmodule SnapshotOldB do
+    @behaviour Handbeam.Agent.Tool
+
+    def name, do: "snapshot_old_b"
+    def description, do: "old b"
+    def input_schema, do: %{"type" => "object", "properties" => %{}}
+    def execute(_input, _context), do: {:ok, "old b"}
+  end
+
+  defmodule SnapshotNewA do
+    @behaviour Handbeam.Agent.Tool
+
+    def name, do: "snapshot_new_a"
+
+    def description do
+      if probe = Process.whereis(Handbeam.Tool.RegistryTest.RegistrySnapshotProbe) do
+        send(probe, {:building_snapshot_replacement, self()})
+
+        receive do
+          :continue_snapshot_replacement -> :ok
+        end
+      end
+
+      "new a"
+    end
+
+    def input_schema, do: %{"type" => "object", "properties" => %{}}
+    def execute(_input, _context), do: {:ok, "new a"}
+  end
+
+  defmodule SnapshotNewB do
+    @behaviour Handbeam.Agent.Tool
+
+    def name, do: "snapshot_new_b"
+    def description, do: "new b"
+    def input_schema, do: %{"type" => "object", "properties" => %{}}
+    def execute(_input, _context), do: {:ok, "new b"}
+  end
+
+  defp names(definitions), do: MapSet.new(definitions, & &1.name)
+
   describe "entries from before deferred?" do
     test "a tool map without deferred? stays eager and does not crash the registry" do
       stale = %{
@@ -416,6 +576,11 @@ defmodule Handbeam.Tool.RegistryTest do
       :sys.replace_state(Registry, fn state ->
         %{state | tools: Map.put(state.tools, stale.name, stale)}
       end)
+
+      Registry.set_active_for_session(
+        "stale-snapshot-sync-#{System.unique_integer([:positive])}",
+        nil
+      )
 
       refute Enum.any?(Registry.deferred_catalog(), &(&1.name == stale.name))
       assert Enum.any?(Registry.tool_defs(), &(&1.name == stale.name))

@@ -118,11 +118,11 @@ defmodule Handbeam.Permissions.ToolPolicy do
       mcp_mode = mcp_decision(policy, name) ->
         release(mcp_mode)
 
-      Enum.any?(policy.allow, &Matcher.match?(&1, call)) ->
-        :auto
-
       browser_mode = browser_decision(policy, name, call) ->
         browser_mode
+
+      Enum.any?(policy.allow, &Matcher.match?(&1, call)) ->
+        :auto
 
       bash_browser_mode = bash_browser_decision(policy, name, call) ->
         bash_browser_mode
@@ -281,6 +281,10 @@ defmodule Handbeam.Permissions.ToolPolicy do
         cwd = input_value(input, "cwd")
         base = if is_binary(cwd) and cwd != "", do: cwd, else: root
         Handbeam.Security.PathValidator.reject_sensitive_command(to_string(command), base) != :ok
+
+      "browser" ->
+        args = Handbeam.Utils.SafeMap.get_any(input, "args", :args) || []
+        BrowserPolicy.sensitive_local_path?(args, root)
 
       _ ->
         false

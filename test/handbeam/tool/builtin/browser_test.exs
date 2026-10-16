@@ -80,6 +80,28 @@ defmodule Handbeam.Tool.Builtin.BrowserTest do
 
       assert reason =~ "session"
     end
+
+    test "denies sensitive local paths without spawning even after approval" do
+      runner = fn _argv, _opts ->
+        flunk("sensitive browser path must not reach the runner")
+      end
+
+      for args <- [
+            ["upload", "@e1", "~/.ssh/id_rsa"],
+            ["--profile", "work", "upload", "@e1", "~/.ssh/id_rsa"],
+            ["screenshot", ".env"],
+            ["--screenshot-dir=.ssh", "screenshot"],
+            ["pdf", "private/client.key"],
+            ["pdf", "--profile", "work", ".env.production"],
+            ["download", "@e2", "../secrets/client.p12"]
+          ] do
+        assert {:error, "sensitive path blocked"} =
+                 Browser.execute(
+                   %{"args" => args},
+                   context(%{browser_runner: runner})
+                 )
+      end
+    end
   end
 
   describe "execute/2 — injected runner" do

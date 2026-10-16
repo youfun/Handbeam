@@ -37,6 +37,9 @@ defmodule Handbeam.Browser.PolicyTest do
       assert {:auto, %{command: "--version"}} = Policy.classify(["--version"])
       assert {:auto, %{command: "-h"}} = Policy.classify(["-h"])
       assert {:auto, %{command: "-V"}} = Policy.classify(["-V"])
+
+      assert {:auto, %{command: "--help"}} =
+               Policy.classify(["--profile", "work", "--help"])
     end
   end
 
@@ -56,6 +59,12 @@ defmodule Handbeam.Browser.PolicyTest do
 
       assert {:prompt, %{command: "upload", capability: :upload}} =
                Policy.classify(["upload", "@e1", "file.pdf"])
+
+      assert {:prompt, %{command: "eval", capability: :eval}} =
+               Policy.classify(["eval", "-h"])
+
+      assert {:prompt, %{command: "upload", capability: :upload}} =
+               Policy.classify(["upload", "@e1", "-h"])
 
       assert {:prompt, %{command: "download", capability: :download}} =
                Policy.classify(["download", "@e3"])
@@ -96,9 +105,15 @@ defmodule Handbeam.Browser.PolicyTest do
       assert {:deny, %{failure_category: "validation-error"}} = Policy.classify([1, "open"])
     end
 
-    test "rejects local and non-http navigation" do
+    test "rejects local and non-http navigation even with prompt flags" do
       assert {:deny, %{failure_category: "validation-error"}} =
                Policy.classify(["open", "file:///etc/passwd"])
+
+      assert {:deny, %{failure_category: "validation-error"}} =
+               Policy.classify(["--headed", "open", "file:///etc/passwd"])
+
+      assert {:deny, %{failure_category: "validation-error"}} =
+               Policy.classify(["open", "file:///etc/passwd", "--profile", "work"])
 
       assert {:deny, %{failure_category: "validation-error"}} =
                Policy.classify(["goto", "about:blank"])
@@ -169,6 +184,35 @@ defmodule Handbeam.Browser.PolicyTest do
       assert Policy.inspection?(["--version"])
       refute Policy.inspection?(["open", "https://example.com"])
       refute Policy.inspection?(["snapshot", "-i"])
+      refute Policy.inspection?(["eval", "-h"])
+      refute Policy.inspection?(["upload", "@e1", "-h"])
+
+      assert Policy.command(["--profile", "work", "eval", "-h"]) == "eval"
+      assert Policy.command(["--cdp", "9222", "upload", "@e1", "-h"]) == "upload"
+    end
+  end
+
+  describe "sensitive_local_path?/2" do
+    test "finds upload sources and browser output paths" do
+      refute Policy.sensitive_local_path?(["upload", "@e1", "notes.txt", "image.png"], nil)
+
+      assert Policy.sensitive_local_path?(["upload", "@e1", "~/.ssh/id_rsa"], nil)
+      assert Policy.sensitive_local_path?(["screenshot", "--full", ".env"], nil)
+      assert Policy.sensitive_local_path?(["pdf", "keys/client.pem"], nil)
+      assert Policy.sensitive_local_path?(["download", "@e2", "private/token.p12"], nil)
+      assert Policy.sensitive_local_path?(["wait", "--download", ".env.local"], nil)
+
+      assert Policy.sensitive_local_path?(
+               ["--profile", "work", "upload", "@e1", "~/.ssh/id_rsa"],
+               nil
+             )
+
+      assert Policy.sensitive_local_path?(
+               ["pdf", "--profile", "work", ".env.production"],
+               nil
+             )
+
+      assert Policy.sensitive_local_path?(["--screenshot-dir=.ssh", "screenshot"], nil)
     end
   end
 end

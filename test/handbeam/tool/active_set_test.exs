@@ -5,12 +5,16 @@ defmodule Handbeam.Tool.ActiveSetTest do
 
   setup do
     registry_state = :sys.get_state(Registry)
+    snapshot_sync_id = "active-set-test-sync-#{System.unique_integer([:positive])}"
 
     for tool <- [Handbeam.Tool.Builtin.Read, Handbeam.Tool.Builtin.Bash] do
       assert :ok = Registry.register(tool)
     end
 
-    on_exit(fn -> :sys.replace_state(Registry, fn _current -> registry_state end) end)
+    on_exit(fn ->
+      :sys.replace_state(Registry, fn _current -> registry_state end)
+      Registry.set_active_for_session(snapshot_sync_id, nil)
+    end)
   end
 
   describe "set_active_for_session/2 and active_for_session/1" do

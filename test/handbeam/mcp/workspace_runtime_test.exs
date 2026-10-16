@@ -20,6 +20,14 @@ defmodule Handbeam.MCP.WorkspaceRuntimeTest do
 
       case message["method"] do
         "server/discover" ->
+          if conn.host == "slow.example" do
+            send(owner, {:slow_discovery, self()})
+
+            receive do
+              :release_slow_discovery -> :ok
+            end
+          end
+
           if conn.host == "modern.example" do
             assert Plug.Conn.get_req_header(conn, "mcp-protocol-version") == ["2026-07-28"]
             assert Plug.Conn.get_req_header(conn, "mcp-method") == ["server/discover"]
@@ -175,6 +183,220 @@ defmodule Handbeam.MCP.WorkspaceRuntimeTest do
     assert Enum.all?(second.runtime_pids, &Process.alive?/1)
   end
 
+  test "bootstrap is single-flight per scope and a slow workspace does not block another", %{
+    opts: opts
+  } do
+    File.write!(
+      opts[:user_config_path],
+      Jason.encode!(%{
+        "mcpServers" => %{
+          "slow" => %{
+            "url" => "https://slow.example/mcp",
+            "workspace_access" => %{"mode" => "selected", "workspace_ids" => ["a"]}
+          },
+          "fast" => %{
+            "url" => "https://fast.example/mcp",
+            "workspace_access" => %{"mode" => "selected", "workspace_ids" => ["b"]}
+          }
+        }
+      })
+    )
+
+    a = Keyword.put(opts, :workspace_id, "a")
+    b = Keyword.put(opts, :workspace_id, "b")
+    first = Task.async(fn -> Handbeam.MCP.bootstrap(a) end)
+    assert_receive {:slow_discovery, gate}, 1_000
+    on_exit(fn -> send(gate, :release_slow_discovery) end)
+
+    parent = self()
+
+    second =
+      Task.async(fn ->
+        send(parent, :second_bootstrap_started)
+        Handbeam.MCP.bootstrap(a)
+      end)
+
+    assert_receive :second_bootstrap_started
+
+    assert {:ok, fast_result} = Task.await(Task.async(fn -> Handbeam.MCP.bootstrap(b) end), 1_000)
+    assert length(fast_result.registered) == 1
+
+    send(gate, :release_slow_discovery)
+    assert {:ok, slow_result} = Task.await(first, 1_000)
+    assert {:ok, ^slow_result} = Task.await(second, 1_000)
+    assert_receive {:request, "slow.example", "server/discover"}
+    refute_received {:request, "slow.example", "server/discover"}
+  end
+
+  test "a delayed candidate-start message cannot retire an already committed runtime", %{
+    opts: opts
+  } do
+    write_server!(opts, "docs", "https://fast.example/mcp")
+    scope_opts = Keyword.put(opts, :workspace_id, "a")
+    assert {:ok, result} = Handbeam.MCP.bootstrap(scope_opts)
+    [runtime] = result.runtime_pids
+    runtime_ref = Process.monitor(runtime)
+
+    send(Handbeam.MCP, {:mcp_candidate_started, make_ref(), runtime})
+    :sys.get_state(Handbeam.MCP)
+
+    assert Process.alive?(runtime)
+    refute_receive {:DOWN, ^runtime_ref, :process, ^runtime, _reason}, 100
+    assert Enum.all?(result.registered, &(Handbeam.Tool.Registry.get(&1) != :error))
+  end
+
+  test "teardown detaches a stale flight so the same scope can bootstrap immediately", %{
+    opts: opts
+  } do
+    write_server!(opts, "slow", "https://slow.example/mcp")
+    scope_opts = Keyword.put(opts, :workspace_id, "a")
+    bootstrap = Task.async(fn -> Handbeam.MCP.bootstrap(scope_opts) end)
+    assert_receive {:slow_discovery, gate}, 1_000
+    on_exit(fn -> send(gate, :release_slow_discovery) end)
+
+    [{_, old_runtime, :worker, _}] =
+      DynamicSupervisor.which_children(Handbeam.MCP.RuntimeSupervisor)
+
+    old_runtime_ref = Process.monitor(old_runtime)
+    assert :ok = Handbeam.MCP.teardown_previous()
+    assert {:error, :teardown} = Task.await(bootstrap, 1_000)
+
+    write_server!(opts, "fast", "https://fast.example/mcp")
+    assert {:ok, fresh} = Handbeam.MCP.bootstrap(scope_opts)
+    assert length(fresh.runtime_pids) == 1
+    assert Process.alive?(hd(fresh.runtime_pids))
+
+    send(gate, :release_slow_discovery)
+    assert_receive {:DOWN, ^old_runtime_ref, :process, ^old_runtime, :normal}, 1_000
+    assert Enum.all?(fresh.registered, &(Handbeam.Tool.Registry.get(&1) != :error))
+  end
+
+  test "teardown retires the previous scope while its replacement is still starting", %{
+    opts: opts
+  } do
+    write_server!(opts, "docs", "https://one.example/mcp")
+    scope_opts = Keyword.put(opts, :workspace_id, "a")
+    assert {:ok, previous} = Handbeam.MCP.bootstrap(scope_opts)
+    [previous_runtime] = previous.runtime_pids
+    previous_ref = Process.monitor(previous_runtime)
+
+    write_server!(opts, "docs", "https://slow.example/mcp")
+    replacement = Task.async(fn -> Handbeam.MCP.bootstrap(scope_opts) end)
+    assert_receive {:slow_discovery, gate}, 1_000
+    on_exit(fn -> send(gate, :release_slow_discovery) end)
+
+    replacement_runtime =
+      Handbeam.MCP.RuntimeSupervisor
+      |> DynamicSupervisor.which_children()
+      |> Enum.map(&elem(&1, 1))
+      |> Enum.find(&(&1 != previous_runtime))
+
+    replacement_ref = Process.monitor(replacement_runtime)
+    assert :ok = Handbeam.MCP.teardown_previous()
+    assert {:error, :teardown} = Task.await(replacement, 1_000)
+    assert_receive {:DOWN, ^previous_ref, :process, ^previous_runtime, :normal}, 1_000
+
+    send(gate, :release_slow_discovery)
+    assert_receive {:DOWN, ^replacement_ref, :process, ^replacement_runtime, :normal}, 1_000
+  end
+
+  test "a crashed multi-server bootstrap cleans partial runtimes without blocking MCP", %{
+    opts: opts
+  } do
+    File.write!(
+      opts[:user_config_path],
+      Jason.encode!(%{
+        "mcpServers" => %{
+          "fast" => %{"url" => "https://one.example/mcp"},
+          "slow" => %{"url" => "https://slow.example/mcp"}
+        }
+      })
+    )
+
+    scope_opts = Keyword.put(opts, :workspace_id, "a")
+    mcp = Process.whereis(Handbeam.MCP)
+    :erlang.trace(mcp, true, [:receive])
+
+    on_exit(fn ->
+      if Process.alive?(mcp), do: :erlang.trace(mcp, false, [:receive])
+    end)
+
+    caller =
+      Task.Supervisor.async_nolink(Handbeam.AgentRunTaskSupervisor, fn ->
+        Handbeam.MCP.bootstrap(scope_opts)
+      end)
+
+    assert_receive {:trace, ^mcp, :receive, {:mcp_candidate_started, flight_id, _pid}}, 1_000
+    assert_receive {:slow_discovery, gate}, 1_000
+    on_exit(fn -> send(gate, :release_slow_discovery) end)
+    :erlang.trace(mcp, false, [:receive])
+
+    scope = Access.scope(scope_opts)
+    flight = :sys.get_state(mcp).flights[scope]
+    assert flight.id == flight_id
+    assert MapSet.size(flight.candidate_pids) >= 1
+
+    partial_runtimes =
+      Handbeam.MCP.RuntimeSupervisor
+      |> DynamicSupervisor.which_children()
+      |> Enum.map(&elem(&1, 1))
+
+    runtime_refs = Map.new(partial_runtimes, &{&1, Process.monitor(&1)})
+    Process.exit(flight.task.pid, :kill)
+    assert {:error, :killed} = Task.await(caller, 1_000)
+
+    write_server!(opts, "fresh", "https://fast.example/mcp")
+    assert {:ok, fresh} = Handbeam.MCP.bootstrap(Keyword.put(opts, :workspace_id, "b"))
+    assert length(fresh.runtime_pids) == 1
+
+    send(gate, :release_slow_discovery)
+
+    Enum.each(runtime_refs, fn {runtime, ref} ->
+      assert_receive {:DOWN, ^ref, :process, ^runtime, _reason}, 1_000
+    end)
+  end
+
+  test "A then B then A preserves request order instead of joining the first A", %{opts: opts} do
+    write_server!(opts, "docs", "https://slow.example/mcp")
+    scope_opts = Keyword.put(opts, :workspace_id, "a")
+    first = Task.async(fn -> Handbeam.MCP.bootstrap(scope_opts) end)
+    assert_receive {:slow_discovery, first_gate}, 1_000
+    on_exit(fn -> send(first_gate, :release_slow_discovery) end)
+
+    mcp = Process.whereis(Handbeam.MCP)
+    scope = Access.scope(scope_opts)
+    :erlang.trace(mcp, true, [:receive])
+
+    on_exit(fn ->
+      if Process.alive?(mcp), do: :erlang.trace(mcp, false, [:receive])
+    end)
+
+    write_server!(opts, "docs", "https://two.example/mcp")
+    second = Task.async(fn -> Handbeam.MCP.bootstrap(scope_opts) end)
+
+    assert_receive {:trace, ^mcp, :receive, {:"$gen_call", _, {:bootstrap, _}}}, 1_000
+    assert length(:sys.get_state(mcp).flights[scope].queued) == 1
+
+    write_server!(opts, "docs", "https://slow.example/mcp")
+    third = Task.async(fn -> Handbeam.MCP.bootstrap(scope_opts) end)
+
+    assert_receive {:trace, ^mcp, :receive, {:"$gen_call", _, {:bootstrap, _}}}, 1_000
+    assert length(:sys.get_state(mcp).flights[scope].queued) == 2
+    :erlang.trace(mcp, false, [:receive])
+
+    send(first_gate, :release_slow_discovery)
+    assert {:ok, first_result} = Task.await(first, 1_000)
+    assert {:ok, second_result} = Task.await(second, 1_000)
+    assert_receive {:slow_discovery, third_gate}, 1_000
+    on_exit(fn -> send(third_gate, :release_slow_discovery) end)
+    send(third_gate, :release_slow_discovery)
+    assert {:ok, third_result} = Task.await(third, 1_000)
+
+    assert first_result.config != second_result.config
+    assert first_result.config == third_result.config
+    assert first_result.runtime_pids != third_result.runtime_pids
+  end
+
   test "same ID with a changed URL replaces connection; successful config is reused", %{
     opts: opts
   } do
@@ -242,5 +464,12 @@ defmodule Handbeam.MCP.WorkspaceRuntimeTest do
              Handbeam.MCP.start_runtime(
                server_config: %Handbeam.MCP.ServerConfig{name: "local", command: "echo"}
              )
+  end
+
+  defp write_server!(opts, name, url) do
+    File.write!(
+      opts[:user_config_path],
+      Jason.encode!(%{"mcpServers" => %{name => %{"url" => url}}})
+    )
   end
 end

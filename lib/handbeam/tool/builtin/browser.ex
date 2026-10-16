@@ -97,6 +97,7 @@ defmodule Handbeam.Tool.Builtin.Browser do
     with {:ok, args} <- fetch_args(input),
          {:ok, timeout_ms} <- fetch_timeout(input),
          {:ok, session_mode} <- fetch_session_mode(input),
+         :ok <- reject_sensitive_paths(args, context),
          :ok <- reject_denied(args) do
       run_cli(args, timeout_ms, session_mode, context)
     end
@@ -215,6 +216,14 @@ defmodule Handbeam.Tool.Builtin.Browser do
           }
 
     {:ok, parsed.content, Map.put(parsed.details, :image_sources, sources)}
+  end
+
+  defp reject_sensitive_paths(args, context) do
+    if Policy.sensitive_local_path?(args, context[:working_directory]) do
+      {:error, Handbeam.Security.PathValidator.sensitive_reason()}
+    else
+      :ok
+    end
   end
 
   defp reject_denied(args) do

@@ -16,6 +16,9 @@ defmodule Handbeam.Tool.Registry do
 
   require Logger
 
+  @snapshot_key :state
+  @snapshot_table __MODULE__
+
   # ── Client API ──
 
   @doc "Start the registry."
@@ -65,13 +68,19 @@ defmodule Handbeam.Tool.Registry do
   @doc "Get a tool entry by name."
   @spec get(String.t()) :: {:ok, map()} | :error
   def get(name) when is_binary(name) do
-    GenServer.call(__MODULE__, {:get, name})
+    state = snapshot()
+
+    case Map.fetch(state.tools, name) do
+      {:ok, entry} -> {:ok, entry}
+      :error -> :error
+    end
   end
 
   @doc "List all registered tool names."
   @spec list() :: [String.t()]
   def list do
-    GenServer.call(__MODULE__, :list)
+    snapshot().tools
+    |> Map.keys()
   end
 
   @doc """
@@ -83,13 +92,14 @@ defmodule Handbeam.Tool.Registry do
   """
   @spec tool_defs() :: [map()]
   def tool_defs do
-    GenServer.call(__MODULE__, :tool_defs)
+    state = snapshot()
+    declared_defs(state.tools, nil)
   end
 
   @doc "Get tool_name => tool entry map for executor lookups."
   @spec tool_fns() :: %{String.t() => map()}
   def tool_fns do
-    GenServer.call(__MODULE__, :tool_fns)
+    snapshot().tools
   end
 
   @doc """
@@ -100,7 +110,11 @@ defmodule Handbeam.Tool.Registry do
   """
   @spec deferred_catalog() :: [map()]
   def deferred_catalog do
-    GenServer.call(__MODULE__, :deferred_catalog)
+    snapshot().tools
+    |> Map.values()
+    |> Enum.filter(&deferred_entry?/1)
+    |> Enum.sort_by(& &1.name)
+    |> Enum.map(&catalog_entry/1)
   end
 
   @doc "Remove a tool by name."
@@ -124,7 +138,8 @@ defmodule Handbeam.Tool.Registry do
   @doc "Get the active tool list for a session."
   @spec active_for_session(String.t()) :: [String.t()] | nil
   def active_for_session(session_id) when is_binary(session_id) do
-    GenServer.call(__MODULE__, {:active_for_session, session_id})
+    snapshot().active_sets
+    |> Map.get(session_id)
   end
 
   @doc """
@@ -135,7 +150,8 @@ defmodule Handbeam.Tool.Registry do
   """
   @spec tool_defs_for_session(String.t()) :: [map()]
   def tool_defs_for_session(session_id) when is_binary(session_id) do
-    GenServer.call(__MODULE__, {:tool_defs_for_session, session_id})
+    state = snapshot()
+    declared_defs(state.tools, Map.get(state.active_sets, session_id))
   end
 
   @doc """
@@ -145,13 +161,15 @@ defmodule Handbeam.Tool.Registry do
   """
   @spec prompt_snippets() :: String.t()
   def prompt_snippets do
-    GenServer.call(__MODULE__, :prompt_snippets)
+    state = snapshot()
+    format_prompt_snippets(state.tools, nil)
   end
 
   @doc "Session-scoped prompt snippets. Nested-only and deferred tools are omitted."
   @spec prompt_snippets_for_session(String.t()) :: String.t()
   def prompt_snippets_for_session(session_id) when is_binary(session_id) do
-    GenServer.call(__MODULE__, {:prompt_snippets_for_session, session_id})
+    state = snapshot()
+    format_prompt_snippets(state.tools, Map.get(state.active_sets, session_id))
   end
 
   # ── Server Callbacks ──
@@ -313,6 +331,14 @@ defmodule Handbeam.Tool.Registry do
 
   @impl true
   def init(_opts) do
+    _table =
+      :ets.new(@snapshot_table, [
+        :named_table,
+        :set,
+        :protected,
+        read_concurrency: true
+      ])
+
     tools =
       Enum.reduce(host_tool_modules(), %{}, fn mod, acc ->
         entry = build_module_entry(mod, nil)
@@ -323,7 +349,9 @@ defmodule Handbeam.Tool.Registry do
       "[ToolRegistry] Registered #{map_size(tools)} tools: #{inspect(Map.keys(tools))}"
     )
 
-    {:ok, %{tools: tools, active_sets: %{}}}
+    state = %{tools: tools, active_sets: %{}}
+    :ok = publish_snapshot(state)
+    {:ok, state}
   end
 
   @impl true
@@ -334,7 +362,8 @@ defmodule Handbeam.Tool.Registry do
     if Map.has_key?(state.tools, entry.name) and not override? do
       {:reply, :ok, state}
     else
-      {:reply, :ok, %{state | tools: Map.put(state.tools, entry.name, entry)}}
+      new_state = %{state | tools: Map.put(state.tools, entry.name, entry)}
+      reply_with_snapshot(:ok, new_state)
     end
   rescue
     exception ->
@@ -372,7 +401,8 @@ defmodule Handbeam.Tool.Registry do
             |> remove_owned_tools(owner)
             |> Map.merge(incoming)
 
-          {:reply, :ok, %{state | tools: tools}}
+          new_state = %{state | tools: tools}
+          reply_with_snapshot(:ok, new_state)
 
         {name, existing} ->
           {:reply, {:error, {:tool_name_collision, name, Map.get(existing.meta, :owner)}}, state}
@@ -384,7 +414,8 @@ defmodule Handbeam.Tool.Registry do
   end
 
   def handle_call({:remove_owner, owner}, _from, state) do
-    {:reply, :ok, %{state | tools: remove_owned_tools(state.tools, owner)}}
+    new_state = %{state | tools: remove_owned_tools(state.tools, owner)}
+    reply_with_snapshot(:ok, new_state)
   end
 
   def handle_call(
@@ -397,7 +428,8 @@ defmodule Handbeam.Tool.Registry do
     if Map.has_key?(state.tools, entry.name) do
       {:reply, :ok, state}
     else
-      {:reply, :ok, %{state | tools: Map.put(state.tools, entry.name, entry)}}
+      new_state = %{state | tools: Map.put(state.tools, entry.name, entry)}
+      reply_with_snapshot(:ok, new_state)
     end
   end
 
@@ -435,11 +467,12 @@ defmodule Handbeam.Tool.Registry do
   end
 
   def handle_call({:unregister, name}, _from, state) do
-    {:reply, :ok, %{state | tools: Map.delete(state.tools, name)}}
+    new_state = %{state | tools: Map.delete(state.tools, name)}
+    reply_with_snapshot(:ok, new_state)
   end
 
   def handle_call(:reset, _from, _state) do
-    {:reply, :ok, %{tools: %{}, active_sets: %{}}}
+    reply_with_snapshot(:ok, %{tools: %{}, active_sets: %{}})
   end
 
   def handle_call({:set_active_for_session, session_id, tool_names}, _from, state) do
@@ -449,7 +482,12 @@ defmodule Handbeam.Tool.Registry do
         names -> Map.put(state.active_sets, session_id, names)
       end
 
-    {:reply, :ok, %{state | active_sets: new_active_sets}}
+    new_state = %{state | active_sets: new_active_sets}
+    reply_with_snapshot(:ok, new_state)
+  end
+
+  def handle_call(:snapshot, _from, state) do
+    {:reply, state, state}
   end
 
   def handle_call({:active_for_session, session_id}, _from, state) do
@@ -466,6 +504,25 @@ defmodule Handbeam.Tool.Registry do
 
   def handle_call({:prompt_snippets_for_session, session_id}, _from, state) do
     {:reply, format_prompt_snippets(state.tools, Map.get(state.active_sets, session_id)), state}
+  end
+
+  defp snapshot do
+    case :ets.lookup(@snapshot_table, @snapshot_key) do
+      [{@snapshot_key, state}] -> state
+      [] -> GenServer.call(__MODULE__, :snapshot)
+    end
+  rescue
+    ArgumentError -> GenServer.call(__MODULE__, :snapshot)
+  end
+
+  defp reply_with_snapshot(reply, state) do
+    :ok = publish_snapshot(state)
+    {:reply, reply, state}
+  end
+
+  defp publish_snapshot(state) do
+    true = :ets.insert(@snapshot_table, {@snapshot_key, state})
+    :ok
   end
 
   defp build_module_entry(mod, owner) do

@@ -12,7 +12,7 @@ defmodule Handbeam.MCP.ServerRuntime do
   alias Handbeam.MCP.{Protocol, ServerConfig}
 
   @stdio_request_timeout_ms 15_000
-  @stdio_bootstrap_call_timeout_ms @stdio_request_timeout_ms * 2 + 1_000
+  @bootstrap_call_timeout_ms 115_000
 
   @type tool_spec :: %{
           name: String.t(),
@@ -22,7 +22,9 @@ defmodule Handbeam.MCP.ServerRuntime do
 
   @type http_state :: %{
           cfg: ServerConfig.t(),
-          tools: [tool_spec()]
+          tools: [tool_spec()],
+          status: :initializing | :ready | {:failed, term()},
+          tools_waiters: [GenServer.from()]
         }
 
   @type stdio_request :: %{
@@ -49,7 +51,11 @@ defmodule Handbeam.MCP.ServerRuntime do
   end
 
   @spec tools(pid()) :: {:ok, [tool_spec()]} | {:error, term()}
-  def tools(pid), do: GenServer.call(pid, :tools, @stdio_bootstrap_call_timeout_ms)
+  def tools(pid) do
+    GenServer.call(pid, :tools, @bootstrap_call_timeout_ms)
+  catch
+    :exit, reason -> {:error, {:runtime_unavailable, reason}}
+  end
 
   @spec call_tool(pid(), String.t(), map()) ::
           {:ok, String.t(), map()} | {:ok, String.t()} | {:error, String.t()}
@@ -70,6 +76,7 @@ defmodule Handbeam.MCP.ServerRuntime do
 
   @impl true
   def init(opts) do
+    notify_candidate_started(opts)
     cfg = Keyword.fetch!(opts, :server_config)
 
     case transport_kind(cfg) do
@@ -83,6 +90,16 @@ defmodule Handbeam.MCP.ServerRuntime do
 
   defp transport_kind(%ServerConfig{url: url}) when is_binary(url) and url != "", do: :http
   defp transport_kind(_), do: :stdio
+
+  defp notify_candidate_started(opts) do
+    case {Keyword.get(opts, :candidate_owner), Keyword.get(opts, :candidate_id)} do
+      {owner, flight_id} when is_pid(owner) and is_reference(flight_id) ->
+        send(owner, {:mcp_candidate_started, flight_id, self()})
+
+      _ ->
+        :ok
+    end
+  end
 
   # -- stdio init --
 
@@ -99,6 +116,11 @@ defmodule Handbeam.MCP.ServerRuntime do
     }
 
     {:ok, {:stdio, state}, {:continue, :initialize_stdio}}
+  end
+
+  defp init_http(cfg) do
+    state = %{cfg: cfg, tools: [], status: :initializing, tools_waiters: []}
+    {:ok, {:http, state}, {:continue, :initialize_http}}
   end
 
   @impl true
@@ -128,9 +150,20 @@ defmodule Handbeam.MCP.ServerRuntime do
     end
   end
 
-  # -- HTTP init --
+  def handle_continue(:initialize_http, {:http, state}) do
+    case initialize_http(state.cfg) do
+      {:ok, cfg, tools} ->
+        Enum.each(state.tools_waiters, &GenServer.reply(&1, {:ok, tools}))
 
-  defp init_http(cfg) do
+        {:noreply, {:http, %{state | cfg: cfg, tools: tools, status: :ready, tools_waiters: []}}}
+
+      {:error, reason} ->
+        Enum.each(state.tools_waiters, &GenServer.reply(&1, {:error, reason}))
+        {:noreply, {:http, %{state | status: {:failed, reason}, tools_waiters: []}}}
+    end
+  end
+
+  defp initialize_http(cfg) do
     with {:ok, cfg, tools} <- Handbeam.MCP.HTTP.initialize(cfg) do
       tools =
         Enum.flat_map(tools, fn
@@ -147,9 +180,7 @@ defmodule Handbeam.MCP.ServerRuntime do
             []
         end)
 
-      {:ok, {:http, %{cfg: cfg, tools: tools}}}
-    else
-      {:error, reason} -> {:stop, reason}
+      {:ok, cfg, tools}
     end
   end
 
@@ -168,7 +199,15 @@ defmodule Handbeam.MCP.ServerRuntime do
     {:noreply, {:stdio, %{state | tools_waiters: [from | state.tools_waiters]}}}
   end
 
-  def handle_call(:tools, _from, {:http, state}), do: {:reply, {:ok, state.tools}, {:http, state}}
+  def handle_call(:tools, _from, {:http, %{status: :ready} = state}),
+    do: {:reply, {:ok, state.tools}, {:http, state}}
+
+  def handle_call(:tools, _from, {:http, %{status: {:failed, reason}} = state}),
+    do: {:reply, {:error, reason}, {:http, state}}
+
+  def handle_call(:tools, from, {:http, state}) do
+    {:noreply, {:http, %{state | tools_waiters: [from | state.tools_waiters]}}}
+  end
 
   def handle_call({:call_tool, tool_name, input}, from, state),
     do: handle_call({:call_tool, tool_name, input, 15_000}, from, state)
@@ -196,7 +235,11 @@ defmodule Handbeam.MCP.ServerRuntime do
     {:reply, {:error, "MCP server is still initializing"}, {:stdio, state}}
   end
 
-  def handle_call({:call_tool, tool_name, input, timeout_ms}, _from, {:http, state}) do
+  def handle_call(
+        {:call_tool, tool_name, input, timeout_ms},
+        _from,
+        {:http, %{status: :ready} = state}
+      ) do
     case Handbeam.MCP.HTTP.call(
            state.cfg,
            "tools/call",
@@ -206,6 +249,18 @@ defmodule Handbeam.MCP.ServerRuntime do
       {:ok, result} -> {:reply, normalize_tool_result(result), {:http, state}}
       {:error, reason} -> {:reply, {:error, format_error(reason)}, {:http, state}}
     end
+  end
+
+  def handle_call(
+        {:call_tool, _tool_name, _input, _timeout_ms},
+        _from,
+        {:http, %{status: {:failed, reason}} = state}
+      ) do
+    {:reply, {:error, format_error(reason)}, {:http, state}}
+  end
+
+  def handle_call({:call_tool, _tool_name, _input, _timeout_ms}, _from, {:http, state}) do
+    {:reply, {:error, "MCP server is still initializing"}, {:http, state}}
   end
 
   @impl true

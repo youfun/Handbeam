@@ -390,8 +390,31 @@ defmodule Handbeam.Permissions.ToolPolicyTest do
 
       assert ToolPolicy.decision(policy, call("browser", %{"args" => ["eval", "1"]})) == :prompt
 
+      assert ToolPolicy.decision(policy, call("browser", %{"args" => ["eval", "-h"]})) ==
+               :prompt
+
+      assert ToolPolicy.decision(
+               policy,
+               call("browser", %{"args" => ["upload", "@e1", "-h"]})
+             ) == :prompt
+
       assert ToolPolicy.decision(policy, call("browser", %{"args" => ["cookies", "get"]})) ==
                :prompt
+    end
+
+    test "browser classification takes precedence over a generic allow rule" do
+      policy =
+        ToolPolicy.from_settings(%{
+          "tools" => %{"default_mode" => "prompt", "allow" => ["browser"]}
+        })
+
+      assert ToolPolicy.decision(policy, call("browser", %{"args" => ["eval", "1"]})) ==
+               :prompt
+
+      assert ToolPolicy.decision(
+               policy,
+               call("browser", %{"args" => ["open", "file:///etc/passwd"]})
+             ) == :deny
     end
 
     test "explicit workspace policy still wins over browser capability defaults" do
@@ -507,6 +530,26 @@ defmodule Handbeam.Permissions.ToolPolicyTest do
 
       assert ToolPolicy.decision(policy, call("read", %{"file_path" => "lib/app.ex"})) == :auto
       assert ToolPolicy.decision(policy, call("bash", %{"command" => "ls lib"})) == :auto
+    end
+
+    test "browser file input and output paths cannot access credentials" do
+      policy =
+        ToolPolicy.from_settings(%{
+          "tools" => %{"default_mode" => "yolo", "allow" => ["browser"]}
+        })
+
+      for args <- [
+            ["upload", "@e1", "~/.ssh/id_rsa"],
+            ["--profile", "work", "upload", "@e1", "~/.ssh/id_rsa"],
+            ["screenshot", ".env"],
+            ["--screenshot-dir=.ssh", "screenshot"],
+            ["pdf", "secrets/client.key"],
+            ["pdf", "--profile", "work", ".env.production"],
+            ["download", "@e2", "../credentials/token.p12"],
+            ["wait", "--download", ".env.production"]
+          ] do
+        assert ToolPolicy.decision(policy, call("browser", %{"args" => args})) == :deny
+      end
     end
   end
 end

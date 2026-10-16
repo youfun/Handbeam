@@ -7,6 +7,9 @@ defmodule Handbeam.Browser.Policy do
   shell metacharacters are denied.
   """
 
+  alias Handbeam.Agent.Tool.Helpers
+  alias Handbeam.Security.PathValidator
+
   @type capability ::
           :navigation
           | :inspect
@@ -77,6 +80,8 @@ defmodule Handbeam.Browser.Policy do
   }
 
   @inspection_flags ["--help", "-h", "--version", "-V"]
+  @leading_value_flags ["--profile", "--cdp"]
+  @leading_switch_flags ["--headed"]
   @navigation_commands MapSet.new(["open", "goto", "navigate"])
   @native_actions MapSet.new(~w(open snapshot eval click fill back show hide close))
 
@@ -116,6 +121,16 @@ defmodule Handbeam.Browser.Policy do
 
   def inspection?(_), do: false
 
+  @doc "True when browser file input or output resolves to a credential path."
+  @spec sensitive_local_path?(term(), String.t() | nil) :: boolean()
+  def sensitive_local_path?(args, root) when is_list(args) do
+    args
+    |> local_paths()
+    |> Enum.any?(&sensitive_path?(&1, root))
+  end
+
+  def sensitive_local_path?(_args, _root), do: false
+
   @doc """
   Classify native structured browser input (`action` / `url` / `js` / `ref`).
 
@@ -134,8 +149,8 @@ defmodule Handbeam.Browser.Policy do
   @doc """
   Command token used by workspace deny/allow globs.
 
-  Desktop uses the first `args` entry. WebView uses `action` and never
-  falls back to injecting `action` into argv.
+  Desktop parses the command after leading global flags. WebView uses `action`
+  and never falls back to injecting `action` into argv.
   """
   @spec command_token(map()) :: String.t()
   def command_token(input) when is_map(input) do
@@ -147,8 +162,8 @@ defmodule Handbeam.Browser.Policy do
         _ -> ""
       end
     else
-      case args do
-        [first | _] when is_binary(first) -> first
+      case command(args) do
+        command when is_binary(command) -> command
         _ -> ""
       end
     end
@@ -156,17 +171,45 @@ defmodule Handbeam.Browser.Policy do
 
   def command_token(_), do: ""
 
-  @doc "First non-flag token, or a leading inspection flag."
+  @doc "First command token after leading global flags, including an inspection flag."
   @spec command([String.t()]) :: String.t() | nil
-  def command(args) when is_list(args) do
-    Enum.find(args, fn
-      flag when flag in @inspection_flags -> true
-      <<"-" <> _::binary>> -> false
-      _ -> true
+  def command(args) when is_list(args), do: command_at_position(args)
+
+  def command(_), do: nil
+
+  defp command_at_position([]), do: nil
+
+  defp command_at_position([flag]) when flag in @leading_value_flags, do: nil
+
+  defp command_at_position([flag, _value | rest]) when flag in @leading_value_flags,
+    do: command_at_position(rest)
+
+  defp command_at_position([arg | rest]) do
+    cond do
+      arg in @inspection_flags ->
+        arg
+
+      arg in @leading_switch_flags or leading_inline_flag?(arg) ->
+        command_at_position(rest)
+
+      is_binary(arg) and String.starts_with?(arg, "-") ->
+        command_at_position(rest)
+
+      is_binary(arg) ->
+        arg
+
+      true ->
+        nil
+    end
+  end
+
+  defp leading_inline_flag?(arg) when is_binary(arg) do
+    Enum.any?(@leading_value_flags ++ @leading_switch_flags, fn flag ->
+      String.starts_with?(arg, flag <> "=")
     end)
   end
 
-  def command(_), do: nil
+  defp leading_inline_flag?(_), do: false
 
   defp classify_command(args) do
     cmd = command(args)
@@ -178,14 +221,14 @@ defmodule Handbeam.Browser.Policy do
       cmd in @inspection_flags ->
         {:auto, %{command: cmd, capability: :inspect}}
 
+      cmd in @navigation_commands ->
+        classify_navigation_with_flags(cmd, args)
+
       prompt_flag = prompt_flag_capability(args) ->
         {:prompt, %{command: cmd, capability: prompt_flag}}
 
       Map.has_key?(@prompt_commands, cmd) ->
         {:prompt, %{command: cmd, capability: Map.fetch!(@prompt_commands, cmd)}}
-
-      cmd in @navigation_commands ->
-        classify_navigation(cmd, args)
 
       cmd in ["close", "quit"] ->
         classify_close(cmd, args)
@@ -195,6 +238,19 @@ defmodule Handbeam.Browser.Policy do
 
       true ->
         {:prompt, %{command: cmd, capability: :unknown}}
+    end
+  end
+
+  defp classify_navigation_with_flags(cmd, args) do
+    case classify_navigation(cmd, args) do
+      {:deny, _meta} = denied ->
+        denied
+
+      decision ->
+        case prompt_flag_capability(args) do
+          nil -> decision
+          capability -> {:prompt, %{command: cmd, capability: capability}}
+        end
     end
   end
 
@@ -340,6 +396,80 @@ defmodule Handbeam.Browser.Policy do
       _ ->
         false
     end
+  end
+
+  defp local_paths(args) do
+    args
+    |> Enum.with_index()
+    |> Enum.flat_map(fn
+      {"upload", index} -> path_candidates_after(args, index)
+      {"screenshot", index} -> path_candidates_after(args, index)
+      {"pdf", index} -> path_candidates_after(args, index)
+      {"download", index} -> path_candidates_after(args, index)
+      {"wait", _index} -> option_values(args, "--download")
+      _ -> []
+    end)
+    |> Kernel.++(option_values(args, "--screenshot-dir"))
+    |> Enum.uniq()
+  end
+
+  defp path_candidates_after(args, command_index) do
+    args
+    |> Enum.drop(command_index + 1)
+    |> positional_args()
+  end
+
+  defp positional_args(args) do
+    Enum.filter(args, &(is_binary(&1) and not String.starts_with?(&1, "-")))
+  end
+
+  defp option_values(args, option) do
+    prefix = option <> "="
+
+    args
+    |> Enum.with_index()
+    |> Enum.flat_map(fn {arg, index} ->
+      cond do
+        arg == option ->
+          case Enum.at(args, index + 1) do
+            value when is_binary(value) ->
+              if(String.starts_with?(value, "-"), do: [], else: [value])
+
+            _ ->
+              []
+          end
+
+        is_binary(arg) and String.starts_with?(arg, prefix) ->
+          case String.replace_prefix(arg, prefix, "") do
+            "" -> []
+            value -> [value]
+          end
+
+        true ->
+          []
+      end
+    end)
+  end
+
+  defp sensitive_path?(path, root) do
+    expanded = Helpers.expand_tilde(path)
+
+    lexical =
+      if Path.type(expanded) == :absolute do
+        expanded
+      else
+        path
+      end
+
+    base = if is_binary(root) and root != "", do: root, else: File.cwd!()
+
+    resolved =
+      if Path.type(expanded) == :absolute,
+        do: Path.expand(expanded),
+        else: Path.expand(expanded, base)
+
+    PathValidator.reject_sensitive(lexical) != :ok or
+      PathValidator.reject_resolved(resolved) != :ok
   end
 
   defp forbidden_token?("--json"), do: true
