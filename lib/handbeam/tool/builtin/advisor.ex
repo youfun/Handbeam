@@ -13,7 +13,13 @@ defmodule Handbeam.Tool.Builtin.Advisor do
 
   @impl true
   def description do
-    "Ask the configured read-only Advisor for a judgment. Provide the question, necessary context, relevant files, and the decision you need. The advisor cannot modify files, browse, delegate, or authorize actions."
+    "Ask the configured read-only Advisor for a judgment. Every call creates a new advisor " <>
+      "conversation. Never call advisor for a follow-up or revised version of an issue already " <>
+      "reviewed by an advisor. A successful result begins with that advisor's " <>
+      "child_conversation_id; continue the exact advisor by calling task_status with action " <>
+      "\"message\", that child_conversation_id, and the follow-up message. Provide the question, " <>
+      "necessary context, relevant files, and the decision you need. The advisor cannot modify " <>
+      "files, browse, delegate, or authorize actions."
   end
 
   @impl true
@@ -79,14 +85,24 @@ defmodule Handbeam.Tool.Builtin.Advisor do
 
     case Handbeam.Agent.Delegation.run(%{"prompt" => prompt}, delegation_context, :advisor) do
       {:ok, _wrapper, data} = result ->
-        {:ok, Runtime.child_text(result) || "", Map.put(data, :profile, :advisor)}
+        {:ok, reusable_result(Runtime.child_text(result) || "", data),
+         Map.put(data, :profile, :advisor)}
 
       {:error, reason, data} = result ->
-        {:error, Runtime.child_text(result) || inspect(reason),
+        {:error, reusable_result(Runtime.child_text(result) || inspect(reason), data),
          Map.put(data || %{}, :profile, :advisor)}
 
       {:error, reason} ->
         {:error, inspect(reason)}
     end
   end
+
+  defp reusable_result(text, %{child_conversation_id: id}) when is_binary(id) do
+    "Reusable advisor conversation: child_conversation_id #{id}. " <>
+      "For every follow-up or revised version of this issue, continue this exact advisor with " <>
+      "task_status(action: \"message\", child_conversation_id: \"#{id}\", message: <follow-up>). " <>
+      "Do not call advisor again for the same issue.\n\n" <> text
+  end
+
+  defp reusable_result(text, _data), do: text
 end

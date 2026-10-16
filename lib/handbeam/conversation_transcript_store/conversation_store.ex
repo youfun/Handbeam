@@ -510,11 +510,18 @@ defmodule Handbeam.ConversationTranscriptStore.ConversationStore do
   defp authorize_read(conversation_id, opts) do
     if Handbeam.ConversationStore.internal?(conversation_id) and
          not runtime_reader?(conversation_id, opts) and
-         self() != Process.whereis(Handbeam.Agent.TranscriptRecovery) do
+         not trusted_runtime_reader?() do
       Handbeam.ConversationStore.authorize_read(conversation_id, opts)
     else
       :ok
     end
+  end
+
+  defp trusted_runtime_reader? do
+    self() in [
+      Process.whereis(Handbeam.Agent.Delegation),
+      Process.whereis(Handbeam.Agent.TranscriptRecovery)
+    ]
   end
 
   defp runtime_reader?(id, opts) do

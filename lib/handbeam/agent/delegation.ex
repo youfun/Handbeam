@@ -680,6 +680,7 @@ defmodule Handbeam.Agent.Delegation do
 
         history ->
           session.child_opts
+          |> refresh_follow_up_authority(job)
           |> Keyword.merge(
             history_messages: history,
             source: Keyword.get(opts, :source, :direct_message)
@@ -692,6 +693,17 @@ defmodule Handbeam.Agent.Delegation do
     else
       start_follow_up_task(state, session, job, text, child_opts, owner)
     end
+  end
+
+  defp refresh_follow_up_authority(child_opts, job) do
+    context = Keyword.get(child_opts, :context, %{})
+
+    delegation_parent =
+      context
+      |> Map.get(:delegation_parent, %{})
+      |> Map.merge(%{mode: :background, child_id: job.id})
+
+    Keyword.put(child_opts, :context, Map.put(context, :delegation_parent, delegation_parent))
   end
 
   defp start_follow_up_task(state, session, job, text, child_opts, owner) do

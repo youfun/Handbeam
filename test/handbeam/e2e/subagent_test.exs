@@ -241,6 +241,7 @@ defmodule Handbeam.E2E.SubagentTest do
 
       cond do
         child?(defs) and text =~ "one more question" ->
+          send(test_pid, {:follow_up_context, Enum.map(defs, & &1.name), text})
           "follow-up answer; remembered=#{text =~ "steered answer"}"
 
         child?(defs) and tool_results(messages) == 0 ->
@@ -277,27 +278,18 @@ defmodule Handbeam.E2E.SubagentTest do
     assert {:ok, %{delivery: :follow_up}} =
              Delegation.message(sid, child, "one more question")
 
+    assert_receive {:follow_up_context, tools, follow_up_context}, 10_000
+    assert "read" in tools
+    assert follow_up_context =~ "focus on notes"
+    assert follow_up_context =~ "steered answer"
+    assert follow_up_context =~ "one more question"
+
     ended =
       await_event(:subagent_end, &(&1.child_conversation_id == child and &1.kind == :dm))
 
     assert ended.status == :completed
     assert ended.report == "follow-up answer; remembered=true"
     settle([sid, child])
-
-    child_entries = entries(child)
-
-    assert Enum.any?(
-             child_entries,
-             &(&1["role"] == "user" and &1["content"] == "focus on notes" and
-                 &1["delivery"] == "steer")
-           )
-
-    assert Enum.any?(
-             child_entries,
-             &(&1["role"] == "user" and &1["content"] == "one more question")
-           )
-
-    assert "follow-up answer; remembered=true" in assistant_texts(child)
 
     reports =
       Enum.filter(entries(sid), &(&1["role"] == "user" and &1["content"] =~ @report_marker))
