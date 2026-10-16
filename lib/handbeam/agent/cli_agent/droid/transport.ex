@@ -53,37 +53,37 @@ defmodule Handbeam.Agent.CliAgent.Droid.Transport do
 
       _ ->
         case WorkspaceEnvironment.find_executable(@executable, opts[:cwd]) do
-          nil -> {:error, :not_available}
-          path -> {:ok, path}
+          {:ok, path} -> {:ok, path}
+          {:error, :not_found} -> {:error, :not_available}
+          {:error, _reason} = error -> error
         end
     end
   end
 
   defp spawn_port(executable, argv, opts) do
     cwd = Keyword.get(opts, :cwd)
-    env = WorkspaceEnvironment.port_env(cwd)
 
-    options = [
-      :binary,
-      :exit_status,
-      :use_stdio,
-      :stderr_to_stdout,
-      :hide,
-      {:args, Enum.map(argv, &String.to_charlist/1)},
-      {:line, 65_536}
-    ]
+    with {:ok, env} <- WorkspaceEnvironment.port_env(cwd) do
+      options = [
+        :binary,
+        :exit_status,
+        :use_stdio,
+        :stderr_to_stdout,
+        :hide,
+        {:args, Enum.map(argv, &String.to_charlist/1)},
+        {:line, 65_536}
+      ]
 
-    options = if is_binary(cwd), do: [{:cd, cwd} | options], else: options
+      options = if is_binary(cwd), do: [{:cd, cwd} | options], else: options
 
-    options =
-      if env == [],
-        do: options,
-        else: [{:env, CommandEnvironment.encode_port_env(env)} | options]
+      options =
+        if env == [],
+          do: options,
+          else: [{:env, CommandEnvironment.encode_port_env(env)} | options]
 
-    port =
-      Port.open({:spawn_executable, executable}, options)
-
-    {:ok, port, os_pid(port)}
+      port = Port.open({:spawn_executable, executable}, options)
+      {:ok, port, os_pid(port)}
+    end
   rescue
     error -> {:error, Exception.message(error)}
   end

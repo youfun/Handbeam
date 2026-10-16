@@ -24,12 +24,11 @@ defmodule Handbeam.Platform.ProcessRunner do
   Job cleanup must be registered before releasing the gate.
   """
   def open_gated_bash(command, cwd, opts \\ []) do
-    opts = put_workspace_environment(opts)
-
     script =
       "printf 'handbeam-ready\\n'; IFS= read -r gate && [ \"$gate\" = go ] || exit 125; eval \"$1\""
 
-    with {:ok, shell} <- ShellResolver.resolve(opts),
+    with {:ok, opts} <- put_workspace_environment(opts),
+         {:ok, shell} <- ShellResolver.resolve(opts),
          {:ok, invocation} <-
            ProcessSandbox.wrap(
              %{shell | args: shell.args ++ [script, "handbeam-job"]},
@@ -109,9 +108,8 @@ defmodule Handbeam.Platform.ProcessRunner do
   end
 
   def open_tracked(opts) do
-    opts = put_workspace_environment(opts)
-
-    with {:ok, shell} <- ShellResolver.resolve(opts),
+    with {:ok, opts} <- put_workspace_environment(opts),
+         {:ok, shell} <- ShellResolver.resolve(opts),
          {:ok, invocation} <- ProcessSandbox.wrap(shell, opts[:command], opts[:cwd], opts) do
       port =
         Port.open(
@@ -184,12 +182,14 @@ defmodule Handbeam.Platform.ProcessRunner do
   defp put_workspace_environment(opts) do
     case Keyword.get(opts, :workspace_path) do
       path when is_binary(path) and path != "" ->
-        project = WorkspaceEnvironment.port_env(path) |> Map.new()
-        explicit = Keyword.get(opts, :env, []) |> Map.new()
-        Keyword.put(opts, :env, project |> Map.merge(explicit) |> Map.to_list())
+        with {:ok, environment} <- WorkspaceEnvironment.port_env(path) do
+          project = Map.new(environment)
+          explicit = Keyword.get(opts, :env, []) |> Map.new()
+          {:ok, Keyword.put(opts, :env, project |> Map.merge(explicit) |> Map.to_list())}
+        end
 
       _ ->
-        opts
+        {:ok, opts}
     end
   end
 

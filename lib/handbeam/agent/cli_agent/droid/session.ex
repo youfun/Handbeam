@@ -14,7 +14,6 @@ defmodule Handbeam.Agent.CliAgent.Droid.Session do
   alias Handbeam.Agent.CliAgent.Event
 
   @init_timeout 15_000
-  @turn_timeout 120_000
 
   defstruct [
     :port,
@@ -83,7 +82,7 @@ defmodule Handbeam.Agent.CliAgent.Droid.Session do
           {:ok, map(), [Event.t()]} | {:error, term()}
   def send_message(pid, text, on_event, decision \\ nil)
       when is_pid(pid) and is_function(on_event, 1) do
-    GenServer.call(pid, {:send_message, text, on_event, decision}, @turn_timeout)
+    GenServer.call(pid, {:send_message, text, on_event, decision}, :infinity)
   catch
     :exit, reason -> {:error, {:exit, reason}}
   end

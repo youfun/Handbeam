@@ -34,16 +34,71 @@ defmodule Handbeam.Platform.WorkspaceEnvironmentTest do
        }}
     end)
 
-    assert WorkspaceEnvironment.environment(File.cwd!()) == %{
+    assert {:ok, environment} = WorkspaceEnvironment.environment(File.cwd!())
+
+    assert environment == %{
              "PATH" => "/workspace/shims:/usr/bin",
              "HANDBEAM_PROJECT_MARKER" => "project"
            }
 
-    assert WorkspaceEnvironment.environment(File.cwd!())["HANDBEAM_PROJECT_MARKER"] == "project"
+    assert {:ok, cached_environment} = WorkspaceEnvironment.environment(File.cwd!())
+    assert cached_environment["HANDBEAM_PROJECT_MARKER"] == "project"
     assert_received {:captured, path}
     assert path == Path.expand(File.cwd!())
     refute_received {:captured, _}
     assert System.get_env("HANDBEAM_PROJECT_MARKER") == original
+  end
+
+  test "does not cache capture failures and retries on the next request" do
+    {:ok, attempts} = Agent.start_link(fn -> 0 end)
+
+    Application.put_env(:handbeam, :workspace_environment_capture, fn _path ->
+      Agent.get_and_update(attempts, fn
+        0 -> {{:error, {:helper_exit_status, 17}}, 1}
+        count -> {{:ok, %{"PATH" => "/workspace/bin"}}, count + 1}
+      end)
+    end)
+
+    assert WorkspaceEnvironment.environment(File.cwd!()) ==
+             {:error, {:workspace_environment_failed, {:helper_exit_status, 17}}}
+
+    assert WorkspaceEnvironment.environment(File.cwd!()) ==
+             {:ok, %{"PATH" => "/workspace/bin"}}
+
+    assert WorkspaceEnvironment.environment(File.cwd!()) ==
+             {:ok, %{"PATH" => "/workspace/bin"}}
+
+    assert Agent.get(attempts, & &1) == 2
+  end
+
+  test "reports a sanitized exception category without exposing its message" do
+    Application.put_env(:handbeam, :workspace_environment_capture, fn _path ->
+      raise "secret helper output /private/path"
+    end)
+
+    assert WorkspaceEnvironment.environment(File.cwd!()) ==
+             {:error, {:workspace_environment_failed, {:capture_exception, RuntimeError}}}
+  end
+
+  test "process startup propagates workspace capture failures" do
+    Application.put_env(:handbeam, :workspace_environment_capture, fn _path ->
+      {:error, {:helper_exit_status, 9}}
+    end)
+
+    assert ProcessRunner.open_tracked(
+             command: "printf should-not-run",
+             cwd: File.cwd!(),
+             workspace_path: File.cwd!()
+           ) == {:error, {:workspace_environment_failed, {:helper_exit_status, 9}}}
+  end
+
+  test "browser CLI does not fall back to the process PATH after capture failure" do
+    Application.put_env(:handbeam, :workspace_environment_capture, fn _path ->
+      {:error, {:helper_exit_status, 23}}
+    end)
+
+    assert Cli.run(["--version"], workspace_path: File.cwd!()) ==
+             {:error, {:workspace_environment_failed, {:helper_exit_status, 23}}}
   end
 
   test "removes desktop backend values before invoking the shell environment helper" do
@@ -78,7 +133,9 @@ printf '{"INHERITED_PHX_SERVER":"%s","INHERITED_PORT":"%s","INHERITED_SECRET":"%
         Application.delete_env(:handbeam, :workspace_environment_capture)
         WorkspaceEnvironment.clear()
 
-        assert WorkspaceEnvironment.environment(root) == %{
+        assert {:ok, environment} = WorkspaceEnvironment.environment(root)
+
+        assert environment == %{
                  "INHERITED_PHX_SERVER" => "unset",
                  "INHERITED_PORT" => "unset",
                  "INHERITED_SECRET" => "unset",
@@ -111,7 +168,7 @@ printf '{"INHERITED_PHX_SERVER":"%s","INHERITED_PORT":"%s","INHERITED_SECRET":"%
       {:ok, %{"PATH" => bin}}
     end)
 
-    assert WorkspaceEnvironment.find_executable("workspace-tool", root) == executable
+    assert WorkspaceEnvironment.find_executable("workspace-tool", root) == {:ok, executable}
   end
 
   test "browser CLI resolves agent-browser from the workspace environment" do

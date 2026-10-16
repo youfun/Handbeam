@@ -99,16 +99,22 @@ defmodule Handbeam.Agent.CliAgent.Grok do
 
   defp ensure_available(opts) do
     cond do
-      not Host.shell?() -> {:error, :not_available}
-      executable_path(opts) -> :ok
-      true -> {:error, :not_available}
+      not Host.shell?() ->
+        {:error, :not_available}
+
+      true ->
+        case executable_path(opts) do
+          {:ok, _path} -> :ok
+          {:error, :not_found} -> {:error, :not_available}
+          {:error, _reason} = error -> error
+        end
     end
   end
 
   defp executable_path(opts) do
     case Keyword.get(opts, :executable) do
-      path when is_binary(path) and path != "" -> true
-      _ -> match?({:ok, _path}, WorkspaceEnvironment.find_executable(@executable, opts[:cwd]))
+      path when is_binary(path) and path != "" -> {:ok, path}
+      _ -> WorkspaceEnvironment.find_executable(@executable, opts[:cwd])
     end
   end
 

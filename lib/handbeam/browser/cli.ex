@@ -88,45 +88,45 @@ defmodule Handbeam.Browser.Cli do
 
       _ ->
         case find.(@binary) do
+          {:ok, path} when is_binary(path) -> {:ok, path}
+          {:error, _reason} = error -> error
+          path when is_binary(path) -> {:ok, path}
           nil -> {:error, :missing_binary, @binary}
-          path -> {:ok, path}
         end
     end
   end
 
   defp spawn_cli(executable, argv, timeout_ms, opts) do
     workspace = Keyword.get(opts, :workspace_path)
-    env = WorkspaceEnvironment.port_env(workspace)
 
-    port_opts = [
-      :binary,
-      :exit_status,
-      :use_stdio,
-      :stderr_to_stdout,
-      :hide,
-      {:args, Enum.map(argv, &String.to_charlist/1)}
-    ]
+    with {:ok, env} <- WorkspaceEnvironment.port_env(workspace) do
+      port_opts = [
+        :binary,
+        :exit_status,
+        :use_stdio,
+        :stderr_to_stdout,
+        :hide,
+        {:args, Enum.map(argv, &String.to_charlist/1)}
+      ]
 
-    port_opts = if is_binary(workspace), do: [{:cd, workspace} | port_opts], else: port_opts
+      port_opts =
+        if is_binary(workspace), do: [{:cd, workspace} | port_opts], else: port_opts
 
-    port_opts =
-      if env == [],
-        do: port_opts,
-        else: [{:env, CommandEnvironment.encode_port_env(env)} | port_opts]
+      port_opts =
+        if env == [],
+          do: port_opts,
+          else: [{:env, CommandEnvironment.encode_port_env(env)} | port_opts]
 
-    port =
-      Port.open(
-        {:spawn_executable, executable},
-        port_opts
-      )
+      port = Port.open({:spawn_executable, executable}, port_opts)
 
-    os_pid =
-      case Port.info(port, :os_pid) do
-        {:os_pid, pid} -> pid
-        _ -> nil
-      end
+      os_pid =
+        case Port.info(port, :os_pid) do
+          {:os_pid, pid} -> pid
+          _ -> nil
+        end
 
-    collect(port, os_pid, System.monotonic_time(:millisecond) + timeout_ms, [])
+      collect(port, os_pid, System.monotonic_time(:millisecond) + timeout_ms, [])
+    end
   rescue
     e -> {:error, "Failed to spawn #{@binary}: #{Exception.message(e)}"}
   end

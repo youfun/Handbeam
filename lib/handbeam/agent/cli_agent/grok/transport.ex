@@ -46,18 +46,19 @@ defmodule Handbeam.Agent.CliAgent.Grok.Transport do
   def models(opts) do
     with {:ok, executable} <- resolve(opts) do
       cwd = Keyword.get(opts, :cwd) || File.cwd!()
-      env = WorkspaceEnvironment.port_env(cwd)
 
-      case System.cmd(executable, ["models"],
-             cd: cwd,
-             env: system_env(env),
-             stderr_to_stdout: true
-           ) do
-        {output, 0} ->
-          {:ok, output}
+      with {:ok, env} <- WorkspaceEnvironment.port_env(cwd) do
+        case System.cmd(executable, ["models"],
+               cd: cwd,
+               env: system_env(env),
+               stderr_to_stdout: true
+             ) do
+          {output, 0} ->
+            {:ok, output}
 
-        {output, status} ->
-          {:error, "grok models exited #{status}: #{String.slice(output, 0, 200)}"}
+          {output, status} ->
+            {:error, "grok models exited #{status}: #{String.slice(output, 0, 200)}"}
+        end
       end
     end
   end
@@ -69,34 +70,35 @@ defmodule Handbeam.Agent.CliAgent.Grok.Transport do
 
       _ ->
         case WorkspaceEnvironment.find_executable(@executable, opts[:cwd]) do
-          nil -> {:error, :not_available}
-          path -> {:ok, path}
+          {:ok, path} -> {:ok, path}
+          {:error, :not_found} -> {:error, :not_available}
+          {:error, _reason} = error -> error
         end
     end
   end
 
   defp spawn_port(executable, argv, cwd) do
-    env = WorkspaceEnvironment.port_env(cwd)
+    with {:ok, env} <- WorkspaceEnvironment.port_env(cwd) do
+      options = [
+        :binary,
+        :exit_status,
+        :use_stdio,
+        :stderr_to_stdout,
+        :hide,
+        {:args, Enum.map(argv, &String.to_charlist/1)},
+        {:line, 65_536}
+      ]
 
-    options = [
-      :binary,
-      :exit_status,
-      :use_stdio,
-      :stderr_to_stdout,
-      :hide,
-      {:args, Enum.map(argv, &String.to_charlist/1)},
-      {:line, 65_536}
-    ]
+      options = if is_binary(cwd) and cwd != "", do: [{:cd, cwd} | options], else: options
 
-    options = if is_binary(cwd) and cwd != "", do: [{:cd, cwd} | options], else: options
+      options =
+        if env == [],
+          do: options,
+          else: [{:env, CommandEnvironment.encode_port_env(env)} | options]
 
-    options =
-      if env == [],
-        do: options,
-        else: [{:env, CommandEnvironment.encode_port_env(env)} | options]
-
-    port = Port.open({:spawn_executable, executable}, options)
-    {:ok, port, os_pid(port)}
+      port = Port.open({:spawn_executable, executable}, options)
+      {:ok, port, os_pid(port)}
+    end
   rescue
     error -> {:error, Exception.message(error)}
   end

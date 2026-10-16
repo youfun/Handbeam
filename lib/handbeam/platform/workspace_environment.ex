@@ -17,6 +17,7 @@ defmodule Handbeam.Platform.WorkspaceEnvironment do
   @type failure_reason ::
           :service_unavailable
           | :helper_unavailable
+          | :workspace_unavailable
           | :invalid_environment
           | :invalid_capture_result
           | :capture_failed
@@ -107,25 +108,35 @@ defmodule Handbeam.Platform.WorkspaceEnvironment do
   defp capture_with_helper(path) do
     helper = System.get_env(@helper_env)
 
-    if is_binary(helper) and File.regular?(helper) and File.dir?(path) do
-      {output, status} =
-        System.cmd(helper, ["--capture-shell-environment", path],
-          cd: path,
-          env: CommandEnvironment.system_cmd_unsets(),
-          stderr_to_stdout: false
-        )
+    cond do
+      not is_binary(helper) or helper == "" ->
+        {:ok, %{}}
 
-      case Handbeam.JSON.decode(output) do
-        {:ok, environment} when is_map(environment) -> {:ok, environment}
-        _ when status == 0 -> {:error, :invalid_environment}
-        _ -> {:error, {:helper_exit_status, status}}
-      end
-    else
-      {:error, :helper_unavailable}
+      not File.regular?(helper) ->
+        {:error, :helper_unavailable}
+
+      not File.dir?(path) ->
+        {:error, :workspace_unavailable}
+
+      true ->
+        {output, status} =
+          System.cmd(helper, ["--capture-shell-environment", path],
+            cd: path,
+            env: CommandEnvironment.system_cmd_unsets(),
+            stderr_to_stdout: false
+          )
+
+        case {status, Handbeam.JSON.decode(output)} do
+          {0, {:ok, environment}} when is_map(environment) -> {:ok, environment}
+          {0, _decode_result} -> {:error, :invalid_environment}
+          {exit_status, _decode_result} -> {:error, {:helper_exit_status, exit_status}}
+        end
     end
   end
 
-  defp sanitize_failure(reason) when reason in [:helper_unavailable, :invalid_environment], do: reason
+  defp sanitize_failure(reason)
+       when reason in [:helper_unavailable, :workspace_unavailable, :invalid_environment],
+       do: reason
 
   defp sanitize_failure({:helper_exit_status, status})
        when is_integer(status) and status >= 0,
