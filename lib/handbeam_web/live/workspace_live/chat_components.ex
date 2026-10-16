@@ -430,7 +430,7 @@ defmodule HandbeamWeb.WorkspaceLive.ChatComponents do
                   {gettext("使用自带的记忆功能")}
                 </label>
                 <p id="add-project-builtin-memory-desc" class="text-[11px] text-tertiary mt-0.5">
-                  {gettext("关闭后仍可使用此工作区配置的外部记忆工具。")}
+                  {gettext("关闭后可使用配置的外部记忆工具")}
                 </p>
               </div>
               <label class="relative inline-flex items-center cursor-pointer h-4 shrink-0">

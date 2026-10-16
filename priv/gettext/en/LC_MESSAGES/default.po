@@ -2547,8 +2547,8 @@ msgid "关闭后，此工作区可继续使用 MCP 或扩展提供的外部记�
 msgstr "When off, this workspace can continue using external memory from MCP or extensions; existing memories are not deleted."
 
 #: lib/handbeam_web/live/workspace_live/chat_components.ex
-msgid "关闭后仍可使用此工作区配置的外部记忆工具。"
-msgstr "External memory tools configured for this workspace remain available when this is off."
+msgid "关闭后可使用配置的外部记忆工具"
+msgstr "External memory tools remain available when this is off."
 
 #: lib/handbeam_web/live/workspace_memory_live.html.heex
 msgid "已开启"
