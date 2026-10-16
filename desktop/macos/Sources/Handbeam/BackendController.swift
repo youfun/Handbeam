@@ -23,12 +23,15 @@ final class BackendController {
     private var intentionalStop = false
     private var startGeneration = 0
     private let managedPort: Int
+    private let allowsConfiguredPortAttachment: Bool
     private var port: Int
     private let fileManager = FileManager.default
 
     init(port: Int? = nil) {
+        let environmentPort = ProcessInfo.processInfo.environment["HANDBEAM_PORT"]
         let resolvedPort = port ?? Self.resolvePort()
         self.managedPort = resolvedPort
+        self.allowsConfiguredPortAttachment = port != nil || DesktopConfig.hasExplicitPort(environmentPort)
         self.port = resolvedPort
     }
 
@@ -88,12 +91,8 @@ final class BackendController {
             }
             return
         }
-        if await probe() {
-            await attach(port: port, generation: generation, reason: "configured port")
-            return
-        }
-        if let existingPort = await discoverExistingServer(excluding: port) {
-            await attach(port: existingPort, generation: generation, reason: "discovered server")
+        if allowsConfiguredPortAttachment, await probe() {
+            await attach(port: port, generation: generation, reason: "explicitly configured port")
             return
         }
         guard generation == startGeneration else { return }
@@ -287,20 +286,11 @@ final class BackendController {
         }
     }
 
-    private func discoverExistingServer(excluding excludedPort: Int) async -> Int? {
-        let output = runTool(
-            "/usr/sbin/lsof",
-            ["-nP", "-a", "-c", "beam.smp", "-iTCP", "-sTCP:LISTEN", "-Fn"]
-        )
-        let candidates = DesktopConfig.loopbackListenerPorts(lsofOutput: output)
-            .filter { $0 != excludedPort }
-
-        return await firstHandbeamServer(in: candidates)
-    }
-
     private func storageOwnerPID() -> String? {
-        let lockPath = fileManager.homeDirectoryForCurrentUser
-            .appendingPathComponent(".handbeam/conversations/.handbeam-storage.lock").path
+        let defaultDatabase = fileManager.homeDirectoryForCurrentUser
+            .appendingPathComponent(".handbeam/handbeam.db").path
+        let database = ProcessInfo.processInfo.environment["DATABASE_PATH"] ?? defaultDatabase
+        let lockPath = DesktopConfig.storageLockPath(databasePath: database)
         let ownerOutput = runTool("/usr/sbin/lsof", ["-nP", "-t", lockPath])
         return ownerOutput.split(whereSeparator: \.isNewline).first.map(String.init)
     }

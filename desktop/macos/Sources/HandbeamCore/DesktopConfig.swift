@@ -2,8 +2,9 @@ import Darwin
 import Foundation
 
 /// Pure decisions for the macOS shell. The app process owns a backend only when
-/// it spawned that process in this lifetime. A server that is already listening
-/// is attached to, never signalled on quit.
+/// it spawned that process in this lifetime. A server that owns the packaged
+/// database, or one selected with an explicit port, is attached to and never
+/// signalled on quit.
 public enum DesktopConfig {
     public static let defaultPort = 5008
     public static let bundleIdentifier = "com.youfun.handbeam"
@@ -63,6 +64,17 @@ public enum DesktopConfig {
         }
         guard loopbackHosts.contains(host) else { return nil }
         return host
+    }
+
+    public static func hasExplicitPort(_ raw: String?) -> Bool {
+        guard let raw, let port = Int(raw) else { return false }
+        return (1...65535).contains(port)
+    }
+
+    /// The runtime holds an OS lock on a sidecar belonging to the resolved
+    /// database path. Desktop discovery must use the same ownership boundary.
+    public static func storageLockPath(databasePath: String) -> String {
+        databasePath + ".lock"
     }
 
     public static func preferredPort(

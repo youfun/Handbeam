@@ -9,6 +9,22 @@ final class DesktopConfigTests: XCTestCase {
         )
     }
 
+    func testAutomaticAttachmentRequiresAValidExplicitPort() {
+        XCTAssertFalse(DesktopConfig.hasExplicitPort(nil))
+        XCTAssertFalse(DesktopConfig.hasExplicitPort(""))
+        XCTAssertFalse(DesktopConfig.hasExplicitPort("not-a-port"))
+        XCTAssertFalse(DesktopConfig.hasExplicitPort("0"))
+        XCTAssertFalse(DesktopConfig.hasExplicitPort("65536"))
+        XCTAssertTrue(DesktopConfig.hasExplicitPort("5002"))
+    }
+
+    func testStorageOwnerLockBelongsToPackagedDatabase() {
+        XCTAssertEqual(
+            DesktopConfig.storageLockPath(databasePath: "/Users/me/.handbeam/handbeam.db"),
+            "/Users/me/.handbeam/handbeam.db.lock"
+        )
+    }
+
     func testLoopbackListenerPortsParsesLsofFieldOutput() {
         let output = """
         p100
