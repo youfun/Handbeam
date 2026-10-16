@@ -31,8 +31,8 @@ defmodule HandbeamProbe.MixProject do
 
   defp deps do
     [
-      {:mob, "== 0.7.39"},
-      {:mob_dev, "~> 0.6", only: :dev, runtime: false},
+      {:mob, "== 0.9.21"},
+      {:mob_dev, "~> 0.7", only: :dev, runtime: false},
       # The native host configures its private data directory and runs root
       # migrations before starting the shared runtime explicitly.
       {:handbeam, path: "..", runtime: false},
@@ -41,9 +41,9 @@ defmodule HandbeamProbe.MixProject do
       {:ex_git, github: "youfun/ex-git", tag: "v0.0.4"},
       # Handbeam pins these; Mob pulled newer ones into this Mix lock.
       {:phoenix_live_view, "~> 1.2.0", override: true},
-      {:req, "~> 0.6.1", override: true},
+      {:req, "~> 0.7.4", override: true},
       {:ghostty, "~> 0.5.0", override: true},
-      {:ecto_sqlite3, "~> 0.18"},
+      {:ecto_sqlite3, "~> 0.25"},
       # Host-provided password hash for workspace Mix projects (phx.gen.auth).
       {:bcrypt_elixir, "~> 3.3"},
       {:gettext, "~> 1.0"},
@@ -51,7 +51,7 @@ defmodule HandbeamProbe.MixProject do
       # Code quality — Credo + ex_slop (catches AI-generated patterns
       # like blanket rescue, narrator docs, redundant Enum chains, etc).
       {:credo, "~> 1.7", only: [:dev, :test], runtime: false},
-      {:ex_slop, "~> 0.4.2", only: [:dev, :test], runtime: false}
+      {:ex_slop, "~> 0.4.5", only: [:dev, :test], runtime: false}
     ]
   end
 
