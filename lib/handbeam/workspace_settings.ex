@@ -56,21 +56,109 @@ defmodule Handbeam.WorkspaceSettings do
   }
   """
 
-  @doc """
-  Return the workspace settings path.
-  """
+  @doc "Return the canonical workspace settings path."
   @spec path(Path.t()) :: Path.t()
-  def path(workspace_root) do
-    Path.join(workspace_root, @settings_relpath)
+  def path(path_or_checkout) do
+    case resolve_path(path_or_checkout) do
+      {:ok, settings_path} -> settings_path
+      {:error, _reason} -> owner_path(path_or_checkout)
+    end
+  end
+
+  @doc "Resolve a workspace or checkout path to the canonical settings owner."
+  @spec resolve_path(Path.t()) :: {:ok, Path.t()} | {:error, String.t()}
+  def resolve_path(path_or_checkout) when is_binary(path_or_checkout) do
+    with {:ok, root} <- resolve_owner_root(path_or_checkout) do
+      {:ok, owner_path(root)}
+    else
+      {:error, reason} ->
+        {:error, "Failed to resolve workspace settings owner: #{inspect(reason)}"}
+    end
+  end
+
+  def resolve_path(_path),
+    do: {:error, "Failed to resolve workspace settings owner: :invalid_path"}
+
+  @doc false
+  def owner_path(canonical_root), do: Path.join(Path.expand(canonical_root), @settings_relpath)
+
+  @doc false
+  def ensure_owner_file(canonical_root) do
+    settings_path = owner_path(canonical_root)
+    with_settings_lock(settings_path, fn -> ensure_file_unlocked(settings_path) end)
   end
 
   @doc """
   Ensure `.handbeam/settings.jsonc` exists without overwriting existing settings.
   """
   @spec ensure_file(Path.t()) :: :ok | {:error, String.t()}
-  def ensure_file(workspace_root) do
-    settings_path = path(workspace_root)
-    with_settings_lock(settings_path, fn -> ensure_file_unlocked(settings_path) end)
+  def ensure_file(path_or_checkout) do
+    with {:ok, settings_path} <- resolve_path(path_or_checkout) do
+      with_settings_lock(settings_path, fn -> ensure_file_unlocked(settings_path) end)
+    else
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp resolve_owner_root(path) do
+    case Handbeam.WorkspaceStore.get_by_path(path) do
+      {:ok, %{"path" => root}} -> {:ok, root}
+      {:error, :not_found} -> resolve_unregistered_owner(path)
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp resolve_unregistered_owner(path) do
+    case Handbeam.RepoIdentity.resolve(path) do
+      {:ok, identity} -> {:ok, identity.workspace_path}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc false
+  def prepare_owner_change(old_root, new_root) do
+    old_path = owner_path(old_root)
+    new_path = owner_path(new_root)
+
+    cond do
+      old_path == new_path ->
+        ensure_owner_file(new_root)
+
+      not File.exists?(old_path) ->
+        ensure_owner_file(new_root)
+
+      not File.exists?(new_path) ->
+        copy_owner_file(old_path, new_path)
+
+      same_file_content?(old_path, new_path) ->
+        :ok
+
+      true ->
+        {:error, :settings_policy_conflict}
+    end
+  end
+
+  defp copy_owner_file(source, target) do
+    with {:ok, content} <- File.read(source),
+         {:ok, stat} <- File.stat(source),
+         :ok <- File.mkdir_p(Path.dirname(target)),
+         :ok <- atomic_write(target, content),
+         :ok <- File.chmod(target, Bitwise.band(stat.mode, 0o777)),
+         {:ok, ^content} <- File.read(target) do
+      :ok
+    else
+      {:ok, _other} -> {:error, :settings_copy_verification_failed}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp same_file_content?(left, right) do
+    with {:ok, left_content} <- File.read(left),
+         {:ok, right_content} <- File.read(right) do
+      :crypto.hash(:sha256, left_content) == :crypto.hash(:sha256, right_content)
+    else
+      _ -> false
+    end
   end
 
   defp ensure_file_unlocked(settings_path) do
@@ -335,21 +423,26 @@ defmodule Handbeam.WorkspaceSettings do
   """
   @spec load(Path.t()) :: {:ok, map()} | {:error, String.t()}
   def load(workspace_root) do
-    settings_path = path(workspace_root)
+    with {:ok, settings_path} <- resolve_path(workspace_root) do
+      case File.read(settings_path) do
+        {:ok, content} ->
+          case decode_jsonc(content) do
+            {:ok, settings} when is_map(settings) ->
+              {:ok, settings}
 
-    case File.read(settings_path) do
-      {:ok, content} ->
-        case decode_jsonc(content) do
-          {:ok, settings} when is_map(settings) -> {:ok, settings}
-          {:ok, _other} -> {:error, "Failed to parse #{settings_path}: expected a JSON object"}
-          {:error, reason} -> {:error, "Failed to parse #{settings_path}: #{inspect(reason)}"}
-        end
+            {:ok, _other} ->
+              {:error, "Failed to parse #{settings_path}: expected a JSON object"}
 
-      {:error, :enoent} ->
-        {:ok, %{}}
+            {:error, reason} ->
+              {:error, "Failed to parse #{settings_path}: #{inspect(reason)}"}
+          end
 
-      {:error, reason} ->
-        {:error, "Failed to read #{settings_path}: #{inspect(reason)}"}
+        {:error, :enoent} ->
+          {:ok, %{}}
+
+        {:error, reason} ->
+          {:error, "Failed to read #{settings_path}: #{inspect(reason)}"}
+      end
     end
   end
 
@@ -602,11 +695,17 @@ defmodule Handbeam.WorkspaceSettings do
   def normalize_transaction_result(result), do: result
 
   defp with_settings_lock(settings_path, fun) when is_function(fun, 0) do
-    resource =
-      {:handbeam_workspace_settings, Handbeam.StorageLock.canonical_path(settings_path)}
+    owner_root = settings_path |> Path.dirname() |> Path.dirname()
 
-    {resource, self()}
-    |> :global.trans(fun, [node()])
-    |> normalize_transaction_result()
+    if File.dir?(owner_root) do
+      resource =
+        {:handbeam_workspace_settings, Handbeam.StorageLock.canonical_path(settings_path)}
+
+      {resource, self()}
+      |> :global.trans(fun, [node()])
+      |> normalize_transaction_result()
+    else
+      {:error, "Failed to resolve workspace settings owner: :not_found"}
+    end
   end
 end

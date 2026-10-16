@@ -68,8 +68,9 @@ defmodule Handbeam.SettingsTest do
   end
 
   describe "workspace model_ai settings" do
-    test "load_workspace_model_ai returns empty map when file does not exist" do
-      ws_root = Path.join(@tmp_base, "nonexistent_ws")
+    test "load_workspace_model_ai returns empty map when settings file does not exist" do
+      ws_root = Path.join(@tmp_base, "workspace_without_settings")
+      File.mkdir_p!(ws_root)
 
       assert {:ok, %{}} = Settings.load_workspace_model_ai(ws_root)
     end
@@ -104,8 +105,9 @@ defmodule Handbeam.SettingsTest do
                Settings.load_workspace_model_ai(ws_dir)
     end
 
-    test "save_workspace_model_ai creates .handbeam directory if missing" do
+    test "save_workspace_model_ai creates .handbeam directory for an existing workspace" do
       ws_root = Path.join(@tmp_base, "fresh_ws")
+      File.mkdir_p!(ws_root)
 
       assert :ok =
                Settings.save_workspace_model_ai(ws_root, %{"default_model" => "claude-sonnet-4"})

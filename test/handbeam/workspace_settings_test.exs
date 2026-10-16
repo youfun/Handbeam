@@ -219,6 +219,38 @@ defmodule Handbeam.WorkspaceSettingsTest do
     assert File.read!(WorkspaceSettings.path(workspace)) == ~s({"custom": true})
   end
 
+  test "owner relocation copies exact settings and rejects policy conflicts" do
+    old_root = tmp_workspace()
+    new_root = tmp_workspace()
+    old_path = WorkspaceSettings.owner_path(old_root)
+    new_path = WorkspaceSettings.owner_path(new_root)
+    File.mkdir_p!(Path.dirname(old_path))
+    original = "{\n  // keep owner policy\n  \"tools\": {\"default_mode\": \"prompt\"}\n}"
+    File.write!(old_path, original)
+
+    assert :ok = WorkspaceSettings.prepare_owner_change(old_root, new_root)
+    assert File.read!(new_path) == original
+
+    File.write!(new_path, ~s({"tools":{"default_mode":"yolo"}}))
+
+    assert {:error, :settings_policy_conflict} =
+             WorkspaceSettings.prepare_owner_change(old_root, new_root)
+
+    assert File.read!(old_path) == original
+    assert File.read!(new_path) == ~s({"tools":{"default_mode":"yolo"}})
+  end
+
+  test "invalid owner paths fail without creating fallback settings" do
+    missing =
+      Path.join(System.tmp_dir!(), "missing-settings-#{System.unique_integer([:positive])}")
+
+    refute File.exists?(missing)
+    assert {:error, _reason} = WorkspaceSettings.ensure_file(missing)
+    assert {:error, _reason} = WorkspaceSettings.load(missing)
+    assert {:error, _reason} = WorkspaceSettings.update_permission_mode(missing, :yolo)
+    refute File.exists?(missing)
+  end
+
   test "update_permission_mode/2 updates tool mode and preserves JSONC comments" do
     workspace = tmp_workspace()
 

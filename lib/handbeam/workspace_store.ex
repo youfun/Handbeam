@@ -1,48 +1,21 @@
 defmodule Handbeam.WorkspaceStore do
   @moduledoc """
-  JSON-based workspace storage.
+  Versioned JSON storage for workspace policy identities.
 
-  Manages workspaces in `~/.handbeam/workspaces.json`.
-
-  ## Data structure
-
-      {
-        "workspaces": [
-          {
-            "id": "default",
-            "name": "My Workspace",
-            "path": "/Users/.../.handbeam/workspace",
-            "default": true,
-            "added_at": "2026-05-14T...",
-            "last_opened_at": "2026-05-14T..."
-          }
-        ]
-      }
-
-  ## API
-
-    - `ensure_default!/0` — ensure default workspace exists
-    - `list/0` — list all workspaces
-    - `add/2` — add a new workspace (with validation)
-    - `get/1` — get workspace by id
-    - `get_by_path/1` — get workspace by path
-    - `touch/1` — update last_opened_at
-    - `remove/1` — remove a non-default workspace from the list
-    - `storage_path/0` — path to workspaces.json
+  One physical Git repository owns one workspace record. Linked worktrees are
+  checkout selections under that workspace and are not persisted as separate
+  workspaces.
   """
 
   require Logger
 
+  alias Handbeam.{RepoIdentity, WorkspaceSettings}
+
   @default_storage "~/.handbeam/workspaces.json"
+  @storage_version 2
+  @dangerous_roots ["/", "/etc", "/System", "/bin", "/sbin", "/usr", "/var"]
+  @required_fields ~w(id name kind repo_key path default_checkout_path default added_at last_opened_at)
 
-  @doc """
-  Return the path to the workspaces JSON storage file.
-
-  Resolution order:
-    1. `HANDBEAM_WORKSPACES_FILE` env var
-    2. `:handbeam, :workspaces_file` application config
-    3. `~/.handbeam/workspaces.json` under the host data directory
-  """
   @spec storage_path() :: String.t()
   def storage_path do
     env = System.get_env("HANDBEAM_WORKSPACES_FILE")
@@ -56,11 +29,49 @@ defmodule Handbeam.WorkspaceStore do
   end
 
   @doc """
-  Ensure the default workspace exists.
-  Creates the storage file and default workspace entry if necessary.
+  Ensure UI-readable v2 storage.
 
-  Returns `{:ok, workspace_map}`.
+  Legacy workspace metadata is moved to a timestamped backup and never imported;
+  callers must tell the user to re-add projects.
   """
+  @spec ensure_default_for_ui() :: {:ok, map(), boolean()} | {:error, term()}
+  def ensure_default_for_ui do
+    case ensure_default!() do
+      {:ok, workspace} -> {:ok, workspace, false}
+      {:error, :workspace_format_outdated} -> archive_outdated_storage()
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp archive_outdated_storage do
+    path = storage_path()
+
+    with_storage_lock(path, fn ->
+      case read_storage(path) do
+        {:error, :workspace_format_outdated} ->
+          backup = path <> ".v1-backup-#{System.os_time(:millisecond)}"
+
+          with :ok <- File.rename(path, backup),
+               {:ok, workspace} <- ensure_default(path) do
+            Logger.warning(
+              "[WorkspaceStore] archived outdated workspace metadata at #{backup}; projects must be re-added"
+            )
+
+            {:ok, workspace, true}
+          end
+
+        {:ok, _data} ->
+          case ensure_default(path) do
+            {:ok, workspace} -> {:ok, workspace, false}
+            error -> error
+          end
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    end)
+  end
+
   @spec ensure_default!() :: {:ok, map()} | {:error, term()}
   def ensure_default! do
     path = storage_path()
@@ -73,13 +84,17 @@ defmodule Handbeam.WorkspaceStore do
         ensure_default_in_storage(path, data)
 
       {:error, :not_found} ->
-        new_default = build_default_workspace()
-        data = %{"workspaces" => [new_default]}
+        root = Handbeam.Workspace.default_root()
 
-        with :ok <- File.mkdir_p(Path.dirname(path)),
-             :ok <- write_storage(path, data),
-             :ok <- prepare_default_workspace(new_default["path"]) do
-          {:ok, new_default}
+        with :ok <- File.mkdir_p(root) do
+          workspace = build_default_workspace(root)
+          data = empty_storage() |> Map.put("workspaces", [workspace])
+
+          with :ok <- File.mkdir_p(Path.dirname(path)),
+               :ok <- write_storage(path, data),
+               :ok <- prepare_default_workspace(root) do
+            {:ok, workspace}
+          end
         end
 
       {:error, reason} ->
@@ -88,230 +103,382 @@ defmodule Handbeam.WorkspaceStore do
   end
 
   defp ensure_default_in_storage(path, data) do
-    workspaces = Map.get(data, "workspaces", [])
+    workspaces = data["workspaces"]
+    root = canonical_default_root()
 
-    case Enum.find(workspaces, & &1["default"]) do
+    case Enum.find_index(workspaces, &(&1["default"] == true)) do
       nil ->
-        new_default = build_default_workspace()
-        updated = Map.put(data, "workspaces", [new_default | workspaces])
+        workspace = build_default_workspace(root)
+        updated = Map.put(data, "workspaces", [workspace | workspaces])
 
-        with :ok <- write_storage(path, updated),
-             :ok <- prepare_default_workspace(new_default["path"]) do
-          {:ok, new_default}
+        with :ok <- File.mkdir_p(root),
+             :ok <- write_storage(path, updated),
+             :ok <- prepare_default_workspace(root) do
+          {:ok, workspace}
         end
 
-      default ->
-        root = Handbeam.Workspace.default_root()
-        corrected = Map.put(default, "path", root)
+      index ->
+        existing = Enum.at(workspaces, index)
 
-        write_result =
-          if corrected == default do
-            :ok
-          else
-            updated = Enum.map(workspaces, &if(&1 == default, do: corrected, else: &1))
-            write_storage(path, Map.put(data, "workspaces", updated))
-          end
+        corrected =
+          existing
+          |> Map.put("kind", "directory")
+          |> Map.put("repo_key", root)
+          |> Map.put("path", root)
+          |> Map.put("default_checkout_path", root)
 
-        with :ok <- write_result,
+        updated = Map.put(data, "workspaces", List.replace_at(workspaces, index, corrected))
+
+        with :ok <- File.mkdir_p(root),
+             :ok <- maybe_write_changed(path, data, updated),
              :ok <- prepare_default_workspace(root) do
           {:ok, corrected}
         end
     end
   end
 
-  defp prepare_default_workspace(root) do
-    with :ok <- File.mkdir_p(root),
-         :ok <- Handbeam.WorkspaceSettings.ensure_file(root) do
-      :ok
-    end
+  defp canonical_default_root do
+    Handbeam.Workspace.default_root()
+    |> Path.expand()
+    |> Handbeam.Security.PathValidator.resolve_symlink()
   end
 
-  @doc """
-  List all workspaces.
-  Returns empty list if the storage file doesn't exist.
-  """
+  defp prepare_default_workspace(root), do: WorkspaceSettings.ensure_owner_file(root)
+
+  @doc "List workspaces, retaining the historical list-only API."
   @spec list() :: [map()]
   def list do
-    path = storage_path()
-
-    case read_storage(path) do
-      {:ok, data} ->
-        workspaces = Map.get(data, "workspaces", [])
-
-        dev_log(
-          "[WorkspaceStore] list path=#{path} count=#{length(workspaces)} " <>
-            "ids=#{inspect(Enum.map(workspaces, & &1["id"]))}"
-        )
-
+    case list_result() do
+      {:ok, workspaces} ->
         workspaces
 
       {:error, :not_found} ->
         []
 
-      {:error, :corrupted} ->
-        Logger.warning("[WorkspaceStore] workspaces.json is corrupted, returning empty list")
+      {:error, reason} ->
+        Logger.warning("[WorkspaceStore] cannot load workspaces: #{inspect(reason)}")
         []
     end
   end
 
-  @doc """
-  Add a new workspace by path.
+  @doc "Read workspaces without collapsing format or corruption errors."
+  @spec list_result() :: {:ok, [map()]} | {:error, term()}
+  def list_result do
+    case read_storage(storage_path()) do
+      {:ok, data} -> {:ok, data["workspaces"]}
+      {:error, reason} -> {:error, reason}
+    end
+  end
 
-  Validates:
-    - path must exist
-    - path must be a directory
-    - path must be readable
-    - path must not be a dangerous root directory
-
-  If a workspace with the same expanded path already exists,
-  returns the existing one and updates `last_opened_at`.
-
-  Returns `{:ok, workspace_map}` or `{:error, reason}`.
-  """
+  @doc "Add a selected directory and return its owning workspace."
   @spec add(String.t(), keyword()) :: {:ok, map()} | {:error, term()}
   def add(raw_path, opts \\ []) do
-    expanded = Path.expand(raw_path)
-
-    with :ok <- validate_path(expanded),
-         :ok <- validate_not_dangerous(expanded),
-         :ok <- validate_directory(expanded) do
-      path = storage_path()
-      with_storage_lock(path, fn -> add_workspace(path, expanded, opts) end)
+    with {:ok, workspace, _checkout_path} <- add_selection(raw_path, opts) do
+      {:ok, workspace}
     end
   end
 
-  defp add_workspace(path, expanded, opts) do
-    with {:ok, data} <- load_storage(path) do
-      name = Keyword.get(opts, :name, Path.basename(expanded))
-      now = now_iso8601()
-      workspaces = Map.get(data, "workspaces", [])
+  @doc "Add a selected directory while preserving the selected checkout context."
+  @spec add_selection(String.t(), keyword()) ::
+          {:ok, map(), String.t()} | {:error, term()}
+  def add_selection(raw_path, opts \\ []) do
+    with {:ok, identity} <- resolve_identity(raw_path),
+         :ok <- validate_not_dangerous(identity.checkout_path),
+         :ok <- validate_not_dangerous(identity.workspace_path) do
+      path = storage_path()
+      with_storage_lock(path, fn -> add_workspace(path, identity, opts) end)
+    end
+  end
 
-      {found_ws, updated_workspaces} =
-        Enum.reduce(workspaces, {nil, []}, fn workspace, {found, acc} ->
-          if workspace["path"] == expanded do
-            updated = Map.put(workspace, "last_opened_at", now)
-            {updated, [updated | acc]}
-          else
-            {found, [workspace | acc]}
+  defp resolve_identity(path) do
+    case RepoIdentity.resolve(path) do
+      {:error, :not_found} -> {:error, "Path does not exist: #{Path.expand(path)}"}
+      {:error, :not_directory} -> {:error, "Path must be a directory"}
+      {:error, :unreadable} -> {:error, "Cannot read directory"}
+      result -> result
+    end
+  end
+
+  defp add_workspace(path, identity, opts) do
+    with {:ok, data} <- load_storage(path) do
+      workspaces = data["workspaces"]
+
+      case directory_candidate(workspaces, identity.checkout_path) do
+        {index, %{"kind" => "directory"} = workspace} when identity.kind == :git ->
+          upgrade_directory_workspace(path, data, index, workspace, identity, opts)
+
+        _other ->
+          case Enum.find_index(workspaces, &(&1["repo_key"] == identity.repo_key)) do
+            nil -> create_workspace(path, data, identity, opts)
+            index -> touch_selected_workspace(path, data, index, identity, opts)
           end
+      end
+    end
+  end
+
+  defp directory_candidate(workspaces, checkout_path) do
+    case Enum.find_index(workspaces, fn workspace ->
+           workspace["kind"] == "directory" and
+             checkout_path in [workspace["path"], workspace["default_checkout_path"]]
+         end) do
+      nil -> nil
+      index -> {index, Enum.at(workspaces, index)}
+    end
+  end
+
+  defp create_workspace(path, data, identity, opts) do
+    now = now_iso8601()
+
+    workspace = %{
+      "id" => generate_id(),
+      "name" => Keyword.get(opts, :name, Path.basename(identity.workspace_path)),
+      "kind" => Atom.to_string(identity.kind),
+      "repo_key" => identity.repo_key,
+      "path" => identity.workspace_path,
+      "default_checkout_path" => identity.checkout_path,
+      "default" => false,
+      "added_at" => now,
+      "last_opened_at" => now
+    }
+
+    updated = Map.update!(data, "workspaces", &(&1 ++ [workspace]))
+
+    with :ok <- write_storage(path, updated),
+         :ok <- WorkspaceSettings.ensure_owner_file(identity.workspace_path),
+         :ok <- maybe_configure_builtin_memory(identity.workspace_path, opts) do
+      {:ok, workspace, identity.checkout_path}
+    end
+  end
+
+  defp touch_selected_workspace(path, data, index, identity, opts) do
+    workspace =
+      data["workspaces"]
+      |> Enum.at(index)
+      |> Map.put("last_opened_at", now_iso8601())
+      |> maybe_set_default_checkout(identity.checkout_path, opts)
+
+    updated = Map.put(data, "workspaces", List.replace_at(data["workspaces"], index, workspace))
+
+    with :ok <- write_storage(path, updated),
+         :ok <- WorkspaceSettings.ensure_owner_file(workspace["path"]),
+         :ok <- maybe_configure_builtin_memory(workspace["path"], opts) do
+      {:ok, workspace, identity.checkout_path}
+    end
+  end
+
+  defp maybe_set_default_checkout(workspace, checkout_path, opts) do
+    if Keyword.get(opts, :set_default_checkout, false),
+      do: Map.put(workspace, "default_checkout_path", checkout_path),
+      else: workspace
+  end
+
+  defp upgrade_directory_workspace(path, data, index, workspace, identity, opts) do
+    conflict =
+      Enum.find(data["workspaces"], fn candidate ->
+        candidate["id"] != workspace["id"] and candidate["repo_key"] == identity.repo_key
+      end)
+
+    if conflict do
+      {:error, :workspace_repo_conflict}
+    else
+      updated_workspace =
+        workspace
+        |> Map.put("kind", "git")
+        |> Map.put("repo_key", identity.repo_key)
+        |> Map.put("path", identity.workspace_path)
+        |> Map.put("last_opened_at", now_iso8601())
+        |> preserve_valid_default_checkout(identity)
+        |> maybe_set_default_checkout(identity.checkout_path, opts)
+
+      updated =
+        Map.put(data, "workspaces", List.replace_at(data["workspaces"], index, updated_workspace))
+
+      with :ok <-
+             WorkspaceSettings.prepare_owner_change(workspace["path"], identity.workspace_path),
+           :ok <- write_storage(path, updated),
+           :ok <- maybe_configure_builtin_memory(identity.workspace_path, opts) do
+        {:ok, updated_workspace, identity.checkout_path}
+      end
+    end
+  end
+
+  defp preserve_valid_default_checkout(workspace, identity) do
+    default_checkout = workspace["default_checkout_path"] || workspace["path"]
+
+    if is_binary(default_checkout) and File.dir?(default_checkout) do
+      Map.put(workspace, "default_checkout_path", default_checkout)
+    else
+      Map.put(workspace, "default_checkout_path", identity.checkout_path)
+    end
+  end
+
+  @doc "Refresh directory/Git identity at a safe lifecycle boundary."
+  @spec refresh_identity(String.t()) :: {:ok, map()} | {:error, term()}
+  def refresh_identity(id) when is_binary(id) do
+    path = storage_path()
+
+    with_storage_lock(path, fn ->
+      with {:ok, data} <- load_storage(path),
+           index when is_integer(index) <- Enum.find_index(data["workspaces"], &(&1["id"] == id)),
+           workspace <- Enum.at(data["workspaces"], index),
+           selected when is_binary(selected) <-
+             workspace["default_checkout_path"] || workspace["path"],
+           {:ok, identity} <- RepoIdentity.resolve(selected) do
+        refresh_workspace(path, data, index, workspace, identity)
+      else
+        nil -> {:error, :not_found}
+        _ -> {:error, :not_found}
+      end
+    end)
+  end
+
+  defp refresh_workspace(
+         path,
+         data,
+         index,
+         %{"kind" => "directory"} = workspace,
+         %{kind: :git} = identity
+       ) do
+    case upgrade_directory_workspace(path, data, index, workspace, identity, []) do
+      {:ok, refreshed, _checkout} -> {:ok, refreshed}
+      error -> error
+    end
+  end
+
+  defp refresh_workspace(
+         path,
+         data,
+         index,
+         %{"kind" => "git"} = workspace,
+         %{kind: :directory} = identity
+       ) do
+    cond do
+      File.exists?(workspace["repo_key"]) ->
+        {:ok, workspace}
+
+      identity.workspace_path != workspace["path"] ->
+        {:ok, workspace}
+
+      Enum.any?(data["workspaces"], fn candidate ->
+        candidate["id"] != workspace["id"] and candidate["repo_key"] == identity.repo_key
+      end) ->
+        {:error, :workspace_repo_conflict}
+
+      true ->
+        refreshed =
+          workspace
+          |> Map.put("kind", "directory")
+          |> Map.put("repo_key", identity.repo_key)
+          |> Map.put("path", identity.workspace_path)
+
+        updated =
+          Map.put(data, "workspaces", List.replace_at(data["workspaces"], index, refreshed))
+
+        with :ok <- write_storage(path, updated), do: {:ok, refreshed}
+    end
+  end
+
+  defp refresh_workspace(path, data, index, workspace, identity) do
+    touched = Map.put(workspace, "last_opened_at", now_iso8601())
+    updated = Map.put(data, "workspaces", List.replace_at(data["workspaces"], index, touched))
+
+    if workspace["repo_key"] == identity.repo_key do
+      with :ok <- write_storage(path, updated), do: {:ok, touched}
+    else
+      {:error, :workspace_identity_changed}
+    end
+  end
+
+  @spec get(String.t()) :: {:ok, map()} | {:error, term()}
+  def get(id) do
+    with {:ok, workspaces} <- list_result() do
+      case Enum.find(workspaces, &(&1["id"] == id)) do
+        nil -> {:error, :not_found}
+        workspace -> {:ok, workspace}
+      end
+    end
+  end
+
+  @spec get_by_path(String.t()) :: {:ok, map()} | {:error, term()}
+  def get_by_path(path) when is_binary(path) do
+    with {:ok, workspaces} <- list_result_or_empty(),
+         {:ok, canonical} <- canonical_lookup_path(path) do
+      direct =
+        Enum.find(workspaces, fn workspace ->
+          canonical in [workspace["path"], workspace["default_checkout_path"]]
         end)
 
-      {workspace, updated_data} =
-        if found_ws do
-          {found_ws, Map.put(data, "workspaces", Enum.reverse(updated_workspaces))}
-        else
-          new_workspace = %{
-            "id" => generate_id(),
-            "name" => name,
-            "path" => expanded,
-            "default" => false,
-            "added_at" => now,
-            "last_opened_at" => now
-          }
-
-          {new_workspace, Map.put(data, "workspaces", workspaces ++ [new_workspace])}
-        end
-
-      with :ok <- write_storage(path, updated_data),
-           :ok <- Handbeam.WorkspaceSettings.ensure_file(expanded),
-           :ok <- maybe_configure_builtin_memory(expanded, opts) do
-        {:ok, workspace}
+      case direct do
+        nil -> get_by_resolved_identity(workspaces, path)
+        workspace -> {:ok, workspace}
       end
     end
   end
 
-  @doc """
-  Get a workspace by id.
-  Returns `{:ok, workspace_map}` or `{:error, :not_found}`.
-  """
-  @spec get(String.t()) :: {:ok, map()} | {:error, :not_found}
-  def get(id) do
-    workspaces = list()
+  def get_by_path(_path), do: {:error, :not_found}
 
-    case Enum.find(workspaces, fn w -> w["id"] == id end) do
-      nil -> {:error, :not_found}
-      ws -> {:ok, ws}
+  defp list_result_or_empty do
+    case list_result() do
+      {:error, :not_found} -> {:ok, []}
+      result -> result
     end
   end
 
-  @doc """
-  Get a workspace by expanded path.
-  Returns `{:ok, workspace_map}` or `{:error, :not_found}`.
-  """
-  @spec get_by_path(String.t()) :: {:ok, map()} | {:error, :not_found}
-  def get_by_path(path) do
-    expanded = Path.expand(path)
-    workspaces = list()
-
-    case Enum.find(workspaces, fn w -> w["path"] == expanded end) do
-      nil -> {:error, :not_found}
-      ws -> {:ok, ws}
+  defp canonical_lookup_path(path) do
+    case Handbeam.Security.PathValidator.canonicalize(path) do
+      {:ok, canonical} -> {:ok, canonical}
+      {:error, _reason} -> {:ok, Path.expand(path)}
     end
   end
 
-  @doc """
-  Update `last_opened_at` for a workspace.
-  Returns `{:ok, workspace_map}` or `{:error, :not_found}`.
-  """
-  @spec touch(String.t()) :: {:ok, map()} | {:error, :not_found | :corrupted | :lock_aborted}
+  defp get_by_resolved_identity(workspaces, path) do
+    with {:ok, identity} <- RepoIdentity.resolve(path) do
+      case Enum.find(workspaces, &(&1["repo_key"] == identity.repo_key)) do
+        nil -> {:error, :not_found}
+        workspace -> {:ok, workspace}
+      end
+    else
+      _ -> {:error, :not_found}
+    end
+  end
+
+  @spec touch(String.t()) :: {:ok, map()} | {:error, term()}
   def touch(id) do
     path = storage_path()
-    with_storage_lock(path, fn -> touch_workspace(path, id) end)
+
+    with_storage_lock(path, fn ->
+      update_workspace(path, id, &Map.put(&1, "last_opened_at", now_iso8601()))
+    end)
   end
 
-  defp touch_workspace(path, id) do
-    with {:ok, data} <- load_storage(path) do
-      workspaces = Map.get(data, "workspaces", [])
-
-      case Enum.find_index(workspaces, fn workspace -> workspace["id"] == id end) do
-        nil ->
-          {:error, :not_found}
-
-        index ->
-          updated_workspace =
-            workspaces
-            |> Enum.at(index)
-            |> Map.put("last_opened_at", now_iso8601())
-
-          updated_data =
-            Map.put(data, "workspaces", List.replace_at(workspaces, index, updated_workspace))
-
-          with :ok <- write_storage(path, updated_data) do
-            {:ok, updated_workspace}
-          end
-      end
-    end
-  end
-
-  @doc """
-  Rename a workspace. The directory on disk is not changed.
-  """
-  @spec rename(String.t(), String.t()) ::
-          {:ok, map()} | {:error, :not_found | :empty | :too_long | :corrupted | :lock_aborted}
+  @spec rename(String.t(), String.t()) :: {:ok, map()} | {:error, term()}
   def rename(id, name) when is_binary(id) and is_binary(name) do
     with {:ok, normalized} <- normalize_name(name) do
       path = storage_path()
-      with_storage_lock(path, fn -> rename_workspace(path, id, normalized) end)
+
+      with_storage_lock(path, fn ->
+        update_workspace(path, id, &Map.put(&1, "name", normalized))
+      end)
     end
   end
 
-  defp rename_workspace(path, id, normalized) do
+  defp update_workspace(path, id, fun) do
     with {:ok, data} <- load_storage(path) do
-      workspaces = Map.get(data, "workspaces", [])
-
-      case Enum.find_index(workspaces, &(&1["id"] == id)) do
+      case Enum.find_index(data["workspaces"], &(&1["id"] == id)) do
         nil ->
           {:error, :not_found}
 
         index ->
-          updated_workspace = Enum.at(workspaces, index) |> Map.put("name", normalized)
+          updated_workspace = data["workspaces"] |> Enum.at(index) |> fun.()
 
-          updated_data =
-            Map.put(data, "workspaces", List.replace_at(workspaces, index, updated_workspace))
+          updated =
+            Map.put(
+              data,
+              "workspaces",
+              List.replace_at(data["workspaces"], index, updated_workspace)
+            )
 
-          with :ok <- write_storage(path, updated_data) do
-            {:ok, updated_workspace}
-          end
+          with :ok <- write_storage(path, updated), do: {:ok, updated_workspace}
       end
     end
   end
@@ -332,21 +499,13 @@ defmodule Handbeam.WorkspaceStore do
     end
   end
 
-  @doc """
-  Remove a workspace from the list.
-
-  Does not delete the directory on disk. The default workspace cannot be
-  removed. Conversations that belonged to the workspace are left in place
-  for the caller to archive.
-  """
-  @spec remove(String.t()) ::
-          {:ok, map()} | {:error, :not_found | :default_workspace | :corrupted | :lock_aborted}
+  @spec remove(String.t()) :: {:ok, map()} | {:error, term()}
   def remove(id) when is_binary(id) do
     path = storage_path()
 
     case with_storage_lock(path, fn -> remove_workspace(path, id) end) do
       {:ok, workspace} = result ->
-        _ = Handbeam.CodeIndex.delete_local(workspace["path"])
+        _ = Handbeam.CodeIndex.delete_workspace(workspace["path"], workspace["id"])
         result
 
       error ->
@@ -356,9 +515,7 @@ defmodule Handbeam.WorkspaceStore do
 
   defp remove_workspace(path, id) do
     with {:ok, data} <- load_storage(path) do
-      workspaces = Map.get(data, "workspaces", [])
-
-      case Enum.find(workspaces, &(&1["id"] == id)) do
+      case Enum.find(data["workspaces"], &(&1["id"] == id)) do
         nil ->
           {:error, :not_found}
 
@@ -366,73 +523,39 @@ defmodule Handbeam.WorkspaceStore do
           {:error, :default_workspace}
 
         workspace ->
-          updated_data =
-            Map.put(data, "workspaces", Enum.reject(workspaces, &(&1["id"] == id)))
+          updated =
+            Map.put(data, "workspaces", Enum.reject(data["workspaces"], &(&1["id"] == id)))
 
-          with :ok <- write_storage(path, updated_data) do
-            {:ok, workspace}
-          end
+          with :ok <- write_storage(path, updated), do: {:ok, workspace}
       end
     end
   end
 
-  # ── Private ──
-
-  @dangerous_roots ["/", "/etc", "/System", "/bin", "/sbin", "/usr", "/var"]
-
-  defp build_default_workspace do
-    root = Handbeam.Workspace.default_root()
+  defp build_default_workspace(root) do
     now = now_iso8601()
 
     %{
       "id" => "default",
       "name" => "My Workspace",
+      "kind" => "directory",
+      "repo_key" => root,
       "path" => root,
+      "default_checkout_path" => root,
       "default" => true,
       "added_at" => now,
       "last_opened_at" => now
     }
   end
 
-  defp dev_log(message) do
-    if dev_env?(), do: Logger.debug(message)
-  end
-
-  defp dev_env? do
-    function_exported?(Mix, :env, 0) and Mix.env() == :dev
-  end
-
-  defp validate_path(path) do
-    with :ok <- validate_not_dangerous(path) do
-      if File.exists?(path) do
-        :ok
-      else
-        {:error, "Path does not exist: #{path}"}
-      end
-    end
-  end
-
-  defp validate_directory(path) do
-    if File.dir?(path) do
-      # Check readability
-      case File.ls(path) do
-        {:ok, _} -> :ok
-        {:error, reason} -> {:error, "Cannot read directory: #{inspect(reason)}"}
-      end
-    else
-      {:error, "Path must be a directory"}
-    end
-  end
-
   defp validate_not_dangerous(path) do
-    expanded = Path.expand(path)
+    canonical = Handbeam.Security.PathValidator.resolve_symlink(Path.expand(path))
 
-    is_dangerous? =
+    dangerous? =
       Enum.any?(@dangerous_roots, fn root ->
-        expanded == Path.expand(root)
+        Handbeam.Security.PathValidator.resolve_symlink(Path.expand(root)) == canonical
       end)
 
-    if is_dangerous? do
+    if dangerous? do
       {:error, "Path #{path} cannot be added as a workspace"}
     else
       :ok
@@ -441,36 +564,25 @@ defmodule Handbeam.WorkspaceStore do
 
   defp maybe_configure_builtin_memory(path, opts) do
     if Keyword.get(opts, :builtin_memory_enabled, true) == false,
-      do: Handbeam.WorkspaceSettings.update_builtin_memory_enabled(path, false),
+      do: WorkspaceSettings.update_builtin_memory_enabled(path, false),
       else: :ok
   end
 
   defp generate_id do
-    # Simple unique id — timestamp + random
     ts = System.os_time(:millisecond)
-    rand = rem(System.unique_integer([:positive]), 100_000)
-    "ws_#{ts}_#{rand}"
+    random = rem(System.unique_integer([:positive]), 100_000)
+    "ws_#{ts}_#{random}"
   end
 
-  defp now_iso8601 do
-    DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
-  end
+  defp now_iso8601,
+    do: DateTime.utc_now() |> DateTime.truncate(:second) |> DateTime.to_iso8601()
 
-  # Read storage file — returns {:ok, data} or {:error, reason}
+  defp empty_storage, do: %{"version" => @storage_version, "workspaces" => []}
+
   defp read_storage(path) do
     case File.read(path) do
       {:ok, content} ->
-        case Handbeam.JSON.decode(content) do
-          {:ok, %{"workspaces" => workspaces} = data}
-          when is_list(workspaces) and is_map(data) ->
-            if Enum.all?(workspaces, &is_map/1), do: {:ok, data}, else: {:error, :corrupted}
-
-          {:ok, _data} ->
-            {:error, :corrupted}
-
-          {:error, _reason} ->
-            {:error, :corrupted}
-        end
+        decode_storage(content)
 
       {:error, :enoent} ->
         {:error, :not_found}
@@ -481,10 +593,40 @@ defmodule Handbeam.WorkspaceStore do
     end
   end
 
+  defp decode_storage(content) do
+    case Handbeam.JSON.decode(content) do
+      {:ok, %{"version" => @storage_version, "workspaces" => workspaces} = data}
+      when is_list(workspaces) ->
+        if Enum.all?(workspaces, &valid_workspace?/1), do: {:ok, data}, else: {:error, :corrupted}
+
+      {:ok, %{"workspaces" => workspaces}} when is_list(workspaces) ->
+        {:error, :workspace_format_outdated}
+
+      {:ok, %{"version" => version}} when version != @storage_version ->
+        {:error, :workspace_format_outdated}
+
+      _ ->
+        {:error, :corrupted}
+    end
+  end
+
+  defp valid_workspace?(workspace) when is_map(workspace) do
+    Enum.all?(@required_fields, &Map.has_key?(workspace, &1)) and
+      workspace["kind"] in ["git", "directory"] and
+      Enum.all?(
+        ~w(id name repo_key path default_checkout_path added_at last_opened_at),
+        fn field ->
+          is_binary(workspace[field]) and workspace[field] != ""
+        end
+      ) and is_boolean(workspace["default"])
+  end
+
+  defp valid_workspace?(_workspace), do: false
+
   defp load_storage(path) do
     case read_storage(path) do
       {:ok, data} -> {:ok, data}
-      {:error, :not_found} -> {:ok, %{"workspaces" => []}}
+      {:error, :not_found} -> {:ok, empty_storage()}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -501,11 +643,14 @@ defmodule Handbeam.WorkspaceStore do
     |> normalize_transaction_result()
   end
 
-  # Atomic write: write to temp file, then rename
+  defp maybe_write_changed(_path, data, data), do: :ok
+  defp maybe_write_changed(path, _old, updated), do: write_storage(path, updated)
+
   defp write_storage(path, data) do
     tmp_path = path <> ".tmp.#{System.unique_integer([:positive])}"
 
-    with {:ok, json} <- Handbeam.JSON.encode(data, pretty: true),
+    with :ok <- File.mkdir_p(Path.dirname(path)),
+         {:ok, json} <- Handbeam.JSON.encode(data, pretty: true),
          :ok <- File.write(tmp_path, json),
          :ok <- File.rename(tmp_path, path) do
       :ok

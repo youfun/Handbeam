@@ -51,6 +51,46 @@ defmodule Handbeam.WorkspaceStoreTest do
   defp restore_config(key, {:ok, value}), do: Application.put_env(:handbeam, key, value)
   defp restore_config(key, :error), do: Application.delete_env(:handbeam, key)
 
+  defp storage_doc(workspaces), do: %{"version" => 2, "workspaces" => workspaces}
+
+  defp workspace_record(overrides) do
+    path = Map.fetch!(overrides, "path")
+
+    Map.merge(
+      %{
+        "id" => "workspace",
+        "name" => "Workspace",
+        "kind" => "directory",
+        "repo_key" => path,
+        "path" => path,
+        "default_checkout_path" => path,
+        "default" => false,
+        "added_at" => "2026-01-01T00:00:00Z",
+        "last_opened_at" => "2026-01-01T00:00:00Z"
+      },
+      overrides
+    )
+  end
+
+  defp git!(cwd, args) do
+    {output, status} = System.cmd("git", args, cd: cwd, stderr_to_stdout: true)
+    assert status == 0, output
+    output
+  end
+
+  defp init_repo!(path) do
+    File.mkdir_p!(path)
+    git!(path, ["init"])
+    git!(path, ["config", "user.email", "test@example.com"])
+    git!(path, ["config", "user.name", "Handbeam Test"])
+  end
+
+  defp commit_file!(repo, relative, content) do
+    File.write!(Path.join(repo, relative), content)
+    git!(repo, ["add", relative])
+    git!(repo, ["commit", "-m", "fixture"])
+  end
+
   describe "storage_path/0" do
     test "returns the host's workspace file when no override is configured" do
       System.delete_env("HANDBEAM_WORKSPACES_FILE")
@@ -106,7 +146,7 @@ defmodule Handbeam.WorkspaceStoreTest do
 
       assert File.read!(host_index) == original
 
-      assert %{"workspaces" => [%{"path" => ^expected_root}]} =
+      assert %{"version" => 2, "workspaces" => [%{"path" => ^expected_root}]} =
                isolated_index |> File.read!() |> Jason.decode!()
     end
 
@@ -128,14 +168,15 @@ defmodule Handbeam.WorkspaceStoreTest do
     } do
       expected_root = Path.join(workspace_path, ".handbeam/workspace")
 
-      existing = %{
-        "id" => "default",
-        "default" => true,
-        "path" => expected_root,
-        "name" => "My Workspace"
-      }
+      existing =
+        workspace_record(%{
+          "id" => "default",
+          "default" => true,
+          "path" => expected_root,
+          "name" => "My Workspace"
+        })
 
-      original = Jason.encode!(%{"workspaces" => [existing]})
+      original = Jason.encode!(storage_doc([existing]))
       File.write!(storage_path, original)
       File.write!(workspace_path, "not a directory")
 
@@ -171,19 +212,29 @@ defmodule Handbeam.WorkspaceStoreTest do
       marker = Path.join(workspace_path, "keep.txt")
       File.write!(marker, "existing project")
 
-      existing = %{
-        "id" => "default",
-        "default" => true,
-        "path" => workspace_path,
-        "name" => "My Workspace",
-        "added_at" => "original"
-      }
+      existing =
+        workspace_record(%{
+          "id" => "default",
+          "default" => true,
+          "path" => workspace_path,
+          "name" => "My Workspace",
+          "added_at" => "original"
+        })
 
-      other = %{"id" => "project", "path" => workspace_path, "name" => "Project"}
-      File.write!(storage_path, Jason.encode!(%{"workspaces" => [existing, other]}))
+      other =
+        workspace_record(%{"id" => "project", "path" => workspace_path, "name" => "Project"})
+
+      File.write!(storage_path, Jason.encode!(storage_doc([existing, other])))
 
       assert {:ok, repaired} = WorkspaceStore.ensure_default!()
-      assert repaired == Map.put(existing, "path", Handbeam.Workspace.default_root())
+
+      assert repaired ==
+               existing
+               |> Map.put("kind", "directory")
+               |> Map.put("repo_key", Handbeam.Workspace.default_root())
+               |> Map.put("path", Handbeam.Workspace.default_root())
+               |> Map.put("default_checkout_path", Handbeam.Workspace.default_root())
+
       assert {:ok, ^repaired} = WorkspaceStore.get("default")
       assert {:ok, ^other} = WorkspaceStore.get("project")
       assert File.read!(marker) == "existing project"
@@ -200,7 +251,7 @@ defmodule Handbeam.WorkspaceStoreTest do
     end
 
     test "creates default workspace if file has no default entry" do
-      json = ~s|{"workspaces": []}|
+      json = ~s|{"version": 2, "workspaces": []}|
       File.write!(WorkspaceStore.storage_path(), json)
 
       {:ok, _ws} = WorkspaceStore.ensure_default!()
@@ -325,7 +376,7 @@ defmodule Handbeam.WorkspaceStoreTest do
         project = Path.join(workspace_path, "project")
         File.mkdir_p!(index_dir)
         File.mkdir_p!(project)
-        original = Jason.encode!(%{"workspaces" => []})
+        original = Jason.encode!(storage_doc([]))
         File.write!(storage_path, original)
         System.put_env("HANDBEAM_WORKSPACES_FILE", storage_path)
         File.chmod!(index_dir, 0o500)
@@ -601,6 +652,82 @@ defmodule Handbeam.WorkspaceStoreTest do
     end
   end
 
+  describe "repository identity" do
+    test "writes version 2 records with explicit identity fields", %{storage_path: storage_path} do
+      assert {:ok, workspace} = WorkspaceStore.ensure_default!()
+      assert workspace["kind"] == "directory"
+      assert workspace["repo_key"] == workspace["path"]
+      assert workspace["default_checkout_path"] == workspace["path"]
+
+      assert %{"version" => 2, "workspaces" => [_]} =
+               storage_path |> File.read!() |> Jason.decode!()
+    end
+
+    test "UI bootstrap archives v1 metadata and asks for project re-addition", %{
+      storage_path: storage_path
+    } do
+      legacy = Jason.encode!(%{"workspaces" => [%{"id" => "old", "path" => "/old"}]})
+      File.write!(storage_path, legacy)
+
+      assert {:ok, %{"id" => "default"}, true} = WorkspaceStore.ensure_default_for_ui()
+      assert %{"version" => 2} = storage_path |> File.read!() |> Jason.decode!()
+      assert [backup] = Path.wildcard(storage_path <> ".v1-backup-*")
+      assert File.read!(backup) == legacy
+      File.rm!(backup)
+    end
+
+    test "rejects unversioned storage without rewriting it", %{storage_path: storage_path} do
+      legacy = Jason.encode!(%{"workspaces" => []})
+      File.write!(storage_path, legacy)
+
+      assert {:error, :workspace_format_outdated} = WorkspaceStore.list_result()
+      assert {:error, :workspace_format_outdated} = WorkspaceStore.ensure_default!()
+      assert File.read!(storage_path) == legacy
+    end
+
+    test "main checkout and linked worktree share one workspace", %{workspace_path: base} do
+      assert {:ok, _default} = WorkspaceStore.ensure_default!()
+      repo = Path.join(base, "repo")
+      linked = Path.join(base, "linked")
+      init_repo!(repo)
+      commit_file!(repo, "README.md", "main")
+      git!(repo, ["worktree", "add", "-b", "feature", linked])
+
+      assert {:ok, main, main_checkout} = WorkspaceStore.add_selection(repo)
+      assert {:ok, selected, linked_checkout} = WorkspaceStore.add_selection(linked)
+      assert main["id"] == selected["id"]
+      assert main["repo_key"] == selected["repo_key"]
+      refute main_checkout == linked_checkout
+      assert length(Enum.reject(WorkspaceStore.list(), & &1["default"])) == 1
+      assert WorkspaceSettings.path(linked) == WorkspaceSettings.owner_path(main["path"])
+    end
+
+    test "git init upgrades a directory workspace without changing its id", %{
+      workspace_path: base
+    } do
+      assert {:ok, _default} = WorkspaceStore.ensure_default!()
+      project = Path.join(base, "upgrade")
+      File.mkdir_p!(project)
+
+      assert {:ok, directory} = WorkspaceStore.add(project, name: "Keep me")
+      original_settings = File.read!(WorkspaceSettings.owner_path(project))
+      init_repo!(project)
+      assert {:ok, git_workspace} = WorkspaceStore.add(project)
+
+      assert git_workspace["id"] == directory["id"]
+      assert git_workspace["name"] == "Keep me"
+      assert git_workspace["kind"] == "git"
+      assert git_workspace["default_checkout_path"] == directory["default_checkout_path"]
+      assert File.read!(WorkspaceSettings.owner_path(project)) == original_settings
+    end
+
+    test "rejects managed subagent worktrees", %{workspace_path: base} do
+      managed = Path.join(base, ".handbeam/worktrees/child")
+      File.mkdir_p!(managed)
+      assert {:error, :managed_worktree} = WorkspaceStore.add(managed)
+    end
+  end
+
   describe "corrupted JSON" do
     test "returns an error without overwriting the corrupted file", %{storage_path: storage_path} do
       corrupted = "this is not valid json {{{"
@@ -635,7 +762,7 @@ defmodule Handbeam.WorkspaceStoreTest do
     end
 
     test "rejects non-object workspace entries without raising", %{storage_path: storage_path} do
-      corrupted = ~s({"workspaces":["not-an-object"]})
+      corrupted = ~s({"version":2,"workspaces":["not-an-object"]})
       File.write!(storage_path, corrupted)
 
       assert {:error, :corrupted} = WorkspaceStore.touch("workspace-id")
