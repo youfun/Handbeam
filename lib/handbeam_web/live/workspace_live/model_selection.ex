@@ -508,23 +508,7 @@ defmodule HandbeamWeb.WorkspaceLive.ModelSelection do
     Handbeam.Agent.RunOpts.resolve_model(workspace_path, selected_model)
   end
 
-  def resolve_global_model(selected_model) do
-    model_entry =
-      Enum.find(Handbeam.Agent.ModelConfig.all_global_models(), &(&1.id == selected_model))
-
-    if model_entry do
-      case Handbeam.Agent.ModelConfig.provider_config_for(
-             File.cwd!(),
-             model_entry.provider_id,
-             model_entry.model_id
-           ) do
-        {:ok, provider_config} -> {:ok, provider_config, model_entry.model_id}
-        {:error, reason} -> {:error, reason}
-      end
-    else
-      {:error, "Model #{selected_model} is not available"}
-    end
-  end
+  defdelegate resolve_global_model(selected_model), to: Handbeam.Agent.ModelConfig
 
   def resolve_auto_title_model(socket, _conv) do
     workspace_path = ConversationState.current_workspace_path(socket)

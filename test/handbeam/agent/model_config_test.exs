@@ -1622,6 +1622,35 @@ defmodule Handbeam.Agent.ModelConfigTest do
       end
     end
 
+    test "resolve_global_model resolves a catalog id without workspace policy" do
+      write_config(%{
+        "defaultProvider" => "global-provider",
+        "defaultModel" => "global-model",
+        "providers" => %{
+          "global-provider" => %{
+            "baseUrl" => "https://global.example.com/v1",
+            "api" => "openai-chat-completions",
+            "apiKey" => "sk-global-test",
+            "models" => [%{"id" => "global-model", "name" => "Global Model"}]
+          }
+        }
+      })
+
+      assert {:ok, provider_config, "global-model"} =
+               ModelConfig.resolve_global_model("global-provider/global-model")
+
+      assert provider_config[:base_url] == "https://global.example.com/v1"
+      assert provider_config[:api_key] == "sk-global-test"
+      assert provider_config[:model] == "global-model"
+    end
+
+    test "resolve_global_model rejects an id absent from the global catalog" do
+      write_config(%{"providers" => %{}})
+
+      assert {:error, "Model missing-provider/missing-model is not available"} =
+               ModelConfig.resolve_global_model("missing-provider/missing-model")
+    end
+
     # ── 13. Workspace settings never expose apiKey/baseUrl ──
 
     test "workspace model settings do NOT expose apiKey or baseUrl" do

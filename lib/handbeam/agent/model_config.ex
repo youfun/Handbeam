@@ -636,6 +636,26 @@ defmodule Handbeam.Agent.ModelConfig do
   end
 
   @doc """
+  Resolve a composite model id from the unrestricted global catalog.
+
+  Returns `{:ok, provider_config, actual_model_id}` or `{:error, reason}`.
+  """
+  @spec resolve_global_model(String.t()) ::
+          {:ok, map(), String.t()} | {:error, String.t()}
+  def resolve_global_model(composite_id) do
+    case Enum.find(all_global_models(), &(&1.id == composite_id)) do
+      nil ->
+        {:error, "Model #{composite_id} is not available"}
+
+      model_entry ->
+        case provider_config_for(File.cwd!(), model_entry.provider_id, model_entry.model_id) do
+          {:ok, provider_config} -> {:ok, provider_config, model_entry.model_id}
+          {:error, _} = error -> error
+        end
+    end
+  end
+
+  @doc """
   Get provider config for a specific provider id from the global config.
   """
   @spec provider_config_for(Path.t(), String.t(), String.t() | nil) ::

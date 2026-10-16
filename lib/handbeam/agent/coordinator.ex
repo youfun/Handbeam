@@ -543,7 +543,7 @@ defmodule Handbeam.Agent.Coordinator do
   defp saved_provider_config(opts, model) do
     cond do
       free_chat?(opts) ->
-        HandbeamWeb.WorkspaceLive.ModelSelection.resolve_global_model(model)
+        Handbeam.Agent.ModelConfig.resolve_global_model(model)
 
       match?({:ok, _}, Keyword.fetch(opts, :workspace_path)) ->
         Handbeam.Agent.ModelConfig.resolve_model_for_workspace(opts[:workspace_path], model)
