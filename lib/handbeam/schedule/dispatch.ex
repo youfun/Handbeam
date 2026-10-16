@@ -6,16 +6,15 @@ defmodule Handbeam.Schedule.Dispatch do
   delivery stays that way until the next planned slot.
   """
 
-  alias Handbeam.Agent.{Coordinator, RunOpts}
+  alias Handbeam.Agent.{Coordinator, Runner, RunOpts}
   alias Handbeam.ArtifactDelivery
   alias Handbeam.ConversationStore
   alias Handbeam.Schedule.{Notice, Rule, Store}
   alias Handbeam.WorkspaceStore
-  alias Handbeam.Runtime.TaskTracker
 
   @spec busy?(String.t()) :: boolean()
   def busy?(conversation_id) when is_binary(conversation_id) do
-    coordinator_busy?(conversation_id) or task_busy?(conversation_id)
+    coordinator_busy?(conversation_id)
   end
 
   @spec run(map()) :: :ok
@@ -205,17 +204,10 @@ defmodule Handbeam.Schedule.Dispatch do
   end
 
   defp coordinator_busy?(conversation_id) do
-    case Coordinator.status(conversation_id) do
+    case Runner.status(conversation_id) do
       {:ok, status} -> busy_status?(status)
       _ -> false
     end
-  end
-
-  defp task_busy?(conversation_id) do
-    Enum.any?(TaskTracker.snapshot().tasks, fn task ->
-      task.conversation_id == conversation_id and
-        task.status in [:running, :waiting_confirmation]
-    end)
   end
 
   defp busy_status?(status) do

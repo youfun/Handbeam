@@ -169,6 +169,65 @@ defmodule Handbeam.Runtime.TaskTrackerTest do
     Handbeam.SessionSupervisor.stop_session(sid)
   end
 
+  test "runner DOWN self-heals a task when no terminal event arrives" do
+    sid = "task-runner-down-#{System.unique_integer([:positive])}"
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
+    runner = start_registered_runner(sid, "run-down")
+
+    send(
+      Process.whereis(TaskTracker),
+      {:run_lifecycle, sid, :run_start, %{run_id: "run-down"}}
+    )
+
+    assert_receive {:notify_action, {:update_running, %{running_count: 1}}}, 500
+    Process.exit(runner, :kill)
+    assert_receive {:notify_action, {:update_running, %{running_count: 0}}}, 500
+    assert_receive {:notify_action, {:system_ended, %{run_id: "run-down"}, :failed}}, 500
+    assert TaskTracker.snapshot().tasks == []
+  end
+
+  test "a stale runner DOWN cannot remove a newer projected run" do
+    sid = "task-stale-down-#{System.unique_integer([:positive])}"
+    {:ok, _} = Handbeam.ConversationStore.create("default", id: sid)
+    runner = start_registered_runner(sid, "run-old")
+    tracker = Process.whereis(TaskTracker)
+
+    send(tracker, {:run_lifecycle, sid, :run_start, %{run_id: "run-old"}})
+    assert_receive {:notify_action, {:update_running, %{running_count: 1}}}, 500
+
+    %{run_monitors: %{^sid => %{ref: old_ref}}} = :sys.get_state(tracker)
+
+    send(tracker, {:run_lifecycle, sid, :run_start, %{run_id: "run-new"}})
+    assert_receive {:notify_action, {:update_running, %{running_count: 1}}}, 500
+    assert [%{run_id: "run-new"}] = TaskTracker.snapshot().tasks
+
+    send(tracker, {:DOWN, old_ref, :process, runner, :killed})
+    assert [%{run_id: "run-new"}] = TaskTracker.snapshot().tasks
+    Process.exit(runner, :kill)
+  end
+
+  defp start_registered_runner(conversation_id, run_id) do
+    parent = self()
+
+    pid =
+      spawn(fn ->
+        {:ok, _} =
+          Registry.register(Handbeam.AgentRunRegistry, conversation_id, %{
+            run_id: run_id,
+            active?: true
+          })
+
+        send(parent, {:runner_registered, self()})
+
+        receive do
+          :stop -> :ok
+        end
+      end)
+
+    assert_receive {:runner_registered, ^pid}, 500
+    pid
+  end
+
   defp flush_notify do
     receive do
       {:notify_action, _} -> flush_notify()

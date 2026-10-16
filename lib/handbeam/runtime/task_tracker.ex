@@ -4,7 +4,8 @@ defmodule Handbeam.Runtime.TaskTracker do
 
   One task is one `run_id`. Follow-up messages absorbed by the current
   Runner stay on the same task. `tool_approval_requested` is waiting,
-  not ended. Terminal `run_end` is the only completion signal.
+  not ended. A terminal `run_end` completes normally; a monitored Runner
+  `:DOWN` removes an orphaned projection when no terminal event arrives.
   """
 
   use GenServer
@@ -51,7 +52,8 @@ defmodule Handbeam.Runtime.TaskTracker do
     {:ok,
      %{
        tasks: %{},
-       viewers: %{}
+       viewers: %{},
+       run_monitors: %{}
      }}
   end
 
@@ -61,7 +63,8 @@ defmodule Handbeam.Runtime.TaskTracker do
   end
 
   def handle_call(:reset, _from, state) do
-    {:reply, :ok, %{state | tasks: %{}}}
+    Enum.each(Map.values(state.run_monitors), &Process.demonitor(&1.ref, [:flush]))
+    {:reply, :ok, %{state | tasks: %{}, run_monitors: %{}}}
   end
 
   @impl true
@@ -71,8 +74,23 @@ defmodule Handbeam.Runtime.TaskTracker do
   end
 
   @impl true
-  def handle_info({:DOWN, _ref, :process, pid, _reason}, state) do
-    {:noreply, update_in(state.viewers, &Map.delete(&1, pid))}
+  def handle_info({:DOWN, ref, :process, pid, _reason}, state) do
+    case Enum.find(state.run_monitors, fn {_conversation_id, monitor} -> monitor.ref == ref end) do
+      {conversation_id, %{pid: ^pid, run_id: run_id}} ->
+        state = update_in(state.run_monitors, &Map.delete(&1, conversation_id))
+
+        case Map.get(state.tasks, conversation_id) do
+          %{run_id: ^run_id} ->
+            {:noreply,
+             finish_task(state, conversation_id, %{run_id: run_id, status: "error"}, :failed)}
+
+          _ ->
+            {:noreply, state}
+        end
+
+      nil ->
+        {:noreply, update_in(state.viewers, &Map.delete(&1, pid))}
+    end
   end
 
   def handle_info({:run_lifecycle, conversation_id, _kind, _payload} = event, state) do
@@ -94,6 +112,7 @@ defmodule Handbeam.Runtime.TaskTracker do
       status: :running
     }
 
+    state = monitor_runner(state, conversation_id, task.run_id)
     state = put_in(state, [:tasks, conversation_id], task)
     dispatch(state, {:started, task})
     {:noreply, state}
@@ -120,13 +139,17 @@ defmodule Handbeam.Runtime.TaskTracker do
     end
   end
 
-  defp handle_lifecycle({:run_lifecycle, conversation_id, :run_resumed, _payload}, state) do
+  defp handle_lifecycle({:run_lifecycle, conversation_id, :run_resumed, payload}, state) do
     case Map.get(state.tasks, conversation_id) do
       %{status: :waiting_confirmation} = task ->
-        task = %{task | status: :running}
-        state = put_in(state, [:tasks, conversation_id], task)
-        dispatch(state, {:started, task})
-        {:noreply, state}
+        if event_matches_task?(task, payload) do
+          task = %{task | status: :running}
+          state = put_in(state, [:tasks, conversation_id], task)
+          dispatch(state, {:started, task})
+          {:noreply, state}
+        else
+          {:noreply, state}
+        end
 
       _ ->
         {:noreply, state}
@@ -186,30 +209,64 @@ defmodule Handbeam.Runtime.TaskTracker do
         state
 
       task ->
-        task = %{
-          task
-          | status: :waiting_confirmation,
-            run_id: resolve_run_id(payload, conversation_id, task.run_id)
-        }
+        if event_matches_task?(task, payload) do
+          task = %{
+            task
+            | status: :waiting_confirmation,
+              run_id: resolve_run_id(payload, conversation_id, task.run_id)
+          }
 
-        state = put_in(state, [:tasks, conversation_id], task)
-        dispatch(state, {:waiting, task})
-        state
+          state = put_in(state, [:tasks, conversation_id], task)
+          dispatch(state, {:waiting, task})
+          state
+        else
+          state
+        end
     end
   end
 
   defp finish_task(state, conversation_id, payload, reason) do
-    {task, state} = pop_in(state, [:tasks, conversation_id])
-
-    case task do
+    case Map.get(state.tasks, conversation_id) do
       nil ->
         state
 
       task ->
-        task = Map.put(task, :run_id, resolve_run_id(payload, conversation_id, task.run_id))
-        dispatch(state, {:ended, task, reason})
+        if event_matches_task?(task, payload) do
+          state = drop_run_monitor(state, conversation_id)
+          {_task, state} = pop_in(state, [:tasks, conversation_id])
+          task = Map.put(task, :run_id, resolve_run_id(payload, conversation_id, task.run_id))
+          dispatch(state, {:ended, task, reason})
+          state
+        else
+          state
+        end
+    end
+  end
+
+  defp event_matches_task?(task, payload) do
+    case payload_value(payload, :run_id) do
+      nil -> true
+      run_id -> run_id == task.run_id
+    end
+  end
+
+  defp monitor_runner(state, conversation_id, run_id) do
+    state = drop_run_monitor(state, conversation_id)
+
+    case Registry.lookup(Handbeam.AgentRunRegistry, conversation_id) do
+      [{pid, %{run_id: ^run_id}}] when is_pid(pid) ->
+        ref = Process.monitor(pid)
+        put_in(state, [:run_monitors, conversation_id], %{ref: ref, pid: pid, run_id: run_id})
+
+      _ ->
         state
     end
+  end
+
+  defp drop_run_monitor(state, conversation_id) do
+    {monitor, state} = pop_in(state, [:run_monitors, conversation_id])
+    if monitor, do: Process.demonitor(monitor.ref, [:flush])
+    state
   end
 
   defp resolve_run_id(payload, conversation_id, fallback) do

@@ -7,11 +7,42 @@ defmodule Handbeam.ScheduleTest do
   alias Handbeam.Agent.Middleware.ToolGuard
   alias Handbeam.ConversationStore
   alias Handbeam.Permissions.ToolPolicy
-  alias Handbeam.Schedule.{Clock, Presentation, Rule, Run, Store}
+  alias Handbeam.Schedule.{Clock, Dispatch, Presentation, Rule, Run, Store}
   alias Handbeam.Tool.Builtin.Schedule, as: ScheduleTool
 
   @zone "Asia/Shanghai"
   @ny "America/New_York"
+
+  defmodule BusyRunner do
+    use GenServer
+
+    def start_link(conversation_id, run_id),
+      do: GenServer.start_link(__MODULE__, {conversation_id, run_id})
+
+    @impl true
+    def init({conversation_id, run_id}) do
+      {:ok, _} =
+        Registry.register(Handbeam.AgentRunRegistry, conversation_id, %{
+          run_id: run_id,
+          active?: true
+        })
+
+      {:ok, %{conversation_id: conversation_id, run_id: run_id}}
+    end
+
+    @impl true
+    def handle_call(:status, _from, state) do
+      {:reply,
+       {:ok,
+        %{
+          conversation_id: state.conversation_id,
+          run_id: state.run_id,
+          running?: true,
+          status: :running,
+          run_pid: self()
+        }}, state}
+    end
+  end
 
   setup do
     on_exit(fn -> Application.delete_env(:handbeam, :schedule_now) end)
@@ -400,8 +431,8 @@ defmodule Handbeam.ScheduleTest do
     at = DateTime.add(now, 60, :second)
     {:ok, entry} = create_once(now, at: at)
     Phoenix.PubSub.subscribe(Handbeam.PubSub, "runtime:schedules")
-    on_exit(fn -> clear_busy(entry.conversation_id) end)
-    mark_busy(entry.conversation_id)
+    busy_runner = mark_busy(entry.conversation_id)
+    on_exit(fn -> clear_busy(entry.conversation_id, busy_runner) end)
 
     Enum.each(0..9, fn minute ->
       assert Clock.tick(DateTime.add(at, minute * 60, :second)) == :ok
@@ -695,19 +726,39 @@ defmodule Handbeam.ScheduleTest do
     end)
   end
 
-  defp mark_busy(conversation_id) do
+  test "a stale TaskTracker projection cannot block scheduler admission" do
+    conversation_id = conversation!()
+
     send(
       Process.whereis(Handbeam.Runtime.TaskTracker),
-      {:run_lifecycle, conversation_id, :run_start, %{run_id: "busy-#{conversation_id}"}}
+      {:run_lifecycle, conversation_id, :run_start, %{run_id: "stale-projection"}}
     )
 
     assert Enum.any?(
              Handbeam.Runtime.TaskTracker.snapshot().tasks,
-             &(&1.conversation_id == conversation_id and &1.status == :running)
+             &(&1.conversation_id == conversation_id)
            )
+
+    refute Dispatch.busy?(conversation_id)
+
+    send(
+      Process.whereis(Handbeam.Runtime.TaskTracker),
+      {:run_lifecycle, conversation_id, :run_end,
+       %{status: "completed", run_id: "stale-projection"}}
+    )
+
+    Handbeam.Runtime.TaskTracker.snapshot()
   end
 
-  defp clear_busy(conversation_id) do
+  defp mark_busy(conversation_id) do
+    {:ok, pid} = BusyRunner.start_link(conversation_id, "busy-#{conversation_id}")
+    assert Dispatch.busy?(conversation_id)
+    pid
+  end
+
+  defp clear_busy(conversation_id, runner) do
+    if is_pid(runner) and Process.alive?(runner), do: GenServer.stop(runner)
+
     send(
       Process.whereis(Handbeam.Runtime.TaskTracker),
       {:run_lifecycle, conversation_id, :run_end,

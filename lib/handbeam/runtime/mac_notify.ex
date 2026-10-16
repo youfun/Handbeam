@@ -57,7 +57,7 @@ defmodule Handbeam.Runtime.MacNotify do
 
   @doc false
   def ended_payload(task, reason, locale) when reason in [:completed, :failed, :cancelled] do
-    Gettext.with_locale(HandbeamWeb.Gettext, locale, fn ->
+    Gettext.with_locale(Handbeam.Gettext, locale, fn ->
       %{
         "op" => "show_ended",
         "reason" => Atom.to_string(reason),
@@ -79,13 +79,13 @@ defmodule Handbeam.Runtime.MacNotify do
 
     case reason do
       :cancelled ->
-        Gettext.gettext(HandbeamWeb.Gettext, "Agent stopped in %{title}.", title: title)
+        Gettext.gettext(Handbeam.Gettext, "Agent stopped in %{title}.", title: title)
 
       :failed ->
-        Gettext.gettext(HandbeamWeb.Gettext, "This run ended in %{title}.", title: title)
+        Gettext.gettext(Handbeam.Gettext, "This run ended in %{title}.", title: title)
 
       _ ->
-        Gettext.gettext(HandbeamWeb.Gettext, "Agent replied in %{title}.", title: title)
+        Gettext.gettext(Handbeam.Gettext, "Agent replied in %{title}.", title: title)
     end
   end
 
@@ -93,7 +93,7 @@ defmodule Handbeam.Runtime.MacNotify do
     title =
       case task[:title] do
         title when is_binary(title) and title != "" -> title
-        _ -> Gettext.gettext(HandbeamWeb.Gettext, "conversation")
+        _ -> Gettext.gettext(Handbeam.Gettext, "conversation")
       end
 
     clip(title, 80)
@@ -113,7 +113,7 @@ defmodule Handbeam.Runtime.MacNotify do
 
   defp default_locale do
     :handbeam
-    |> Application.get_env(HandbeamWeb.Gettext, [])
+    |> Application.get_env(Handbeam.Gettext, [])
     |> Keyword.get(:default_locale)
     |> UI.valid_locale() || "zh_CN"
   end
