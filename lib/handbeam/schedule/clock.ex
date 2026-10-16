@@ -10,6 +10,7 @@ defmodule Handbeam.Schedule.Clock do
 
   alias Handbeam.Schedule.{Dispatch, Notice, Store}
 
+  @busy_retry_ms 1_000
   @max_delay 60_000
 
   def start_link(opts \\ []) do
@@ -28,12 +29,13 @@ defmodule Handbeam.Schedule.Clock do
 
   @impl true
   def init(_opts) do
-    state = %{timer: nil}
+    state = %{timer: nil, busy_retries: %{}}
 
     state =
       if enabled?() do
-        recover_unknown(Handbeam.Schedule.now())
-        schedule(state)
+        now = Handbeam.Schedule.now()
+        recover_unknown(now)
+        schedule(state, now)
       else
         state
       end
@@ -45,8 +47,10 @@ defmodule Handbeam.Schedule.Clock do
   def handle_call({:tick, now}, _from, state) do
     cancel(state.timer)
     recover_unknown(now)
-    dispatch_due(now)
-    {:reply, :ok, schedule(state)}
+    busy_retries = dispatch_due(now, state.busy_retries)
+
+    state = %{state | busy_retries: busy_retries}
+    {:reply, :ok, schedule(state, now)}
   end
 
   def handle_call({:recover, now}, _from, state) do
@@ -56,34 +60,54 @@ defmodule Handbeam.Schedule.Clock do
 
   @impl true
   def handle_info(:tick, state) do
+    cancel(state.timer)
     now = Handbeam.Schedule.now()
     recover_unknown(now)
-    dispatch_due(now)
-    {:noreply, schedule(%{state | timer: nil})}
+    busy_retries = dispatch_due(now, state.busy_retries)
+
+    state = %{state | timer: nil, busy_retries: busy_retries}
+    {:noreply, schedule(state, now)}
   end
 
   def handle_info(_message, state), do: {:noreply, state}
 
-  defp dispatch_due(now) do
+  defp dispatch_due(now, busy_retries) do
     if Handbeam.Storage.Health.writable?() do
-      Enum.each(Store.due(now), fn entry ->
-        if Handbeam.Schedule.Rule.once?(entry.rule) do
-          dispatch_once(entry, now)
+      due = Store.due(now)
+      monotonic_now = System.monotonic_time(:millisecond)
+
+      busy_retries =
+        Map.take(busy_retries, Enum.map(due, & &1.id))
+
+      Enum.reduce(due, busy_retries, fn entry, retries ->
+        if dispatch_retry_pending?(retries, entry, monotonic_now, now) do
+          retries
         else
-          claim_and_handoff(entry, now)
+          result =
+            if Handbeam.Schedule.Rule.once?(entry.rule) do
+              dispatch_once(entry, now)
+            else
+              claim_and_handoff(entry, now)
+            end
+
+          update_retry(retries, entry.id, result)
         end
       end)
+    else
+      busy_retries
     end
   end
 
   defp dispatch_once(entry, now) do
     case Handbeam.Schedule.Rule.busy_deadline(entry.rule) do
       {:ok, deadline} ->
-        cond do
-          Dispatch.busy?(entry.conversation_id) and DateTime.compare(now, deadline) == :lt ->
-            :ok
+        busy? = Dispatch.busy?(entry.conversation_id)
 
-          Dispatch.busy?(entry.conversation_id) ->
+        cond do
+          busy? and DateTime.compare(now, deadline) == :lt ->
+            {:retry, busy_retry_not_before(now, deadline)}
+
+          busy? ->
             case Store.give_up(entry, now) do
               {:ok, %{schedule: schedule, run: run}} -> Notice.skip(schedule, run, "busy")
               _ -> :ok
@@ -97,6 +121,39 @@ defmodule Handbeam.Schedule.Clock do
         claim_and_handoff(entry, now)
     end
   end
+
+  defp busy_retry_not_before(now, deadline) do
+    remaining_ms =
+      deadline
+      |> DateTime.diff(now, :millisecond)
+      |> max(1)
+      |> min(@busy_retry_ms)
+
+    System.monotonic_time(:millisecond) + remaining_ms
+  end
+
+  defp dispatch_retry_pending?(retries, entry, monotonic_now, now) do
+    retry_pending?(retries, entry.id, monotonic_now) and before_busy_deadline?(entry, now)
+  end
+
+  defp before_busy_deadline?(entry, now) do
+    case Handbeam.Schedule.Rule.busy_deadline(entry.rule) do
+      {:ok, deadline} -> DateTime.compare(now, deadline) == :lt
+      :error -> false
+    end
+  end
+
+  defp retry_pending?(retries, id, monotonic_now) do
+    case Map.get(retries, id) do
+      not_before when is_integer(not_before) -> not_before > monotonic_now
+      _ -> false
+    end
+  end
+
+  defp update_retry(retries, id, {:retry, retry_not_before}),
+    do: Map.put(retries, id, retry_not_before)
+
+  defp update_retry(retries, id, _result), do: Map.delete(retries, id)
 
   defp claim_and_handoff(entry, now) do
     case Store.claim(entry, now) do
@@ -152,29 +209,57 @@ defmodule Handbeam.Schedule.Clock do
     end
   end
 
-  defp schedule(state) do
+  defp schedule(state, now) do
     if enabled?() and Handbeam.Storage.Health.writable?() and tables_ready?() do
-      %{state | timer: Process.send_after(self(), :tick, delay())}
+      %{state | timer: Process.send_after(self(), :tick, delay(state.busy_retries, now))}
     else
       %{state | timer: nil}
     end
   end
 
-  defp delay do
-    now = Handbeam.Schedule.now()
+  defp delay(busy_retries, now) do
+    monotonic_now = System.monotonic_time(:millisecond)
 
-    case Store.earliest_next_run_at() do
-      %DateTime{} = next ->
-        diff = DateTime.diff(next, now, :millisecond)
-        diff = if diff < 0, do: 0, else: diff
-        min(diff, @max_delay)
+    persistent_delay =
+      now
+      |> DateTime.add(@max_delay, :millisecond)
+      |> Store.due()
+      |> Enum.reject(&retry_pending?(busy_retries, &1.id, monotonic_now))
+      |> Enum.map(&persistent_delay(&1.next_run_at, now))
+      |> Enum.min(fn -> @max_delay end)
 
-      _ ->
-        @max_delay
+    min(persistent_delay, busy_retry_delay(busy_retries, monotonic_now))
+  end
+
+  defp persistent_delay(next_run_at, now) do
+    diff = DateTime.diff(next_run_at, now, :millisecond)
+
+    if DateTime.compare(next_run_at, now) == :gt do
+      max(diff, 1)
+    else
+      max(diff, 0)
     end
   end
 
-  defp cancel(ref) when is_reference(ref), do: Process.cancel_timer(ref)
+  defp busy_retry_delay(busy_retries, monotonic_now) do
+    busy_retries
+    |> Map.values()
+    |> Enum.map(&max(&1 - monotonic_now, 0))
+    |> Enum.min(fn -> @max_delay end)
+  end
+
+  defp cancel(ref) when is_reference(ref) do
+    if Process.cancel_timer(ref) == false do
+      receive do
+        :tick -> :ok
+      after
+        0 -> :ok
+      end
+    else
+      :ok
+    end
+  end
+
   defp cancel(_), do: :ok
 
   defp enabled? do

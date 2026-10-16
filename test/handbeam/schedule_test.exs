@@ -457,6 +457,89 @@ defmodule Handbeam.ScheduleTest do
     assert length(Store.recent_runs(entry.id)) == 1
   end
 
+  test "a busy one-shot backs off the clock without moving its persisted time" do
+    now = ~U[2026-08-01 01:30:00Z]
+    at = DateTime.add(now, 60, :second)
+    {:ok, entry} = create_once(now, at: at)
+    busy_runner = mark_busy(entry.conversation_id)
+    on_exit(fn -> clear_busy(entry.conversation_id, busy_runner) end)
+    Application.put_env(:handbeam, :schedule_now, fn -> at end)
+
+    previous_clock = Application.get_env(:handbeam, :schedule_clock)
+    Application.put_env(:handbeam, :schedule_clock, enabled: true)
+
+    on_exit(fn ->
+      if previous_clock,
+        do: Application.put_env(:handbeam, :schedule_clock, previous_clock),
+        else: Application.delete_env(:handbeam, :schedule_clock)
+
+      Clock.tick(at)
+    end)
+
+    assert Clock.tick(at) == :ok
+
+    state = :sys.get_state(Clock)
+    assert is_reference(state.timer)
+    assert Process.read_timer(state.timer) > 0
+    entry_id = entry.id
+    assert %{^entry_id => retry_not_before} = state.busy_retries
+    assert retry_not_before > System.monotonic_time(:millisecond)
+    assert {:ok, waiting} = Store.get(entry.id)
+    assert waiting.next_run_at == at
+    assert waiting.status == "active"
+  end
+
+  test "a sub-millisecond busy deadline still records a positive retry" do
+    now = ~U[2026-08-01 01:40:00Z]
+    at = DateTime.add(now, 60, :second)
+    {:ok, entry} = create_once(now, at: at)
+    busy_runner = mark_busy(entry.conversation_id)
+    on_exit(fn -> clear_busy(entry.conversation_id, busy_runner) end)
+
+    deadline = DateTime.add(at, 30 * 60, :second)
+    boundary = DateTime.add(deadline, -500, :microsecond)
+    Application.put_env(:handbeam, :schedule_now, fn -> boundary end)
+    monotonic_before = System.monotonic_time(:millisecond)
+
+    assert Clock.tick(boundary) == :ok
+    entry_id = entry.id
+    assert %{^entry_id => retry_not_before} = :sys.get_state(Clock).busy_retries
+    assert retry_not_before >= monotonic_before + 1
+    assert Store.recent_runs(entry.id) == []
+  end
+
+  test "a busy one-shot retry does not hide an independent schedule due in 100ms" do
+    now = ~U[2026-08-01 01:50:00Z]
+    busy_at = DateTime.add(now, 60, :second)
+    idle_at = DateTime.add(busy_at, 1, :second)
+    {:ok, busy} = create_once(now, at: busy_at)
+    {:ok, idle} = create_once(now, at: idle_at)
+    busy_runner = mark_busy(busy.conversation_id)
+    on_exit(fn -> clear_busy(busy.conversation_id, busy_runner) end)
+
+    clock_now = DateTime.add(busy_at, 900, :millisecond)
+    Application.put_env(:handbeam, :schedule_now, fn -> clock_now end)
+    previous_clock = Application.get_env(:handbeam, :schedule_clock)
+    Application.put_env(:handbeam, :schedule_clock, enabled: true)
+
+    on_exit(fn ->
+      if previous_clock,
+        do: Application.put_env(:handbeam, :schedule_clock, previous_clock),
+        else: Application.delete_env(:handbeam, :schedule_clock)
+
+      Clock.tick(clock_now)
+    end)
+
+    assert Clock.tick(clock_now) == :ok
+    state = :sys.get_state(Clock)
+    busy_id = busy.id
+    assert %{^busy_id => _retry_not_before} = state.busy_retries
+    assert is_reference(state.timer)
+    assert remaining = Process.read_timer(state.timer)
+    assert remaining in 1..100
+    assert Store.recent_runs(idle.id) == []
+  end
+
   test "an idle one-shot catches up one slot however late it is" do
     now = ~U[2026-08-01 02:00:00Z]
     at = DateTime.add(now, 60, :second)
