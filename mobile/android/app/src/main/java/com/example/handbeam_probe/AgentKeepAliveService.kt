@@ -110,12 +110,7 @@ class AgentKeepAliveService : Service() {
         } catch (_: Throwable) {
         }
         running.set(false)
-        if (Build.VERSION.SDK_INT >= 24) {
-            stopForeground(STOP_FOREGROUND_REMOVE)
-        } else {
-            @Suppress("DEPRECATION")
-            stopForeground(true)
-        }
+        stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
 
@@ -171,7 +166,6 @@ class AgentKeepAliveService : Service() {
     }
 
     private fun ensureChannel() {
-        if (Build.VERSION.SDK_INT < 26) return
         val nm = getSystemService(NotificationManager::class.java) ?: return
         val name = if (Locale.getDefault().language == "zh") "Agent" else "Agent"
         val channel =

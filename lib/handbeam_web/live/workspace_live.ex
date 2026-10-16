@@ -182,7 +182,6 @@ defmodule HandbeamWeb.WorkspaceLive do
       |> assign(:show_reasoning_sheet, false)
       |> assign(:show_settings_sheet, false)
       |> assign(:show_file_drawer, false)
-      |> assign(:show_settings_panel, false)
       |> assign(:mobile_right_panel_open, false)
       |> assign(:right_panel_collapsed, false)
       |> assign(:browser_capture_token, nil)
@@ -1445,23 +1444,6 @@ defmodule HandbeamWeb.WorkspaceLive do
       end
 
     {:noreply, push_patch(socket, to: "/w/#{ws_id}/c/#{conv_id}")}
-  end
-
-  # ── Workspace / Conversation switching ──
-
-  @impl true
-  def handle_info({:settings_saved, effective}, socket) do
-    Logger.debug("[WorkspaceLive] settings saved")
-
-    {:noreply,
-     socket
-     |> assign(:show_settings_panel, false)
-     |> assign(:effective_settings, effective)
-     |> ModelSelection.apply_effective()}
-  end
-
-  def handle_info(:settings_closed, socket) do
-    {:noreply, assign(socket, :show_settings_panel, false)}
   end
 
   # ── Agent events ──

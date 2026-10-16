@@ -82,9 +82,7 @@ full host rebuild.
 
 iOS app icons are checked in under `ios/Assets.xcassets/AppIcon.appiconset`.
 They reuse the Android vector mark and launcher colors, with opaque PNGs for
-iPhone, iPad, and the 1024px App Store slot. The same command also refreshes
-the rounded legacy Android mipmaps (`mipmap-*dpi/ic_launcher.png`). To
-regenerate them on macOS:
+iPhone, iPad, and the 1024px App Store slot. To regenerate them on macOS:
 
 ```bash
 swift script/generate_ios_icons.swift

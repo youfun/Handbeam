@@ -2,9 +2,8 @@ defmodule HandbeamWeb.SettingsLive do
   @moduledoc """
   Unified full-screen Settings page.
 
-  Replaces the old SettingsPanel LiveComponent modal. Provides a left menu
-  and renders each settings section in the right panel. Uses `live_render`
-  to nest independent LiveViews (e.g. AvailableModelsLive) for complex
+  Provides a left menu and renders each settings section in the right panel. Uses
+  `live_render` to nest independent LiveViews (e.g. AvailableModelsLive) for complex
   sections, keeping each section's state, events and PubSub subscriptions
   self-contained.
 

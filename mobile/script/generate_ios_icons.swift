@@ -1,6 +1,6 @@
 // Run from mobile/: swift script/generate_ios_icons.swift
-// Rasterize the Android vector mark into opaque iOS icons and rounded legacy
-// Android mipmaps. The mark is one even-odd path; the seam is a hole.
+// Rasterize the Android vector mark into opaque iOS icons. The mark is one
+// even-odd path; the seam is a hole.
 import Foundation
 import CoreGraphics
 import ImageIO
@@ -101,28 +101,9 @@ for (idiom, size, scales) in slots {
         writePNG(context.makeImage()!, to: "\(output)/\(filename)")
     }
 }
-// Legacy launchers (API 25 and below) still read the density PNGs. Match the
-// previous corner: opaque from 38px in on the 192px asset.
-let densities = [("mdpi", 48), ("hdpi", 72), ("xhdpi", 96), ("xxhdpi", 144), ("xxxhdpi", 192)]
-for (bucket, pixels) in densities {
-    let context = CGContext(data: nil, width: pixels, height: pixels,
-        bitsPerComponent: 8, bytesPerRow: pixels * 4,
-        space: CGColorSpace(name: CGColorSpace.sRGB)!,
-        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-    context.interpolationQuality = .high
-    context.clear(CGRect(x: 0, y: 0, width: pixels, height: pixels))
-    let radius = CGFloat(pixels) * 38 / 192
-    context.addPath(CGPath(roundedRect: CGRect(x: 0, y: 0, width: pixels, height: pixels),
-                           cornerWidth: radius, cornerHeight: radius, transform: nil))
-    context.clip()
-    drawMark(context: context, pixels: pixels)
-    let dir = "\(resources)/mipmap-\(bucket)"
-    writePNG(context.makeImage()!, to: "\(dir)/ic_launcher.png")
-}
 let info: [String: Any] = ["author": "xcode", "version": 1]
 try JSONSerialization.data(withJSONObject: ["images": images, "info": info], options: [.prettyPrinted, .sortedKeys])
     .write(to: URL(fileURLWithPath: "\(output)/Contents.json"))
 try JSONSerialization.data(withJSONObject: ["info": info], options: [.prettyPrinted, .sortedKeys])
     .write(to: URL(fileURLWithPath: "\(catalog)/Contents.json"))
 print("Generated \(rendered.count) opaque iOS icon PNGs in \(output)")
-print("Refreshed \(densities.count) legacy Android mipmaps")
