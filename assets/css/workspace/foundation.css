@@ -804,6 +804,19 @@ textarea::placeholder {
   transform: scale(0.94);
 }
 
+.conversation-nav-bottom {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateY(6px);
+  transition: opacity 120ms ease, transform 120ms ease;
+}
+
+.conversation-nav.is-away-from-bottom .conversation-nav-bottom {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
 .conversation-nav.is-open .conversation-nav-btn[data-conversation-nav-toggle] {
   color: var(--sig-text-inverse, #fff);
   background: var(--sig-text-primary, #1a1815);

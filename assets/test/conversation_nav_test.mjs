@@ -127,11 +127,13 @@ counter.textContent = "2/2";
 const item1 = new FakeEl({ "data-target-id": "u1", "data-index": "1" });
 const item2 = new FakeEl({ "data-target-id": "u2", "data-index": "2" });
 const toggle = new FakeEl({ "data-conversation-nav-toggle": "", "aria-expanded": "false" });
+const bottom = new FakeEl({ "data-conversation-nav-bottom": "" });
 panel.append(counter);
 panel.append(item1);
 panel.append(item2);
 navEl.append(panel);
 navEl.append(toggle);
+navEl.append(bottom);
 
 const documentListeners = {};
 const fakeDocument = {
@@ -178,6 +180,19 @@ assert.equal(unpinned, 1);
 assert.equal(panel.hidden, true);
 assert.equal(item1.getAttribute("aria-current"), "true");
 assert.equal(counter.textContent, "1/2");
+
+messages.scrollTop = 600;
+nav.syncFromScroll();
+assert.equal(bottom.getAttribute("aria-hidden"), "true");
+assert.equal(bottom.tabIndex, -1);
+assert.equal(navEl.classList.contains("is-away-from-bottom"), false);
+
+panel.children = [counter];
+messages.scrollTop = 0;
+nav.syncFromScroll();
+assert.equal(bottom.getAttribute("aria-hidden"), "false");
+assert.equal(bottom.tabIndex, 0);
+assert.equal(navEl.classList.contains("is-away-from-bottom"), true);
 
 nav.setOpen(true);
 for (const fn of documentListeners.keydown || []) fn({ key: "Escape" });

@@ -248,7 +248,7 @@
                   :for={model <- @selected_provider.models}
                   class={unless model.enabled, do: "is-disabled"}
                 >
-                  <td>
+                  <td data-label={gettext("启用")}>
                     <label class="settings-toggle" title={gettext("启用后出现在模型选择中")}>
                       <input
                         type="checkbox"
@@ -259,10 +259,17 @@
                       <span class="settings-toggle-slider"></span>
                     </label>
                   </td>
-                  <td class="font-mono text-[11px] text-tertiary">{model.id}</td>
-                  <td class="font-medium">{model.name}</td>
-                  <td><span class="settings-badge">{model.type}</span></td>
-                  <td>
+                  <td
+                    data-label={gettext("模型 ID")}
+                    class="font-mono text-[11px] text-tertiary"
+                  >
+                    {model.id}
+                  </td>
+                  <td data-label={gettext("名称")} class="font-medium">{model.name}</td>
+                  <td data-label={gettext("类型")}>
+                    <span class="settings-badge">{model.type}</span>
+                  </td>
+                  <td data-label={gettext("推理")}>
                     <span :if={model.reasoning} class="settings-badge">
                       {Enum.map_join(
                         reasoning_levels_for(@selected_provider.id, model),
@@ -272,14 +279,16 @@
                     </span>
                     <span :if={!model.reasoning} class="text-tertiary">—</span>
                   </td>
-                  <td>
+                  <td data-label={gettext("上下文")}>
                     <span :if={model.context_window} class="text-tertiary tabular-nums">
                       {format_context(model.context_window)}
                     </span>
                     <span :if={!model.context_window} class="text-tertiary">—</span>
                   </td>
-                  <td class="text-tertiary">{format_price(model.cost)}</td>
-                  <td>
+                  <td data-label={gettext("价格")} class="text-tertiary">
+                    {format_price(model.cost)}
+                  </td>
+                  <td class="settings-model-delete-cell">
                     <button
                       phx-click="confirm_delete_model"
                       phx-value-id={model.id}

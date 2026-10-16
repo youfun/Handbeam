@@ -766,14 +766,29 @@
   }
 
   .composer-dock {
-    padding: 4px 10px 8px;
+    padding: 6px 10px 8px;
+    border-top: 1px solid var(--sig-border-subtle);
+    background: color-mix(in srgb, var(--sig-bg-surface) 94%, transparent);
+    backdrop-filter: blur(12px);
   }
 
   .composer-turn-controls {
     flex-wrap: nowrap;
     min-height: 0;
-    padding: 0 2px;
+    padding: 0 2px 2px;
     gap: 6px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .composer-turn-controls::-webkit-scrollbar {
+    display: none;
+  }
+
+  .composer-turn-pickers {
+    flex: 0 0 auto;
   }
 
   .textarea-wrap {
@@ -781,31 +796,32 @@
   }
 
   .textarea-wrap textarea {
-    min-height: 22px;
-    max-height: 22px;
-    height: 22px;
+    min-height: 44px;
+    max-height: 120px;
+    height: auto;
     font-size: 16px;
     line-height: 1.35;
-    padding: 0 2px;
+    padding: 8px 4px 4px;
     border-radius: 0;
     resize: none;
-    overflow-y: hidden;
+    overflow-y: auto;
     transition: all var(--sig-motion-normal);
   }
 
   .composer-bar {
     position: relative;
-    flex-direction: row;
-    align-items: flex-end;
+    flex-direction: column;
+    align-items: stretch;
     border-radius: var(--sig-radius-xl, 14px);
-    padding: 4px 6px 4px 10px;
-    gap: 4px;
+    padding: 4px 6px 6px 10px;
+    gap: 2px;
   }
 
   .composer-toolbar {
-    min-height: 28px;
+    width: 100%;
+    min-height: 44px;
     gap: 2px;
-    flex-shrink: 0;
+    justify-content: flex-end;
   }
 
   .composer-thumbs.visible {
@@ -817,15 +833,13 @@
 
   .composer-icon-btn,
   .composer-send-btn {
-    width: 28px;
-    height: 28px;
+    width: 44px;
+    height: 44px;
   }
 
   .composer:focus-within textarea {
-    min-height: 22px;
-    max-height: 96px;
-    height: auto;
-    overflow-y: auto;
+    min-height: 44px;
+    max-height: 120px;
   }
 
   .btn {
@@ -834,10 +848,13 @@
   }
 
   #model-picker,
-  #reasoning-picker {
-    min-height: 0;
+  #reasoning-picker,
+  #cli-picker,
+  #cli-model-picker {
+    min-height: 36px;
     min-width: 0;
-    font-size: 11px;
+    max-width: 168px;
+    font-size: 12px;
   }
 
   .pill {

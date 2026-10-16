@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta
       name="viewport"
-      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
     />
     <meta name="csrf-token" content={get_csrf_token()} />
     <.live_title default="Handbeam" phx-no-format>{assigns[:page_title]}</.live_title>
@@ -26,14 +26,13 @@
         --safe-top: env(safe-area-inset-top, 0px);
       }
       body { overscroll-behavior: none; -webkit-tap-highlight-color: transparent; }
-      @media (max-width: 767px) { body { user-select: none; -webkit-user-select: none; } }
 
       /* ── Backdrop ── */
       .mobile-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.35); z-index: 50; opacity: 0; pointer-events: none; transition: opacity 0.25s ease; }
       .mobile-backdrop.open { opacity: 1; pointer-events: auto; }
 
       /* ── Bottom Sheet ── */
-      .bottom-sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 51; background: var(--sig-bg-elevated); border-radius: 20px 20px 0 0; max-height: 76vh; overflow: hidden; transform: translateY(100%); transition: transform 0.32s cubic-bezier(0.22,1,0.36,1); padding-bottom: var(--safe-bottom); box-shadow: 0 -8px 40px rgba(0,0,0,0.12); display: flex; flex-direction: column; }
+      .bottom-sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 51; background: var(--sig-bg-elevated); border-radius: 20px 20px 0 0; max-height: min(76dvh, calc(100dvh - var(--safe-top) - 12px)); overflow: hidden; transform: translateY(100%); transition: transform 0.32s cubic-bezier(0.22,1,0.36,1); padding-bottom: var(--safe-bottom); box-shadow: 0 -8px 40px rgba(0,0,0,0.12); display: flex; flex-direction: column; }
       .bottom-sheet.open { transform: translateY(0); }
       .bottom-sheet.dragging { transition: none !important; }
       .bottom-sheet-inner { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 0 0 16px; }
@@ -74,21 +73,6 @@
       .side-drawer { position: fixed; top: 0; right: 0; bottom: 0; width: 100%; z-index: 40; background: var(--sig-bg-elevated); transform: translateX(100%); transition: transform 0.28s cubic-bezier(0.22,1,0.36,1); display: flex; flex-direction: column; touch-action: pan-y; }
       .side-drawer.open { transform: translateX(0); }
       .side-drawer.swiping { transition: none !important; }
-
-      /* ── Mobile Header v2 ── */
-      .mobile-header-v2 { display: none; }
-      @media (max-width: 767px) {
-        .mobile-header-v2 { display: flex; }
-      }
-      .mobile-header-v2 { align-items: center; gap: 4px; padding: 8px 10px 6px; border-bottom: 1px solid var(--sig-border-default); background: var(--sig-bg-elevated); flex-shrink: 0; z-index: 20; }
-      .mobile-header-workspace-btn { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; border: none; background: none; cursor: pointer; outline: none; padding: 4px 8px; border-radius: 10px; transition: background 0.12s; min-height: 44px; touch-action: manipulation; }
-      .mobile-header-workspace-btn:active { background: var(--sig-bg-surface-hover); }
-      .mobile-chevron { flex-shrink: 0; color: var(--sig-text-tertiary); }
-      .mobile-header-settings-btn { display: flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: 10px; border: none; background: transparent; color: var(--sig-text-tertiary); cursor: pointer; outline: none; flex-shrink: 0; transition: background 0.12s, color 0.12s; min-height: 44px; min-width: 44px; touch-action: manipulation; }
-      .mobile-header-settings-btn:active { background: var(--sig-bg-surface-hover); color: var(--sig-text-primary); }
-      .mobile-header-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
-      .mobile-brand { font-size: 15px; font-weight: 700; color: var(--sig-text-primary); }
-      .mobile-workspace { font-size: 12px; color: var(--sig-text-secondary); }
 
       /* ── Mobile FAB ── */
       .mobile-fab { position: fixed; bottom: 24px; right: 16px; width: 40px; height: 40px; border-radius: 10px; background: var(--sig-accent); color: var(--sig-text-inverse); display: flex; align-items: center; justify-content: center; box-shadow: 0 2px 8px rgba(26,24,21,0.12); transition: transform 0.22s cubic-bezier(0.22,1,0.36,1), opacity 0.22s cubic-bezier(0.22,1,0.36,1); z-index: 30; cursor: pointer; border: none; outline: none; touch-action: manipulation; }

@@ -113,16 +113,27 @@ export const ConversationNav = {
   syncFromScroll() {
     const scroller = messagesEl();
     const items = this.navItems();
-    if (!scroller || items.length === 0) {
-      this.el.classList.remove("is-away-from-bottom");
+    if (!scroller) {
+      this.syncBottomButton(false);
       return;
     }
 
     const distFromBottom = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight;
-    this.el.classList.toggle("is-away-from-bottom", distFromBottom > NEAR_BOTTOM_PX);
+    const awayFromBottom = distFromBottom > NEAR_BOTTOM_PX;
+    this.syncBottomButton(awayFromBottom);
+
+    if (items.length === 0) return;
 
     const currentId = this.currentUserMessageId(scroller, items);
     if (currentId) this.markCurrent(currentId);
+  },
+
+  syncBottomButton(awayFromBottom) {
+    this.el.classList.toggle("is-away-from-bottom", awayFromBottom);
+    const bottom = this.el.querySelector("[data-conversation-nav-bottom]");
+    if (!bottom) return;
+    bottom.setAttribute("aria-hidden", awayFromBottom ? "false" : "true");
+    bottom.tabIndex = awayFromBottom ? 0 : -1;
   },
 
   currentUserMessageId(scroller, items) {
